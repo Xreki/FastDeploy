@@ -1,34 +1,41 @@
-FastDeploy
+FastDeploy LLM部署
 ===
-4.5T开源代码
 
-快速开始
----
-如何构建、安装、运行
+## 安装
 
-测试
----
-如何执行自动化测试
+```
+python setup.py install
+```
 
-如何贡献
----
-贡献patch流程及质量要求
+## LLM API使用
+```
+from fastdeployllm import LLM, SamplingParams
 
-版本信息
----
-本项目的各版本信息和变更历史可以在[这里][changelog]查看。
+# Define a list of input prompts
+prompts = [
+    "Hello, my name is",
+    "The largest ocean is",
+]
 
-维护者
----
-### owners
-* jiangjiajun(jiangjiajun@baidu.com)
+# Define sampling parameters
+sampling_params = SamplingParams(temperature=0.8, top_p=0.95)
 
-### committers
-* jiangjiajun(jiangjiajun@baidu.com)
+# Initialize the LLM engine with the OPT-125M model
+llm = LLM(model="ERNIE/4.5-Turbo")
 
-讨论
----
-百度Hi交流群：群号
+# Generate outputs for the input prompts
+outputs = llm.generate(prompts, sampling_params)
 
+# Print the generated outputs
+for output in outputs:
+    prompt = output.prompt
+    generated_text = output.outputs[0].text
+```
 
-[changelog]: http://icode.baidu.com/repos/baidu/paddle_internal/FastDeploy/blob/master:CHANGELOG.md
+## 代码提交规范
+
+- 本仓库已添加pre-commit hook，代码clone至本地后，进入主目录，执行```pre-commit install```，即可安装代码提交自动格式化工具（git commit时会自动执行)。
+- Python代码遵循PEP-8风格
+- 所有新增函数鼓励增加注释（英文），核心函数/用户API接口强制增加注释
+- 配置参数均需注释说明作用
+- 开源代码遵循Apache 2.0开源协议，如存在拷贝或借鉴自外部开源代码，请务必在文件头说明引用来源
