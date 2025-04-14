@@ -11,16 +11,16 @@ class ModelRunnerTransformer(ModelRunnerBase):
     def __init__(self, config, args, nranks, rank):
         """
             Initializes the model and sets up the necessary parameters for distributed training.
-        
+
         Args:
             config (DictConfig): Config dictionary for the model.
             args (argparse.Namespace): Arguments for the model.
             nranks (int): Number of GPUs used in parallel training.
             rank (int): Rank of the current GPU used in parallel training.
-        
+
         Returns:
             None.
-        
+
         Raises:
             None.
         """
@@ -31,13 +31,15 @@ class ModelRunnerTransformer(ModelRunnerBase):
     def _load_model(self, model_name):
         """
             加载模型，并设置缓存。
-        
+
         Args:
             model_name (str): 模型名称或路径。
-        
+
         Returns:
             None.
         """
+        import sys
+        sys.path.append("/opt/source/PaddleNLP")
         llm_utils.set_triton_cache(self.args.model_name_or_path, "dynamic")
         from llm.predict.predictor import ModelArgument, PredictorArgument
 
@@ -75,10 +77,10 @@ class ModelRunnerTransformer(ModelRunnerBase):
         """
             初始化旋转位置嵌入，并将其保存在模型中。
         该函数会创建一个长度为max_seq_len的位置ID序列，并使用get_rotary_position_embedding函数生成相应的旋转位置嵌入。
-        
+
         Args:
             max_seq_len (int): 最大序列长度。
-        
+
         Returns:
             None. 直接修改模型中的share_inputs字典，添加名称为"rope_emb"的键值对，包含旋转位置嵌入。
         """

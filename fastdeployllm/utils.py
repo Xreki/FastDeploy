@@ -46,7 +46,7 @@ class DailyRotatingFileHandler(BaseRotatingHandler):
     ):
         """
             初始化 RotatingFileHandler 对象。
-        
+
         Args:
             filename (str): 日志文件的路径，可以是相对路径或绝对路径。
             backupCount (int, optional, default=0): 保存的备份文件数量，默认为 0，表示不保存备份文件。
@@ -54,7 +54,7 @@ class DailyRotatingFileHandler(BaseRotatingHandler):
             delay (bool, optional, default=False): 是否延迟写入，默认为 False，表示立即写入。
             utc (bool, optional, default=False): 是否使用 UTC 时区，默认为 False，表示不使用 UTC 时区。
             kwargs (dict, optional): 其他参数将被传递给 BaseRotatingHandler 类的 init 方法。
-        
+
         Raises:
             TypeError: 如果 filename 不是 str 类型。
             ValueError: 如果 backupCount 小于等于 0。
@@ -154,6 +154,8 @@ def get_logger(name, file_name, without_formater=False):
     get logger
     """
     log_dir = os.getenv("FD_LOG_DIR", default="log")
+    if not os.path.exists(log_dir):
+        os.mkdir(log_dir)
     is_debug = int(os.getenv("FD_DEBUG", default="0"))
     logger = logging.getLogger(name)
     if is_debug:
@@ -250,15 +252,15 @@ def extract_tar(tar_path, output_dir):
 def download_model(url, output_dir, temp_tar):
     """
     下载模型，并将其解压到指定目录。
-    
+
     Args:
         url (str): 模型文件的URL地址。
         output_dir (str): 模型文件要保存的目录路径。
         temp_tar (str, optional): 临时保存模型文件的TAR包名称，默认为'temp.tar'.
-    
+
     Raises:
         Exception: 如果下载或解压过程中出现任何错误，都会抛出Exception异常。
-    
+
     Returns:
         None - 无返回值，只是在下载和解压过程中进行日志输出和清理临时文件。
     """

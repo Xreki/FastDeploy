@@ -16,7 +16,6 @@
 
 
 import sys
-sys.path.append("/opt/server/server_new")
 
 import multiprocessing
 import os
@@ -60,15 +59,15 @@ class LLMEngine(object):
         config = engine_args.create_engine_config()
         # Create the LLMEngine.
         return cls(cfg=config)
-    
+
     def __init__(self, cfg):
         """
             Args:
             cfg (Config): Config object containing all the configuration parameters.
-        
+
         Raises:
             None
-        
+
         Returns:
             None
         """
@@ -140,10 +139,10 @@ class LLMEngine(object):
             启动推送模式发送线程，该线程会不断地向服务器发送数据。
         当客户端处于推送模式时，需要定期将数据发送到服务器以保持连接的有效性。
         该函数会在客户端初始化后自动调用一次。
-        
+
         Args:
             无参数。
-        
+
         Returns:
             无返回值，通过修改类成员变量 push_mode_sender_thread 来实现。
         """
@@ -213,7 +212,7 @@ class LLMEngine(object):
     def unfinished_requests_num(self):
         """
             返回还没有完成的请求数量，即最大批处理大小减去当前可用批处理大小。
-        
+
         Returns:
             int -- 还没有完成的请求数量，即最大批处理大小减去当前可用批处理大小。
         """
@@ -225,7 +224,7 @@ class LLMEngine(object):
         """
             将请求添加到队列中，并进行相应的处理。如果启用了文本截断，则对输入文本进行截断；否则，使用默认参数进行处理。
         如果任务需要的资源超过限制，则不会缓存该任务。
-        
+
         Args:
             task (dict): 包含请求信息的字典，其中必须包含以下键值对：
                 - "input_text" (str): 输入文本。
@@ -234,10 +233,10 @@ class LLMEngine(object):
                 - "max_dec_len" (int, optional): 最大解码长度，默认为800。
                 - "min_dec_len" (int, optional): 最小解码长度，默认为20。
                 - "req_id" (str, optional): 请求ID，默认为None。
-        
+
         Returns:
             None, 如果任务需要的资源超过限制，则不会缓存该任务。
-        
+
         Raises:
             None
         """
@@ -284,7 +283,7 @@ class LLMEngine(object):
             f"cached_task_num: {len(self.cached_task_deque)}."
         )
         model_server_logger.debug(f"cache task: {task}")
-    
+
     def warmup(self):
         """
         construct test tasks and avoid out of memory problem in the infer process
@@ -555,8 +554,8 @@ class LLMEngine(object):
         """
         current_file_path = os.path.abspath(__file__)
         current_dir_path = os.path.split(current_file_path)[0]
-        pd_cmd = "python3 -m paddle.distributed.launch "
-        py_script = "/opt/server/server_new/server/worker/model_executor.py"
+        pd_cmd = f"{sys.executable} -m paddle.distributed.launch "
+        py_script = os.path.join(current_dir_path, "../worker/model_executor.py")
         arguments = (f" --nnodes {str(self.cfg.nnode)}"
                     f" --devices {self.cfg.device_ids} {py_script}"
                     f" --max_batch_size {self.cfg.max_batch_size} --max_seq_len {self.cfg.max_seq_len}"
@@ -570,7 +569,8 @@ class LLMEngine(object):
                     f" --block_ratio {self.cfg.block_ratio} --dtype {self.cfg.dtype}")
         if self.cfg.nnode > 1:
             pd_cmd = pd_cmd + f" --ips {self.cfg.ips}"
-        pd_cmd = pd_cmd + arguments + " >log/launch_infer.log 2>&1"
+        log_dir = os.getenv("FD_LOG_DIR", default="log")
+        pd_cmd = pd_cmd + arguments + f" >{log_dir}/launch_infer.log 2>&1"
         model_server_logger.info("Launch infer service command: {}".format(pd_cmd))
         p = subprocess.Popen(
             pd_cmd,

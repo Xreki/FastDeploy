@@ -79,13 +79,13 @@ class ModelConfig:
         """
             从环境变量中读取配置信息，并更新当前对象的属性值。
         如果某个属性在环境变量中不存在或为空字符串，则使用默认值。
-        
+
         Args:
             None.
-        
+
         Returns:
             None.
-        
+
         Raises:
             None.
         """
@@ -231,13 +231,13 @@ class Config:
         """
             获取下载模型，支持的模型类型为"default"和"speculate"。
         如果模型名称不在支持列表中，将抛出ValueError异常。
-        
+
         Args:
             model_type (str, optional): 模型类型，默认为"default"，可选值为"default"或"speculate"。 Default to "default".
-        
+
         Raises:
             ValueError: 如果模型名称不在支持列表中。
-        
+
         Returns:
             None.
         """
@@ -288,7 +288,7 @@ class Config:
         return self.model_config
 
 
-       def read_from_config(self):
+    def read_from_config(self):
         """
         reset model config from json file
         """
@@ -304,17 +304,17 @@ class Config:
         reset_value(self, "max_seq_len", "infer_model_max_seq_len")
         reset_value(self, "return_full_hidden_states", "return_full_hidden_states")
         reset_value(self, "kv_cache_dtype", "infer_model_dtype")
- 
+
 
 
     def __str__(self) -> str:
         """
             将对象转换为字符串，返回一个JSON格式的字符串。
         该方法用于在打印或显示对象时，将其转换为可读性更高的字符串形式。
-        
+
         Args:
             None
-        
+
         Returns:
             str (str): JSON格式的字符串，包含对象所有属性和值。
         """
