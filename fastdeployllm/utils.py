@@ -1,0 +1,288 @@
+# Copyright (c) 2024 PaddlePaddle Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import base64
+import codecs
+import logging
+import os
+import pickle
+import re
+import subprocess
+import time
+import requests
+import tarfile
+import shutil
+from tqdm import tqdm
+from datetime import datetime
+from enum import Enum
+from logging.handlers import BaseRotatingHandler
+from pathlib import Path
+
+
+class DailyRotatingFileHandler(BaseRotatingHandler):
+    """
+    like `logging.TimedRotatingFileHandler`, but this class support multi-process
+    """
+
+    def __init__(
+        self,
+        filename,
+        backupCount=0,
+        encoding="utf-8",
+        delay=False,
+        utc=False,
+        **kwargs
+    ):
+        """
+            初始化 RotatingFileHandler 对象。
+        
+        Args:
+            filename (str): 日志文件的路径，可以是相对路径或绝对路径。
+            backupCount (int, optional, default=0): 保存的备份文件数量，默认为 0，表示不保存备份文件。
+            encoding (str, optional, default='utf-8'): 编码格式，默认为 'utf-8'。
+            delay (bool, optional, default=False): 是否延迟写入，默认为 False，表示立即写入。
+            utc (bool, optional, default=False): 是否使用 UTC 时区，默认为 False，表示不使用 UTC 时区。
+            kwargs (dict, optional): 其他参数将被传递给 BaseRotatingHandler 类的 init 方法。
+        
+        Raises:
+            TypeError: 如果 filename 不是 str 类型。
+            ValueError: 如果 backupCount 小于等于 0。
+        """
+        self.backup_count = backupCount
+        self.utc = utc
+        self.suffix = "%Y-%m-%d"
+        self.base_log_path = Path(filename)
+        self.base_filename = self.base_log_path.name
+        self.current_filename = self._compute_fn()
+        self.current_log_path = self.base_log_path.with_name(self.current_filename)
+        BaseRotatingHandler.__init__(self, filename, "a", encoding, delay)
+
+    def shouldRollover(self, record):
+        """
+        check scroll through the log
+        """
+        if self.current_filename != self._compute_fn():
+            return True
+        return False
+
+    def doRollover(self):
+        """
+        scroll log
+        """
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+
+        self.current_filename = self._compute_fn()
+        self.current_log_path = self.base_log_path.with_name(self.current_filename)
+
+        if not self.delay:
+            self.stream = self._open()
+
+        self.delete_expired_files()
+
+    def _compute_fn(self):
+        """
+        Calculate the log file name corresponding current time
+        """
+        return self.base_filename + "." + time.strftime(self.suffix, time.localtime())
+
+    def _open(self):
+        """
+        open new log file
+        """
+        if self.encoding is None:
+            stream = open(str(self.current_log_path), self.mode)
+        else:
+            stream = codecs.open(str(self.current_log_path), self.mode, self.encoding)
+
+        if self.base_log_path.exists():
+            try:
+                if (
+                    not self.base_log_path.is_symlink()
+                    or os.readlink(self.base_log_path) != self.current_filename
+                ):
+                    os.remove(self.base_log_path)
+            except OSError:
+                pass
+
+        try:
+            os.symlink(self.current_filename, str(self.base_log_path))
+        except OSError:
+            pass
+        return stream
+
+    def delete_expired_files(self):
+        """
+        delete expired log files
+        """
+        if self.backup_count <= 0:
+            return
+
+        file_names = os.listdir(str(self.base_log_path.parent))
+        result = []
+        prefix = self.base_filename + "."
+        plen = len(prefix)
+        for file_name in file_names:
+            if file_name[:plen] == prefix:
+                suffix = file_name[plen:]
+                if re.match(r"^\d{4}-\d{2}-\d{2}(\.\w+)?$", suffix):
+                    result.append(file_name)
+        if len(result) < self.backup_count:
+            result = []
+        else:
+            result.sort()
+            result = result[: len(result) - self.backup_count]
+
+        for file_name in result:
+            os.remove(str(self.base_log_path.with_name(file_name)))
+
+
+def get_logger(name, file_name, without_formater=False):
+    """
+    get logger
+    """
+    log_dir = os.getenv("FD_LOG_DIR", default="log")
+    is_debug = int(os.getenv("FD_DEBUG", default="0"))
+    logger = logging.getLogger(name)
+    if is_debug:
+        logger.setLevel(level=logging.DEBUG)
+    else:
+        logger.setLevel(level=logging.INFO)
+
+    LOG_FILE = "{0}/{1}".format(log_dir, file_name)
+    backup_count = int(os.getenv("FD_LOG_BACKUP_COUNT", "7"))
+    handler = DailyRotatingFileHandler(LOG_FILE, backupCount=backup_count)
+
+    formatter = logging.Formatter(
+        "%(levelname)-8s %(asctime)s %(process)-5s %(filename)s[line:%(lineno)d] %(message)s"
+    )
+    if not without_formater:
+        handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    handler.propagate = False
+    return logger
+
+
+def str_to_datetime(date_string):
+    """
+    string to datetime class object
+    """
+    if "." in date_string:
+        return datetime.strptime(date_string, "%Y-%m-%d %H:%M:%S.%f")
+    else:
+        return datetime.strptime(date_string, "%Y-%m-%d %H:%M:%S")
+
+
+def datetime_diff(datetime_start, datetime_end):
+    """
+    Calculate the difference between two dates and times(s)
+
+    Args:
+        datetime_start (Union[str, datetime.datetime]): start time
+        datetime_end (Union[str, datetime.datetime]): end time
+
+    Returns:
+        float: date time difference(s)
+    """
+    if isinstance(datetime_start, str):
+        datetime_start = str_to_datetime(datetime_start)
+    if isinstance(datetime_end, str):
+        datetime_end = str_to_datetime(datetime_end)
+    if datetime_end > datetime_start:
+        cost = datetime_end - datetime_start
+    else:
+        cost = datetime_start - datetime_end
+    return cost.total_seconds()
+
+
+def download_file(url, save_path):
+    """Download file with progress bar"""
+    try:
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+
+        total_size = int(response.headers.get('content-length', 0))
+        progress_bar = tqdm(
+            total=total_size,
+            unit='iB',
+            unit_scale=True,
+            desc=f"Downloading {os.path.basename(url)}"
+        )
+
+        with open(save_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=1024):
+                if chunk:  # filter out keep-alive chunks
+                    f.write(chunk)
+                    progress_bar.update(len(chunk))
+
+        progress_bar.close()
+        return True
+    except Exception as e:
+        if os.path.exists(save_path):
+            os.remove(save_path)
+        raise RuntimeError(f"Download failed: {str(e)}")
+
+def extract_tar(tar_path, output_dir):
+    """Extract tar file with progress tracking"""
+    try:
+        with tarfile.open(tar_path) as tar:
+            members = tar.getmembers()
+            with tqdm(total=len(members), desc="Extracting files") as pbar:
+                for member in members:
+                    tar.extract(member, path=output_dir)
+                    pbar.update(1)
+        print(f"Successfully extracted to: {output_dir}")
+    except Exception as e:
+        raise RuntimeError(f"Extraction failed: {str(e)}")
+
+def download_model(url, output_dir, temp_tar):
+    """
+    下载模型，并将其解压到指定目录。
+    
+    Args:
+        url (str): 模型文件的URL地址。
+        output_dir (str): 模型文件要保存的目录路径。
+        temp_tar (str, optional): 临时保存模型文件的TAR包名称，默认为'temp.tar'.
+    
+    Raises:
+        Exception: 如果下载或解压过程中出现任何错误，都会抛出Exception异常。
+    
+    Returns:
+        None - 无返回值，只是在下载和解压过程中进行日志输出和清理临时文件。
+    """
+    try:
+        temp_tar = os.path.join(output_dir, temp_tar)
+        # Download the file
+        model_server_logger.info(f"\nStarting download from: {url} {temp_tar}")
+        download_file(url, temp_tar)
+        # Extract the archive
+        print("\nExtracting files...")
+        extract_tar(temp_tar, output_dir)
+
+    except Exception as e:
+        # Cleanup on failure
+        if os.path.exists(temp_tar):
+            os.remove(temp_tar)
+        raise Exception(f"Failed to get model from {url}, please recheck the model name from https://github.com/PaddlePaddle/PaddleNLP/blob/develop/llm/server/docs/static_models.md")
+    finally:
+        # Cleanup temp file
+        if os.path.exists(temp_tar):
+            os.remove(temp_tar)
+
+model_server_logger = get_logger("model_server", "infer_server.log")
+http_server_logger = get_logger("http_server", "http_server.log")
+data_processor_logger = get_logger("data_processor", "data_processor.log")
+monitor_logger = get_logger("monitor_logger", "monitor_logger.log", True)
+error_logger = get_logger("error_logger", "error_logger.log", True)
