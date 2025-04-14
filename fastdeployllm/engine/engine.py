@@ -289,39 +289,7 @@ class LLMEngine(object):
         construct test tasks and avoid out of memory problem in the infer process
         """
         # get eos_token_id
-        from fastdeployllm.data.processor import DataProcessor
-        eos_token_ids = DataProcessor().get_eos_tokens()
-
-       # construct test tasks
-        res_task = []
-        for j in range(2 * self.cfg.max_batch_size):
-            data = {
-                "input_ids": [5],
-                "req_id": j,
-                "max_dec_len": self.cfg.dec_len_limit,
-                "min_dec_len": int(self.cfg.dec_len_limit * 0.5) + 1,
-                "eos_token_ids": eos_token_ids
-            }
-            res_task.append(data)
-        for j in range(2 * self.cfg.max_prefill_batch):
-            data = {
-                "input_ids": [5] * self.cfg.seq_len_limit,
-                "req_id": j + 2 * self.cfg.max_batch_size,
-                "max_dec_len": 1,
-                "min_dec_len": 1,
-                "eos_token_ids": eos_token_ids
-            }
-            res_task.append(data)
-
-        for x in res_task:
-            while self.resource_manager.available_batch() == 0 or not self.insert_tasks([x]):
-                time.sleep(0.0002)
-
-        self.token_processor._is_blocking = False
-        # wait for all tasks finished
-        while not self.all_tasks_finished():
-            time.sleep(1)
-
+        pass
     def insert_tasks(self, tasks):
         """
         insert tasks to the engine

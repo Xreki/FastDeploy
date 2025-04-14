@@ -13,8 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
+import os
 
 from fastdeployllm.input.text_processor import DataProcessor
+from fastdeployllm.input.ernie_processor import ErnieProcessor
 
 
 class InputPreprocessor:
@@ -57,7 +59,10 @@ class InputPreprocessor:
             DataProcessor or MultiModalRegistry.Processor (Union[DataProcessor, MultiModalRegistry.Processor]): 数据处理器。
         """
         if not self.enable_mm_registry:
-            self.processor = DataProcessor(model_name_or_path=self.model_name_or_path)
+            if int(os.getenv("OPEN_SOURCE", "0")) == 1:
+                self.processor = DataProcessor(model_name_or_path=self.model_name_or_path)
+            else:
+                self.processor = ErnieProcessor(model_name_or_path=self.model_name_or_path)
         else:
             from fastdeployllm.input.mm_register import MultiModalRegistry
             self.processor = MultiModalRegistry.create_processor(self.model_name_or_path)

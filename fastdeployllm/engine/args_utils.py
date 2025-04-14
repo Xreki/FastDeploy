@@ -1,19 +1,3 @@
-"""
-# Copyright (c) 2024 PaddlePaddle Authors. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-"""
-
 import argparse
 import json
 from dataclasses import dataclass, fields as dataclass_fields
@@ -30,13 +14,13 @@ class EngineArgs:
     # Model configuration parameters
     model: str = "facebook/opt-125m"
     model_config_path: Optional[str] = None
-    tokenizer: Optional[str] = None
-    download_dir: Optional[str] = None
-    max_model_len: Optional[int] = None
+    tokenizer: str = None
+    download_dir: str = None
+    max_model_len: int = 2048
     tensor_parallel_size: int = 1
-    block_size: Optional[int] = None
+    block_size: int = 64
     task: TaskOption = "generate"
-    max_num_seqs: Optional[int] = None
+    max_num_seqs: int = 8
     mm_processor_kwargs: Optional[Dict[str, Any]] = None
     speculative_config: Optional[Dict[str, Any]] = None
 
@@ -95,6 +79,22 @@ class EngineArgs:
             help="Maximum context length for the model"
         )
 
+
+        model_group.add_argument(
+            "--use-warmup",
+            type=int,
+            default=EngineArgs.max_model_len,
+            help="Maximum context length for the model"
+        )
+
+        model_group.add_argument(
+            "--use_tqdm_on_load",
+            type=int,
+            default=EngineArgs.max_model_len,
+            help="Maximum context length for the model"
+        )
+
+
         # Parallel processing parameters group
         parallel_group = parser.add_argument_group("Parallel Configuration")
         parallel_group.add_argument(
@@ -104,12 +104,25 @@ class EngineArgs:
             default=EngineArgs.tensor_parallel_size,
             help="Tensor parallelism degree"
         )
+        parallel_group.add_argument(
+            "--max-num-seqs",
+            type=int,
+            default=EngineArgs.max_num_seqs,
+            help="Maximum number of sequences per iteration"
+        )
 
         # Cluster system parameters group
         system_group = parser.add_argument_group("System Configuration")
         system_group.add_argument(
             "--pod-ips",
             type=lambda s: s.split(",") if s else None,
+            default=EngineArgs.pod_ips,
+            help="Cluster node IP list (comma-separated)"
+        )
+
+        system_group.add_argument(
+            "--nnode",
+            type=int,
             default=EngineArgs.pod_ips,
             help="Cluster node IP list (comma-separated)"
         )
@@ -122,12 +135,7 @@ class EngineArgs:
             default=EngineArgs.enable_prefix_caching,
             help="Enable prefix caching"
         )
-        perf_group.add_argument(
-            "--max-num-seqs",
-            type=int,
-            default=EngineArgs.max_num_seqs,
-            help="Maximum number of sequences per iteration"
-        )
+
 
         return parser
 
@@ -143,14 +151,26 @@ class EngineArgs:
         """Create model configuration object"""
         return ModelConfig(
             model_name_or_path=self.model,
-            config_json_file=self.model_config_path
+            use_tqdm_on_load=self.use_tqdm_on_load
         )
 
     def create_engine_config(self) -> Config:
         """Create engine configuration object"""
+        model_cfg = self.create_model_config()
         return Config(
-            model_config=self.create_model_config(),
             model=self.model,
-            tensor_parallel_size=self.tensor_parallel_size,
-            # Add other required parameters according to actual Config class definition
+            model_config=model_cfg,
+            download_dir=self.download_dir,
+            max_model_len=self.max_model_len,
+            tensor_parallel_size=model_cfg.mp_num,
+            max_num_seqs=self.max_num_seqs,
+            mm_processor_kwargs=self.mm_processor_kwargs,
+            speculative_config=self.speculative_config,
+            block_bs=self.block_bs,
+            block_ratio=self.block_ratio,
+            nnode=self.nnode,
+            pod_ips=self.pod_ips,
+            max_cache_task_num=self.max_cache_task_num,
+            use_warmup=self.use_warmup,
+            enable_prefix_caching=self.enable_prefix_caching
         )

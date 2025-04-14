@@ -5,7 +5,7 @@ import os
 import sys
 import time
 
-# from concurrent.futures import ThreadPoolExecutor
+
 from multiprocessing import shared_memory
 
 import numpy as np
@@ -13,44 +13,35 @@ import paddle
 import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
 from paddle.base.framework import use_pir_api
-from paddlenlp_ops import speculate_step_paddle, step_paddle
+
+if int(os.getenv("OPEN_SOURCE", "0")) == 1:
+    from paddlenlp_ops import speculate_step_paddle, step_paddle
+    from paddlenlp.experimental.transformers import (
+        EagleProposer,
+        InferenceWithReferenceProposer,
+        )
+    from fastdeployllm.worker.model_runner.model_runner_paddlenlp import ModelRunner
+
+else:
+    from efficientllm.gpu import *
+    from fastdeployllm.worker.model_runner.model_runner_ernie import ModelRunner
+
 
 
 from fastdeployllm.engine.config import ModelConfig
 from fastdeployllm.utils import get_logger
 from fastdeployllm.inter_communicator.task_queue_manager import TaskQueueManager
 
-from paddlenlp.experimental.transformers import (
-    EagleProposer,
-    InferenceWithReferenceProposer,
-)
 
-
-from fastdeployllm.worker.model_runner.model_runner_paddlenlp import ModelRunnerTransformer
-
-File_Path = os.path.realpath(sys.argv[0])
-Dir_Path = os.path.dirname(File_Path)
 logger = get_logger("infer_server", "infer.log")
 
 
 
 class ModelExecutor:
     def __init__(self, args):
-        """
-            Initializes the InferenceEngine class.
-        
-        Args:
-            args (argparse.Namespace): The parsed arguments from the command line.
-                See `transformers.inference_utils.InferenceEngine.add_arguments` for details.
-        
-        Raises:
-            None.
-        
-        Returns:
-            None. (NoneType)
-        """
         self.args = args
         self.MAX_INFER_SEED = 9223372036854775806
+        paddle.set_default_dtype(args.dtype)
 
 
         self.model_cfg = ModelConfig(args.model_name_or_path)
@@ -61,7 +52,7 @@ class ModelExecutor:
         self.helper_tensors = {}
 
 
-        self.infer_engine = ModelRunnerTransformer(
+        self.infer_engine = ModelRunner(
             config=self.model_cfg,
             args=self.args,
             nranks=self.nranks,
@@ -71,7 +62,7 @@ class ModelExecutor:
         self.infer_queue = TaskQueueManager(rank=self.rank, mp_num=self.nranks, port=self.args.infer_port)
 
         self.init_health()
-
+    
 
 
     def init_dist_env(self, seed=20):
@@ -96,43 +87,24 @@ class ModelExecutor:
 
 
     def init_health(self):
-        """
-            初始化健康状态，包括共享内存的创建和初始化。
-        共享内存用于同步模型推理过程中的各个进程。
-        
-        Args:
-            None
-        
-        Returns:
-            None
-        
-        Raises:
-            None
-        """
         flag_array = np.zeros([1], dtype=np.int32)
         self.shm_flag_broadcast = shared_memory.SharedMemory(
             name="shm_pd_infer_flag_broadcast")
         self.flag_broadcast_array = np.ndarray(flag_array.shape,
                                         dtype=flag_array.dtype,
                                         buffer=self.shm_flag_broadcast.buf)
-
+        flag_array = np.zeros([self.nranks], dtype=np.int32)
         self.shm_flag_ready = shared_memory.SharedMemory(name="shm_flag_infer_ready")
         self.flag_ready_array = np.ndarray(flag_array.shape,
                                     dtype=flag_array.dtype,
                                     buffer=self.shm_flag_ready.buf)
         self.flag_ready_array[self.rank] = 1  # 已初始化完毕
 
-
+        flag_array = np.zeros([1], dtype=np.int32)
         self.shm_flag_has_block_step = shared_memory.SharedMemory(name="shm_flag_has_block_step")
         self.flag_has_block_step_array = np.ndarray(flag_array.shape,
                                             dtype=flag_array.dtype,
                                             buffer=self.shm_flag_has_block_step.buf)
-
-
-
-        self.infer_live_flag_shm = shared_memory.SharedMemory(create=True,
-                                                        size=1,
-                                                        name="shm_flag_infer_{}_live".format(self.rank))
 
     def format_print_configuration(self):
         """
@@ -180,27 +152,13 @@ class ModelExecutor:
 
 
     def run(self):
-        """
-        主函数，用于执行模型的推理过程。
-            该函数会不断地从队列中获取任务，并进行相应的处理，直到所有任务都被完成。
-            在每次获取任务后，会将结果写入输出文件中。
-        
-            Args:
-                None.
-        
-            Returns:
-                None.
-        
-            Raises:
-                None.
-        """
         infer_seed_increment = paddle.full(shape=[self.args.max_batch_size, 1], fill_value=4, dtype="int64")
         self.nnode = 1
         while True:
             self.insert_step = False
 
             # self.engine_healthy_recorded_time_array[0] = time.time()
-            mp_num_per_node = self.nranks
+            mp_num_per_node = self.nranks 
 
             if self.rank % mp_num_per_node == 0:
                 if not self.infer_queue.empty():
@@ -238,8 +196,8 @@ class ModelExecutor:
                 continue
 
 
-
-            self.infer_engine.model.generate(**self.infer_engine.share_inputs)
+            
+            self.infer_engine.generate()
             self.infer_engine.share_inputs["infer_seed"].add_(infer_seed_increment)
             self.infer_engine.share_inputs["infer_seed"][:] %= self.MAX_INFER_SEED
 

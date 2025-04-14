@@ -115,6 +115,9 @@ class ModelRunnerBase(ABC):
             "penalty_score": paddle.full([max_batch_size, 1], self.penalty_score, **float32_config),
             "frequency_score": paddle.full([max_batch_size, 1], self.frequency_score, **float32_config),
             "presence_score": paddle.full([max_batch_size, 1], self.presence_score, **float32_config),
+            # TODO 名称统一
+            "min_dec_len": paddle.full([max_batch_size, 1], self.min_length, **int64_config),
+            "max_dec_len": paddle.full([max_batch_size, 1], self.max_length, **int64_config),
             "min_length": paddle.full([max_batch_size, 1], self.min_length, **int64_config),
             "max_length": paddle.full([max_batch_size, 1], self.max_length, **int64_config),
             "seq_lens_this_time": paddle.full([max_batch_size, 1], 0, **int32_config),

@@ -18,12 +18,12 @@ import sys
 import traceback
 import uuid
 import time
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Union
 from tqdm import tqdm
 
 from fastdeployllm.engine.args_utils import EngineArgs
 from fastdeployllm.engine.engine import LLMEngine
-# from fastdeployllm.engine.request import Request
+# from server.engine.request import Request
 
 from fastdeployllm.utils import model_server_logger
 
@@ -73,9 +73,9 @@ class LLM:
 
     def generate(
         self,
-        prompts: str,
+        prompts: Union[str, List[int]],
         use_tqdm: bool = True,
-    ) -> list[Dict[str, Any]]:
+    ):
         """Generates the completions for the input prompts.
         """
 
@@ -94,8 +94,8 @@ class LLM:
 
     def _add_request(
         self,
-        prompts: str,
-    ) -> None:
+        prompts: Union[str, List[int]],
+    ):
         """
             添加一个请求到 LLM Engine，并返回该请求的 ID。
         如果请求已经存在于 LLM Engine 中，则不会重复添加。
@@ -107,15 +107,22 @@ class LLM:
             None: 无返回值，直接修改 LLM Engine 的状态。
         """
         request_id = str(uuid.uuid4())
-        tasks = {
-            "text": prompts,
-            "req_id": request_id,
-        }
+        if isinstance(prompts, str):
+            tasks = {
+                "text": prompts,
+                "req_id": request_id,
+            }
+        else:
+            tasks = {
+                "input_ids": prompts,
+                "req_id": request_id,
+            }
+
         self.llm_engine.add_requests(tasks)
 
     def _run_engine(
         self, *, use_tqdm: bool
-    ) -> list[Dict[str, Any]]:
+    ):
         """
             运行引擎，并返回结果列表。
         
@@ -166,6 +173,18 @@ class LLM:
 
 
 if __name__ == "__main__":
-    llm = LLM(model="llama_model")
-    output = llm.generate(prompts="who are you？", use_tqdm=True)
+    # llm = LLM(model="llama_model")
+    # output = llm.generate(prompts="who are you？", use_tqdm=True)
+    # print(output)
+    llm = LLM(model="llama_model", tensor_parallel_size=4)
+    output = llm.generate(prompts=[100273, 94065 , 94125 , 93983 , 93957 , 93949 , 5     , 93938 , 93939 ,
+         1859  , 94029 , 94125 , 93983 , 93978 , 93949 , 6     , 93938 , 369   ,
+         93919 , 5     , 1859  , 93964 , 94341 , 16882 , 42799 , 94735 , 94022 ,
+         2326  , 2087  , 712   , 1779  , 2254  , 7     , 1248  , 93956 , 94604 ,
+         93983 , 93939 , 93983 , 43690 , 93986 , 94110 , 269   , 94098 , 23    ,
+         23    , 93980 , 3058  , 93974 , 9128  , 93973 , 355   , 95159 , 5756  ,
+         93919 , 6     , 93983 , 408   , 95159 , 6     , 361   , 95159 , 5756  ,
+         93919 , 4     , 93983 , 412   , 95159 , 4     , 576   , 438   , 93974 ,
+         9128  , 93973 , 23    , 8296  , 94395 , 1159  , 93956 , 21558 , 3458  ,
+         1676  , 10621 , 6     , 8231  , 3240  , 94035 , 100272], use_tqdm=True)
     print(output)
