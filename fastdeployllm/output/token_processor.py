@@ -20,7 +20,14 @@ import traceback
 from collections import Counter
 from datetime import datetime
 
-from paddlenlp_ops import get_output, speculate_get_output
+
+if int(os.getenv("OPEN_SOURCE", "0")) == 1:
+    from paddlenlp_ops import get_output, speculate_get_output
+else:
+    from efficientllm.gpu import get_output
+
+
+
 from fastdeployllm.utils import datetime_diff, model_server_logger, monitor_logger
 
 from paddlenlp.utils.env import MAX_BSZ, MAX_DRAFT_TOKENS, SPECULATE_MAX_BSZ
@@ -84,6 +91,9 @@ class TokenProcessor(object):
         """
         read tokens from paddle inference engine and process
         """
+        
+
+
         while True:
             try:
                 rank_id = 0

@@ -46,10 +46,9 @@ class ErnieProcessor(BaseDataProcessor):
 
         self.decode_status = dict()
         self._load_tokenizer()
-        data_processor_logger.info(f"tokenizer information: bos_token is {self.tokenizer.bos_token}",
-                                   f"{self.tokenizer.bos_token_id}, ",
-                                   f"eos_token is {self.tokenizer.eos_token}, {self.tokenizer.eos_token_id} ")
-
+        data_processor_logger.info(f"tokenizer information: bos_token is {self.tokenizer.bos_token} \
+                                   {self.tokenizer.bos_token_id}, \
+                                   eos_token is {self.tokenizer.eos_token}, {self.tokenizer.eos_token_id} ")
         self.eos_token_ids = [self.tokenizer.eos_token_id]
         self.eos_token_id_len = len(self.eos_token_ids)
         self.pad_token_id = self.get_pad_id() 
