@@ -87,8 +87,10 @@ class ErnieProcessor(BaseDataProcessor):
 
         if "input_ids" not in request or \
             (isinstance(request["input_ids"], (list, tuple)) and len(request["input_ids"]) == 0):
+            system = request.get("system", "")
             if "text" in request:
-                request["input_ids"] = self.text2ids(request["text"], max_seq_len)
+                history_qa = request.get("history_QA")
+                request["input_ids"] = self.text2ids(request["text"], history_qa, max_seq_len, system)
             elif "messages" in request:
                 if self.tokenizer.chat_template is None:
                     raise ValueError(f"This model does not support chat_template.")
@@ -128,27 +130,75 @@ class ErnieProcessor(BaseDataProcessor):
             response_dict["tokens_all"] = self.ids2tokens(token_ids, response_dict["req_id"])
         return response_dict
 
-    def text2ids(self, text, max_seq_len):
+    def text2ids(self, text, history_qa=None, max_seq_len=None, system=""):
         """
-        text to token ids
-
+        将文本转换为对应的 ID。如果有history_qa，会将text和history_qa进行拼接。
+        
         Args:
-            text (str): text
-
+            text (str): 待转换的文本。
+            history_qa (List[str], optional): 历史多轮对话，默认None。
+                history_qa示例[[Q1, A1],[Q2, A2],[Q3, A3],[Q4, A4].....], Q1,A1表示最近时间的对话
+            system (str): 系统设定，如“你是一位高超的程序员”
+        
         Returns:
-            List[int]: token ids list
+            List[int]: 转换后的 ID 列表。
         """
+        messages = []
+        if history_qa is not None:
+            for item in reversed(history_qa):
+                if len(item) != 2:
+                    raise ValueError(f"The history_qa should be a list of [Q, A] pairs: {history_qa}.")
+                messages.append(item[0])
+                messages.append(item[1])
+        messages.append(text)
+        tokens = self._convert_to_ids(messages, max_seq_len, system)
+        data_processor_logger.debug(f"processed data : {''.join(tokens)}")
+        input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
+        return input_ids
 
-        # TODO: tokenizer 模版匹配
-        tokens = self.tokenizer(
-            text,
-            return_tensors="np",
-            padding=True,
-            truncation=True,
-            max_length=max_seq_len,
-            add_special_tokens=self.tokenizer.chat_template is None,
-        )
-        return tokens["input_ids"][0]
+    def _convert_to_ids(self, messages, max_seq_len=None, system=""):
+        """
+        将多轮对话转换为对话ID序列。
+        
+        Args:
+            messages (List[str]): 包含所有对话轮的文本列表。
+                messages示例[Q1, A1, Q2, A2, Q3, A3, Q4], Q3,A3表示最近时间的对话，Q4表示需要回答的问题
+        
+        Returns:
+            List[int]: 对话ID序列，每个ID都是整数。
+        """
+        if len(messages) % 2 == 0:
+            raise ValueError(f"The number of the messages context ({len(messages)}) must be odd.")
+        
+
+        prefix_tokens = [self.tokenizer.cls_token]
+        suffix_tokens = []
+
+        context_tokens = self.tokenizer.tokenize(messages[-1]) + [self.tokenizer.sep_token]
+
+        # process messages
+        for idx in range(len(messages) - 2, -1, -2):
+            cur_turn_tokens = self.tokenizer.tokenize(messages[idx - 1]) + [self.tokenizer.sep_token]
+            cur_turn_tokens += self.tokenizer.tokenize(messages[idx]) + [self.tokenizer.cls_token]
+            if max_seq_len is not None and len(prefix_tokens) + len(context_tokens) + len(suffix_tokens) + \
+                                               len(cur_turn_tokens) >= max_seq_len:
+                data_processor_logger.warning(f"Truncate messages into: {messages[idx + 1:]}")
+                break
+            context_tokens = cur_turn_tokens + context_tokens
+        new_length =  len(prefix_tokens) + len(context_tokens) + len(suffix_tokens) + 1
+
+        if max_seq_len is not None and len(prefix_tokens) + len(context_tokens) + len(suffix_tokens) + 1 >= max_seq_len:
+            data_processor_logger.warning(
+                "The length of the knowledge and the last user content "
+                f"({len(prefix_tokens) + len(context_tokens) + len(suffix_tokens)}) is greater than "
+                f"max input length ({max_seq_len}). We will truncate it."
+            )
+
+            context_tokens = context_tokens[-(max_seq_len - len(prefix_tokens) - len(suffix_tokens) - 1):]
+            return prefix_tokens + context_tokens + suffix_tokens
+        
+        return prefix_tokens + context_tokens + suffix_tokens
+
 
     def messages2ids(self, messages):
         """
