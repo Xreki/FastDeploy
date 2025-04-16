@@ -130,6 +130,8 @@ class ModelRunner(ModelRunnerBase):
         for value in self.cache_kvs.values():
             del value
 
+    def generate(self):
+        self.model.generate(**self.share_inputs)
 
     def dy_input_preprocess(self, tasks):
         """

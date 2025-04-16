@@ -15,8 +15,7 @@
 """
 import os
 
-from fastdeployllm.input.text_processor import DataProcessor
-from fastdeployllm.input.ernie_processor import ErnieProcessor
+
 
 
 class InputPreprocessor:
@@ -60,8 +59,10 @@ class InputPreprocessor:
         """
         if not self.enable_mm_registry:
             if int(os.getenv("OPEN_SOURCE", "0")) == 1:
+                from fastdeployllm.input.text_processor import DataProcessor
                 self.processor = DataProcessor(model_name_or_path=self.model_name_or_path)
             else:
+                from fastdeployllm.input.ernie_processor import ErnieProcessor
                 self.processor = ErnieProcessor(model_name_or_path=self.model_name_or_path)
         else:
             from fastdeployllm.input.mm_register import MultiModalRegistry
