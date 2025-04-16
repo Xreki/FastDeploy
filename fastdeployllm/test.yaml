@@ -1,0 +1,2 @@
+model: "/opt/baidu/paddle_internal/FastDeploy/fastdeployllm/llama_model"
+tensor_parallel_size: 1

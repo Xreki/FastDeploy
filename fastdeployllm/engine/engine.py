@@ -75,7 +75,7 @@ class LLMEngine(object):
 
         self.cached_generated_tokens = queue.Queue()
         self.cached_task_deque = deque()
-
+        self.req_output = dict()
 
         self.input_processor = InputPreprocessor(cfg.model_dir)
         self.resource_manager = ResourceManager(self.cfg)
@@ -130,7 +130,7 @@ class LLMEngine(object):
         # start TokenProcessor thread
         self.token_processor.run()
 
-        # self.start_push_sender_thread()
+        self.start_push_sender_thread()
         model_server_logger.info("Infer processes are launched with {} seconds.".format(time.time() - start_time))
 
 
@@ -158,14 +158,22 @@ class LLMEngine(object):
             try:
                 batch_result = self.cached_generated_tokens.get()
                 for result in batch_result:
-
-                    result = self.data_processor.process_response(result)
-
-                    # model_server_logger.info(f"Send result to client under push mode: {result}")
-
+                    if result["req_id"] not in self.req_output:
+                        self.req_output[result["req_id"]] = deque()
+                    self.req_output[result["req_id"]].appendleft(result)
             except Exception as e:
                 model_server_logger.error("Unexcepted error happend: {}, {}".format(e, str(traceback.format_exc())))
 
+    def get_result(self, req_id):
+        """
+        Get result from cache
+        """
+        if req_id not in self.req_output:
+            return None
+        if self.req_output[req_id]:
+            return self.req_output[req_id].pop()
+        else:
+            return None
 
 
     def _insert_task_push_mode(self):
@@ -240,6 +248,7 @@ class LLMEngine(object):
         Raises:
             None
         """
+
         task = add_default_params(task)
 
         if int(task.get("enable_text_truncate", 1)):
@@ -273,8 +282,6 @@ class LLMEngine(object):
             error_msg = f"The input task required resources is exceed the limit, task={task}."
             model_server_logger.error(error_msg)
             return
-
-
 
         task["preprocess_end_time"] = datetime.now()
         self.cached_task_deque.appendleft(task)
@@ -321,6 +328,8 @@ class LLMEngine(object):
                 tasks[i]["input_ids"] = tasks[i]["input_ids"][:self.cfg.max_seq_len - 1]
             if "seq_len" in tasks[i] and "max_dec_len" not in tasks[i]:
                 tasks[i]["max_dec_len"] = tasks[i]["seq_len"]
+            if "max_dec_len" not in tasks[i]:
+                tasks[i]["max_dec_len"] = self.cfg.max_seq_len
 
             # max_dec_len + input_token_num > MAX_SEQ_LEN
             if input_token_num + tasks[i]["max_dec_len"] > self.cfg.max_seq_len:
@@ -533,3 +542,60 @@ class LLMEngine(object):
         start infer service
         """
         return self._start_gpu_infer_service()
+
+
+    def _format_and_add_data(self, prompts: dict):
+        request_id = str(uuid.uuid4())
+
+        prompts["req_id"] = request_id
+        if "top_p" in prompts:
+            prompts["topp"] = prompts["top_p"]
+        query_list = []
+        if "context" in prompts:
+            for item in prompts["context"]:
+                if item["role"] == "system":
+                    prompts["system"] = item["utterance"]
+                elif item["role"] in ["user", "assistant"]:
+                    query_list.append(item["utterance"])
+                    prompts["text"] = query_list
+        if "prompt" in prompts:
+            prompts["text"] = [prompts["prompt"]]
+        tasks = prompts
+
+        self.add_requests(tasks)
+        return request_id
+
+    def generate(self, prompts, stream):
+        """
+        Generate a response based on the given prompt using the model.
+        
+        Args:
+            prompts (dict): The prompt to use for generating the response.
+            stream (bool): Whether to stream the output or wait until completion.
+        
+        Yields:
+            str: The generated response.
+        """
+        model_server_logger.info(f"Start generate prompt: {prompts}")
+        req_id = self._format_and_add_data(prompts)
+        
+        while True:
+            # 获取当前请求的结果
+            result = self.get_result(req_id)
+            if result is None:
+                time.sleep(0.01)  # 避免忙等待
+                continue
+            
+            is_end = result.get('is_end', 1)
+        
+            if stream:
+                processed = self.data_processor.process_response(result)
+                model_server_logger.info(f"Output: {processed}")
+                yield processed
+            
+            # 遇到终止条件时退出循环
+            if is_end:
+                processed = self.data_processor.process_response(result)
+                model_server_logger.info(f"Output: {processed}")
+                yield processed  
+                break

@@ -32,6 +32,18 @@ for output in outputs:
     generated_text = output.outputs[0].text
 ```
 
+## LLM api server
+
+启动api server
+```
+python api_server.py --config test.yaml --port 9904
+```
+
+测试api server
+```
+curl 0.0.0.0:9904/generate    -H 'Content-Type: application/json'    -d '{"prompt": "hello, llm","stream":1}'
+```
+
 ## 代码提交规范
 
 - 本仓库已添加pre-commit hook，代码clone至本地后，进入主目录，执行```pre-commit install```，即可安装代码提交自动格式化工具（git commit时会自动执行)。

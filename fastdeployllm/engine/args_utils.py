@@ -4,6 +4,9 @@ from dataclasses import dataclass, fields as dataclass_fields
 from typing import Any, Dict, List, Optional
 
 from fastdeployllm.engine.config import Config, ModelConfig, TaskOption
+from fastdeployllm.utils import FlexibleArgumentParser
+
+
 
 def nullable_str(x: str) -> Optional[str]:
     """Convert empty string to None while preserving other string values"""
@@ -36,7 +39,6 @@ class EngineArgs:
     # System configuration parameters
     use_warmup: int = 0
     enable_prefix_caching: bool = False
-    use_tqdm_on_load: bool = True
 
     def __post_init__(self):
         """Post-initialization processing"""
@@ -44,7 +46,7 @@ class EngineArgs:
             self.tokenizer = self.model
 
     @staticmethod
-    def add_cli_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    def add_cli_args(parser: FlexibleArgumentParser) -> FlexibleArgumentParser:
         """Add command line interface arguments"""
         # Model parameters group
         model_group = parser.add_argument_group("Model Configuration")
@@ -79,19 +81,45 @@ class EngineArgs:
             help="Maximum context length for the model"
         )
 
+        model_group.add_argument(
+            "--block-size",
+            type=int,
+            default=EngineArgs.block_size,
+            help="one block contain token number"
+        )
+
+        model_group.add_argument(
+            "--task",
+            type=str,
+            default=EngineArgs.task,
+            help="Task to execute"
+        )
+
 
         model_group.add_argument(
             "--use-warmup",
             type=int,
-            default=EngineArgs.max_model_len,
-            help="Maximum context length for the model"
+            default=EngineArgs.use_warmup,
+            help="before inference whether to use warm up"
         )
 
         model_group.add_argument(
             "--use_tqdm_on_load",
             type=int,
-            default=EngineArgs.max_model_len,
-            help="Maximum context length for the model"
+            default=EngineArgs.use_tqdm_on_load,
+            help="load model weights with tqdm"
+        )
+
+        model_group.add_argument(
+            "--mm_processor_kwargs",
+            default=None,
+            help="mm processorkwargs"
+        )
+
+        model_group.add_argument(
+            "--speculative_config",
+            default=None,
+            help="speculative config path"
         )
 
 
@@ -111,6 +139,25 @@ class EngineArgs:
             help="Maximum number of sequences per iteration"
         )
 
+        parallel_group.add_argument(
+            "--block-bs",
+            type=float,
+            default=EngineArgs.block_bs
+        )
+
+        parallel_group.add_argument(
+            "--block-ratio",
+            type=float,
+            default=EngineArgs.block_ratio
+        )
+
+        parallel_group.add_argument(
+            "--max_cache_task_num",
+            type=int,
+            default=EngineArgs.max_cache_task_num,
+            help="waiting list max task num"
+        )
+
         # Cluster system parameters group
         system_group = parser.add_argument_group("System Configuration")
         system_group.add_argument(
@@ -123,8 +170,8 @@ class EngineArgs:
         system_group.add_argument(
             "--nnode",
             type=int,
-            default=EngineArgs.pod_ips,
-            help="Cluster node IP list (comma-separated)"
+            default=EngineArgs.nnode,
+            help="number of nodes"
         )
 
         # Performance tuning parameters group
@@ -140,7 +187,7 @@ class EngineArgs:
         return parser
 
     @classmethod
-    def from_cli_args(cls, args: argparse.Namespace) -> "EngineArgs":
+    def from_cli_args(cls, args: FlexibleArgumentParser) -> "EngineArgs":
         """Create instance from command line arguments"""
         return cls(**{
             field.name: getattr(args, field.name)
