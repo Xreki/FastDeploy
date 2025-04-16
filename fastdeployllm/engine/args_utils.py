@@ -157,12 +157,13 @@ class EngineArgs:
     def create_engine_config(self) -> Config:
         """Create engine configuration object"""
         model_cfg = self.create_model_config()
+        tensor_parallel_size = model_cfg.mp_num if hasattr(model_cfg, "mp_num") else self.tensor_parallel_size
         return Config(
             model=self.model,
             model_config=model_cfg,
             download_dir=self.download_dir,
             max_model_len=self.max_model_len,
-            tensor_parallel_size=model_cfg.mp_num,
+            tensor_parallel_size=tensor_parallel_size,
             max_num_seqs=self.max_num_seqs,
             mm_processor_kwargs=self.mm_processor_kwargs,
             speculative_config=self.speculative_config,
