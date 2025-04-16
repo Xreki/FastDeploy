@@ -88,8 +88,8 @@ class EngineWorkerQueue:
             self.manager.start()
         else:
             # Client-side connection setup
-            assert self.client_id >= 0 and self.client_id < self.num_client,
-        f"self.client_id={self.client_id}, self.num_client={self.num_client}"
+            assert self.client_id >= 0 and self.client_id < self.num_client, (
+				f"self.client_id={self.client_id}, self.num_client={self.num_client}")
             QueueManager.register("get_tasks")
             QueueManager.register("get_client_read_flag")
             QueueManager.register("get_lock")
@@ -117,9 +117,9 @@ class EngineWorkerQueue:
                 self.connected_client_counter.get() + 1)
             self.lock.release()
             model_server_logger.info((
-         f"Connected EngineWorkerQueue client_id: {self.client_id}, number "
-         f"of connected clients: {self.connected_client_counter.get()}"
-            )
+         		f"Connected EngineWorkerQueue client_id: {self.client_id}, number "
+         		f"of connected clients: {self.connected_client_counter.get()}"
+            ))
 
     def _connect_with_retry(self, max_retries=5, interval=3):
         """
