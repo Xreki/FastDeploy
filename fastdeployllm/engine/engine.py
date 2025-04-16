@@ -523,7 +523,7 @@ class LLMEngine(object):
         current_file_path = os.path.abspath(__file__)
         current_dir_path = os.path.split(current_file_path)[0]
         pd_cmd = f"{sys.executable} -m paddle.distributed.launch "
-        py_script = os.path.join(current_dir_path, "../worker/model_executor.py")
+        py_script = os.path.join(current_dir_path, "../model_executor/worker.py")
         arguments = (f" --nnodes {str(self.cfg.nnode)}"
                     f" --devices {self.cfg.device_ids} {py_script}"
                     f" --max_batch_size {self.cfg.max_batch_size} --max_seq_len {self.cfg.max_seq_len}"

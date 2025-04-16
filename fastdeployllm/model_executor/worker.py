@@ -20,11 +20,11 @@ if int(os.getenv("OPEN_SOURCE", "0")) == 1:
         EagleProposer,
         InferenceWithReferenceProposer,
         )
-    from fastdeployllm.worker.model_runner.model_runner_paddlenlp import ModelRunner
+    from fastdeployllm.model_executor.model_runner.model_runner_paddlenlp import ModelRunner
 
 else:
     from efficientllm.gpu import *
-    from fastdeployllm.worker.model_runner.model_runner_ernie import ModelRunner
+    from fastdeployllm.model_executor.model_runner.model_runner_inference import ModelRunner
 
 
 
@@ -37,7 +37,7 @@ logger = get_logger("infer_server", "infer.log")
 
 
 
-class ModelExecutor:
+class Worker:
     def __init__(self, args):
         self.args = args
         self.MAX_INFER_SEED = 9223372036854775806
@@ -231,11 +231,11 @@ def parse_args():
 
 def main():
     """
-    start model executor
+    start worker
     """
     args = parse_args()
-    model_executor = ModelExecutor(args)
-    model_executor.run()
+    worker = Worker(args)
+    worker.run()
 
 
 if __name__ == "__main__":

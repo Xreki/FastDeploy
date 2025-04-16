@@ -2,56 +2,95 @@ import paddle
 import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
 
-import os
+from paddlenlp.trl import llm_utils
+from paddlenlp.trl.llm_utils import get_rotary_position_embedding
 import numpy as np
-from fastdeployllm.worker.model_runner.model_runner_base import ModelRunnerBase
+from fastdeployllm.model_executor.model_runner.model_runner_base import ModelRunnerBase
+from fastdeployllm.model_executor.utils import PredictorArgument, ModelArgument
 
 class ModelRunner(ModelRunnerBase):
     def __init__(self, config, args, nranks, rank):
+        """
+            Initializes the model and sets up the necessary parameters for distributed training.
+        
+        Args:
+            config (DictConfig): Config dictionary for the model.
+            args (argparse.Namespace): Arguments for the model.
+            nranks (int): Number of GPUs used in parallel training.
+            rank (int): Rank of the current GPU used in parallel training.
+        
+        Returns:
+            None.
+        
+        Raises:
+            None.
+        """
         self.nranks = nranks
         self.rank = rank
-        super().__init__(config,args)
-        self._reset_paddle_env()
-    
-    def _reset_paddle_env(self):
-        #FLAGS_gqa_use_tensorcore
-        #FLAGS_ffn2_use_hardamard 
-        # gqa .etc paddle Flags set
-        pass
+        super().__init__(config, args)
 
     def _load_model(self, model_name):
-        from efficientllm.models.export_model import build_stream_line_model
-        config, tokenizer, model = build_stream_line_model(
-            os.path.join(self.args.model_name_or_path, os.getenv("CONFIG_JSON_FILE", "config.json")),
-            self.args.model_name_or_path,
-            self.args.dtype,
-            block_size=self.args.block_size,
-            max_len=self.args.max_seq_len,
-            stage_flag="msgid-1 predict",
-            export_model_type="wint8",
-            use_fake_parameter=False,
-            use_stop_seqs=self.model_cfg.ellm_dynamic_use_stop_seqs,
-            use_beam_search=False,
-            speculate_method=None,
-            speculate_max_draft_token_num=5,
-            return_all_hidden_states=False,
-            is_int4_moe=True,
+        """
+            加载模型，并设置缓存。
+        
+        Args:
+            model_name (str): 模型名称或路径。
+        
+        Returns:
+            None.
+        """
+        llm_utils.set_triton_cache(self.args.model_name_or_path, "dynamic")
+
+        predictor_args = PredictorArgument()
+        model_args = ModelArgument()
+
+        predictor_args.model_name_or_path = self.args.model_name_or_path
+        predictor_args.max_length = self.args.max_dec_len
+        predictor_args.dtype = self.args.dtype
+        predictor_args.total_max_length = self.args.max_seq_len
+        predictor_args.inference_model = True
+        predictor_args.mode = "dynamic"
+        predictor_args.block_attn = True
+
+        paddle.set_device(predictor_args.device)
+        paddle.set_default_dtype(predictor_args.dtype)
+
+        from paddlenlp.transformers import AutoConfig, AutoInferenceModelForCausalLM
+
+        config = AutoConfig.from_pretrained(predictor_args.model_name_or_path)
+        self.model = AutoInferenceModelForCausalLM.from_pretrained(
+            predictor_args.model_name_or_path,
+            config=config,
+            predictor_args=predictor_args,
+            model_args=model_args,
+            dtype=predictor_args.dtype,
+            tensor_parallel_degree=self.nranks,
+            tensor_parallel_rank=self.rank,
         )
-        model.eval()
-        self.model = model
 
     def init_rotary_position_embedding(self, max_seq_len):
+        """
+            初始化旋转位置嵌入，并将其保存在模型中。
+        该函数会创建一个长度为max_seq_len的位置ID序列，并使用get_rotary_position_embedding函数生成相应的旋转位置嵌入。
+        
+        Args:
+            max_seq_len (int): 最大序列长度。
+        
+        Returns:
+            None. 直接修改模型中的share_inputs字典，添加名称为"rope_emb"的键值对，包含旋转位置嵌入。
+        """
         tmp_position_ids = paddle.arange(max_seq_len).reshape((1, -1))
-        self.share_inputs["rope_emb"] = self.get_rotary_position_embedding(
+        self.share_inputs["rope_emb"] = get_rotary_position_embedding(
             tmp_position_ids,
-            self.model_cfg.hidden_size // self.model_cfg.num_attention_heads
+            self.model_cfg.hidden_size // self.model_cfg.num_attention_heads,
+            self.rope_theta,
+            self.rope_scaling,
         )
 
     def _init_kvcache(self, max_block_num):
         """
         分享不拷贝数据
         """
-        
         self.cache_kvs = {}
 
         if (
@@ -87,10 +126,13 @@ class ModelRunner(ModelRunnerBase):
                 dtype=cache_type,
             )
 
-        self.share_inputs["caches"] = list(self.cache_kvs.values())
+        self.share_inputs["cache_kvs"] = list(self.cache_kvs.values())
         for value in self.cache_kvs.values():
             del value
-  
+
+    def generate(self):
+        self.model.generate(**self.share_inputs)
+
     def dy_input_preprocess(self, tasks):
         """
         dynamic insertion
@@ -114,14 +156,14 @@ class ModelRunner(ModelRunnerBase):
             self.share_inputs["seq_lens_encoder"][idx : idx + 1] = length
             self.share_inputs["seq_lens_decoder"][idx : idx + 1] = 0
             self.share_inputs["step_idx"][idx : idx + 1] = 0
-            self.share_inputs["min_dec_len"][idx : idx + 1] = task.get("min_dec_len", 1)
+            self.share_inputs["min_length"][idx : idx + 1] = task.get("min_dec_len", 1)
             if "max_dec_len" in task:
                 max_dec_len = task["max_dec_len"]
             elif "seq_len" in task:
                 max_dec_len = task["seq_len"]
             else:
                 max_dec_len = self.args.max_dec_len
-            self.share_inputs["max_dec_len"][idx : idx + 1] = max_dec_len
+            self.share_inputs["max_length"][idx : idx + 1] = max_dec_len
             self.share_inputs["stop_flags"][idx : idx + 1] = False
 
             self.share_inputs["first_token_ids"][idx : idx + 1] = self.share_inputs["input_ids"][idx : idx + 1, :1]
@@ -145,37 +187,3 @@ class ModelRunner(ModelRunnerBase):
                 self.share_inputs["stop_seqs"][:stop_seqs_num, : len(task["stop_seqs"][0])] = np.array(
                     task["stop_seqs"], dtype="int64"
                 )
-
-    def get_rotary_position_embedding(self,position_ids, head_dim, rope_theta=160000):
-        """
-        Pre-calculate rotary position embedding for position_ids.
-
-        Args:
-            position_ids: [1, S]
-            head_dim: D
-
-        Returns:
-            rot_emb: [2, 1, S, 1, D // 2] or [2, 1, S, 1, D], cos + sin 
-        """
-        bsz, max_seq_len = position_ids.shape[:2]
-        inv_freq = rope_theta ** (-paddle.arange(0, head_dim, 2, dtype="float32") / head_dim)
-
-        # shape: [B, S, D/2]
-        # eblite should divide compression_ratio, default 1.0 for eb3.5 or eb4
-        compression_ratio = 1.0
-        compressed_position_ids = position_ids / compression_ratio
-        freqs = paddle.einsum("ij,k->ijk", compressed_position_ids.cast("float32"),
-                            inv_freq)
-
-        rot_emb = paddle.zeros((2, bsz, max_seq_len, 1, head_dim // 2), dtype="float32")
-        emb = paddle.stack([freqs], axis=-1).reshape((bsz, max_seq_len, head_dim // 2))
-        # shape: [B, S, 1, D]
-        emb = paddle.unsqueeze(emb, 2)
-
-        rot_emb[0] = paddle.cos(emb)
-        rot_emb[1] = paddle.sin(emb)
-
-        return rot_emb
-
-    def generate(self):
-        self.model(**self.share_inputs)
