@@ -38,7 +38,7 @@ from fastdeployllm.input.preprocess import InputPreprocessor
 from fastdeployllm.engine.args_utils import EngineArgs
 from fastdeployllm.checker import add_default_params, check_basic_params
 from fastdeployllm.engine.resource_manager import ResourceManager
-from fastdeployllm.inter_communicator.task_queue_manager import TaskQueueManager, launch_queue_service
+from fastdeployllm.inter_communicator.engine_worker_queue import EngineWorkerQueue
 from fastdeployllm.output.token_processor import TokenProcessor, WarmUpTokenProcessor
 from fastdeployllm.utils import model_server_logger
 
@@ -78,17 +78,17 @@ class LLMEngine(object):
 
 
         self.input_processor = InputPreprocessor(cfg.model_dir)
-        if self.cfg.nnode == 1 or self.cfg.host_ip == os.getenv('POD_0_IP', '127.0.0.1'):
-            self.queue_service = self._start_tasks_queue_service()
-
-
         self.resource_manager = ResourceManager(self.cfg)
-
 
         self.token_processor = TokenProcessor(cfg=self.cfg, cached_generated_tokens=self.cached_generated_tokens)
         self.token_processor.set_resource_manager(self.resource_manager)
-        time.sleep(1)
-        self.tasks_queue = TaskQueueManager(mp_num=self.cfg.mp_num, port=self.cfg.infer_port)
+        time.sleep(1) # TODO ????
+
+        # TODO
+        # 1. 增加engine hostname
+        # 2. self.cfg.infer_port -> self.cfg.engine_worker_queue_port
+        address = ('0.0.0.0', self.cfg.infer_port)
+        self.engine_worker_queue = EngineWorkerQueue(address=address, is_server=True, num_client=self.cfg.mp_num)
 
         self.is_started = False
 
@@ -121,7 +121,7 @@ class LLMEngine(object):
             model_server_logger.info("Warmup finish")
 
 
-        self.token_processor.tasks_queue = self.tasks_queue
+        self.token_processor.tasks_queue = self.engine_worker_queue
 
         self.insert_task_to_engine_thread = threading.Thread(target=self._insert_task_push_mode, args=())
         self.insert_task_to_engine_thread.daemon = True
@@ -181,7 +181,7 @@ class LLMEngine(object):
                 if len(self.cached_task_deque) == 0:
                     time.sleep(0.001)
                     continue
-                if not self.tasks_queue.empty():
+                if self.engine_worker_queue.num_tasks() > 0:
                     time.sleep(0.001)
                     continue
 
@@ -344,7 +344,7 @@ class LLMEngine(object):
 
         req_ids = [t["req_id"] for t in tasks]
         model_server_logger.info(f"Tasks are sent to engine, req_ids={req_ids}")
-        self.tasks_queue.put((tasks, self.resource_manager.real_bsz))
+        self.engine_worker_queue.put_tasks((tasks, self.resource_manager.real_bsz))
         return True
 
     def task_is_finished(self, index):
@@ -380,7 +380,7 @@ class LLMEngine(object):
         self.token_processor_backup = self.token_processor
         self.token_processor = WarmUpTokenProcessor(self.cfg)
         self.token_processor.set_resource_manager(self.resource_manager)
-        self.token_processor.tasks_queue = self.tasks_queue
+        self.token_processor.tasks_queue = self.engine_worker_queue
 
         # start TokenProcessor thread
         self.token_processor.run()
@@ -493,25 +493,6 @@ class LLMEngine(object):
             self.queue_service.join()
         if hasattr(self, "infer_proc") and self.infer_proc is not None:
             os.killpg(self.infer_proc.pid, signal.SIGTERM)
-
-    def _start_tasks_queue_service(self):
-        """
-        start tasks queue service
-
-        Returns:
-            p: process handle
-        """
-        p = multiprocessing.Process(target=launch_queue_service, args=(self.cfg.infer_port, self.cfg.mp_num))
-        p.start()
-        time.sleep(0.3)
-        if p.is_alive():
-            model_server_logger.info("start tasks queue service successfully")
-        else:
-            error_msg = "Failed to start tasks queue service, please check " \
-                        "the log/task_queue_manager.log for details"
-            model_server_logger.info(error_msg)
-            raise Exception(error_msg)
-        return p
 
     def _start_gpu_infer_service(self):
         """

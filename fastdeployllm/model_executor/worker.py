@@ -30,7 +30,7 @@ else:
 
 from fastdeployllm.engine.config import ModelConfig
 from fastdeployllm.utils import get_logger
-from fastdeployllm.inter_communicator.task_queue_manager import TaskQueueManager
+from fastdeployllm.inter_communicator.engine_worker_queue import EngineWorkerQueue
 
 
 logger = get_logger("infer_server", "infer.log")
@@ -39,6 +39,16 @@ logger = get_logger("infer_server", "infer.log")
 
 class Worker:
     def __init__(self, args):
+        """
+            Args:
+            args (ArgumentParser): 命令行参数，包含模型名称、端口号等信息。
+            
+        Returns:
+            None, 无返回值，初始化完成后会将相关参数和对象保存到类属性中。
+            
+        Raises:
+            None, 没有异常抛出。
+        """
         self.args = args
         self.MAX_INFER_SEED = 9223372036854775806
         paddle.set_default_dtype(args.dtype)
@@ -59,10 +69,12 @@ class Worker:
             rank=self.rank
         )
 
-        self.infer_queue = TaskQueueManager(rank=self.rank, mp_num=self.nranks, port=self.args.infer_port)
+        address = ('0.0.0.0', self.args.infer_port)
+        self.engine_worker_queue = EngineWorkerQueue(
+            address=address, is_server=False, num_client=self.nranks, client_id=self.rank)
 
         self.init_health()
-    
+
 
 
     def init_dist_env(self, seed=20):
@@ -152,32 +164,45 @@ class Worker:
 
 
     def run(self):
+        """
+        运行函数，不断地从队列中获取任务并进行推理。
+            当队列为空或者所有节点都处于等待状态时，将会休眠一段时间再次尝试获取任务。
+        
+            Args:
+                None.
+        
+            Returns:
+                None.
+        
+            Raises:
+                None.
+        """
         infer_seed_increment = paddle.full(shape=[self.args.max_batch_size, 1], fill_value=4, dtype="int64")
         self.nnode = 1
         while True:
             self.insert_step = False
 
             # self.engine_healthy_recorded_time_array[0] = time.time()
-            mp_num_per_node = self.nranks 
+            mp_num_per_node = self.nranks
 
             if self.rank % mp_num_per_node == 0:
-                if not self.infer_queue.empty():
+                if self.engine_worker_queue.num_tasks() > 0:
                     if self.nnode > 1:
-                        self.infer_queue.read_finish_flag.set(1)
+                        self.engine_worker_queue.read_finish_flag.set(1)
                     else:
                         self.flag_broadcast_array[0] = 1
 
             if self.nranks > 1:
                 paddle.distributed.barrier()
 
-            if self.flag_broadcast_array[0] == 1 or self.infer_queue.read_finish_flag.get() == 1:
+            if self.flag_broadcast_array[0] == 1 or self.engine_worker_queue.read_finish_flag.get() == 1:
                 logger.info(f"rank: {self.rank} start to get")
                 self.insert_step = True
 
-                tasks, read_finish = self.infer_queue.get()
+                tasks, read_finish = self.engine_worker_queue.get_tasks()
                 if read_finish:
                     self.flag_broadcast_array[0] = 0
-                    self.infer_queue.read_finish_flag.set(0)
+                    self.engine_worker_queue.read_finish_flag.set(0)
 
                 req_dicts = []
                 for req_dict, bsz in tasks:
@@ -196,7 +221,7 @@ class Worker:
                 continue
 
 
-            
+
             self.infer_engine.generate()
             self.infer_engine.share_inputs["infer_seed"].add_(infer_seed_increment)
             self.infer_engine.share_inputs["infer_seed"][:] %= self.MAX_INFER_SEED
