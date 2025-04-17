@@ -179,7 +179,7 @@ class EngineArgs:
         perf_group = parser.add_argument_group("Performance Tuning")
         perf_group.add_argument(
             "--enable-prefix-caching",
-            action=argparse.BooleanOptionalAction,
+            action='store_true',
             default=EngineArgs.enable_prefix_caching,
             help="Enable prefix caching"
         )
