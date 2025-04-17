@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-
+from __future__ import annotations
 import sys
 import traceback
 import uuid
@@ -42,7 +42,7 @@ class LLM:
         **kwargs (optional):
             Additional keyword arguments to pass to the `EngineArgs` constructor. See
             `EngineArgs.__init__` for details. Defaults to {}.
-    
+
     Raises:
         ValueError:
             If `model` is not in `LLMEngine.SUPPORTED_MODELS`.
@@ -79,24 +79,24 @@ class LLM:
     ):
         """
         Generate function for the LLM class.
-        
+
         Args:
-            prompts (Union[str, list[str], list[int], list[list[int]], dict[str, Any], list[dict[str, Any]]]): 
+            prompts (Union[str, list[str], list[int], list[list[int]], dict[str, Any], list[dict[str, Any]]]):
                 The prompt to use for generating the response.
-            sampling_params (Optional[Union[SamplingParams, list[SamplingParams]]], optional): 
+            sampling_params (Optional[Union[SamplingParams, list[SamplingParams]]], optional):
                 The sampling parameters to use for generating the response. Defaults to None.
             use_tqdm (bool, optional): Whether to use tqdm for the progress bar. Defaults to True.
-        
+
         Returns:
             Union[str, list[str]]: The generated response.
         """
 
         if sampling_params is None:
             sampling_params = self.default_sampling_params
-        
+
         if isinstance(prompts, str):
             prompts = [prompts]
-        
+
         if isinstance(prompts, list) and isinstance(prompts[0], int):
             prompts = [prompts]
 
@@ -104,7 +104,7 @@ class LLM:
         if isinstance(prompts, dict):
             if "prompts" not in prompts:
                 raise ValueError("prompts must be a input dict")
-            
+
             text = prompts.pop("prompt")
             # sampling_params = SamplingParams.from_dict(prompts)
             prompts = [text]
@@ -130,10 +130,10 @@ class LLM:
         """
             添加一个请求到 LLM Engine，并返回该请求的 ID。
         如果请求已经存在于 LLM Engine 中，则不会重复添加。
-        
+
         Args:
             prompts (str): 需要处理的文本内容，类型为字符串。
-        
+
         Returns:
             None: 无返回值，直接修改 LLM Engine 的状态。
         """
@@ -171,20 +171,20 @@ class LLM:
     ):
         """
             运行引擎，并返回结果列表。
-        
+
         Args:
             use_tqdm (bool, optional): 是否使用tqdm进度条，默认为False。
-        
+
         Returns:
             list[Dict[str, Any]]: 包含每个请求的结果字典的列表，字典中包含以下键值对：
                     - "text": str, 生成的文本；
                     - "score": float, 得分（可选）。
-        
+
         Raises:
             无。
         """
         # Initialize tqdm.
-        
+
         if use_tqdm:
             num_requests = len(req_ids)
             pbar = tqdm(
