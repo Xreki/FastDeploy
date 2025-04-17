@@ -13,6 +13,8 @@ import paddle
 import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
 from paddle.base.framework import use_pir_api
+from fastdeployllm.inter_communicator import IPCSignal
+
 
 if int(os.getenv("OPEN_SOURCE", "0")) == 1:
     from paddlenlp_ops import speculate_step_paddle, step_paddle
@@ -30,7 +32,7 @@ else:
 
 from fastdeployllm.engine.config import ModelConfig
 from fastdeployllm.utils import get_logger
-from fastdeployllm.inter_communicator.engine_worker_queue import EngineWorkerQueue
+from fastdeployllm.inter_communicator import EngineWorkerQueue
 
 
 logger = get_logger("infer_server", "infer.log")
@@ -42,10 +44,10 @@ class Worker:
         """
             Args:
             args (ArgumentParser): 命令行参数，包含模型名称、端口号等信息。
-            
+
         Returns:
             None, 无返回值，初始化完成后会将相关参数和对象保存到类属性中。
-            
+
         Raises:
             None, 没有异常抛出。
         """
@@ -99,24 +101,21 @@ class Worker:
 
 
     def init_health(self):
-        flag_array = np.zeros([1], dtype=np.int32)
-        self.shm_flag_broadcast = shared_memory.SharedMemory(
-            name="shm_pd_infer_flag_broadcast")
-        self.flag_broadcast_array = np.ndarray(flag_array.shape,
-                                        dtype=flag_array.dtype,
-                                        buffer=self.shm_flag_broadcast.buf)
-        flag_array = np.zeros([self.nranks], dtype=np.int32)
-        self.shm_flag_ready = shared_memory.SharedMemory(name="shm_flag_infer_ready")
-        self.flag_ready_array = np.ndarray(flag_array.shape,
-                                    dtype=flag_array.dtype,
-                                    buffer=self.shm_flag_ready.buf)
-        self.flag_ready_array[self.rank] = 1  # 已初始化完毕
+        # worker_ready_signal 用于engine感知各worker进程是否Ready
+        worker_ready_signal_data = np.zeros(shape=[self.nranks], dtype=np.int32)
+        self.worker_ready_signal = IPCSignal(name="worker_ready_singnal",
+                                             array=worker_ready_signal_data, dtype=np.int32, create=False)
+        self.worker_ready_signal.value[self.rank] = 1
 
-        flag_array = np.zeros([1], dtype=np.int32)
-        self.shm_flag_has_block_step = shared_memory.SharedMemory(name="shm_flag_has_block_step")
-        self.flag_has_block_step_array = np.ndarray(flag_array.shape,
-                                            dtype=flag_array.dtype,
-                                            buffer=self.shm_flag_has_block_step.buf)
+        # exist_task_signal 用于各worker进程感知是否有新Task需要处理
+        exist_task_signal_data = np.zeros([1], dtype=np.int32)
+        self.exist_task_signal = IPCSignal(
+            name="exist_task_signal", array=exist_task_signal_data, dtype=np.int32, create=False)
+
+        # exist_swapped_task_signal 用于engine感知worker中是否存在swapped task
+        exist_swapped_task_signal_data = np.zeros([1], dtype=np.int32)
+        self.exist_swapped_task_signal = IPCSignal(
+            name="exist_swapped_task_signal", array=exist_swapped_task_signal_data, dtype=np.int32, create=False)
 
     def format_print_configuration(self):
         """
@@ -167,13 +166,13 @@ class Worker:
         """
         运行函数，不断地从队列中获取任务并进行推理。
             当队列为空或者所有节点都处于等待状态时，将会休眠一段时间再次尝试获取任务。
-        
+
             Args:
                 None.
-        
+
             Returns:
                 None.
-        
+
             Raises:
                 None.
         """
@@ -190,18 +189,18 @@ class Worker:
                     if self.nnode > 1:
                         self.engine_worker_queue.read_finish_flag.set(1)
                     else:
-                        self.flag_broadcast_array[0] = 1
+                        self.exist_task_signal.value[0] = 1
 
             if self.nranks > 1:
                 paddle.distributed.barrier()
 
-            if self.flag_broadcast_array[0] == 1 or self.engine_worker_queue.read_finish_flag.get() == 1:
+            if self.exist_task_signal.value[0] == 1 or self.engine_worker_queue.read_finish_flag.get() == 1:
                 logger.info(f"rank: {self.rank} start to get")
                 self.insert_step = True
 
                 tasks, read_finish = self.engine_worker_queue.get_tasks()
                 if read_finish:
-                    self.flag_broadcast_array[0] = 0
+                    self.exist_task_signal.value[0] = 0
                     self.engine_worker_queue.read_finish_flag.set(0)
 
                 req_dicts = []

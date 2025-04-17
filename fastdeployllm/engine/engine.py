@@ -33,13 +33,12 @@ import threading
 import numpy as np
 from fastdeployllm.input.preprocess import InputPreprocessor
 
-
-
 from fastdeployllm.engine.args_utils import EngineArgs
 from fastdeployllm.checker import add_default_params, check_basic_params
 from fastdeployllm.engine.resource_manager import ResourceManager
-from fastdeployllm.inter_communicator.engine_worker_queue import EngineWorkerQueue
+from fastdeployllm.inter_communicator import EngineWorkerQueue
 from fastdeployllm.output.token_processor import TokenProcessor, WarmUpTokenProcessor
+from fastdeployllm.inter_communicator import IPCSignal
 from fastdeployllm.utils import model_server_logger
 
 
@@ -92,7 +91,7 @@ class LLMEngine(object):
 
         self.is_started = False
 
-        self._init_engine_flags()
+        self._init_worker_signals()
         self._finalizer = weakref.finalize(self, self._exit_sub_services)
 
 
@@ -421,94 +420,36 @@ class LLMEngine(object):
         Returns:
             return: True if all ready, False otherwise
         """
-        if np.sum(self.flag_ready_array) == self.cfg.mp_num_per_node:
+        if np.sum(self.worker_ready_signal.value) == self.cfg.mp_num_per_node:
             return True
         return False
 
-    def _clear_engine_flags(self):
-        """
-        clear engine flags
-        """
-        try:
-            self.shm_flag_ready.close()
-            self.shm_flag_ready.unlink()
-            self.shm_flag_has_block_step.close()
-            self.shm_flag_has_block_step.unlink()
-        except:
-            pass
-
-    def _init_engine_flags(self):
+    def _init_worker_signals(self):
         """
         Initialize shared memory to indicate engine status
         """
+        # worker_ready_signal 用于engine感知各worker进程是否Ready
+        worker_ready_signal_data = np.zeros(shape=[self.cfg.mp_num], dtype=np.int32)
+        self.worker_ready_signal = IPCSignal(name="worker_ready_singnal",
+                                             array=worker_ready_signal_data, dtype=np.int32, create=True)
 
+        # exist_task_signal 用于各worker进程感知是否有新Task需要处理
+        exist_task_signal_data = np.zeros([1], dtype=np.int32)
+        self.exist_task_signal = IPCSignal(name="exist_task_signal",
+                                           array=exist_task_signal_data, dtype=np.int32, create=True)
 
-        flag_array = np.zeros([self.cfg.mp_num], dtype=np.int32)
-        try:
-            tmp = shared_memory.SharedMemory(
-                create=False, size=flag_array.nbytes, name="shm_flag_infer_ready"
-            )
-            tmp.close()
-            tmp.unlink()
-        except:
-            pass
-        self.shm_flag_ready = shared_memory.SharedMemory(
-            create=True, size=flag_array.nbytes, name="shm_flag_infer_ready"
-        )
-        self.flag_ready_array = np.ndarray(
-            flag_array.shape, dtype=flag_array.dtype, buffer=self.shm_flag_ready.buf
-        )
-        self.flag_ready_array[:] = 0
-
-        # broadcast flag for engine
-        broadcast_flag_array = np.zeros([1], dtype=np.int32)
-        try:
-            tmp = shared_memory.SharedMemory(
-                create=False,
-                size=broadcast_flag_array.nbytes,
-                name="shm_pd_infer_flag_broadcast",
-            )
-            tmp.close()
-            tmp.unlink()
-        except:
-            pass
-        self.shm_flag_broadcast = shared_memory.SharedMemory(
-            create=True, size=broadcast_flag_array.nbytes, name="shm_pd_infer_flag_broadcast"
-        )
-        self.flag_broadcast_array = np.ndarray(
-            broadcast_flag_array.shape,
-            dtype=broadcast_flag_array.dtype,
-            buffer=self.shm_flag_broadcast.buf,
-        )
-        self.flag_broadcast_array[0] = 0
-
-        has_block_step_flag_array = np.zeros([1], dtype=np.int32)
-        try:
-            tmp = shared_memory.SharedMemory(
-                create=False,
-                size=has_block_step_flag_array.nbytes,
-                name="shm_flag_has_block_step")
-            tmp.close()
-            tmp.unlink()
-        except:
-            pass
-        self.shm_flag_has_block_step = shared_memory.SharedMemory(
-            create=True,
-            size=has_block_step_flag_array.nbytes,
-            name="shm_flag_has_block_step")
-        self.flag_has_block_step_array = np.ndarray(
-            has_block_step_flag_array.shape,
-            dtype=has_block_step_flag_array.dtype,
-            buffer=self.shm_flag_has_block_step.buf)
-        self.flag_has_block_step_array[:] = 0
+        # exist_swapped_task_signal 用于engine感知worker中是否存在swapped task
+        exist_swapped_task_signal_data = np.zeros([1], dtype=np.int32)
+        self.exist_swapped_task_signal = IPCSignal(
+            name="exist_swapped_task_signal", array=exist_swapped_task_signal_data, dtype=np.int32, create=True)
 
     def _exit_sub_services(self):
         """
         exit sub services
         """
-        if hasattr(self, "queue_service") and self.queue_service is not None:
-            self.queue_service.terminate()
-            self.queue_service.join()
+        self.worker_ready_signal.clear()
+        self.exist_task_signal.clear()
+        self.exist_swapped_task_signal.clear()
         if hasattr(self, "infer_proc") and self.infer_proc is not None:
             os.killpg(self.infer_proc.pid, signal.SIGTERM)
 
