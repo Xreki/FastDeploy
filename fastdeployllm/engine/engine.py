@@ -123,9 +123,9 @@ class LLMEngine(object):
 
         self.token_processor.tasks_queue = self.engine_worker_queue
 
-        self.insert_task_to_engine_thread = threading.Thread(target=self._insert_task_push_mode, args=())
-        self.insert_task_to_engine_thread.daemon = True
-        self.insert_task_to_engine_thread.start()
+        self.insert_task_to_worker_thread = threading.Thread(target=self._insert_task_to_worker, args=())
+        self.insert_task_to_worker_thread.daemon = True
+        self.insert_task_to_worker_thread.start()
 
         # start TokenProcessor thread
         self.token_processor.run()
@@ -176,7 +176,25 @@ class LLMEngine(object):
             return None
 
 
-    def _insert_task_push_mode(self):
+    def _get_tasks(self, num=1):
+       """
+       获取批量任务进行推理
+       """
+       if len(self.cached_task_deque) == 0:
+           return []
+
+       task_num = min(len(self.cached_task_deque), num)
+       tasks = []
+       need_block_num = 0
+       for i in range(task_num):
+           num_input_token = len(self.cached_task_deque[-1]["input_ids"])
+           need_block_num += self.resource_manager.get_required_block_number(num_input_token)
+           if need_block_num > self.resource_manager.availabel_block_num():
+               break
+           tasks.append(self.cached_task_deque.pop())
+       return tasks
+
+    def _insert_task_to_worker(self):
         """
         Insert task to engine thread, monitor cached_task_deque.
         if the engine has resource, insert task to engine
@@ -186,35 +204,26 @@ class LLMEngine(object):
                 if self.resource_manager.available_batch() == 0:
                     time.sleep(0.001)
                     continue
-                if len(self.cached_task_deque) == 0:
-                    time.sleep(0.001)
-                    continue
                 if self.engine_worker_queue.num_tasks() > 0:
                     time.sleep(0.001)
                     continue
 
-                i_bs = 0
-                for _ in range(self.cfg.max_prefill_batch):
-                    if len(self.cached_task_deque) == 0:
-                        break
-                    if self.resource_manager.available_batch() == 0:
-                        break
+                tasks = self._get_tasks(self.cfg.max_prefill_batch)
+                if len(tasks) == 0:
+                    time.sleep(0.001)
+                    continue
 
-                    input_token_num = len(self.cached_task_deque[-1]["input_ids"])
-                    if not self.resource_manager.is_resource_sufficient(input_token_num):
-                        break
-                    task = self.cached_task_deque.pop()
-                    try:
-                        self.insert_tasks([task])
-                    except Exception as e:
-                        err_msg = "Error happend while insert task to engine: {}, {}.".format(
-                            e, str(traceback.format_exc())
-                        )
-                        model_server_logger.error(err_msg)
-            model_server_logger.info("finish insert_task_push_mode thread")
+                try:
+                    self.insert_tasks(tasks)
+                except Exception as e:
+                    err_msg = "Error happend while insert task to engine: {}, {}.".format(
+                        e, str(traceback.format_exc())
+                    )
+                    model_server_logger.error(err_msg)
+            model_server_logger.info("finish insert_task_to_worker thread")
         except Exception as e:
             model_server_logger.error(
-                "insert_task_push_mode thread exit " f"unexpectedly, {e}. {str(traceback.format_exc())}"
+                "insert_task_to_worker thread exit " f"unexpectedly, {e}. {str(traceback.format_exc())}"
             )
 
     def unfinished_requests_num(self):
@@ -568,34 +577,34 @@ class LLMEngine(object):
     def generate(self, prompts, stream):
         """
         Generate a response based on the given prompt using the model.
-        
+
         Args:
             prompts (dict): The prompt to use for generating the response.
             stream (bool): Whether to stream the output or wait until completion.
-        
+
         Yields:
             str: The generated response.
         """
         model_server_logger.info(f"Start generate prompt: {prompts}")
         req_id = self._format_and_add_data(prompts)
-        
+
         while True:
             # 获取当前请求的结果
             result = self.get_result(req_id)
             if result is None:
                 time.sleep(0.01)  # 避免忙等待
                 continue
-            
+
             is_end = result.get('is_end', 1)
-        
+
             if stream:
                 processed = self.data_processor.process_response(result)
                 model_server_logger.info(f"Output: {processed}")
                 yield processed
-            
+
             # 遇到终止条件时退出循环
             if is_end:
                 processed = self.data_processor.process_response(result)
                 model_server_logger.info(f"Output: {processed}")
-                yield processed  
+                yield processed
                 break
