@@ -17,6 +17,7 @@
 import os
 import numpy as np
 
+
 from fastdeployllm.utils import data_processor_logger
 from paddlenlp.generation import GenerationConfig
 from efficientllm.models.tokenizer import ErnieBotTokenizer
@@ -77,29 +78,29 @@ class ErnieProcessor(BaseDataProcessor):
             bool: Whether preprocessing is successful
             str: error message
         """
-        if "eos_token_ids" not in request or request["eos_token_ids"] == [None]:
-            request["eos_token_ids"] = []
-        request["eos_token_ids"].extend(self.eos_token_ids)
+        if request.get("eos_token_ids") is None or len(request.eos_token_ids) == 0:
+            request.eos_token_ids = self.eos_token_ids
 
-        if "stop_seqs" not in request or (isinstance(
-            request["stop_seqs"], (list, tuple)) and len(request["stop_seqs"]) == 0):
-            self.update_stop_seq(request)
+        stop_sequences = request.get("stop", [])
+        if stop_sequences is not None and len(stop_sequences) != 0:
+            stop_seqs, stop_seqs_len = self.update_stop_seq(stop_sequences)
+            request.set("stop_token_ids", stop_seqs)
+            request.set("stop_seqs_len", stop_seqs_len)
 
-        if "input_ids" not in request or \
-            (isinstance(request["input_ids"], (list, tuple)) and len(request["input_ids"]) == 0):
+        if request.prompt_token_ids is None or len(request.prompt_token_ids) == 0:
             system = request.get("system", "")
-            if "text" in request:
+            if request.prompt is not None:
                 history_qa = request.get("history_QA")
-                request["input_ids"] = self.text2ids(request["text"], history_qa, max_seq_len, system)
-            elif "messages" in request:
+                request.prompt_token_ids = self.text2ids(request.prompt, history_qa, max_seq_len, system)
+            elif request.messages is not None:
                 if self.tokenizer.chat_template is None:
                     raise ValueError(f"This model does not support chat_template.")
-                request["input_ids"] = self.messages2ids(request["messages"])
+                request.prompt_token_ids = self.messages2ids(request.messages)
             else:
                 raise ValueError(f"The request should have `input_ids`, `text` or `messages`: {request}.")
 
-        if max_seq_len is not None and len(request["input_ids"]) > max_seq_len:
-            request["input_ids"] = request["input_ids"][:max_seq_len - 1]
+        if max_seq_len is not None and len(request.prompt_token_ids) > max_seq_len:
+            request.prompt_token_ids = request.prompt_token_ids[:max_seq_len - 1]
         data_processor_logger.info(f"processed request: {request}")
         return request
 
@@ -113,21 +114,21 @@ class ErnieProcessor(BaseDataProcessor):
         Returns:
             Dict: response contain text fields
         """
-        is_end = response_dict.get("is_end", 0)
-        req_id = response_dict.get("req_id")
-        if "choices" in response_dict:
-            for i in range(len(response_dict["choices"])):
-                response_dict["token"] = self.ids2tokens(response_dict["choices"][i]["token_ids"], req_id)
-            return response_dict
+        is_end = response_dict.finished
+        req_id = response_dict.request_id
+        # TODO openai format
+        # if "choices" in response_dict:
+        #     for i in range(len(response_dict["choices"])):
+        #         response_dict["token"] = self.ids2tokens(response_dict["choices"][i]["token_ids"], req_id)
+        #     return response_dict
 
-        token_ids = response_dict.get("token_ids", [])
-        response_dict["token"] = self.ids2tokens(token_ids, response_dict["req_id"])
-        response_dict["usage"] = {"completion_tokens" : response_dict["send_idx"] + 1}
+        token_ids = response_dict.outputs.token_ids
+        response_dict.outputs.text = self.ids2tokens(token_ids, req_id)
+        response_dict.usage = {"completion_tokens" : response_dict.outputs.index + 1}
 
         if is_end:
             self.clear_request_status(req_id)
-            token_ids = response_dict.get("tokens_all_ids", [])
-            response_dict["tokens_all"] = self.ids2tokens(token_ids, response_dict["req_id"])
+            response_dict.outputs.text = self.ids2tokens(token_ids, req_id)
         return response_dict
 
     def text2ids(self, text, history_qa=None, max_seq_len=None, system=""):
@@ -321,18 +322,19 @@ class ErnieProcessor(BaseDataProcessor):
             return padded_insts, seq_len
         return padded_insts
 
-    def update_stop_seq(self, request):
+    def update_stop_seq(self, stop_sequences):
         """
         Update stop sequences from request.
         """
         stop_seqs =  []
-        for seq in request.get("stop_sequences", []):
+        for seq in stop_sequences:
             if seq != self.tokenizer.eos_token_id:
                 stop_seqs.append(self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(seq)))
-        request["stop_seqs"], request["stop_seqs_len"] = self.pad_batch_data(
+        stop_seqs, stop_seqs_len = self.pad_batch_data(
             stop_seqs,
             pad_id=-1,
             return_seq_len=True,
             return_array=False
         )
-        data_processor_logger.debug(f"processed request: {request['stop_seqs'], request['stop_seqs_len']}")
+        data_processor_logger.debug(f"processed stop_seqs: {stop_seqs}, {stop_seqs_len}")
+        return stop_seqs, stop_seqs_len

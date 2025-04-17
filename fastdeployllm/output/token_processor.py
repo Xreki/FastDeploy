@@ -26,11 +26,10 @@ if int(os.getenv("OPEN_SOURCE", "0")) == 1:
 else:
     from efficientllm.gpu import get_output
 
-
+from paddlenlp.utils.env import MAX_BSZ, MAX_DRAFT_TOKENS, SPECULATE_MAX_BSZ
 
 from fastdeployllm.utils import datetime_diff, model_server_logger, monitor_logger
-
-from paddlenlp.utils.env import MAX_BSZ, MAX_DRAFT_TOKENS, SPECULATE_MAX_BSZ
+from fastdeployllm.engine.request import RequestOutput, CompletionOutput, RequestMetrics
 
 
 class TokenProcessor(object):
@@ -45,8 +44,6 @@ class TokenProcessor(object):
         self.cfg = cfg
         self.cached_generated_tokens = cached_generated_tokens
         self.resource_manager = None
-        # record all tokens for each request
-        self.all_tokens = [[] for _ in range(self.cfg.max_batch_size)]
 
         self.tokens_counter = Counter()
 
@@ -91,8 +88,6 @@ class TokenProcessor(object):
         """
         read tokens from paddle inference engine and process
         """
-        
-
 
         while True:
             try:
@@ -119,79 +114,6 @@ class TokenProcessor(object):
         """
         self.cached_generated_tokens.put(batch_result)
 
-    def _get_single_result(self, i, task_id, token_ids, task):
-        """
-        processing single results
-
-        Args:
-            i (int): batch index
-            task_id (str): task id
-            token_ids (list): token id
-            task (dict): task information
-
-        Returns:
-            dict: result
-        """
-        inference_time_cost = time.time() - task["inference_start_time"]
-        task["inference_time_cost"] = inference_time_cost
-        task["tokens_all_num"] = len(self.all_tokens[i])
-        task["inference_current_step_time"] = datetime.now()
-        result = {
-            "req_id": task_id,
-            "is_end": 0,
-            "token_ids": token_ids,
-            "send_idx": self.tokens_counter[task_id],
-            "inference_time_cost": inference_time_cost,
-            "infer_seed": task["infer_seed"],
-            "return_all_tokens": task.get("return_all_tokens", False),
-        }
-
-        # get benchmark msg
-        if task.get("benchmark"):
-            keys = [
-                "preprocess_start_time",
-                "preprocess_end_time",
-                "schedule_start_time",
-                "inference_start_time",
-                "inference_current_step_time",
-            ]
-            for key in keys:
-                if key in task:
-                    result[key] = str(task[key])
-
-        # fill some extra information
-        result["token_ids"] = []
-        for token_id in token_ids:
-            self.number_of_output_tokens += 1
-            if token_id in task["eos_token_ids"]:
-                result["is_end"] = 1
-                result["send_idx"] = self.tokens_counter[task_id]
-                result["tokens_all_num"] = len(self.all_tokens[i]) + 1
-                result["tokens_all_ids"] = self.all_tokens[i]
-
-                info_dict = {}
-                info_dict["req_id"] = task["req_id"]
-                info_dict["input_token_num"] = len(task["input_ids"])
-                info_dict["output_token_num"] = len(self.all_tokens[i])
-                if hasattr(task, "preprocess_start_time") and hasattr(task, "preprocess_end_time"):
-                    info_dict["preprocess_cost_time"] = datetime_diff(
-                        task["preprocess_start_time"], task["preprocess_end_time"]
-                    )
-                if hasattr(task, "preprocess_end_time") and hasattr(task, "schedule_start_time"):
-                    info_dict["cache_waiting_cost_time"] = datetime_diff(
-                        task["preprocess_end_time"], task["schedule_start_time"]
-                    )
-                info_dict["inference_time_cost"] = task["inference_time_cost"]
-                info_dict["version"] = "OpenSource"
-                info_dict["timestamp"] = time.time()
-                monitor_logger.info(f"{info_dict}")
-                break
-            else:
-                self.tokens_counter[task_id] += 1
-                self.all_tokens[i].append(token_id)
-                result["token_ids"].append(token_id)
-
-        return result
 
     def _recycle_resources(self, task_id, index, task):
         """
@@ -199,10 +121,10 @@ class TokenProcessor(object):
         """
         self.resource_manager.stop_flags[index] = True
         self.resource_manager.tasks_list[index] = None
-        self.resource_manager._recycle_block_tables(task["block_tables"])
+        self.resource_manager._recycle_block_tables(task.block_tables)
         if task_id in self.tokens_counter:
             del self.tokens_counter[task_id]
-        self.all_tokens[index] = list()
+
 
     def _process_batch_output(self):
         """
@@ -237,12 +159,40 @@ class TokenProcessor(object):
 
             task = self.resource_manager.tasks_list[i]
 
-            task_id = task["req_id"]
-            result = self._get_single_result(i, task_id, token_ids, task)
-            self.total_step += 1
+            task_id = task.request_id
 
+            self.total_step += 1
+            
+            if self.tokens_counter[task_id] == 0:
+                metrics = RequestMetrics(
+                    arrival_time=task.arrival_time,
+                    inference_start_time=task.inference_start_time,
+                    first_token_time=time.time() - task.inference_start_time,
+                    time_in_queue =datetime_diff(
+                        task.preprocess_end_time, task.schedule_start_time
+                    ),
+                    preprocess_cost_time = datetime_diff(
+                        task.preprocess_start_time, task.preprocess_end_time
+                    )
+                )
+            else:
+                metrics = RequestMetrics(arrival_time=time.time())
+            self.number_of_output_tokens += len(token_ids)
             for token_id in token_ids:
-                if token_id in task["eos_token_ids"]:
+                result = RequestOutput(
+                    request_id=task_id,
+                    outputs = CompletionOutput(
+                        index=self.tokens_counter[task_id],
+                        token_ids=token_ids
+                    ),
+                    finished=False,
+                    metrics=metrics
+                )
+                self.tokens_counter[task_id] += 1 
+                if token_id in task.eos_token_ids:
+                    result.finished = True
+                    result.prompt = task.prompt
+                    result.prompt_token_ids = task.prompt_token_ids
                     self._recycle_resources(task_id, i, task)
                     model_server_logger.info("req_id: {0} finished".format(task_id))
                     model_server_logger.info(f"{self.resource_manager.info()}")

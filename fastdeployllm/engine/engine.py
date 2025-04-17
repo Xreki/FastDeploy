@@ -31,10 +31,10 @@ from multiprocessing import shared_memory
 from collections import deque
 import threading
 import numpy as np
-from fastdeployllm.input.preprocess import InputPreprocessor
 
+from fastdeployllm.input.preprocess import InputPreprocessor
 from fastdeployllm.engine.args_utils import EngineArgs
-from fastdeployllm.checker import add_default_params, check_basic_params
+from fastdeployllm.engine.request import Request
 from fastdeployllm.engine.resource_manager import ResourceManager
 from fastdeployllm.inter_communicator import EngineWorkerQueue
 from fastdeployllm.output.token_processor import TokenProcessor, WarmUpTokenProcessor
@@ -75,6 +75,7 @@ class LLMEngine(object):
         self.cached_generated_tokens = queue.Queue()
         self.cached_task_deque = deque()
         self.req_output = dict()
+        self.req_output_completion = dict()
 
         self.input_processor = InputPreprocessor(cfg.model_dir)
         self.resource_manager = ResourceManager(self.cfg)
@@ -157,9 +158,17 @@ class LLMEngine(object):
             try:
                 batch_result = self.cached_generated_tokens.get()
                 for result in batch_result:
-                    if result["req_id"] not in self.req_output:
-                        self.req_output[result["req_id"]] = deque()
-                    self.req_output[result["req_id"]].appendleft(result)
+                    if result.request_id not in self.req_output:
+                        self.req_output[result.request_id] = deque()
+                        self.req_output_completion[result.request_id] = result
+                    else:
+                        self.req_output_completion[result.request_id].add(result)
+                    if result.finished:
+                        result = self.req_output_completion[result.request_id]
+                        del self.req_output_completion[result.request_id]
+ 
+                    self.req_output[result.request_id].appendleft(result)
+
             except Exception as e:
                 model_server_logger.error("Unexcepted error happend: {}, {}".format(e, str(traceback.format_exc())))
 
@@ -186,7 +195,7 @@ class LLMEngine(object):
        tasks = []
        need_block_num = 0
        for i in range(task_num):
-           num_input_token = len(self.cached_task_deque[-1]["input_ids"])
+           num_input_token = self.cached_task_deque[-1].prompt_token_ids_len
            need_block_num += self.resource_manager.get_required_block_number(num_input_token)
            if need_block_num > self.resource_manager.availabel_block_num():
                break
@@ -236,43 +245,37 @@ class LLMEngine(object):
 
 
 
-    def add_requests(self, task):
+    def add_requests(self, task, sampling_params=None):
         """
-            将请求添加到队列中，并进行相应的处理。如果启用了文本截断，则对输入文本进行截断；否则，使用默认参数进行处理。
-        如果任务需要的资源超过限制，则不会缓存该任务。
+        Add a new request to the queue.
 
         Args:
-            task (dict): 包含请求信息的字典，其中必须包含以下键值对：
-                - "input_text" (str): 输入文本。
-                - "model_name" (str, optional): 模型名称，默认为None。
-                - "enable_text_truncate" (int, optional): 是否启用文本截断，默认为1。
-                - "max_dec_len" (int, optional): 最大解码长度，默认为800。
-                - "min_dec_len" (int, optional): 最小解码长度，默认为20。
-                - "req_id" (str, optional): 请求ID，默认为None。
+            task: Request A dictionary representing the request.
+            sampling_params: A dictionary representing the sampling parameters.
 
         Returns:
-            None, 如果任务需要的资源超过限制，则不会缓存该任务。
-
-        Raises:
             None
         """
 
-        task = add_default_params(task)
-
+        request = Request.from_dict(task)
+        if sampling_params is not None:
+            request.sampling_params = sampling_params
+        request.preprocess_start_time = datetime.now()
         if int(task.get("enable_text_truncate", 1)):
             real_seq_len = self.cfg.max_seq_len - task.get("max_dec_len", 800)
-            task = self.data_processor.process_request(task, max_seq_len=real_seq_len)
+            self.data_processor.process_request(request, max_seq_len=real_seq_len)
         else:
-            task = self.data_processor.process_request(task, self.cfg.max_seq_len)
+            self.data_processor.process_request(request, self.cfg.max_seq_len)
 
-        input_ids_len = len(task["input_ids"])
-        if "max_dec_len" not in task:
-            task["max_dec_len"] = self.cfg.max_seq_len - input_ids_len
-        min_dec_len = task["min_dec_len"]
-        if input_ids_len + min_dec_len >= self.cfg.max_seq_len:
+
+        request.prompt_token_ids_len = len(request.prompt_token_ids)
+        input_ids_len = request.prompt_token_ids_len
+        request.set("max_tokens", min(self.cfg.max_seq_len - input_ids_len , request.get("max_tokens"))) 
+        min_tokens = request.get("min_tokens")
+        if input_ids_len + min_tokens >= self.cfg.max_seq_len:
             error_msg = (
                 f"Input text is too long, input_ids_len ({input_ids_len}) "
-                f"+ min_dec_len ({min_dec_len}) >= max_seq_len "
+                f"+ min_dec_len ({min_tokens}) >= max_seq_len "
             )
             model_server_logger.error(error_msg)
             return
@@ -291,13 +294,13 @@ class LLMEngine(object):
             model_server_logger.error(error_msg)
             return
 
-        task["preprocess_end_time"] = datetime.now()
-        self.cached_task_deque.appendleft(task)
+        request.preprocess_end_time = datetime.now()
+        self.cached_task_deque.appendleft(request)
         model_server_logger.info(
-            f"cache task with req_id ({task.get('req_id')}), "
+            f"cache task with req_id ({request.get('request_id')}), "
             f"cached_task_num: {len(self.cached_task_deque)}."
         )
-        model_server_logger.debug(f"cache task: {task}")
+        model_server_logger.debug(f"cache task: {request}")
 
     def warmup(self):
         """
@@ -319,7 +322,7 @@ class LLMEngine(object):
             tasks = [tasks]
 
         for item in tasks:
-            item["schedule_start_time"] = datetime.now()
+            item.schedule_start_time = datetime.now()
 
         available_batch = np.sum(self.resource_manager.stop_flags)
         if len(tasks) > available_batch:
@@ -328,38 +331,15 @@ class LLMEngine(object):
             model_server_logger.error("The exceeded part will be ignored!")
             tasks = tasks[:available_batch]
 
-        for i in range(len(tasks)):
-            req_id = tasks[i]["req_id"]
-            input_token_num = len(tasks[i]["input_ids"])
-            if input_token_num >= self.cfg.max_seq_len - 1:
-                model_server_logger.warning(f"{req_id}: Input length:{input_token_num}, exceed the limits.")
-                tasks[i]["input_ids"] = tasks[i]["input_ids"][:self.cfg.max_seq_len - 1]
-            if "seq_len" in tasks[i] and "max_dec_len" not in tasks[i]:
-                tasks[i]["max_dec_len"] = tasks[i]["seq_len"]
-            if "max_dec_len" not in tasks[i]:
-                tasks[i]["max_dec_len"] = self.cfg.max_seq_len
-
-            # max_dec_len + input_token_num > MAX_SEQ_LEN
-            if input_token_num + tasks[i]["max_dec_len"] > self.cfg.max_seq_len:
-                tasks[i]["max_dec_len"] = self.cfg.max_seq_len - input_token_num
-                model_server_logger.warning("Force max_dec_len to be {} for req_id={}.".format(
-                    tasks[i]["max_dec_len"], tasks[i]["req_id"]))
-
-            # min_dec_len + input_token_num > MAX_SEQ_LEN
-            if input_token_num + tasks[i]["min_dec_len"] > self.cfg.max_seq_len:
-                tasks[i]["min_dec_len"] = self.cfg.max_seq_len - input_token_num
-                model_server_logger.warning("Force min_dec_len to be {} for req_id={}.".format(
-                    tasks[i]["min_dec_len"], tasks[i]["req_id"]))
-
         tasks = self.resource_manager.allocate_resources_for_new_tasks(tasks)
         if not tasks:
             return False
 
         self.token_processor.number_of_tasks += len(tasks)
         for i in range(len(tasks)):
-            self.token_processor.number_of_input_tokens += len(tasks[i]["input_ids"])
+            self.token_processor.number_of_input_tokens += tasks[i].prompt_token_ids_len
 
-        req_ids = [t["req_id"] for t in tasks]
+        req_ids = [t.request_id for t in tasks]
         model_server_logger.info(f"Tasks are sent to engine, req_ids={req_ids}")
         self.engine_worker_queue.put_tasks((tasks, self.resource_manager.real_bsz))
         return True
@@ -498,8 +478,6 @@ class LLMEngine(object):
         request_id = str(uuid.uuid4())
 
         prompts["req_id"] = request_id
-        if "top_p" in prompts:
-            prompts["topp"] = prompts["top_p"]
         query_list = []
         if "context" in prompts:
             for item in prompts["context"]:
@@ -507,12 +485,12 @@ class LLMEngine(object):
                     prompts["system"] = item["utterance"]
                 elif item["role"] in ["user", "assistant"]:
                     query_list.append(item["utterance"])
-                    prompts["text"] = query_list
-        if "prompt" in prompts:
-            prompts["text"] = [prompts["prompt"]]
-        tasks = prompts
+                    prompts["prompt"] = query_list
 
-        self.add_requests(tasks)
+        if "max_tokens" not in prompts:
+            prompts["max_tokens"] = self.cfg.max_seq_len
+
+        self.add_requests(prompts)
         return request_id
 
     def generate(self, prompts, stream):
@@ -536,16 +514,19 @@ class LLMEngine(object):
                 time.sleep(0.01)  # 避免忙等待
                 continue
 
-            is_end = result.get('is_end', 1)
+            is_end = result.finished
 
             if stream:
                 processed = self.data_processor.process_response(result)
+                output = processed.todict()
                 model_server_logger.info(f"Output: {processed}")
-                yield processed
+                yield output
 
             # 遇到终止条件时退出循环
             if is_end:
                 processed = self.data_processor.process_response(result)
                 model_server_logger.info(f"Output: {processed}")
-                yield processed
+                del self.req_output[req_id]
+                output = processed.todict()
+                yield output
                 break

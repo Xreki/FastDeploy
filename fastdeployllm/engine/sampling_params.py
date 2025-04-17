@@ -87,7 +87,7 @@ class SamplingParams:
     min_p: float = 0.0
     seed: Optional[int] = None
     stop: Optional[Union[str, List[str]]] = None
-    stop_token_ids: Optional[List[int]] = None
+    stop_token_ids: Optional[Union[List[List[int]], List[int]]] = None
     max_tokens: Optional[int] = 16
     min_tokens: int = 1
     logprobs: Optional[int] = None
@@ -97,7 +97,7 @@ class SamplingParams:
     def from_dict(cls, req_dict: dict[str, Any]) -> "SamplingParams":
         """Create instance from command line arguments"""
         return cls(**{
-            field.name: getattr(req_dict, field.name)
+            field.name: req_dict[field.name] if field.name in req_dict else field.default
             for field in fields(cls)
         })
 
@@ -142,6 +142,7 @@ class SamplingParams:
         if self.logprobs is not None and self.logprobs < 0:
             raise ValueError(
                 f"logprobs must be non-negative, got {self.logprobs}.")
+
 
     def update_from_tokenizer(self, tokenizer):
         """

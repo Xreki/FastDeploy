@@ -187,11 +187,11 @@ class ResourceManager(object):
             if processing_task_index >= len(tasks):
                 break
 
-            if len(tasks[processing_task_index]["input_ids"]) > self.cfg.max_seq_len:
+            if tasks[processing_task_index].prompt_token_ids_len > self.cfg.max_seq_len:
                 model_server_logger.error("req_id: {0} input_ids len:{1} > {2}".format(
                     tasks[
-                        processing_task_index]["req_id"], len(tasks[
-                        processing_task_index]["input_ids"]), self.cfg.max_seq_len
+                        processing_task_index].request_id, len(tasks[
+                        processing_task_index].prompt_token_ids), self.cfg.max_seq_len
                 ))
                 processing_task_index += 1
                 continue
@@ -204,30 +204,28 @@ class ResourceManager(object):
                 allocated_position += 1
             if can_insert:
                 if self.stop_flags[allocated_position]:
-                    task = copy.deepcopy(tasks[processing_task_index])
 
-                    if not isinstance(task["eos_token_ids"], list):
-                        task["eos_token_ids"] = [task["eos_token_ids"]]
+                    task = tasks[processing_task_index]
 
-                    if "infer_seed" in task and task["infer_seed"]:
-                        task["infer_seed"] = int(task["infer_seed"])
-                    else:
-                        task["infer_seed"] = random.randint(0, 9223372036854775807)
-                    task["idx"] = allocated_position
-                    task["block_tables"] = self._get_block_tables(len(task["input_ids"]))
-                    if not task["block_tables"]:
-                        model_server_logger.error("req_id: {0} block_tables is empty".format(task["req_id"]))
+                    if task.get("seed") is None:
+                        task.set("seed", random.randint(0, 9223372036854775807))
+                    task.idx = allocated_position
+                    block_tables = self._get_block_tables(task.prompt_token_ids_len)
+                    if not block_tables:
+                        model_server_logger.error("req_id: {0} block_tables is empty".format(task.request_id))
                         continue
+                    else:
+                        task.block_tables = block_tables
 
                     processed_tasks.append(task)
                     self.stop_flags[allocated_position] = False
-                    task["inference_start_time"] = time.time()
-                    task["inference_time_cost"] = -1.0
-                    task["tokens_all_num"] = int(0)
+                    task.inference_start_time = time.time()
+                    task.inference_time_cost = -1.0
+                    task.tokens_all_num = int(0)
                     self.tasks_list[allocated_position] = task
-                    model_server_logger.info(f"allocate req_id: {task['req_id']}, "
+                    model_server_logger.info(f"allocate req_id: {task.request_id}, "
                                             f"allocated_position:{allocated_position}, "
-                                            f"input_ids_length: {len(task['input_ids'])}")
+                                            f"input_ids_length: {task.prompt_token_ids_len}")
                 allocated_position += 1
             processing_task_index += 1
 

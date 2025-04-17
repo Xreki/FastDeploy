@@ -139,51 +139,49 @@ class ModelRunner(ModelRunnerBase):
         """
         for i in range(len(tasks)):
             task = tasks[i]
-            idx = task["idx"]
-            length = len(task["input_ids"])
-            self.share_inputs["input_ids"][idx : idx + 1, :length] = np.array(task["input_ids"])
-            if len(task["eos_token_ids"]) < self.args.eos_tokens_lens:
-                task["eos_token_ids"].append(task["eos_token_ids"][0])
-            self.share_inputs["eos_token_id"][:] = np.array(task["eos_token_ids"], dtype="int64").reshape(-1, 1)
+            idx = task.idx
+            length = task.prompt_token_ids_len
+            self.share_inputs["input_ids"][idx : idx + 1, :length] = np.array(task.prompt_token_ids)
+
+            if len(task.eos_token_ids) < self.args.eos_tokens_lens:
+                task.eos_token_ids.append(task.eos_token_ids[0])
+            self.share_inputs["eos_token_id"][:] = np.array(task.eos_token_ids, dtype="int64").reshape(-1, 1)
             self.share_inputs["pre_ids"][idx : idx + 1] = -1
             self.share_inputs["top_p"][idx : idx + 1] = task.get("topp", 0.7)
             self.share_inputs["temperature"][idx : idx + 1] = task.get("temperature", 0.95)
-            self.share_inputs["penalty_score"][idx : idx + 1] = task.get("penalty_score", 1.0)
-            self.share_inputs["frequency_score"][idx : idx + 1] = task.get("frequency_score", 0.0)
-            self.share_inputs["presence_score"][idx : idx + 1] = task.get("presence_score", 0.0)
+            self.share_inputs["penalty_score"][idx : idx + 1] = task.get("repetition_penalty", 1.0)
+            self.share_inputs["frequency_score"][idx : idx + 1] = task.get("frequency_penalty", 0.0)
+            self.share_inputs["presence_score"][idx : idx + 1] = task.get("presence_penalty", 0.0)
             self.share_inputs["seq_lens_this_time"][idx : idx + 1] = length
             self.share_inputs["step_seq_lens_encoder"][idx : idx + 1] = length
             self.share_inputs["seq_lens_encoder"][idx : idx + 1] = length
             self.share_inputs["seq_lens_decoder"][idx : idx + 1] = 0
             self.share_inputs["step_idx"][idx : idx + 1] = 0
-            self.share_inputs["min_length"][idx : idx + 1] = task.get("min_dec_len", 1)
-            if "max_dec_len" in task:
-                max_dec_len = task["max_dec_len"]
-            elif "seq_len" in task:
-                max_dec_len = task["seq_len"]
-            else:
-                max_dec_len = self.args.max_dec_len
-            self.share_inputs["max_length"][idx : idx + 1] = max_dec_len
+            self.share_inputs["min_length"][idx : idx + 1] = task.get("min_tokens", 1)
+
+            self.share_inputs["max_length"][idx : idx + 1] = task.get("max_tokens", self.args.max_dec_len)
             self.share_inputs["stop_flags"][idx : idx + 1] = False
 
             self.share_inputs["first_token_ids"][idx : idx + 1] = self.share_inputs["input_ids"][idx : idx + 1, :1]
             self.share_inputs["ori_seq_lens_encoder"][idx : idx + 1] = length
 
-            if "infer_seed" in task:
-                self.share_inputs["infer_seed"][idx : idx + 1] = task["infer_seed"]
+            if task.get("seed") is not None:
+                self.share_inputs["infer_seed"][idx : idx + 1] = task.get("seed")
 
-            encoder_block_num = len(task["block_tables"])
+            encoder_block_num = len(task.get("block_tables"))
             self.share_inputs["encoder_block_lens"][idx : idx + 1] = encoder_block_num
             self.share_inputs["block_tables"][idx : idx + 1, :] = -1
             self.share_inputs["block_tables"][idx : idx + 1, :encoder_block_num] = np.array(
-                task["block_tables"], dtype="int32"
+                task.block_tables, dtype="int32"
             )
 
-            if "stop_seqs_len" in task:
-                stop_seqs_num = len(task["stop_seqs_len"])
+            # TODO 待确认正确性
+            if task.get("stop_token_ids") is not None:
+                stop_seqs_num = len(task.get("stop_seqs_len"))
                 for i in range(stop_seqs_num, self.model_cfg.max_stop_seqs_num):
-                    task["stop_seqs_len"].append(0)
-                self.share_inputs["stop_seqs_len"][:] = np.array(task["stop_seqs_len"], dtype="int32")
-                self.share_inputs["stop_seqs"][:stop_seqs_num, : len(task["stop_seqs"][0])] = np.array(
-                    task["stop_seqs"], dtype="int64"
+                    task.stop_seqs_len.append(0)
+                self.share_inputs["stop_seqs_len"][:] = np.array(task.stop_seqs_len, dtype="int32")
+                self.share_inputs["stop_seqs"][:stop_seqs_num, : len(task.get("stop_token_ids")[0])] = np.array(
+                    task.get("stop_token_ids"), dtype="int64"
                 )
+

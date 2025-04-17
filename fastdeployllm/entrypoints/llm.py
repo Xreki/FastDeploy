@@ -64,7 +64,7 @@ class LLM:
         self.llm_engine = LLMEngine.from_engine_args(
             engine_args=engine_args)
 
-        self.default_sampling_params = SamplingParams()
+        self.default_sampling_params = SamplingParams(max_tokens = self.llm_engine.cfg.max_seq_len)
 
         self.llm_engine.start()
 
@@ -94,6 +94,11 @@ class LLM:
         if sampling_params is None:
             sampling_params = self.default_sampling_params
 
+        if isinstance(sampling_params, SamplingParams):
+            sampling_params_len = 1
+        else:
+            sampling_params_len = len(sampling_params)
+
         if isinstance(prompts, str):
             prompts = [prompts]
 
@@ -104,10 +109,13 @@ class LLM:
         if isinstance(prompts, dict):
             if "prompts" not in prompts:
                 raise ValueError("prompts must be a input dict")
-
             text = prompts.pop("prompt")
-            # sampling_params = SamplingParams.from_dict(prompts)
             prompts = [text]
+            sampling_params = SamplingParams.from_dict(prompts)
+        
+
+        if sampling_params_len != 1 and len(prompts) != sampling_params_len:
+            raise ValueError("prompts and sampling_params must be the same length.")
 
         req_ids = self._add_request(
             prompts=prompts,
@@ -146,12 +154,12 @@ class LLM:
             request_id = str(uuid.uuid4())
             if isinstance(prompts[i], str):
                 tasks = {
-                    "text": prompts[i],
+                    "prompt": prompts[i],
                     "req_id": request_id,
                 }
             elif isinstance(prompts[i], list) and isinstance(prompts[i][0], int):
                 tasks = {
-                    "input_ids": prompts[i],
+                    "prompt_token_ids": prompts[i],
                     "req_id": request_id,
                 }
             elif isinstance(prompts[i], dict):
@@ -162,7 +170,9 @@ class LLM:
                     f"Invalid type for 'prompt': {type(prompts[i])}, expected one of ['str', 'list', 'dict']."
                 )
             req_ids.append(request_id)
-            self.llm_engine.add_requests(tasks)
+            if isinstance(sampling_params, list):
+                sampling_params = sampling_params[i]
+            self.llm_engine.add_requests(tasks, sampling_params)
         return req_ids
 
 
@@ -203,13 +213,14 @@ class LLM:
                     if result is None:
                         time.sleep(0.01)
                         continue
-                    is_end = result.get("is_end", 0)
+                    is_end = result.finished
                     result = self.llm_engine.data_processor.process_response(result)
                     model_server_logger.debug(f"Send result to client under push mode: {result}")
                     if is_end:
                         output.append(result)
                         num_requests -= 1
                         req_ids.remove(req_id)
+                        model_server_logger.debug("Request id: {} has been completed.".format(req_id))
                         if use_tqdm:
                             pbar.update(1)
                 except Exception as e:
@@ -224,9 +235,13 @@ if __name__ == "__main__":
     # output = llm.generate(prompts="who are you？", use_tqdm=True)
     # print(output)
     llm = LLM(model="/opt/baidu/paddle_internal/FastDeploy/fastdeployllm/llama_model", tensor_parallel_size=1)
-    output = llm.generate(prompts="who are you？", use_tqdm=True)
+    sampling_params = SamplingParams(temperature=0.1, max_tokens=30)
+    output = llm.generate(prompts="who are you？", use_tqdm=True, sampling_params=sampling_params)
     print(output)
 
 
-    output = llm.generate(prompts=["who are you？", "what can you do？"], use_tqdm=True)
+    output = llm.generate(prompts=["who are you？", "what can you do？"], sampling_params = SamplingParams(temperature=1, max_tokens=50), use_tqdm=True)
+    print(output)
+
+    output = llm.generate(prompts=["who are you？", "what can you do？"], sampling_params = [SamplingParams(temperature=1, max_tokens=50), SamplingParams(temperature=1, max_tokens=20)], use_tqdm=True)
     print(output)
