@@ -39,6 +39,7 @@ class EngineArgs:
     # System configuration parameters
     use_warmup: int = 0
     enable_prefix_caching: bool = False
+    use_tqdm_on_load: bool = False
 
     def __post_init__(self):
         """Post-initialization processing"""

@@ -69,69 +69,6 @@ class LLM:
         self.llm_engine.start()
 
 
-
-    @overload
-    def generate(
-        self,
-        prompts: str,
-        sampling_params: Optional[Union[SamplingParams,
-                                        list[SamplingParams]]] = None,
-        use_tqdm: bool = True,
-    ):
-
-        ...
-        
-    @overload
-    def generate(
-        self,
-        prompts: list[str],
-        sampling_params: Optional[Union[SamplingParams,
-                                        list[SamplingParams]]] = None,
-        use_tqdm: bool = True,
-    ):
-        ...
-
-    @overload
-    def generate(
-        self,
-        prompts: list[int],
-        sampling_params: Optional[Union[SamplingParams,
-                                        list[SamplingParams]]] = None,
-        use_tqdm: bool = True,
-    ):
-        ...
-    
-    @overload
-    def generate(
-        self,
-        prompts: list[list[int]],
-        sampling_params: Optional[Union[SamplingParams,
-                                        list[SamplingParams]]] = None,
-        use_tqdm: bool = True,
-    ):
-        ...
-    
-    @overload
-    def generate(
-        self,
-        prompts: dict[str, Any],
-        sampling_params: Optional[Union[SamplingParams,
-                                        list[SamplingParams]]] = None,
-        use_tqdm: bool = True,
-    ):
-        ...
-        
-    @overload
-    def generate(
-        self,
-        prompts: list[dict[str, Any]],
-        sampling_params: Optional[Union[SamplingParams,
-                                        list[SamplingParams]]] = None,
-        use_tqdm: bool = True,
-    ):
-        ...
-        
-    @overload
     def generate(
         self,
         prompts: Union[str, list[str], list[int], list[list[int]],

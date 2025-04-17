@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
+
 from dataclasses import dataclass, fields
 from typing import Any, Optional, Union, List
 
@@ -81,14 +82,14 @@ class SamplingParams:
     frequency_penalty: float = 0.0
     repetition_penalty: float = 1.0
     temperature: float = 1.0
-    top_p: float = 1.0
+    top_p: float = 0.7
     top_k: int = -1
     min_p: float = 0.0
     seed: Optional[int] = None
     stop: Optional[Union[str, List[str]]] = None
     stop_token_ids: Optional[List[int]] = None
     max_tokens: Optional[int] = 16
-    min_tokens: int = 0
+    min_tokens: int = 1
     logprobs: Optional[int] = None
     bad_words: Optional[List[str]] = None
 
@@ -150,6 +151,7 @@ class SamplingParams:
         pass
 
 
+@dataclass
 class BeamSearchParams:
     """Beam search parameters for text generation."""
     beam_width: int
