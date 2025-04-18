@@ -1,6 +1,7 @@
 import paddle
 import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
+import random
 
 from paddlenlp.trl import llm_utils
 from paddlenlp.trl.llm_utils import get_rotary_position_embedding
@@ -45,7 +46,7 @@ class ModelRunner(ModelRunnerBase):
         model_args = ModelArgument()
 
         predictor_args.model_name_or_path = self.args.model_name_or_path
-        predictor_args.max_length = self.args.max_dec_len
+        predictor_args.max_length = self.args.max_seq_len
         predictor_args.dtype = self.args.dtype
         predictor_args.total_max_length = self.args.max_seq_len
         predictor_args.inference_model = True
@@ -102,12 +103,13 @@ class ModelRunner(ModelRunnerBase):
             kv_num_head = int(self.model_cfg.num_key_value_heads) // self.nranks
         else:
             kv_num_head = self.model_cfg.num_attention_heads // self.nranks
+        self.model_cfg.kv_num_head = kv_num_head
 
         for i in range(self.model_cfg.num_layers):
             cache_type = self.args.dtype
             self.cache_kvs["key_caches_{}".format(i)] = paddle.full(
                 shape=[
-                    self.args.max_block_num,
+                    max_block_num,
                     kv_num_head,
                     self.args.block_size,
                     self.model_cfg.hidden_size // self.model_cfg.num_attention_heads,
@@ -117,7 +119,7 @@ class ModelRunner(ModelRunnerBase):
             )
             self.cache_kvs["value_caches_{}".format(i)] = paddle.full(
                 shape=[
-                    self.args.max_block_num,
+                    max_block_num,
                     kv_num_head,
                     self.args.block_size,
                     self.model_cfg.hidden_size // self.model_cfg.num_attention_heads,
@@ -159,7 +161,7 @@ class ModelRunner(ModelRunnerBase):
             self.share_inputs["step_idx"][idx : idx + 1] = 0
             self.share_inputs["min_length"][idx : idx + 1] = task.get("min_tokens", 1)
 
-            self.share_inputs["max_length"][idx : idx + 1] = task.get("max_tokens", self.args.max_dec_len)
+            self.share_inputs["max_length"][idx : idx + 1] = task.get("max_tokens", self.max_length)
             self.share_inputs["stop_flags"][idx : idx + 1] = False
 
             self.share_inputs["first_token_ids"][idx : idx + 1] = self.share_inputs["input_ids"][idx : idx + 1, :1]
@@ -185,3 +187,70 @@ class ModelRunner(ModelRunnerBase):
                     task.get("stop_token_ids"), dtype="int64"
                 )
 
+ 
+    def _cal_theortical_kvcache(self):
+        """
+        计算理论的kvcache大小
+        """
+        num_layers = self.model_cfg.num_layers
+        byte_of_cache = 2
+        #TODO
+        # 支持c8 c4
+
+        hidden_size = self.model_cfg.hidden_size
+        attention_heads = self.model_cfg.num_attention_heads
+        hidden_dim = hidden_size / attention_heads * self.model_cfg.kv_num_head
+        theoretical_kv_cache_memory = (2 * byte_of_cache * self.args.block_size * num_layers * hidden_dim)
+        return theoretical_kv_cache_memory
+    
+
+
+    def _update_share_input_block_num(self, num_gpu_blocks):
+        del self.share_inputs["cache_kvs"]
+        self._init_kvcache(num_gpu_blocks)
+
+        del self.share_inputs["block_tables"]
+        self.share_inputs["block_tables"] = paddle.full(
+            [self.args.max_batch_size, num_gpu_blocks], -1, dtype="int32"
+        )
+
+        # 初始化free list
+        free_list = list(
+            range(num_gpu_blocks - 1, int(num_gpu_blocks * self.args.block_ratio) - 1, -1)
+        )
+        self.free_list_len = len(free_list)
+        self.share_inputs.update({
+            "free_list": paddle.to_tensor(free_list, dtype="int32"),
+            "free_list_len": paddle.full([1], self.free_list_len, dtype="int32"),
+        })
+    
+
+    def dummy_input(self, num_total_tokens, number_of_tasks):
+        """
+        fake input to profile
+        """
+        full_length = num_total_tokens // number_of_tasks
+        input_length = int(full_length * self.args.block_ratio)
+        block_num = (input_length + self.args.block_size - 1 + self.args.enc_dec_block_num) // self.args.block_size 
+
+        for i in range(number_of_tasks):
+            idx = i
+            self.share_inputs["input_ids"][idx : idx + 1, :input_length] = np.array([5] * input_length)
+
+            self.share_inputs["eos_token_id"][:] = np.array([2] * self.args.eos_tokens_lens, \
+                                                            dtype="int64").reshape(-1, 1)
+            self.share_inputs["seq_lens_this_time"][idx : idx + 1] = input_length
+            self.share_inputs["step_seq_lens_encoder"][idx : idx + 1] = input_length
+            self.share_inputs["seq_lens_encoder"][idx : idx + 1] = input_length
+            self.share_inputs["seq_lens_decoder"][idx : idx + 1] = 0
+            self.share_inputs["step_idx"][idx : idx + 1] = 0
+            self.share_inputs["max_length"][idx : idx + 1] = 10
+            self.share_inputs["stop_flags"][idx : idx + 1] = False
+
+            self.share_inputs["first_token_ids"][idx : idx + 1] = self.share_inputs["input_ids"][idx : idx + 1, :1]
+            self.share_inputs["ori_seq_lens_encoder"][idx : idx + 1] = input_length
+
+            self.share_inputs["infer_seed"][idx : idx + 1] = random.randint(0, 922337203685477580)
+            self.share_inputs["encoder_block_lens"][idx : idx + 1] = block_num
+            self.share_inputs["block_tables"][idx : idx + 1, :block_num] = np.arange(idx * block_num, \
+                                                                                (idx + 1) * block_num, 1)

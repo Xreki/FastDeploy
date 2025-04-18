@@ -16,6 +16,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, fields
 from typing import Any, Optional, Union, List
+import random
 
 
 @dataclass
@@ -101,6 +102,13 @@ class SamplingParams:
             for field in fields(cls)
         })
 
+
+    def __post_init__(self):
+        if self.seed is None:
+            self.seed = random.randint(0, 922337203685477580)
+        self._verify_args()
+
+
     def _verify_args(self) -> None:
         if not isinstance(self.n, int):
             raise ValueError(f"n must be an int, but is of type {type(self.n)}")
@@ -142,6 +150,10 @@ class SamplingParams:
         if self.logprobs is not None and self.logprobs < 0:
             raise ValueError(
                 f"logprobs must be non-negative, got {self.logprobs}.")
+        
+        if not 0 <= self.seed <= 922337203685477580:
+            raise ValueError("seed must be in [0, 922337203685477580], got "
+                             f"{self.seed}.")
 
 
     def update_from_tokenizer(self, tokenizer):

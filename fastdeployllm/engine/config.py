@@ -127,6 +127,96 @@ class ModelConfig:
         # 保存至指定的 download dir
         pass
 
+    def print(self):
+        """
+        print all config
+
+        """
+        model_server_logger.info("Model Configuration Information :")
+        for k, v in self.__dict__.items():
+                model_server_logger.info("{:<20}:{:<6}{}".format(k, "", v))
+        model_server_logger.info("=============================================================")
+
+
+
+class CacheConfig:
+    """Configuration for the KV cache.
+
+    Args:
+        block_size: Size of a cache block in number of tokens.
+        gpu_memory_utilization: Fraction of GPU memory to use for the model execution.
+        cache_dtype: Data type for kv cache storage.
+        num_gpu_blocks_override: Number of GPU blocks to use. This overrides the
+            profiled num_gpu_blocks if None. 
+        enable_prefix_caching: Whether to enable prefix caching.
+    """
+    def __init__(
+        self,
+        block_size: int,
+        gpu_memory_utilization: float,
+        cache_dtype: str = "bfloat16",
+        num_gpu_blocks_override: Optional[int] = None,
+        block_ratio: float = 0.75,
+        enc_dec_block_num: int = 2,
+        enable_prefix_caching: bool = False,
+    ):
+        self.block_size = block_size
+        self.gpu_memory_utilization = gpu_memory_utilization
+        self.num_gpu_blocks_override = num_gpu_blocks_override
+        self.block_ratio = block_ratio
+        self.enc_dec_block_num = enc_dec_block_num
+        self.cache_dtype = cache_dtype
+        self.enable_prefix_caching = enable_prefix_caching
+        self._verify_args()
+
+    def metrics_info(self):
+        """Convert cache_config to dict(key: str, value: str) for prometheus metrics info."""
+        return {key: str(value) for key, value in self.__dict__.items()}
+
+    def _verify_args(self):
+        if self.gpu_memory_utilization > 1.0:
+            raise ValueError(
+                "GPU memory utilization must be less than 1.0. Got "
+                f"{self.gpu_memory_utilization}.")
+        if self.block_ratio > 1.0:
+            raise ValueError(
+                "Block ratio must be less than 1.0. Got "
+                f"{self.block_ratio}.")
+
+
+    def postprocess(self, num_total_tokens, number_of_tasks):
+        """
+        calculate block num
+        """
+        self.dec_token_num = self.enc_dec_block_num * self.block_size
+        if self.num_gpu_blocks_override is not None:
+            self.total_block_num = self.num_gpu_blocks_override
+        else:
+            length = num_total_tokens // number_of_tasks
+            block_num = (length + self.block_size - 1 + self.enc_dec_block_num) // self.block_size 
+            self.total_block_num =  block_num * number_of_tasks
+            model_server_logger.info(f"Doing profile, the total_block_num:{self.total_block_num}")
+        self.max_block_num = int(self.total_block_num * self.block_ratio)
+
+    def reset(self, num_gpu_blocks):
+        """
+        reset gpu block number
+        """
+        self.total_block_num  = num_gpu_blocks
+        self.max_block_num = int(self.total_block_num * self.block_ratio)
+        model_server_logger.info((f"Reset block num, the total_block_num:{self.total_block_num},"
+            f" max_block_num:{self.max_block_num}"))
+
+    def print(self):
+        """
+        print all config
+
+        """
+        model_server_logger.info("Cache Configuration Information :")
+        for k, v in self.__dict__.items():
+                model_server_logger.info("{:<20}:{:<6}{}".format(k, "", v))
+        model_server_logger.info("=============================================================")
+
 
 class Config:
     """
@@ -135,38 +225,31 @@ class Config:
 
     def __init__(self,
         model_config: ModelConfig,
+        cache_config: CacheConfig,
         model: str = None,
         download_dir: str = None,
         tensor_parallel_size: int = 8,
         nnode: int = 1,
         max_cached_task_num: int = 128,
-        kv_cache_dtype: str = 'bfloat16',
         max_model_len: int = 8192,
-        block_bs: float = 0.5,
-        block_ratio: float = 0.75,
         max_cache_task_num: int = 128,
-        block_size: int = 64,
-        enc_dec_block_num: int = 2,
         max_num_seqs: int = 8,
+        max_num_batched_tokens: Optional[int] = None,
         pod_ips: Optional[List[str]] = None,
         mm_processor_kwargs: Optional[Dict[str, Any]] = None,
         speculative_config: Optional[Dict[str, Any]] = None,
         use_warmup: bool = False,
-        enable_prefix_caching: bool = False,
         use_tqdm_on_load: bool = True,
         ):
 
         self.model_config = model_config
+        self.cache_config = cache_config
         self.model_dir = model
+        self.max_num_batched_tokens = max_num_batched_tokens
         self.download_dir = download_dir
         self.mp_num = tensor_parallel_size
-        self.block_bs = block_bs
-        self.block_ratio = block_ratio
         self.nnode = nnode
         self.pod_ips = pod_ips
-        self.block_size = block_size
-        self.enc_dec_block_num = enc_dec_block_num
-        self.dtype = kv_cache_dtype
         self.max_seq_len = max_model_len
         self.max_batch_size = max_num_seqs
         self.mm_processor_kwargs = mm_processor_kwargs
@@ -175,7 +258,6 @@ class Config:
  
         self.speculative_config = speculative_config
         self.use_warmup = use_warmup
-        self.enable_prefix_caching = enable_prefix_caching
         self.use_tqdm_on_load = use_tqdm_on_load
         self.max_prefill_batch = 3
 
@@ -187,6 +269,7 @@ class Config:
         self.read_from_config()
         self.postprocess()
         self.check()
+        self.print()
 
 
 
@@ -205,13 +288,12 @@ class Config:
         import paddle
         self.paddle_commit_id = paddle.version.commit
 
-        if self.block_ratio >= 1.0:
-            self.enc_dec_block_num = (self.max_seq_len + self.block_size - 1) // self.block_size
-        self.max_query_block_num = (self.max_seq_len + self.block_size - 1) // self.block_size
-        self.dec_token_num = self.enc_dec_block_num * self.block_size
-        self.total_block_num = int(self.block_bs * self.max_query_block_num)
-        self.max_block_num = int(self.total_block_num * self.block_ratio)
-        model_server_logger.info(f"max_block_num:{self.max_block_num}")
+        if self.max_num_batched_tokens is None:
+            self.max_num_batched_tokens = self.max_seq_len
+
+        self.cache_config.postprocess(self.max_num_batched_tokens, self.max_batch_size)
+
+
 
     def check(self):
         """
@@ -225,23 +307,6 @@ class Config:
             self.max_batch_size
         )
 
-
-        # # max_output_token_num
-        # max_output_token_num = (
-        #     self.total_block_num - self.max_block_num
-        # ) * self.block_size + self.enc_dec_block_num * self.block_size
-        # assert max_output_token_num >= self.max_seq_len, (
-        #     f"The available output token number of the service is {max_output_token_num}, "
-        #     f"which is less than the setting MAX_DEC_LEN:{self.max_seq_len}. "
-        # )
-
-        # # Maximum input length of a single query that the service can handle
-        # max_input_token_num = int(math.floor(self.max_block_num * self.block_size - self.dec_token_num))
-        # assert max_input_token_num >= self.max_seq_len, (
-        #     f"The available input token number of the service is {max_input_token_num}, "
-        #     f"which is less than the setting MAX_SEQ_LEN:{self.max_seq_len}. "
-        # )
-
     def print(self, file=None):
         """
         print all config
@@ -254,6 +319,8 @@ class Config:
             if k == "generation_config" and v is not None:
                 for gck, gcv in v.to_dict().items():
                     model_server_logger.info("{:<20}:{:<6}{}".format(gck, "", gcv))
+            elif k == "cache_config" or k == "model_config":
+                v.print()
             else:
                 model_server_logger.info("{:<20}:{:<6}{}".format(k, "", v))
         model_server_logger.info("=============================================================")
@@ -282,16 +349,16 @@ class Config:
         """
 
         config = self.get_model_config()
-        def reset_value(self, value_name, key):
+        def reset_value(cls, value_name, key):
             if hasattr(config, key):
                 value = getattr(config, key)
-                setattr(self, value_name, value)
+                setattr(cls, value_name, value)
                 model_server_logger.info(f"Reset parameter {value_name} = {value} from configuration.")
 
-        reset_value(self, "block_size", "infer_model_block_size")
+        reset_value(self.cache_config, "block_size", "infer_model_block_size")
         reset_value(self, "max_seq_len", "infer_model_max_seq_len")
         reset_value(self, "return_full_hidden_states", "return_full_hidden_states")
-        reset_value(self, "kv_cache_dtype", "infer_model_dtype")
+        reset_value(self.cache_config, "cache_dtype", "infer_model_dtype")
 
 
 

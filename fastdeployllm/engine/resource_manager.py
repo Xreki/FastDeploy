@@ -28,7 +28,7 @@ class ResourceManager(object):
     """
     record and allocate resources for the engine
     """
-    def __init__(self, cfg):
+    def __init__(self, max_batch_size, cache_config):
         """
             Args:
             cfg (Config): config object containing parameters for the engine
@@ -40,13 +40,24 @@ class ResourceManager(object):
         Initializes the engine with the given configuration and sets up necessary
         data structures to manage tasks and blocks.
         """
-        self.cfg = cfg
-        self.stop_flags = [True] * cfg.max_batch_size
-        self.free_list = list(range(cfg.max_block_num - 1, -1, -1))
-        self.tasks_list = [None] * self.cfg.max_batch_size
+        self.cfg = cache_config
+        self.max_batch_size = max_batch_size
+        self.stop_flags = [True] * max_batch_size
+
+
+        self.free_list = list(range(self.cfg.max_block_num - 1, -1, -1))
+        self.tasks_list = [None] * max_batch_size
         # current batch status of the engine
         self.real_bsz = 0
         model_server_logger.info(f"{self.info()}")
+
+    def reset_cache_config(self, cfg):
+        """
+        reset cache config
+        """
+        self.cfg = cfg
+        self.free_list = list(range(self.cfg.max_block_num - 1, -1, -1))
+
 
     def get_required_block_number(self, input_token_num):
         """
@@ -111,7 +122,7 @@ class ResourceManager(object):
             block_num = self.get_decoder_block_number()
         else:
             raise ValueError('unknown required type')
-        block_num = min(block_num, self.cfg.max_query_block_num)
+
         block_list = list()
         if block_num > len(self.free_list):
             model_server_logger.error("block_num:{0} > free_list len:{1}".format(block_num, len(self.free_list)))
@@ -183,21 +194,12 @@ class ResourceManager(object):
         allocated_position = 0
         processing_task_index = 0
         processed_tasks = list()
-        while allocated_position < self.cfg.max_batch_size:
+        while allocated_position < self.max_batch_size:
             if processing_task_index >= len(tasks):
                 break
 
-            if tasks[processing_task_index].prompt_token_ids_len > self.cfg.max_seq_len:
-                model_server_logger.error("req_id: {0} input_ids len:{1} > {2}".format(
-                    tasks[
-                        processing_task_index].request_id, len(tasks[
-                        processing_task_index].prompt_token_ids), self.cfg.max_seq_len
-                ))
-                processing_task_index += 1
-                continue
-
             can_insert = False
-            while allocated_position + 1 <= self.cfg.max_batch_size:
+            while allocated_position + 1 <= self.max_batch_size:
                 if sum(self.stop_flags[allocated_position : allocated_position + 1]) == 1:
                     can_insert = True
                     break
@@ -230,7 +232,7 @@ class ResourceManager(object):
             processing_task_index += 1
 
         # batch size when the statistical engine is inferring
-        for i in range(self.cfg.max_batch_size - 1, -1, -1):
+        for i in range(self.max_batch_size - 1, -1, -1):
             if not self.stop_flags[i]:
                 self.real_bsz = i + 1
                 break

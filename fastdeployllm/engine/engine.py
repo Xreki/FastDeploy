@@ -78,7 +78,7 @@ class LLMEngine(object):
         self.req_output_completion = dict()
 
         self.input_processor = InputPreprocessor(cfg.model_dir)
-        self.resource_manager = ResourceManager(self.cfg)
+        self.resource_manager = ResourceManager(cfg.max_batch_size, cfg.cache_config)
 
         self.token_processor = TokenProcessor(cfg=self.cfg, cached_generated_tokens=self.cached_generated_tokens)
         self.token_processor.set_resource_manager(self.resource_manager)
@@ -91,6 +91,11 @@ class LLMEngine(object):
         self.engine_worker_queue = EngineWorkerQueue(address=address, is_server=True, num_client=self.cfg.mp_num)
 
         self.is_started = False
+
+        if self.cfg.cache_config.num_gpu_blocks_override is None:
+            self.do_profile = 1
+        else:
+            self.do_profile = 0
 
         self._init_worker_signals()
         self._finalizer = weakref.finalize(self, self._exit_sub_services)
@@ -109,8 +114,10 @@ class LLMEngine(object):
         self.infer_proc = self._start_infer_service()
         model_server_logger.info("Waitting infer processes ready...")
         while not self._infer_processes_ready():
+            #model_server_logger.info(f"{self.engine_ready_check_flag_array[0]} GPU KV blocks can be allocated.")
             time.sleep(1)
         self.is_started = True
+
 
         # start warmup
         if self.cfg.use_warmup:
@@ -131,6 +138,8 @@ class LLMEngine(object):
         self.token_processor.run()
 
         self.start_push_sender_thread()
+        if self.do_profile:
+            self._stop_profile()
         model_server_logger.info("Infer processes are launched with {} seconds.".format(time.time() - start_time))
 
 
@@ -423,6 +432,12 @@ class LLMEngine(object):
         exist_swapped_task_signal_data = np.zeros([1], dtype=np.int32)
         self.exist_swapped_task_signal = IPCSignal(
             name="exist_swapped_task_signal", array=exist_swapped_task_signal_data, dtype=np.int32, create=True)
+        
+        if self.do_profile:
+            get_profile_block_num = np.zeros([self.cfg.mp_num], dtype=np.int32)
+            self.get_profile_block_num_signal = IPCSignal(
+                name="get_profile_block_num", array=get_profile_block_num, dtype=np.int32, create=True)
+
 
     def _exit_sub_services(self):
         """
@@ -448,14 +463,17 @@ class LLMEngine(object):
         arguments = (f" --nnodes {str(self.cfg.nnode)}"
                     f" --devices {self.cfg.device_ids} {py_script}"
                     f" --max_batch_size {self.cfg.max_batch_size} --max_seq_len {self.cfg.max_seq_len}"
-                    f" --max_dec_len {self.cfg.max_seq_len}"
+                    f" --gpu_memory_utilization {self.cfg.cache_config.gpu_memory_utilization}"
                     f" --model_name_or_path {str(self.cfg.model_dir)}"
+                    f" --device_ids {self.cfg.device_ids}"
                     f" --infer_port {str(self.cfg.infer_port)}"
-                    f" --max_block_num {self.cfg.total_block_num} --block_size {self.cfg.block_size}"
-                    f" --enc_dec_block_num {self.cfg.enc_dec_block_num}"
+                    f" --max_block_num {self.cfg.cache_config.total_block_num} "
+                    f"--block_size {self.cfg.cache_config.block_size}"
+                    f" --enc_dec_block_num {self.cfg.cache_config.enc_dec_block_num}"
                     f" --eos_tokens_lens {self.data_processor.eos_token_id_len}"
                     f" --pad_token_id {self.data_processor.pad_token_id}"
-                    f" --block_ratio {self.cfg.block_ratio} --dtype {self.cfg.dtype}")
+                    f" --do_profile {self.do_profile}"
+                    f" --block_ratio {self.cfg.cache_config.block_ratio} --dtype {self.cfg.cache_config.cache_dtype}")
         if self.cfg.nnode > 1:
             pd_cmd = pd_cmd + f" --ips {self.cfg.ips}"
         log_dir = os.getenv("FD_LOG_DIR", default="log")
@@ -531,3 +549,23 @@ class LLMEngine(object):
                 output = processed.todict()
                 yield output
                 break
+
+    def _stop_profile(self):
+        """
+        Stop profiling of the model server and reset variables.
+        """
+        self.do_profile = 0
+        num_gpu_blocks = -1
+        for i in range(self.cfg.mp_num):
+            while self.get_profile_block_num_signal.value[i] == 0:
+                time.sleep(1)
+            if num_gpu_blocks < 0:
+                num_gpu_blocks = self.get_profile_block_num_signal.value[i]
+            else:
+                num_gpu_blocks = min(num_gpu_blocks, self.get_profile_block_num_signal.value[i])
+        
+        self.get_profile_block_num_signal.clear()
+        model_server_logger.info(f"Stop profile, num_gpu_blocks:  {num_gpu_blocks}")
+        self.cfg.cache_config.reset(num_gpu_blocks)
+        self.resource_manager.reset_cache_config(self.cfg.cache_config)
+

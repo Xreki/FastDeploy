@@ -3,7 +3,7 @@ import json
 from dataclasses import dataclass, fields as dataclass_fields
 from typing import Any, Dict, List, Optional
 
-from fastdeployllm.engine.config import Config, ModelConfig, TaskOption
+from fastdeployllm.engine.config import Config, ModelConfig, CacheConfig, TaskOption
 from fastdeployllm.utils import FlexibleArgumentParser
 
 
@@ -29,8 +29,9 @@ class EngineArgs:
 
     # Inference configuration parameters
 
-    # TODO block bs memory profiling 计算得出
-    block_bs: float = 5
+    gpu_memory_utilization : float = 0.9
+    num_gpu_blocks_override: Optional[int] = None
+    max_num_batched_tokens: Optional[int] = None
     block_ratio: float = 0.75
     nnode: int = 1
     pod_ips: Optional[List[str]] = None
@@ -141,9 +142,22 @@ class EngineArgs:
         )
 
         parallel_group.add_argument(
-            "--block-bs",
+            "--num-gpu-blocks-override",
+            type=int,
+            default=EngineArgs.num_gpu_blocks_override
+        )
+
+        parallel_group.add_argument(
+            "--max-num-batched-tokens",
+            type=int,
+            default=EngineArgs.max_num_batched_tokens,
+        )
+
+        parallel_group.add_argument(
+            "--gpu-memory-utilization",
             type=float,
-            default=EngineArgs.block_bs
+            default=EngineArgs.gpu_memory_utilization,
+            help="gpu memory utilization"
         )
 
         parallel_group.add_argument(
@@ -202,6 +216,16 @@ class EngineArgs:
             use_tqdm_on_load=self.use_tqdm_on_load
         )
 
+    def create_cache_config(self) -> CacheConfig:
+        """Create cache configuration object"""
+        return CacheConfig(
+            block_size=self.block_size,
+            gpu_memory_utilization=self.gpu_memory_utilization,
+            num_gpu_blocks_override=self.num_gpu_blocks_override,
+            block_ratio=self.block_ratio,
+            enable_prefix_caching=self.enable_prefix_caching
+        )
+
     def create_engine_config(self) -> Config:
         """Create engine configuration object"""
         model_cfg = self.create_model_config()
@@ -209,17 +233,16 @@ class EngineArgs:
         return Config(
             model=self.model,
             model_config=model_cfg,
+            cache_config=self.create_cache_config(),
             download_dir=self.download_dir,
             max_model_len=self.max_model_len,
             tensor_parallel_size=tensor_parallel_size,
             max_num_seqs=self.max_num_seqs,
             mm_processor_kwargs=self.mm_processor_kwargs,
             speculative_config=self.speculative_config,
-            block_bs=self.block_bs,
-            block_ratio=self.block_ratio,
+            max_num_batched_tokens=self.max_num_batched_tokens,
             nnode=self.nnode,
             pod_ips=self.pod_ips,
             max_cache_task_num=self.max_cache_task_num,
-            use_warmup=self.use_warmup,
-            enable_prefix_caching=self.enable_prefix_caching
+            use_warmup=self.use_warmup
         )

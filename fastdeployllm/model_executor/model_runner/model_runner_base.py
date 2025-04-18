@@ -107,7 +107,7 @@ class ModelRunnerBase(ABC):
 
         # 批量初始化张量
         self.share_inputs.update({
-            "pre_ids": paddle.full([max_batch_size, self.args.max_dec_len], -1, **int64_config),
+            "pre_ids": paddle.full([max_batch_size, self.max_length], -1, **int64_config),
             "input_ids": paddle.full([max_batch_size, self.args.max_seq_len], self.args.pad_token_id, **int64_config),
             "eos_token_id": paddle.full([self.args.eos_tokens_lens, 1], 0, **int64_config),
             "top_p": paddle.full([max_batch_size, 1], self.top_p, **float32_config),
@@ -223,3 +223,4 @@ class ModelRunnerBase(ABC):
                 NotImplementedError: 如果没有实现该方法。
         """
         raise NotImplementedError
+

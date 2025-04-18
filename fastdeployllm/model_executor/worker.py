@@ -55,6 +55,8 @@ class Worker:
         self.MAX_INFER_SEED = 9223372036854775806
         paddle.set_default_dtype(args.dtype)
 
+        self.device_ids = self.args.device_ids.split(",")
+
 
         self.model_cfg = ModelConfig(args.model_name_or_path)
         self.init_dist_env()
@@ -227,6 +229,98 @@ class Worker:
 
             self.step_cuda()
 
+    def determine_num_available_blocks(self):
+        """Profiles the peak memory usage of the model to determine how many
+        KV blocks may be allocated without OOMs.
+
+        The engine will first conduct a profiling of the existing memory usage.
+        Then, it calculate the maximum possible number of GPU and CPU blocks
+        that can be allocated with the remaining free memory.
+
+        .. tip::
+            You may limit the usage of GPU memory
+            by adjusting the `gpu_memory_utilization` parameter.
+        """
+        # Profile the memory usage of the model and get the maximum number of
+        # cache blocks that can be allocated with the remaining free memory.
+        start_time = time.time()
+
+        GiB = 1024**3
+        paddle.device.cuda.empty_cache()
+
+        paddle.device.cuda.reset_max_memory_allocated()
+        before_activation_gpu_memory = paddle.device.cuda.max_memory_allocated() / GiB
+        logger.info(f"before activate gpu memory: {before_activation_gpu_memory} GiB.")
+
+        import pynvml
+        import gc
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(int(self.device_ids[self.rank]))
+        meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        total_gpu_memory = meminfo.total / GiB
+        used_gpu_memory = meminfo.used / GiB
+        pynvml.nvmlShutdown()
+        logger.info(f"used gpu memory: {used_gpu_memory} GiB.")
+
+        self.run_profile()
+        current_max_peak_gpu_memory = paddle.device.cuda.max_memory_reserved() / GiB
+        logger.info(f"current max peak gpu memory: {current_max_peak_gpu_memory} GiB.")
+        per_block_memory_used = self.infer_engine._cal_theortical_kvcache() / GiB
+        logger.info(f"each kv cache block takes {per_block_memory_used} GiB.")
+        used_cache_gpu_memory = self.args.max_block_num * per_block_memory_used
+        logger.info(f"used cache gpu memory: {used_cache_gpu_memory} GiB.")
+        model_weights_memory = used_gpu_memory - used_cache_gpu_memory
+        paddle_peak_increase = current_max_peak_gpu_memory - before_activation_gpu_memory
+        memory_for_current_instance = total_gpu_memory * 0.9
+        available_kv_cache_memory = memory_for_current_instance - used_gpu_memory - \
+                                    paddle_peak_increase + used_cache_gpu_memory
+
+        num_gpu_blocks = int(available_kv_cache_memory // per_block_memory_used )
+        profile_time = time.time() - start_time
+
+        msg = (f"Memory profiling takes {profile_time:.2f} seconds\n"
+               "the current instance can use "
+               "total_gpu_memory "
+               f"({(total_gpu_memory):.2f}GiB)"
+               " x gpu_memory_utilization "
+               f"({self.args.gpu_memory_utilization})"
+               f" = {(memory_for_current_instance):.2f}GiB\n"
+               "model weights take "
+               f"{(model_weights_memory ):.2f}GiB;"
+               " Paddle activation peak memory takes "
+               f"{(paddle_peak_increase):.2f}GiB;"
+               " the rest of the memory reserved for KV Cache is "
+               f"{(available_kv_cache_memory):.2f}GiB.")
+
+        logger.info(msg)
+        # Final cleanup
+
+        get_profile_block_num = np.zeros(shape=[self.nranks], dtype=np.int32)
+        self.get_profile_block_num_signal = IPCSignal(
+            name="get_profile_block_num", array=get_profile_block_num, dtype=np.int32, create=False)
+        self.get_profile_block_num_signal.value[self.rank] = int(num_gpu_blocks)
+        logger.info(f"{self.get_profile_block_num_signal.value[self.rank]} GPU KV blocks can be allocated.")
+        self.infer_engine._update_share_input_block_num(num_gpu_blocks)
+        gc.collect()
+
+    def run_profile(self):
+        """
+        run profile
+        """
+        infer_seed_increment = paddle.full(shape=[self.args.max_batch_size, 1], fill_value=4, dtype="int64")
+        mp_num_per_node = self.nranks
+
+
+        self.infer_engine.dummy_input(self.args.max_seq_len, self.args.max_batch_size)
+        while True:
+            if self.nranks > 1:
+                paddle.distributed.barrier()
+            self.infer_engine.generate()
+            self.infer_engine.share_inputs["infer_seed"].add_(infer_seed_increment)
+            self.infer_engine.share_inputs["infer_seed"][:] %= self.MAX_INFER_SEED
+            self.step_cuda()
+            if int((self.infer_engine.share_inputs['seq_lens_this_time'] > 0).sum()) == 0:
+                break
 
 
 def parse_args():
@@ -235,18 +329,18 @@ def parse_args():
     """
     parser = argparse.ArgumentParser("FastDeploy LLM Inference")
     parser.add_argument("-m", "--model_name_or_path", type=str, default="./output", help="model dir")
-    parser.add_argument("-mp", "--mp_degree", type=int, default=1, help="mp degree")
     parser.add_argument("-mbs", "--max_batch_size", type=int, default=34, help="max batch size")
     parser.add_argument("--max_block_num", type=int, default=2000)
-    parser.add_argument("--block_size", type=int, default=128)
+    parser.add_argument("--block_size", type=int, default=64)
     parser.add_argument("--infer_port", type=int, default=9923)
     parser.add_argument("--max_seq_len", type=int, default=3072, help="max_seq_len")
-    parser.add_argument("--max_dec_len", type=int, default=1024, help="max_dec_len")
-    parser.add_argument("--use_cache_kv_int8", type=int, default=0, help="use cache kv int8")
+    parser.add_argument("--device_ids", type=str, default="0", help="cuda visible devices")
     parser.add_argument("--dtype", type=str, default="bfloat16", help="input dtype")
     parser.add_argument("--enc_dec_block_num", type=int, default=1, help="encoder's decoder num")
     parser.add_argument("--block_ratio", type=float, default=0.7, help="block ratio")
     parser.add_argument("--first_token_id", type=int, default=1, help="first token id")
+    parser.add_argument("--gpu_memory_utilization", type=float, default=0.9, help="gpu memory utilization")
+    parser.add_argument("--do_profile", type=int, default=0, help="do profile or not")
     parser.add_argument("--pad_token_id", type=int, default=-1, help="pad token id")
     parser.add_argument("--eos_tokens_lens", type=int, default=2, help="eos token lens")
     args = parser.parse_args()
@@ -259,6 +353,8 @@ def main():
     """
     args = parse_args()
     worker = Worker(args)
+    if args.do_profile:
+        worker.determine_num_available_blocks()
     worker.run()
 
 

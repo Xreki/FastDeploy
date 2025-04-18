@@ -39,6 +39,11 @@ class LLM:
         tokenizer (Optional[str], optional):
             The name of the tokenizer to use. Defaults to None. If not specified, the
             default tokenizer for the selected model will be used.
+        gpu_memory_utilization: The ratio (between 0 and 1) of GPU memory to
+            reserve for the model weights, activations, and KV cache. Higher
+            values will increase the KV cache size and thus improve the model's
+            throughput. However, if the value is too high, it may cause out-of-
+            memory (OOM) errors.
         **kwargs (optional):
             Additional keyword arguments to pass to the `EngineArgs` constructor. See
             `EngineArgs.__init__` for details. Defaults to {}.
