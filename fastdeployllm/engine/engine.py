@@ -216,7 +216,8 @@ class LLMEngine(object):
                     time.sleep(0.001)
                     continue
 
-                tasks = self._get_tasks(self.cfg.max_prefill_batch)
+                num_prefill_batch = min(self.resource_manager.available_batch(), self.cfg.max_prefill_batch)
+                tasks = self._get_tasks(num_prefill_batch)
                 if len(tasks) == 0:
                     time.sleep(0.001)
                     continue
