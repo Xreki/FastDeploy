@@ -108,7 +108,7 @@ class Worker:
         self.worker_ready_signal = IPCSignal(name="worker_ready_singnal",
                                              array=worker_ready_signal_data,
 											 dtype=np.int32,
- 											 pid=self.args.engine_pid,
+ 											 suffix=self.args.engine_pid,
 											 create=False)
         self.worker_ready_signal.value[self.rank] = 1
 
@@ -118,7 +118,7 @@ class Worker:
             name="exist_task_signal",
 			array=exist_task_signal_data,
 			dtype=np.int32,
-			pid=self.args.engine_pid,
+			suffix=self.args.engine_pid,
 			create=False)
 
         # exist_swapped_task_signal 用于engine感知worker中是否存在swapped task
@@ -127,7 +127,7 @@ class Worker:
             name="exist_swapped_task_signal",
 			array=exist_swapped_task_signal_data,
 			dtype=np.int32,
-			pid=self.args.engine_pid,
+			suffix=self.args.engine_pid,
 			create=False)
 
     def format_print_configuration(self):
@@ -311,7 +311,7 @@ class Worker:
             name="get_profile_block_num",
 			array=get_profile_block_num,
 			dtype=np.int32,
-            pid=self.args.engine_pid,
+            suffix=self.args.engine_pid,
 			create=False)
         self.get_profile_block_num_signal.value[self.rank] = int(num_gpu_blocks)
         logger.info(f"{self.get_profile_block_num_signal.value[self.rank]} GPU KV blocks can be allocated.")

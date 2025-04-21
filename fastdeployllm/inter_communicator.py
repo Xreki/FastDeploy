@@ -51,7 +51,7 @@ class IPCSignal:
                  name: str,
                  array: np.ndarray,
                  dtype: np.dtype,
-                 pid: int = None,
+                 suffix: int = None,
                  create: bool = True) -> None:
         """Initialize or connect to a shared memory block.
 
@@ -59,6 +59,7 @@ class IPCSignal:
             name: Unique identifier for the shared memory block.
             array: Numpy array template defining shape and data type.
             dtype: Data type of the array (must match array.dtype).
+            suffix: Suffix number that will be appended to the name.
             create: If True, creates new memory block; otherwise connects to existing.
 
         Raises:
@@ -68,8 +69,8 @@ class IPCSignal:
         assert dtype == array.dtype, "Specified dtype must match array dtype"
 
         # Set a suffix for name to avoid name conflict while there are multiple engine launched
-        if pid is not None:
-            name = name + f".{pid}"
+        if suffix is not None:
+            name = name + f".{suffix}"
 
         if create:
             assert not shared_memory_exists(

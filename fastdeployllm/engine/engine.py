@@ -422,7 +422,7 @@ class LLMEngine(object):
         self.worker_ready_signal = IPCSignal(name="worker_ready_singnal",
                                              array=worker_ready_signal_data,
                       						 dtype=np.int32,
-  											 pid=os.getpid(),
+  											 suffix=os.getpid(),
 											 create=True)
 
         # exist_task_signal 用于各worker进程感知是否有新Task需要处理
@@ -430,7 +430,7 @@ class LLMEngine(object):
         self.exist_task_signal = IPCSignal(name="exist_task_signal",
                                            array=exist_task_signal_data,
 										   dtype=np.int32,
-                                           pid=os.getpid(),
+                                           suffix=os.getpid(),
 										   create=True)
 
         # exist_swapped_task_signal 用于engine感知worker中是否存在swapped task
@@ -439,7 +439,7 @@ class LLMEngine(object):
             name="exist_swapped_task_signal",
 			array=exist_swapped_task_signal_data,
 			dtype=np.int32,
-            pid=os.getpid(),
+            suffix=os.getpid(),
 			create=True)
 
         if self.do_profile:
@@ -448,7 +448,7 @@ class LLMEngine(object):
                 name="get_profile_block_num",
 				array=get_profile_block_num,
 				dtype=np.int32,
-                pid=os.getpid(),
+                suffix=os.getpid(),
 				create=True)
 
     def _exit_sub_services(self):
