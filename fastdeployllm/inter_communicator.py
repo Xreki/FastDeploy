@@ -10,7 +10,7 @@ import numpy as np
 from multiprocessing.managers import (AcquirerProxy, BaseManager, ListProxy,
                                       Value, ValueProxy)
 from queue import Queue
-from fastdeployllm.utils import model_server_logger
+from fastdeployllm.utils import llm_logger
 import multiprocessing
 from multiprocessing.shared_memory import SharedMemory
 from typing import Optional, Dict, Tuple, List, Any
@@ -170,14 +170,14 @@ class EngineWorkerQueue:
         assert self.num_client == len(self.client_read_flag)
 
         if is_server:
-            model_server_logger.info(f"EngineWorkerQueue server started.")
+            llm_logger.info(f"EngineWorkerQueue server started.")
         else:
             # Update client connection counter
             self.lock.acquire()
             self.connected_client_counter.set(
                 self.connected_client_counter.get() + 1)
             self.lock.release()
-            model_server_logger.info((
+            llm_logger.info((
                 f"Connected EngineWorkerQueue client_id: {self.client_id}, number "
                 f"of connected clients: {self.connected_client_counter.get()}"
             ))

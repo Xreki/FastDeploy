@@ -19,7 +19,7 @@ import os
 from datetime import datetime
 import re
 import uuid
-from fastdeployllm.utils import model_server_logger
+from fastdeployllm.utils import llm_logger
 from fastdeployllm.download_model import download_from_txt
 
 from typing import Literal,Optional,Dict,List,Any
@@ -48,7 +48,7 @@ class ModelConfig:
                 for key, value in config_dict.items():
                     setattr(self, key, value)
             except:
-                model_server_logger.error("Don't support the current model, you can use `paddlenlp` to register your model.")
+                llm_logger.error("Don't support the current model, you can use `paddlenlp` to register your model.")
                 raise ValueError("Don't support the current model, you can use `paddlenlp` to register your model.")
         else:
             with open(config_file, "r", encoding="utf-8") as f:
@@ -112,9 +112,9 @@ class ModelConfig:
             if not hasattr(self, key.lower()):
                 if os.getenv(key, None):
                     value = eval(os.getenv(key))
-                    model_server_logger.info("Get parameter `{}` = {} from environment.".format(key, value))
+                    llm_logger.info("Get parameter `{}` = {} from environment.".format(key, value))
                 else:
-                    model_server_logger.info("Parameter `{}` will use default value {}.".format(key, value))
+                    llm_logger.info("Parameter `{}` will use default value {}.".format(key, value))
                 setattr(self, key.lower(), value)
                 
         reset_config_value("COMPRESSION_RATIO", 1.0)
@@ -132,10 +132,10 @@ class ModelConfig:
         print all config
 
         """
-        model_server_logger.info("Model Configuration Information :")
+        llm_logger.info("Model Configuration Information :")
         for k, v in self.__dict__.items():
-                model_server_logger.info("{:<20}:{:<6}{}".format(k, "", v))
-        model_server_logger.info("=============================================================")
+                llm_logger.info("{:<20}:{:<6}{}".format(k, "", v))
+        llm_logger.info("=============================================================")
 
 
 
@@ -195,7 +195,7 @@ class CacheConfig:
             length = num_total_tokens // number_of_tasks
             block_num = (length + self.block_size - 1 + self.enc_dec_block_num) // self.block_size 
             self.total_block_num =  block_num * number_of_tasks
-            model_server_logger.info(f"Doing profile, the total_block_num:{self.total_block_num}")
+            llm_logger.info(f"Doing profile, the total_block_num:{self.total_block_num}")
         self.max_block_num = int(self.total_block_num * self.block_ratio)
 
     def reset(self, num_gpu_blocks):
@@ -204,7 +204,7 @@ class CacheConfig:
         """
         self.total_block_num  = num_gpu_blocks
         self.max_block_num = int(self.total_block_num * self.block_ratio)
-        model_server_logger.info((f"Reset block num, the total_block_num:{self.total_block_num},"
+        llm_logger.info((f"Reset block num, the total_block_num:{self.total_block_num},"
             f" max_block_num:{self.max_block_num}"))
 
     def print(self):
@@ -212,10 +212,10 @@ class CacheConfig:
         print all config
 
         """
-        model_server_logger.info("Cache Configuration Information :")
+        llm_logger.info("Cache Configuration Information :")
         for k, v in self.__dict__.items():
-                model_server_logger.info("{:<20}:{:<6}{}".format(k, "", v))
-        model_server_logger.info("=============================================================")
+                llm_logger.info("{:<20}:{:<6}{}".format(k, "", v))
+        llm_logger.info("=============================================================")
 
 
 class Config:
@@ -314,16 +314,16 @@ class Config:
         Args:
             file (str): the path of file to save config
         """
-        model_server_logger.info("=================== Configuration Information ===============")
+        llm_logger.info("=================== Configuration Information ===============")
         for k, v in self.__dict__.items():
             if k == "generation_config" and v is not None:
                 for gck, gcv in v.to_dict().items():
-                    model_server_logger.info("{:<20}:{:<6}{}".format(gck, "", gcv))
+                    llm_logger.info("{:<20}:{:<6}{}".format(gck, "", gcv))
             elif k == "cache_config" or k == "model_config":
                 v.print()
             else:
-                model_server_logger.info("{:<20}:{:<6}{}".format(k, "", v))
-        model_server_logger.info("=============================================================")
+                llm_logger.info("{:<20}:{:<6}{}".format(k, "", v))
+        llm_logger.info("=============================================================")
         if file is not None:
             f = open(file, "a")
             now_time = datetime.now()
@@ -353,7 +353,7 @@ class Config:
             if hasattr(config, key):
                 value = getattr(config, key)
                 setattr(cls, value_name, value)
-                model_server_logger.info(f"Reset parameter {value_name} = {value} from configuration.")
+                llm_logger.info(f"Reset parameter {value_name} = {value} from configuration.")
 
         reset_value(self.cache_config, "block_size", "infer_model_block_size")
         reset_value(self, "max_seq_len", "infer_model_max_seq_len")

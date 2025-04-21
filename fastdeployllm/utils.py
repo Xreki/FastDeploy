@@ -268,7 +268,7 @@ def download_model(url, output_dir, temp_tar):
     try:
         temp_tar = os.path.join(output_dir, temp_tar)
         # Download the file
-        model_server_logger.info(f"\nStarting download from: {url} {temp_tar}")
+        llm_logger.info(f"\nStarting download from: {url} {temp_tar}")
         download_file(url, temp_tar)
         # Extract the archive
         print("\nExtracting files...")
@@ -283,15 +283,6 @@ def download_model(url, output_dir, temp_tar):
         # Cleanup temp file
         if os.path.exists(temp_tar):
             os.remove(temp_tar)
-
-model_server_logger = get_logger("model_server", "infer_server.log")
-http_server_logger = get_logger("http_server", "http_server.log")
-data_processor_logger = get_logger("data_processor", "data_processor.log")
-monitor_logger = get_logger("monitor_logger", "monitor_logger.log", True)
-error_logger = get_logger("error_logger", "error_logger.log", True)
-
-
-
 
 
 class FlexibleArgumentParser(argparse.ArgumentParser):
@@ -346,3 +337,7 @@ class FlexibleArgumentParser(argparse.ArgumentParser):
                     items.append((new_key, v))
             return dict(items)
         return _flatten(d)
+
+
+llm_logger = get_logger("model_server", "infer_server.log")
+data_processor_logger = get_logger("data_processor", "data_processor.log")

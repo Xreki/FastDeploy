@@ -39,7 +39,7 @@ from fastdeployllm.engine.resource_manager import ResourceManager
 from fastdeployllm.inter_communicator import EngineWorkerQueue
 from fastdeployllm.output.token_processor import TokenProcessor, WarmUpTokenProcessor
 from fastdeployllm.inter_communicator import IPCSignal
-from fastdeployllm.utils import model_server_logger
+from fastdeployllm.utils import llm_logger
 
 
 class LLMEngine(object):
@@ -112,20 +112,20 @@ class LLMEngine(object):
         self.data_processor = self.input_processor.create_processor()
 
         self.infer_proc = self._start_infer_service()
-        model_server_logger.info("Waitting infer processes ready...")
+        llm_logger.info("Waitting infer processes ready...")
         while not self._infer_processes_ready():
-            #model_server_logger.info(f"{self.engine_ready_check_flag_array[0]} GPU KV blocks can be allocated.")
+            #llm_logger.info(f"{self.engine_ready_check_flag_array[0]} GPU KV blocks can be allocated.")
             time.sleep(1)
         self.is_started = True
 
 
         # start warmup
         if self.cfg.use_warmup:
-            model_server_logger.info("Start warmup")
+            llm_logger.info("Start warmup")
             self._set_warmup_token_processor()
             self.warmup()
             self._del_warmup_token_processor()
-            model_server_logger.info("Warmup finish")
+            llm_logger.info("Warmup finish")
 
 
         self.token_processor.tasks_queue = self.engine_worker_queue
@@ -140,7 +140,7 @@ class LLMEngine(object):
         self.start_push_sender_thread()
         if self.do_profile:
             self._stop_profile()
-        model_server_logger.info("Infer processes are launched with {} seconds.".format(time.time() - start_time))
+        llm_logger.info("Infer processes are launched with {} seconds.".format(time.time() - start_time))
 
 
     def start_push_sender_thread(self):
@@ -179,7 +179,7 @@ class LLMEngine(object):
                     self.req_output[result.request_id].appendleft(result)
 
             except Exception as e:
-                model_server_logger.error("Unexcepted error happend: {}, {}".format(e, str(traceback.format_exc())))
+                llm_logger.error("Unexcepted error happend: {}, {}".format(e, str(traceback.format_exc())))
 
     def get_result(self, req_id):
         """
@@ -237,10 +237,10 @@ class LLMEngine(object):
                     err_msg = "Error happend while insert task to engine: {}, {}.".format(
                         e, str(traceback.format_exc())
                     )
-                    model_server_logger.error(err_msg)
-            model_server_logger.info("finish insert_task_to_worker thread")
+                    llm_logger.error(err_msg)
+            llm_logger.info("finish insert_task_to_worker thread")
         except Exception as e:
-            model_server_logger.error(
+            llm_logger.error(
                 "insert_task_to_worker thread exit " f"unexpectedly, {e}. {str(traceback.format_exc())}"
             )
 
@@ -287,30 +287,30 @@ class LLMEngine(object):
                 f"Input text is too long, input_ids_len ({input_ids_len}) "
                 f"+ min_dec_len ({min_tokens}) >= max_seq_len "
             )
-            model_server_logger.error(error_msg)
+            llm_logger.error(error_msg)
             return
 
         if input_ids_len > self.cfg.max_seq_len:
             error_msg = (
                 f"Length of input token({input_ids_len}) exceeds the limit MAX_SEQ_LEN({self.cfg.max_seq_len})."
             )
-            model_server_logger.error(error_msg)
+            llm_logger.error(error_msg)
             return
 
 
         required_block_num = self.resource_manager.get_required_block_number(input_ids_len)
         if required_block_num > self.resource_manager.total_block_number():
             error_msg = f"The input task required resources is exceed the limit, task={task}."
-            model_server_logger.error(error_msg)
+            llm_logger.error(error_msg)
             return
 
         request.preprocess_end_time = datetime.now()
         self.cached_task_deque.appendleft(request)
-        model_server_logger.info(
+        llm_logger.info(
             f"cache task with req_id ({request.get('request_id')}), "
             f"cached_task_num: {len(self.cached_task_deque)}."
         )
-        model_server_logger.debug(f"cache task: {request}")
+        llm_logger.debug(f"cache task: {request}")
 
     def warmup(self):
         """
@@ -336,9 +336,9 @@ class LLMEngine(object):
 
         available_batch = np.sum(self.resource_manager.stop_flags)
         if len(tasks) > available_batch:
-            model_server_logger.error("Inserting batch:{} exceeds the available batch:{}.".format(
+            llm_logger.error("Inserting batch:{} exceeds the available batch:{}.".format(
                 len(tasks), available_batch))
-            model_server_logger.error("The exceeded part will be ignored!")
+            llm_logger.error("The exceeded part will be ignored!")
             tasks = tasks[:available_batch]
 
         tasks = self.resource_manager.allocate_resources_for_new_tasks(tasks)
@@ -350,7 +350,7 @@ class LLMEngine(object):
             self.token_processor.number_of_input_tokens += tasks[i].prompt_token_ids_len
 
         req_ids = [t.request_id for t in tasks]
-        model_server_logger.info(f"Tasks are sent to engine, req_ids={req_ids}")
+        llm_logger.info(f"Tasks are sent to engine, req_ids={req_ids}")
         self.engine_worker_queue.put_tasks((tasks, self.resource_manager.real_bsz))
         return True
 
@@ -478,7 +478,7 @@ class LLMEngine(object):
             pd_cmd = pd_cmd + f" --ips {self.cfg.ips}"
         log_dir = os.getenv("FD_LOG_DIR", default="log")
         pd_cmd = pd_cmd + arguments + f" >{log_dir}/launch_infer.log 2>&1"
-        model_server_logger.info("Launch infer service command: {}".format(pd_cmd))
+        llm_logger.info("Launch infer service command: {}".format(pd_cmd))
         p = subprocess.Popen(
             pd_cmd,
             shell=True,
@@ -523,7 +523,7 @@ class LLMEngine(object):
         Yields:
             str: The generated response.
         """
-        model_server_logger.info(f"Start generate prompt: {prompts}")
+        llm_logger.info(f"Start generate prompt: {prompts}")
         req_id = self._format_and_add_data(prompts)
 
         while True:
@@ -538,13 +538,13 @@ class LLMEngine(object):
             if stream:
                 processed = self.data_processor.process_response(result)
                 output = processed.todict()
-                model_server_logger.info(f"Output: {processed}")
+                llm_logger.info(f"Output: {processed}")
                 yield output
 
             # 遇到终止条件时退出循环
             if is_end:
                 processed = self.data_processor.process_response(result)
-                model_server_logger.info(f"Output: {processed}")
+                llm_logger.info(f"Output: {processed}")
                 del self.req_output[req_id]
                 output = processed.todict()
                 yield output
@@ -565,7 +565,7 @@ class LLMEngine(object):
                 num_gpu_blocks = min(num_gpu_blocks, self.get_profile_block_num_signal.value[i])
         
         self.get_profile_block_num_signal.clear()
-        model_server_logger.info(f"Stop profile, num_gpu_blocks:  {num_gpu_blocks}")
+        llm_logger.info(f"Stop profile, num_gpu_blocks:  {num_gpu_blocks}")
         self.cfg.cache_config.reset(num_gpu_blocks)
         self.resource_manager.reset_cache_config(self.cfg.cache_config)
 

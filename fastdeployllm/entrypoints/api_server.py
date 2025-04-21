@@ -19,16 +19,14 @@ import json
 from fastapi import FastAPI
 from fastapi.responses import Response, StreamingResponse
 
-from fastdeployllm.utils import FlexibleArgumentParser, http_server_logger
+from fastdeployllm.utils import FlexibleArgumentParser, get_logger
 from fastdeployllm.engine.args_utils import EngineArgs
 from fastdeployllm.engine.engine import LLMEngine
 
-
-
+api_server_logger = get_logger("fastdeploy", "api_server.log")
 app = FastAPI()
 
 llm_engine = None
-
 
 def init_app(args):
     """

@@ -21,7 +21,7 @@ import threading
 import time
 
 import numpy as np
-from fastdeployllm.utils import model_server_logger
+from fastdeployllm.utils import llm_logger
 
 
 class ResourceManager(object):
@@ -49,7 +49,7 @@ class ResourceManager(object):
         self.tasks_list = [None] * max_batch_size
         # current batch status of the engine
         self.real_bsz = 0
-        model_server_logger.info(f"{self.info()}")
+        llm_logger.info(f"{self.info()}")
 
     def reset_cache_config(self, cfg):
         """
@@ -125,12 +125,12 @@ class ResourceManager(object):
 
         block_list = list()
         if block_num > len(self.free_list):
-            model_server_logger.error("block_num:{0} > free_list len:{1}".format(block_num, len(self.free_list)))
+            llm_logger.error("block_num:{0} > free_list len:{1}".format(block_num, len(self.free_list)))
             return block_list
         for _ in range(block_num):
             used_block_id = self.free_list.pop()
             block_list.append(used_block_id)
-        model_server_logger.info(f"dispatch {len(block_list)} blocks.")
+        llm_logger.info(f"dispatch {len(block_list)} blocks.")
         return block_list
 
     def _recycle_block_tables(self, block_tables):
@@ -143,7 +143,7 @@ class ResourceManager(object):
         ori_number = len(self.free_list)
         self.free_list.extend(block_tables)
         cur_number = len(self.free_list)
-        model_server_logger.info(f"recycle {cur_number - ori_number} blocks.")
+        llm_logger.info(f"recycle {cur_number - ori_number} blocks.")
 
     def available_batch(self):
         """
@@ -214,7 +214,7 @@ class ResourceManager(object):
                     task.idx = allocated_position
                     block_tables = self._get_block_tables(task.prompt_token_ids_len)
                     if not block_tables:
-                        model_server_logger.error("req_id: {0} block_tables is empty".format(task.request_id))
+                        llm_logger.error("req_id: {0} block_tables is empty".format(task.request_id))
                         continue
                     else:
                         task.block_tables = block_tables
@@ -225,7 +225,7 @@ class ResourceManager(object):
                     task.inference_time_cost = -1.0
                     task.tokens_all_num = int(0)
                     self.tasks_list[allocated_position] = task
-                    model_server_logger.info(f"allocate req_id: {task.request_id}, "
+                    llm_logger.info(f"allocate req_id: {task.request_id}, "
                                             f"allocated_position:{allocated_position}, "
                                             f"input_ids_length: {task.prompt_token_ids_len}")
                 allocated_position += 1
@@ -237,9 +237,9 @@ class ResourceManager(object):
                 self.real_bsz = i + 1
                 break
 
-        model_server_logger.info("in num:{0} new task num:{1} real_bsz is:{2}".format(
+        llm_logger.info("in num:{0} new task num:{1} real_bsz is:{2}".format(
             len(tasks), len(processed_tasks), self.real_bsz))
-        model_server_logger.info(f"{self.info()}")
+        llm_logger.info(f"{self.info()}")
         return processed_tasks
 
     def info(self):

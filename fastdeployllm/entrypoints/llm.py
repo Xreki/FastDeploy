@@ -25,7 +25,7 @@ from fastdeployllm.engine.args_utils import EngineArgs
 from fastdeployllm.engine.engine import LLMEngine
 from fastdeployllm.engine.sampling_params import SamplingParams
 
-from fastdeployllm.utils import model_server_logger
+from fastdeployllm.utils import llm_logger
 
 
 class LLM:
@@ -220,16 +220,16 @@ class LLM:
                         continue
                     is_end = result.finished
                     result = self.llm_engine.data_processor.process_response(result)
-                    model_server_logger.debug(f"Send result to client under push mode: {result}")
+                    llm_logger.debug(f"Send result to client under push mode: {result}")
                     if is_end:
                         output.append(result)
                         num_requests -= 1
                         req_ids.remove(req_id)
-                        model_server_logger.debug("Request id: {} has been completed.".format(req_id))
+                        llm_logger.debug("Request id: {} has been completed.".format(req_id))
                         if use_tqdm:
                             pbar.update(1)
                 except Exception as e:
-                        model_server_logger.error("Unexcepted error happend: {}".format(e))
+                        llm_logger.error("Unexcepted error happend: {}".format(e))
         if use_tqdm:
             pbar.close()
         return output

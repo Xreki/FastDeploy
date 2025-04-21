@@ -28,7 +28,7 @@ else:
 
 from paddlenlp.utils.env import MAX_BSZ, MAX_DRAFT_TOKENS, SPECULATE_MAX_BSZ
 
-from fastdeployllm.utils import datetime_diff, model_server_logger, monitor_logger
+from fastdeployllm.utils import datetime_diff, llm_logger, monitor_logger
 from fastdeployllm.engine.request import RequestOutput, CompletionOutput, RequestMetrics
 
 
@@ -103,7 +103,7 @@ class TokenProcessor(object):
 
                 self._process_batch_output()
             except Exception as e:
-                model_server_logger.info("while get input_data error: {0} {1}".format(e, str(traceback.format_exc())))
+                llm_logger.info("while get input_data error: {0} {1}".format(e, str(traceback.format_exc())))
 
     def postprocess(self, batch_result):
         """
@@ -194,9 +194,9 @@ class TokenProcessor(object):
                     result.prompt = task.prompt
                     result.prompt_token_ids = task.prompt_token_ids
                     self._recycle_resources(task_id, i, task)
-                    model_server_logger.info("req_id: {0} finished".format(task_id))
-                    model_server_logger.info(f"{self.resource_manager.info()}")
-                    model_server_logger.info(
+                    llm_logger.info("req_id: {0} finished".format(task_id))
+                    llm_logger.info(f"{self.resource_manager.info()}")
+                    llm_logger.info(
                         f"Speculate accept ratio: {1 - self.total_step * 1.0 / self.number_of_output_tokens}"
                         f" total step: {self.total_step}. total_output_token_num: {self.number_of_output_tokens}"
                     )
@@ -235,7 +235,7 @@ class WarmUpTokenProcessor(TokenProcessor):
                     continue
                 self._process_batch_output()
             except Exception as e:
-                model_server_logger.info("while get input_data error: {0} {1}".format(e, str(traceback.format_exc())))
+                llm_logger.info("while get input_data error: {0} {1}".format(e, str(traceback.format_exc())))
 
     def stop(self):
         """
@@ -243,5 +243,5 @@ class WarmUpTokenProcessor(TokenProcessor):
         """
         self._is_running = False
         self.worker.join()
-        model_server_logger.info("warm up thread stop")
+        llm_logger.info("warm up thread stop")
         del self.worker
