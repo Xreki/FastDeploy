@@ -28,7 +28,7 @@ else:
 
 from paddlenlp.utils.env import MAX_BSZ, MAX_DRAFT_TOKENS, SPECULATE_MAX_BSZ
 
-from fastdeployllm.utils import datetime_diff, llm_logger, monitor_logger
+from fastdeployllm.utils import datetime_diff, llm_logger
 from fastdeployllm.engine.request import RequestOutput, CompletionOutput, RequestMetrics
 
 
