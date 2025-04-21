@@ -106,18 +106,29 @@ class Worker:
         # worker_ready_signal 用于engine感知各worker进程是否Ready
         worker_ready_signal_data = np.zeros(shape=[self.nranks], dtype=np.int32)
         self.worker_ready_signal = IPCSignal(name="worker_ready_singnal",
-                                             array=worker_ready_signal_data, dtype=np.int32, create=False)
+                                             array=worker_ready_signal_data,
+											 dtype=np.int32,
+ 											 pid=self.args.engine_pid,
+											 create=False)
         self.worker_ready_signal.value[self.rank] = 1
 
         # exist_task_signal 用于各worker进程感知是否有新Task需要处理
         exist_task_signal_data = np.zeros([1], dtype=np.int32)
         self.exist_task_signal = IPCSignal(
-            name="exist_task_signal", array=exist_task_signal_data, dtype=np.int32, create=False)
+            name="exist_task_signal",
+			array=exist_task_signal_data,
+			dtype=np.int32,
+			pid=self.args.engine_pid,
+			create=False)
 
         # exist_swapped_task_signal 用于engine感知worker中是否存在swapped task
         exist_swapped_task_signal_data = np.zeros([1], dtype=np.int32)
         self.exist_swapped_task_signal = IPCSignal(
-            name="exist_swapped_task_signal", array=exist_swapped_task_signal_data, dtype=np.int32, create=False)
+            name="exist_swapped_task_signal",
+			array=exist_swapped_task_signal_data,
+			dtype=np.int32,
+			pid=self.args.engine_pid,
+			create=False)
 
     def format_print_configuration(self):
         """
@@ -297,7 +308,11 @@ class Worker:
 
         get_profile_block_num = np.zeros(shape=[self.nranks], dtype=np.int32)
         self.get_profile_block_num_signal = IPCSignal(
-            name="get_profile_block_num", array=get_profile_block_num, dtype=np.int32, create=False)
+            name="get_profile_block_num",
+			array=get_profile_block_num,
+			dtype=np.int32,
+            pid=self.args.engine_pid,
+			create=False)
         self.get_profile_block_num_signal.value[self.rank] = int(num_gpu_blocks)
         logger.info(f"{self.get_profile_block_num_signal.value[self.rank]} GPU KV blocks can be allocated.")
         self.infer_engine._update_share_input_block_num(num_gpu_blocks)
@@ -340,6 +355,7 @@ def parse_args():
     parser.add_argument("--block_ratio", type=float, default=0.7, help="block ratio")
     parser.add_argument("--first_token_id", type=int, default=1, help="first token id")
     parser.add_argument("--gpu_memory_utilization", type=float, default=0.9, help="gpu memory utilization")
+    parser.add_argument("--engine_pid", type=int, default=None, help="Process ID of engine")
     parser.add_argument("--do_profile", type=int, default=0, help="do profile or not")
     parser.add_argument("--pad_token_id", type=int, default=-1, help="pad token id")
     parser.add_argument("--eos_tokens_lens", type=int, default=2, help="eos token lens")

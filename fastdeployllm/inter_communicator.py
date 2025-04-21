@@ -51,6 +51,7 @@ class IPCSignal:
                  name: str,
                  array: np.ndarray,
                  dtype: np.dtype,
+                 pid: int = None,
                  create: bool = True) -> None:
         """Initialize or connect to a shared memory block.
 
@@ -65,6 +66,10 @@ class IPCSignal:
         """
         assert isinstance(array, np.ndarray), "Input must be a numpy array"
         assert dtype == array.dtype, "Specified dtype must match array dtype"
+
+        # Set a suffix for name to avoid name conflict while there are multiple engine launched
+        if pid is not None:
+            name = name + f".{pid}"
 
         if create:
             assert not shared_memory_exists(

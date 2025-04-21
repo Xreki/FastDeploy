@@ -16,7 +16,6 @@
 
 
 import sys
-
 import multiprocessing
 import os
 import signal
@@ -175,7 +174,7 @@ class LLMEngine(object):
                     if result.finished:
                         result = self.req_output_completion[result.request_id]
                         del self.req_output_completion[result.request_id]
- 
+
                     self.req_output[result.request_id].appendleft(result)
 
             except Exception as e:
@@ -280,7 +279,7 @@ class LLMEngine(object):
 
         request.prompt_token_ids_len = len(request.prompt_token_ids)
         input_ids_len = request.prompt_token_ids_len
-        request.set("max_tokens", min(self.cfg.max_seq_len - input_ids_len , request.get("max_tokens"))) 
+        request.set("max_tokens", min(self.cfg.max_seq_len - input_ids_len , request.get("max_tokens")))
         min_tokens = request.get("min_tokens")
         if input_ids_len + min_tokens >= self.cfg.max_seq_len:
             error_msg = (
@@ -421,23 +420,36 @@ class LLMEngine(object):
         # worker_ready_signal 用于engine感知各worker进程是否Ready
         worker_ready_signal_data = np.zeros(shape=[self.cfg.mp_num], dtype=np.int32)
         self.worker_ready_signal = IPCSignal(name="worker_ready_singnal",
-                                             array=worker_ready_signal_data, dtype=np.int32, create=True)
+                                             array=worker_ready_signal_data,
+                      						 dtype=np.int32,
+  											 pid=os.getpid(),
+											 create=True)
 
         # exist_task_signal 用于各worker进程感知是否有新Task需要处理
         exist_task_signal_data = np.zeros([1], dtype=np.int32)
         self.exist_task_signal = IPCSignal(name="exist_task_signal",
-                                           array=exist_task_signal_data, dtype=np.int32, create=True)
+                                           array=exist_task_signal_data,
+										   dtype=np.int32,
+                                           pid=os.getpid(),
+										   create=True)
 
         # exist_swapped_task_signal 用于engine感知worker中是否存在swapped task
         exist_swapped_task_signal_data = np.zeros([1], dtype=np.int32)
         self.exist_swapped_task_signal = IPCSignal(
-            name="exist_swapped_task_signal", array=exist_swapped_task_signal_data, dtype=np.int32, create=True)
-        
+            name="exist_swapped_task_signal",
+			array=exist_swapped_task_signal_data,
+			dtype=np.int32,
+            pid=os.getpid(),
+			create=True)
+
         if self.do_profile:
             get_profile_block_num = np.zeros([self.cfg.mp_num], dtype=np.int32)
             self.get_profile_block_num_signal = IPCSignal(
-                name="get_profile_block_num", array=get_profile_block_num, dtype=np.int32, create=True)
-
+                name="get_profile_block_num",
+				array=get_profile_block_num,
+				dtype=np.int32,
+                pid=os.getpid(),
+				create=True)
 
     def _exit_sub_services(self):
         """
@@ -472,6 +484,7 @@ class LLMEngine(object):
                     f" --enc_dec_block_num {self.cfg.cache_config.enc_dec_block_num}"
                     f" --eos_tokens_lens {self.data_processor.eos_token_id_len}"
                     f" --pad_token_id {self.data_processor.pad_token_id}"
+                    f" --engine_pid {os.getpid()}"
                     f" --do_profile {self.do_profile}"
                     f" --block_ratio {self.cfg.cache_config.block_ratio} --dtype {self.cfg.cache_config.cache_dtype}")
         if self.cfg.nnode > 1:
@@ -563,9 +576,8 @@ class LLMEngine(object):
                 num_gpu_blocks = self.get_profile_block_num_signal.value[i]
             else:
                 num_gpu_blocks = min(num_gpu_blocks, self.get_profile_block_num_signal.value[i])
-        
+
         self.get_profile_block_num_signal.clear()
         llm_logger.info(f"Stop profile, num_gpu_blocks:  {num_gpu_blocks}")
         self.cfg.cache_config.reset(num_gpu_blocks)
         self.resource_manager.reset_cache_config(self.cfg.cache_config)
-
