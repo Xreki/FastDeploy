@@ -212,7 +212,7 @@ class ModelRunner(ModelRunnerBase):
     
 
     def _update_share_input_block_num(self, num_gpu_blocks):
-        del self.share_inputs["cache_kvs"]
+        del self.share_inputs["caches"]
         self._init_kvcache(num_gpu_blocks)
 
         del self.share_inputs["block_tables"]
@@ -222,7 +222,7 @@ class ModelRunner(ModelRunnerBase):
 
         # 初始化free list
         free_list = list(
-            range(self.num_gpu_blocks - 1, int(self.num_gpu_blocks * self.args.block_ratio) - 1, -1)
+            range(num_gpu_blocks - 1, int(num_gpu_blocks * self.args.block_ratio) - 1, -1)
         )
         self.free_list_len = len(free_list)
         self.share_inputs.update({

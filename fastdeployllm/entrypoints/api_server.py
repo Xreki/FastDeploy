@@ -37,7 +37,7 @@ def init_app(args):
     engine_args = EngineArgs.from_cli_args(args)
     llm_engine = LLMEngine.from_engine_args(engine_args)
     llm_engine.start()
-    http_server_logger.info(f"LLM engine inited")
+    api_server_logger.info(f"LLM engine inited")
 
 
 @app.get("/health")
@@ -51,7 +51,7 @@ def generate(request: dict):
     """
     generate stream api
     """
-    http_server_logger.info(f"receive request: {request}")
+    api_server_logger.info(f"receive request: {request}")
     stream = request.get("stream", 0)
     def event_generator():
         for result in llm_engine.generate(request, stream):
@@ -64,8 +64,8 @@ def launch_api_server(args) -> None:
     """
     启动http服务
     """
-    http_server_logger.info(f"launch Fastdeploy api server... port: {args.port}")
-    http_server_logger.info(f"args: {args.__dict__}")
+    api_server_logger.info(f"launch Fastdeploy api server... port: {args.port}")
+    api_server_logger.info(f"args: {args.__dict__}")
 
     init_app(args)
 
@@ -76,7 +76,7 @@ def launch_api_server(args) -> None:
                     workers=args.workers,
                     log_level="error")  # set log level to error to avoid log
     except Exception as e:
-        http_server_logger.error(f"launch sync http server error, {e}")
+        api_server_logger.error(f"launch sync http server error, {e}")
 
 
 def main():
