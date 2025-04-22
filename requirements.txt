@@ -1,7 +1,6 @@
---index-url https://pip.baidu-int.com/simple/
---trusted-host pip.baidu.com
-hatchling>=1.18.0
-build>=1.0.3
-pytest
-mock
--e .
+setuptools==50.3.2
+tqdm
+pynvml
+uvicorn
+fastapi
+paddlenlp @ https://paddle-qa.bj.bcebos.com/paddlenlp/wheel/7922286e92751c86b5084e00b5b14b5185d8a6f0/paddlenlp-3.0.0b2.post20250221-py3-none-any.whl

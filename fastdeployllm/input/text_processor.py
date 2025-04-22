@@ -20,9 +20,8 @@ import numpy as np
 from abc import ABC, abstractmethod
 
 from paddlenlp.transformers import Llama3Tokenizer, LlamaTokenizer
-from paddlenlp.trl.llm_utils import get_eos_token_id
+
 from fastdeployllm.utils import data_processor_logger
-from paddlenlp.utils.env import USE_FAST_TOKENIZER
 from paddlenlp.generation import GenerationConfig
 
 
@@ -147,6 +146,8 @@ class DataProcessor(BaseDataProcessor):
         self.tokenizer = self._load_tokenizer()
         data_processor_logger.info(f"tokenizer information: bos_token is {self.tokenizer.bos_token}, {self.tokenizer.bos_token_id}, \
                                 eos_token is {self.tokenizer.eos_token}, {self.tokenizer.eos_token_id} ")
+
+        from paddlenlp.trl.llm_utils import get_eos_token_id
 
         self.eos_token_ids = get_eos_token_id(self.tokenizer, self.generation_config)
         self.eos_token_id_len = len(self.eos_token_ids)
@@ -338,6 +339,8 @@ class DataProcessor(BaseDataProcessor):
         Returns:
             tokenizer (AutoTokenizer)
         """
+
+        from paddlenlp.utils.env import USE_FAST_TOKENIZER
         use_fast = int(os.getenv("USE_FAST", "1")) == 1
         if self.use_hf_tokenizer:
             from transformers import AutoTokenizer

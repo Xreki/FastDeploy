@@ -1,10 +1,18 @@
 FastDeploy LLM部署
 ===
 
-## 安装
+4.5T 快速部署
+
+## 环境安装
+安装efficient llm (https://console.cloud.baidu-int.com/devops/icode/repos/baidu/paddle_internal/EfficientLLM/tree/master)
+
+拉取fastdeploy llm 到本地，并将路径添加至PYTHONPATH
+
 
 ```
-python setup.py install
+cd FastDeploy
+pip install -r requirements.txt
+export PYTHONPATH=${PWD}:$PYTHONPATH
 ```
 
 ## LLM API使用
@@ -20,7 +28,7 @@ prompts = [
 # Define sampling parameters
 sampling_params = SamplingParams(temperature=0.8, top_p=0.95)
 
-# Initialize the LLM engine with the OPT-125M model
+# Initialize the LLM engine with the ERNIE 4.5 Turbo model
 llm = LLM(model="ERNIE/4.5-Turbo")
 
 # Generate outputs for the input prompts
@@ -29,7 +37,7 @@ outputs = llm.generate(prompts, sampling_params)
 # Print the generated outputs
 for output in outputs:
     prompt = output.prompt
-    generated_text = output.outputs[0].text
+    generated_text = output.outputs.text
 ```
 
 ## LLM api server
