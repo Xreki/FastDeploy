@@ -112,6 +112,13 @@ class Worker:
 											 create=False)
         self.worker_ready_signal.value[self.rank] = 1
 
+
+        # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
+        self.infer_healthy_live_recorded_time_array = np.zeros(shape=[self.nranks], dtype=np.float32)
+        self.infer_healthy_live_signal = IPCSignal(name="infer_healthy_live_signal",
+                    array=self.infer_healthy_live_recorded_time_array, dtype=np.float32, create=False)
+        self.infer_healthy_live_signal.value[self.rank] = time.time()
+
         # exist_task_signal 用于各worker进程感知是否有新Task需要处理
         exist_task_signal_data = np.zeros([1], dtype=np.int32)
         self.exist_task_signal = IPCSignal(
@@ -192,9 +199,10 @@ class Worker:
         infer_seed_increment = paddle.full(shape=[self.args.max_batch_size, 1], fill_value=4, dtype="int64")
         self.nnode = 1
         while True:
+
             self.insert_step = False
 
-            # self.engine_healthy_recorded_time_array[0] = time.time()
+            self.infer_healthy_live_recorded_time_array[self.rank] = time.time()
             mp_num_per_node = self.nranks
 
             if self.rank % mp_num_per_node == 0:

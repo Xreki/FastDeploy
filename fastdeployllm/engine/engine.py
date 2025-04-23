@@ -16,6 +16,7 @@
 
 
 import sys
+import asyncio
 import multiprocessing
 import os
 import signal
@@ -171,6 +172,7 @@ class LLMEngine(object):
                         self.req_output_completion[result.request_id] = result
                     else:
                         self.req_output_completion[result.request_id].add(result)
+
                     if result.finished:
                         result = self.req_output_completion[result.request_id]
                         del self.req_output_completion[result.request_id]
@@ -311,6 +313,7 @@ class LLMEngine(object):
         )
         llm_logger.debug(f"cache task: {request}")
 
+
     def warmup(self):
         """
         construct test tasks and avoid out of memory problem in the infer process
@@ -442,6 +445,12 @@ class LLMEngine(object):
             suffix=os.getpid(),
 			create=True)
 
+
+        # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
+        self.infer_healthy_live_recorded_time_array = np.zeros(shape=[self.cfg.mp_num], dtype=np.float32)
+        self.infer_healthy_live_signal = IPCSignal(name="infer_healthy_live_signal",
+                    array=self.infer_healthy_live_recorded_time_array, dtype=np.float32, create=True)
+        
         if self.do_profile:
             get_profile_block_num = np.zeros([self.cfg.mp_num], dtype=np.int32)
             self.get_profile_block_num_signal = IPCSignal(
@@ -458,6 +467,7 @@ class LLMEngine(object):
         self.worker_ready_signal.clear()
         self.exist_task_signal.clear()
         self.exist_swapped_task_signal.clear()
+        self.infer_healthy_live_signal.clear()
         if hasattr(self, "infer_proc") and self.infer_proc is not None:
             os.killpg(self.infer_proc.pid, signal.SIGTERM)
 
@@ -507,10 +517,12 @@ class LLMEngine(object):
 
 
     def _format_and_add_data(self, prompts: dict):
-        request_id = str(uuid.uuid4())
 
-        prompts["req_id"] = request_id
+        if "req_id" not in prompts:
+            request_id = str(uuid.uuid4())
+            prompts["req_id"] = request_id
         query_list = []
+
         if "context" in prompts:
             for item in prompts["context"]:
                 if item["role"] == "system":
@@ -540,28 +552,26 @@ class LLMEngine(object):
         req_id = self._format_and_add_data(prompts)
 
         while True:
-            # 获取当前请求的结果
             result = self.get_result(req_id)
             if result is None:
                 time.sleep(0.01)  # 避免忙等待
                 continue
 
             is_end = result.finished
-
             if stream:
                 processed = self.data_processor.process_response(result)
                 output = processed.todict()
-                llm_logger.info(f"Output: {processed}")
                 yield output
 
             # 遇到终止条件时退出循环
             if is_end:
                 processed = self.data_processor.process_response(result)
-                llm_logger.info(f"Output: {processed}")
                 del self.req_output[req_id]
                 output = processed.todict()
-                yield output
+                if not stream:
+                    yield output
                 break
+
 
     def _stop_profile(self):
         """
@@ -581,3 +591,19 @@ class LLMEngine(object):
         llm_logger.info(f"Stop profile, num_gpu_blocks:  {num_gpu_blocks}")
         self.cfg.cache_config.reset(num_gpu_blocks)
         self.resource_manager.reset_cache_config(self.cfg.cache_config)
+
+    def check_health(self, time_interval_threashold=30):
+        """
+        Check the health of the model server by checking whether all workers are alive.
+
+        Returns:
+            bool: True if all workers are alive, False otherwise.
+        """
+        if self.infer_healthy_live_recorded_time_array[0]:
+            elapsed_time = time.time() - self.infer_healthy_live_recorded_time_array[0]
+            if elapsed_time > time_interval_threashold:
+                return False, "Infer Service Not Healthy"
+
+        return True, ""
+
+
