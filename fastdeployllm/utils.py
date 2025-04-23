@@ -341,3 +341,4 @@ class FlexibleArgumentParser(argparse.ArgumentParser):
 
 llm_logger = get_logger("model_server", "infer_server.log")
 data_processor_logger = get_logger("data_processor", "data_processor.log")
+http_server_logger = get_logger("http_server", "http_server.log")

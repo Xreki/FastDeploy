@@ -68,3 +68,4 @@ class InputPreprocessor:
             from fastdeployllm.input.mm_register import MultiModalRegistry
             self.processor = MultiModalRegistry.create_processor(self.model_name_or_path)
         return self.processor
+

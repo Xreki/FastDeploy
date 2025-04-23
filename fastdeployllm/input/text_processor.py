@@ -285,7 +285,7 @@ class DataProcessor(BaseDataProcessor):
             List[int]: ID sequences
         """
         message_result = self.tokenizer.apply_chat_template(messages, return_tensors="pd")
-        return message_result["input_ids"][0]
+        return np.array(message_result["input_ids"][0])
 
 
     def ids2tokens(self, token_id, task_id):

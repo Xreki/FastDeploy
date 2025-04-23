@@ -178,7 +178,7 @@ class ModelRunner(ModelRunnerBase):
             )
 
             # TODO 待确认正确性
-            if task.get("stop_token_ids") is not None:
+            if task.get("stop_token_ids") is not None and task.get("stop_seqs_len") is not None:
                 stop_seqs_num = len(task.get("stop_seqs_len"))
                 for i in range(stop_seqs_num, self.model_cfg.max_stop_seqs_num):
                     task.stop_seqs_len.append(0)

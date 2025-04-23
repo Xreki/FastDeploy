@@ -15,13 +15,13 @@ class Request:
     def __init__(
         self,
         request_id: str,
-        prompt: Optional[Union[str, list[str]]],
-        prompt_token_ids: Optional[list[int]],
-        messages: Optional[list[list[dict[str, Any]]]],
-        system: Optional[Union[str, list[str]]],
         sampling_params: SamplingParams,
-        eos_token_ids: Optional[list[int]],
         arrival_time: float,
+        prompt: Optional[Union[str, list[str]]]=None,
+        prompt_token_ids: Optional[list[int]]=None,
+        messages: Optional[list[list[dict[str, Any]]]]=None,
+        system: Optional[Union[str, list[str]]]=None,
+        eos_token_ids: Optional[list[int]]=None,
         multi_modal_inputs: Optional[dict] = None,
     ) -> None:
         self.request_id = request_id
@@ -164,7 +164,8 @@ class RequestOutput:
 
     def add(self, next_output: "RequestOutput") -> None:
         """Merge RequestOutput into this one"""
-
+        self.prompt = next_output.prompt
+        self.prompt_token_ids = next_output.prompt_token_ids
         self.finished |= next_output.finished
         self.outputs.index = next_output.outputs.index
         self.outputs.token_ids.extend(next_output.outputs.token_ids)

@@ -178,16 +178,20 @@ class TokenProcessor(object):
             else:
                 metrics = RequestMetrics(arrival_time=time.time())
             self.number_of_output_tokens += len(token_ids)
+            result = RequestOutput(
+                request_id=task_id,
+                outputs = CompletionOutput(
+                    index=self.tokens_counter[task_id],
+                    token_ids=token_ids
+                ),
+                finished=False,
+                metrics=metrics
+            )
+            if self.tokens_counter[task_id] == 0 and task.messages is not None:
+                result.prompt = task.messages
+                result.prompt_token_ids = task.prompt_token_ids
+
             for token_id in token_ids:
-                result = RequestOutput(
-                    request_id=task_id,
-                    outputs = CompletionOutput(
-                        index=self.tokens_counter[task_id],
-                        token_ids=token_ids
-                    ),
-                    finished=False,
-                    metrics=metrics
-                )
                 self.tokens_counter[task_id] += 1 
                 if token_id in task.eos_token_ids:
                     result.finished = True

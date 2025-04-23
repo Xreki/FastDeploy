@@ -114,9 +114,8 @@ class LLM:
         if isinstance(prompts, dict):
             if "prompts" not in prompts:
                 raise ValueError("prompts must be a input dict")
-            text = prompts.pop("prompt")
-            prompts = [text]
-            sampling_params = SamplingParams.from_dict(prompts)
+            prompts = [prompts]
+            sampling_params = None
         
 
         if sampling_params_len != 1 and len(prompts) != sampling_params_len:

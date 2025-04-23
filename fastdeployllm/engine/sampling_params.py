@@ -50,11 +50,6 @@ class SamplingParams:
             the model more random. Zero means greedy sampling.
         top_p: Float that controls the cumulative probability of the top tokens
             to consider. Must be in (0, 1]. Set to 1 to consider all tokens.
-        top_k: Integer that controls the number of top tokens to consider. Set
-            to -1 to consider all tokens.
-        min_p: Float that represents the minimum probability for a token to be
-            considered, relative to the probability of the most likely token.
-            Must be in [0, 1]. Set to 0 to disable this.
         seed: Random seed to use for the generation.
         stop: list of strings that stop the generation when they are generated.
             The returned output will not contain the stop strings.
@@ -84,8 +79,6 @@ class SamplingParams:
     repetition_penalty: float = 1.0
     temperature: float = 1.0
     top_p: float = 0.7
-    top_k: int = -1
-    min_p: float = 0.0
     seed: Optional[int] = None
     stop: Optional[Union[str, List[str]]] = None
     stop_token_ids: Optional[Union[List[List[int]], List[int]]] = None
@@ -101,6 +94,42 @@ class SamplingParams:
             field.name: req_dict[field.name] if field.name in req_dict else field.default
             for field in fields(cls)
         })
+
+
+    @classmethod
+    def from_optional(cls,
+        n,
+        best_of,
+        presence_penalty,
+        frequency_penalty,
+        repetition_penalty,
+        temperature,
+        top_p,
+        seed=None,
+        stop=None,
+        stop_token_ids=None,
+        max_tokens=2048,
+        min_tokens=1,
+        logprobs=None,
+        bad_words=None
+        ) -> "SamplingParams":
+        """Create instance from command line arguments"""
+        return cls(
+            n=1 if n is None else n,
+            best_of=best_of,
+            presence_penalty=presence_penalty if presence_penalty is not None else 0.0,
+            frequency_penalty=frequency_penalty if frequency_penalty is not None else 0.0,
+            repetition_penalty=repetition_penalty if repetition_penalty is not None else 1.0,
+            temperature=temperature if temperature is not None else 1.0,
+            top_p=top_p if top_p is not None else 0.7,
+            seed=seed,
+            stop=stop,
+            stop_token_ids=stop_token_ids,
+            max_tokens=max_tokens if max_tokens is not None else 2048,
+            min_tokens=min_tokens,
+            logprobs=logprobs,
+            bad_words=bad_words
+        )
 
 
     def __post_init__(self):
@@ -129,14 +158,7 @@ class SamplingParams:
                 f"temperature must be non-negative, got {self.temperature}.")
         if not 0.0 < self.top_p <= 1.0:
             raise ValueError(f"top_p must be in (0, 1], got {self.top_p}.")
-        if self.top_k < -1 or self.top_k == 0:
-            raise ValueError(f"top_k must be -1 (disable), or at least 1, "
-                             f"got {self.top_k}.")
-        if not isinstance(self.top_k, int):
-            raise TypeError(
-                f"top_k must be an integer, got {type(self.top_k).__name__}")
-        if not 0.0 <= self.min_p <= 1.0:
-            raise ValueError(f"min_p must be in [0, 1], got {self.min_p}.")
+
         if self.max_tokens is not None and self.max_tokens < 1:
             raise ValueError(
                 f"max_tokens must be at least 1, got {self.max_tokens}.")
