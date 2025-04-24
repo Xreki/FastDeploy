@@ -182,7 +182,7 @@ class TokenProcessor(object):
                 request_id=task_id,
                 outputs = CompletionOutput(
                     index=self.tokens_counter[task_id],
-                    token_ids=token_ids
+                    token_ids=[]
                 ),
                 finished=False,
                 metrics=metrics
@@ -205,6 +205,7 @@ class TokenProcessor(object):
                         f" total step: {self.total_step}. total_output_token_num: {self.number_of_output_tokens}"
                     )
                     break
+                result.outputs.token_ids.append(token_id)
             batch_result.append(result)
 
         self.postprocess(batch_result)
