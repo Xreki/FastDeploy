@@ -88,14 +88,13 @@ class ErnieProcessor(BaseDataProcessor):
             request.set("stop_seqs_len", stop_seqs_len)
 
         if request.prompt_token_ids is None or len(request.prompt_token_ids) == 0:
-            system = request.get("system", "")
+            system = request.get("system")
             if request.prompt is not None:
-                history_qa = request.get("history_QA")
+                history_qa = request.get("history")
                 request.prompt_token_ids = self.text2ids(request.prompt, history_qa, max_seq_len, system)
             elif request.messages is not None:
-                if self.tokenizer.chat_template is None:
-                    raise ValueError(f"This model does not support chat_template.")
-                request.prompt_token_ids = self.messages2ids(request.messages)
+                
+                request.prompt_token_ids = self.messages2ids(request.messages, max_seq_len)
             else:
                 raise ValueError(f"The request should have `input_ids`, `text` or `messages`: {request}.")
 
@@ -131,7 +130,7 @@ class ErnieProcessor(BaseDataProcessor):
             response_dict.outputs.text = self.ids2tokens(token_ids, req_id)
         return response_dict
 
-    def text2ids(self, text, history_qa=None, max_seq_len=None, system=""):
+    def text2ids(self, text, history_qa=None, max_seq_len=None, system=None):
         """
         将文本转换为对应的 ID。如果有history_qa，会将text和history_qa进行拼接。
         
@@ -151,13 +150,16 @@ class ErnieProcessor(BaseDataProcessor):
                     raise ValueError(f"The history_qa should be a list of [Q, A] pairs: {history_qa}.")
                 messages.append(item[0])
                 messages.append(item[1])
-        messages.append(text)
+        if isinstance(text, list):
+            messages.extend(text)
+        else:
+            messages.append(text)
         tokens = self._convert_to_ids(messages, max_seq_len, system)
         data_processor_logger.debug(f"processed data : {''.join(tokens)}")
         input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
         return input_ids
 
-    def _convert_to_ids(self, messages, max_seq_len=None, system=""):
+    def _convert_to_ids(self, messages, max_seq_len=None, system=None):
         """
         将多轮对话转换为对话ID序列。
         
@@ -172,22 +174,28 @@ class ErnieProcessor(BaseDataProcessor):
             raise ValueError(f"The number of the messages context ({len(messages)}) must be odd.")
         
 
-        prefix_tokens = [self.tokenizer.cls_token]
-        suffix_tokens = []
+    
 
-        context_tokens = self.tokenizer.tokenize(messages[-1]) + [self.tokenizer.sep_token]
+        prefix_tokens = [self.tokenizer.cls_token]
+        suffix_tokens = self.tokenizer.tokenize("Assistant: ")
+        system_tokens = []
+        if system is not None:
+            system_tokens = self.tokenizer.tokenize(system) + self.tokenizer.tokenize("\n")
+        context_tokens = self.tokenizer.tokenize(messages[-1]) + self.tokenizer.tokenize("\n")
 
         # process messages
         for idx in range(len(messages) - 2, -1, -2):
-            cur_turn_tokens = self.tokenizer.tokenize(messages[idx - 1]) + [self.tokenizer.sep_token]
-            cur_turn_tokens += self.tokenizer.tokenize(messages[idx]) + [self.tokenizer.cls_token]
+            cur_turn_tokens = self.tokenizer.tokenize("User: ") + \
+                self.tokenizer.tokenize(messages[idx - 1]) + self.tokenizer.tokenize("\n")
+            cur_turn_tokens += self.tokenizer.tokenize("Assistant: ") + \
+                self.tokenizer.tokenize(messages[idx]) + [self.tokenizer.sep_token]
             if max_seq_len is not None and len(prefix_tokens) + len(context_tokens) + len(suffix_tokens) + \
                                                len(cur_turn_tokens) >= max_seq_len:
                 data_processor_logger.warning(f"Truncate messages into: {messages[idx + 1:]}")
                 break
             context_tokens = cur_turn_tokens + context_tokens
-        new_length =  len(prefix_tokens) + len(context_tokens) + len(suffix_tokens) + 1
-
+        new_length =  len(system_tokens) + len(prefix_tokens) + len(context_tokens) + len(suffix_tokens) + 1
+        context_tokens = system_tokens + prefix_tokens + context_tokens
         if max_seq_len is not None and len(prefix_tokens) + len(context_tokens) + len(suffix_tokens) + 1 >= max_seq_len:
             data_processor_logger.warning(
                 "The length of the knowledge and the last user content "
@@ -201,18 +209,33 @@ class ErnieProcessor(BaseDataProcessor):
         return prefix_tokens + context_tokens + suffix_tokens
 
 
-    def messages2ids(self, messages):
+    def messages2ids(self, raw_messages, max_seq_len):
         """
         Convert multi-turn messages into ID sequences.
 
         Args:
-            messages (List[List[Dict[str, Any]]]): multi-turn messages.
+            messages (List[Dict[str, Any]]): multi-turn messages.
+            max_seq_len : support max length
 
         Returns:
             List[int]: ID sequences
         """
-        message_result = self.tokenizer.apply_chat_template(messages, return_tensors="pd")
-        return message_result["input_ids"][0]
+        system = None
+        if raw_messages[0]["role"] == "system" or raw_messages[0]["role"] == "developer":
+            system = raw_messages[0]["content"]
+            raw_messages = raw_messages[1:]
+        messages = []
+        messages_len = len(raw_messages)
+        if messages_len % 2 == 0:
+            raise ValueError(f"The number of the messages context (messages_len) must be odd.")
+        for message in raw_messages:
+            messages.append(message["content"])
+
+
+        tokens = self._convert_to_ids(messages, max_seq_len, system)
+        data_processor_logger.debug(f"processed data : {''.join(tokens)}")
+        input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
+        return input_ids
 
     def ids2tokens(self, token_id, task_id):
         """
