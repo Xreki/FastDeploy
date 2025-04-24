@@ -181,7 +181,8 @@ class ErnieProcessor(BaseDataProcessor):
         system_tokens = []
         if system is not None:
             system_tokens = self.tokenizer.tokenize(system) + self.tokenizer.tokenize("\n")
-        context_tokens = self.tokenizer.tokenize(messages[-1]) + self.tokenizer.tokenize("\n")
+        context_tokens = self.tokenizer.tokenize("User: ") + \
+            self.tokenizer.tokenize(messages[-1]) + self.tokenizer.tokenize("\n")
 
         # process messages
         for idx in range(len(messages) - 2, -1, -2):
@@ -195,7 +196,7 @@ class ErnieProcessor(BaseDataProcessor):
                 break
             context_tokens = cur_turn_tokens + context_tokens
         new_length =  len(system_tokens) + len(prefix_tokens) + len(context_tokens) + len(suffix_tokens) + 1
-        context_tokens = system_tokens + prefix_tokens + context_tokens
+        context_tokens = system_tokens + context_tokens
         if max_seq_len is not None and len(prefix_tokens) + len(context_tokens) + len(suffix_tokens) + 1 >= max_seq_len:
             data_processor_logger.warning(
                 "The length of the knowledge and the last user content "
