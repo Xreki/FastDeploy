@@ -152,7 +152,7 @@ class ModelRunner(ModelRunnerBase):
             )
 
             # TODO 待确认正确性
-            if task.get("stop_token_ids") is not None:
+            if task.get("stop_token_ids") is not None and task.get("stop_seqs_len") is not None:
                 stop_seqs_num = len(task.get("stop_seqs_len"))
                 for i in range(stop_seqs_num, self.model_cfg.max_stop_seqs_num):
                     task.stop_seqs_len.append(0)
@@ -248,7 +248,7 @@ class ModelRunner(ModelRunnerBase):
             self.share_inputs["seq_lens_encoder"][idx : idx + 1] = input_length
             self.share_inputs["seq_lens_decoder"][idx : idx + 1] = 0
             self.share_inputs["step_idx"][idx : idx + 1] = 0
-            self.share_inputs["max_length"][idx : idx + 1] = 10
+            self.share_inputs["max_dec_len"][idx : idx + 1] = 10
             self.share_inputs["stop_flags"][idx : idx + 1] = False
 
             self.share_inputs["first_token_ids"][idx : idx + 1] = self.share_inputs["input_ids"][idx : idx + 1, :1]
