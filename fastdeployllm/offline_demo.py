@@ -15,7 +15,11 @@
 """
 
 from fastdeployllm.entrypoints.llm import LLM
+from fastdeployllm.engine.sampling_params import SamplingParams
 model_name_or_path = "llama-7b"
+
+# 超参设置
+sampling_params = SamplingParams(temperature=0.1, max_tokens=30)
 llm = LLM(model=model_name_or_path, tensor_parallel_size=4)
 output = llm.generate(prompts="who are you？", use_tqdm=True)
 print(output)

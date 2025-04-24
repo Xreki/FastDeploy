@@ -561,7 +561,8 @@ class LLMEngine(object):
             if stream:
                 processed = self.data_processor.process_response(result)
                 output = processed.todict()
-                yield output
+                if not is_end:
+                    yield output
 
             # 遇到终止条件时退出循环
             if is_end:
@@ -569,6 +570,9 @@ class LLMEngine(object):
                 del self.req_output[req_id]
                 output = processed.todict()
                 if not stream:
+                    yield output
+                else:
+                    output["outputs"]["text"] = ""
                     yield output
                 break
 
