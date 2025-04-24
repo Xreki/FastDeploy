@@ -173,6 +173,8 @@ class RequestOutput:
     def add(self, next_output: "RequestOutput") -> None:
         """Merge RequestOutput into this one"""
 
+        self.prompt = next_output.prompt
+        self.prompt_token_ids = next_output.prompt_token_ids
         self.finished |= next_output.finished
         self.outputs.index = next_output.outputs.index
         self.outputs.token_ids.extend(next_output.outputs.token_ids)
@@ -198,5 +200,3 @@ class RequestOutput:
             "metrics": self.metrics.__dict__,
             "num_cached_tokens": self.num_cached_tokens,
         }
-
-
