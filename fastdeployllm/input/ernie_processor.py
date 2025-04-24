@@ -20,7 +20,7 @@ import numpy as np
 
 from fastdeployllm.utils import data_processor_logger
 from paddlenlp.generation import GenerationConfig
-from efficientllm.models.tokenizer import ErnieBotTokenizer
+from .ernie_tokenizer import ErnieBotTokenizer
 from fastdeployllm.input.text_processor import BaseDataProcessor
 from fastdeployllm.utils import data_processor_logger
 

@@ -30,11 +30,8 @@ from fastdeployllm.entrypoints.openai.protocol import (
     CompletionResponse
 )
 
-
 from fastdeployllm.entrypoints.openai.serving_chat import OpenAIServingChat
 from fastdeployllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
-
-
 
 app = FastAPI()
 
@@ -146,12 +143,6 @@ async def create_completion(request: CompletionRequest):
         return JSONResponse(content=generator.model_dump())
 
     return StreamingResponse(content=generator, media_type="text/event-stream")
-
-
-
-
-
-
 
 
 def launch_api_server(args) -> None:
