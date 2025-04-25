@@ -7,7 +7,7 @@
 """
 
 import time
-from typing import Any, ClassVar, Literal, Optional, Union, List
+from typing import Any, ClassVar, Literal, Optional, Union, List, Dict
 
 from fastapi import UploadFile
 from pydantic import (BaseModel, ConfigDict, Field, TypeAdapter,
@@ -84,6 +84,7 @@ class DeltaMessage(BaseModel):
     """
     role: Optional[str] = None
     content: Optional[str] = None
+    token_ids: Optional[List[int]] = None
 
 
 class ChatCompletionResponseStreamChoice(BaseModel):
@@ -92,6 +93,7 @@ class ChatCompletionResponseStreamChoice(BaseModel):
     """
     index: int
     delta: DeltaMessage
+    finish_reason: Optional[Literal["stop", "length"]] = None
 
 
 class ChatCompletionStreamResponse(BaseModel):
@@ -181,6 +183,7 @@ class CompletionRequest(BaseModel):
     top_p: Optional[float] = None
     user: Optional[str] = None
 
+
     # doc: begin-completion-sampling-params
     repetition_penalty: Optional[float] = None
     stop_token_ids: Optional[list[int]] = Field(default_factory=list)
@@ -223,7 +226,7 @@ class ChatCompletionRequest(BaseModel):
     """
     # Ordered by official OpenAI API documentation
     # https://platform.openai.com/docs/api-reference/chat/create
-    messages: list[ChatCompletionMessageParam]
+    messages: Union[list[ChatCompletionMessageParam], list[int]]
     model: Optional[str] = "default"
     frequency_penalty: Optional[float] = 0.0
     # remove max_tokens when field is removed from OpenAI API
@@ -239,6 +242,7 @@ class ChatCompletionRequest(BaseModel):
     stream_options: Optional[StreamOptions] = None
     temperature: Optional[float] = None
     top_p: Optional[float] = None
+    metadata: Optional[dict] = None
 
 
     # doc: begin-chat-completion-sampling-params
@@ -246,6 +250,8 @@ class ChatCompletionRequest(BaseModel):
     stop_token_ids: Optional[list[int]] = Field(default_factory=list)
     min_tokens: int = 0
     # doc: end-chat-completion-sampling-params
+
+    # training: Optional[bool] = True
 
     def to_dict_for_infer(self, request_id=None):
         """
@@ -257,9 +263,15 @@ class ChatCompletionRequest(BaseModel):
         req_dict = {}
         if request_id is not None:
             req_dict['request_id'] = request_id
+        if self.metadata is not None:
+            for key, value in self.metadata.items():
+                req_dict[key] = value
         for key, value in self.dict().items():
             if value is not None:
                 req_dict[key] = value
+        if isinstance(self.messages[0], int):
+            req_dict["prompt_token_ids"] = self.messages
+            del req_dict["messages"]
         return req_dict
 
     @model_validator(mode="before")

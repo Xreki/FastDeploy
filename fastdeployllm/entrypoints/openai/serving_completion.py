@@ -41,7 +41,28 @@ class OpenAIServingCompletion:
         """重构后的异步处理方法"""
         created_time = int(time.time())
         request_id = f"cmpl-{uuid.uuid4()}"
-        request_prompts = [request.prompt] if isinstance(request.prompt, str) else request.prompt
+        request_prompt_ids = None
+        request_prompts = None
+
+        if isinstance(request.prompt, str):
+            request_prompts = [request.prompt]
+        elif isinstance(request.prompt, list) and all(isinstance(item,  int) for item in request.prompt):
+            request_prompt_ids = [request.prompt]
+        elif isinstance(request.prompt, list) and all(isinstance(item, str) for item in request.prompt):
+            request_prompts = request.prompt
+        elif isinstance(request.prompt, list):
+            for item in request.prompt:
+                if isinstance(item, list) and all(isinstance(x, int) for x in item):
+                    continue
+                else:
+                    raise ValueError("Prompt must be a string, a list of strings or a list of integers.")
+            request_prompt_ids = request.prompt
+        else:
+            raise ValueError("Prompt must be a string, a list of strings or a list of integers.")
+
+        if request_prompt_ids is not None:
+            request_prompts = request_prompt_ids
+
         current_req_dict = request.to_dict_for_infer(request_id)
         
         try:
@@ -49,7 +70,10 @@ class OpenAIServingCompletion:
             async_generators = []
             for idx, prompt in enumerate(request_prompts):
                 # 创建同步生成器
-                current_req_dict["prompt"] = prompt
+                if request_prompt_ids is not None:
+                    current_req_dict["prompt_token_ids"] = request_prompt_ids[idx]
+                else:
+                    current_req_dict["prompt"] = request_prompts[idx]
                 sync_gen = self.engine_client.generate(
                     current_req_dict,
                     request.stream

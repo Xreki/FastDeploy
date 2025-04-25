@@ -136,6 +136,8 @@ class OpenAIServingChat:
                             index=i,
                             delta=DeltaMessage(role="assistant", content="")
                         )
+                        if request.metadata is not None and request.metadata.get("training", False):
+                            choice.delta.token_ids = list(res["prompt_token_ids"])
                         chunk = ChatCompletionStreamResponse(
                             id=request_id,
                             object=chunk_object_type,
@@ -151,7 +153,6 @@ class OpenAIServingChat:
                             )
                         yield f"data: {chunk.model_dump_json(exclude_unset=True)} \n\n"
                     first_iteration = False
-                http_server_logger.info(f"The chat completion stream chu{res}")
                 output = res["outputs"]
                 delta_text = output["text"]
 
@@ -162,6 +163,14 @@ class OpenAIServingChat:
                     index=output["index"],
                     delta=delta_message
                 )
+                if res["finished"]:
+                    if request.max_tokens is None or output["index"] + 1 != request.max_tokens:
+                        choice.finish_reason = "stop"
+                    else:
+                        choice.finish_reason = "length"
+
+                if request.metadata is not None and request.metadata.get("training", False) and delta_text != "":
+                    choice.delta.token_ids = output["token_ids"]
                 chunk = ChatCompletionStreamResponse(
                     id=request_id,
                     object=chunk_object_type,
@@ -227,11 +236,17 @@ class OpenAIServingChat:
             role="assistant",
             content=output["text"]
         )
+
         choice = ChatCompletionResponseChoice(
             index=output["index"],
             message=message,
             finish_reason=None
         )
+        if request.max_tokens is None or output["index"] + 1 != request.max_tokens:
+            
+            choice.finish_reason = "stop"
+        else:
+            choice.finish_reason = "length"
         choices.append(choice)
 
         num_prompt_tokens = len(final_res["prompt_token_ids"])

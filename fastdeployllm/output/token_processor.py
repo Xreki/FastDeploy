@@ -187,8 +187,9 @@ class TokenProcessor(object):
                 finished=False,
                 metrics=metrics
             )
-            if self.tokens_counter[task_id] == 0 and task.messages is not None:
-                result.prompt = task.messages
+            if self.tokens_counter[task_id] == 0:
+                if task.messages is not None:
+                    result.prompt = task.messages
                 result.prompt_token_ids = task.prompt_token_ids
 
             for token_id in token_ids:
