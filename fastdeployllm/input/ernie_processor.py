@@ -16,7 +16,8 @@
 
 import os
 import numpy as np
-
+from string import Template
+import re
 
 from fastdeployllm.utils import data_processor_logger
 from paddlenlp.generation import GenerationConfig
@@ -44,6 +45,14 @@ class ErnieProcessor(BaseDataProcessor):
         self.model_name_or_path = model_name_or_path
         data_processor_logger.info(f"model_name_or_path: {model_name_or_path}")
         self._init_config()
+
+        self.is_thinking = False
+        #TODO 规范 
+        if "X1" in model_name_or_path:
+            self.is_thinking = True
+            self.thinking_template = "<|prefixoftext|>思考<|middleoftext|>"
+            self.response_template = "<|prefixoftext|>开始回复<|middleoftext|>"
+
 
         self.decode_status = dict()
         self._load_tokenizer()
@@ -115,20 +124,33 @@ class ErnieProcessor(BaseDataProcessor):
         """
         is_end = response_dict.finished
         req_id = response_dict.request_id
-        # TODO openai format
-        # if "choices" in response_dict:
-        #     for i in range(len(response_dict["choices"])):
-        #         response_dict["token"] = self.ids2tokens(response_dict["choices"][i]["token_ids"], req_id)
-        #     return response_dict
+
 
         token_ids = response_dict.outputs.token_ids
-        response_dict.outputs.text = self.ids2tokens(token_ids, req_id)
-        response_dict.usage = {"completion_tokens" : response_dict.outputs.index + 1}
-
-        if is_end:
-            self.clear_request_status(req_id)
+        if self.is_thinking:
+            text, reasoning_content = self.ids2tokens_thinking(token_ids, req_id)
+            response_dict.outputs.text = text
+            response_dict.outputs.reasoning_content = reasoning_content
+        else:
             response_dict.outputs.text = self.ids2tokens(token_ids, req_id)
+        response_dict.usage = {"completion_tokens" : response_dict.outputs.index + 1}
+        if is_end:
+            if self.is_thinking:
+                text, reasoning_content = self.ids2tokens_thinking(token_ids, req_id)
+                response_dict.outputs.text = text
+                response_dict.outputs.reasoning_content = reasoning_content
+                if reasoning_content != "":
+                    match = re.search(r'^(.*?)<\|prefixoftext\|>开始回复<\|middleoftext\|>(.*)$', reasoning_content)
+                    if match:
+                        response_dict.outputs.text = match.group(1)
+                        response_dict.outputs.reasoning_content = match.group(2)
+            else:
+                response_dict.outputs.text = self.ids2tokens(token_ids, req_id)
+        if response_dict.outputs.text == "" and response_dict.outputs.reasoning_content == "":
+            return None
         return response_dict
+
+
 
     def text2ids(self, text, history_qa=None, max_seq_len=None, system=None):
         """
@@ -154,7 +176,12 @@ class ErnieProcessor(BaseDataProcessor):
             messages.extend(text)
         else:
             messages.append(text)
-        tokens = self._convert_to_ids(messages, max_seq_len, system)
+        if self.is_thinking:
+            system = "<sys_internal>【高优系统设定】必须最优先遵循<br/>启动思考模式：在采取任何行动前，\
+                都需要先写下自己的思考过程，为后续的决策或对用户的回复内容做铺垫。</sys_internal>\n\n"
+            tokens = self._convert_to_ids_thinking(messages, max_seq_len, system)
+        else:
+            tokens = self._convert_to_ids(messages, max_seq_len, system)
         data_processor_logger.debug(f"processed data : {''.join(tokens)}")
         input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
         return input_ids
@@ -172,9 +199,6 @@ class ErnieProcessor(BaseDataProcessor):
         """
         if len(messages) % 2 == 0:
             raise ValueError(f"The number of the messages context ({len(messages)}) must be odd.")
-        
-
-    
 
         prefix_tokens = [self.tokenizer.cls_token]
         suffix_tokens = self.tokenizer.tokenize("Assistant: ")
@@ -210,6 +234,47 @@ class ErnieProcessor(BaseDataProcessor):
         return prefix_tokens + context_tokens + suffix_tokens
 
 
+
+    def _convert_to_ids_thinking(self, messages, max_seq_len=None, system=None):
+        """
+        将多轮对话转换为对话ID序列。
+        
+        Args:
+            messages (List[str]): 包含所有对话轮的文本列表。
+                messages示例[Q1, A1, Q2, A2, Q3, A3, Q4], Q3,A3表示最近时间的对话，Q4表示需要回答的问题
+        
+        Returns:
+            List[int]: 对话ID序列，每个ID都是整数。
+        """
+        if len(messages) % 2 == 0:
+            raise ValueError(f"The number of the messages context ({len(messages)}) must be odd.")
+
+        
+        suffix_tokens = self.tokenizer.tokenize("<role>\nassistant<br/>\n<|prefixoftext|>思考<|middleoftext|>")
+
+        system_tokens = self.tokenizer.tokenize(system)
+
+        user_template = Template("""<role>\nuser<br/>\n${question}\n</role>\n\n""")
+
+        assistant_template = Template("""<role>
+assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n</role>\n\n""")
+
+        context_tokens = self.tokenizer.tokenize(user_template.safe_substitute({"question": messages[-1]}))
+
+        # process messages
+        for idx in range(len(messages) - 2, -1, -2):
+            cur_turn_tokens = self.tokenizer.tokenize(user_template.safe_substitute({"question": messages[idx - 1]}))
+            cur_turn_tokens += self.tokenizer.tokenize(assistant_template.safe_substitute({"answer": messages[idx]}))
+            if max_seq_len is not None and len(system_tokens) + len(context_tokens) + len(suffix_tokens) + \
+                                               len(cur_turn_tokens) >= max_seq_len:
+                data_processor_logger.warning(f"Truncate messages into: {messages[idx + 1:]}")
+                break
+            context_tokens = cur_turn_tokens + context_tokens
+
+        return system_tokens + context_tokens + suffix_tokens
+
+
+
     def messages2ids(self, raw_messages, max_seq_len):
         """
         Convert multi-turn messages into ID sequences.
@@ -222,9 +287,13 @@ class ErnieProcessor(BaseDataProcessor):
             List[int]: ID sequences
         """
         system = None
-        if raw_messages[0]["role"] == "system" or raw_messages[0]["role"] == "developer":
-            system = raw_messages[0]["content"]
-            raw_messages = raw_messages[1:]
+        if self.is_thinking:
+            system = "<sys_internal>【高优系统设定】必须最优先遵循<br/>启动思考模式：在采取任何行动前，\
+                都需要先写下自己的思考过程，为后续的决策或对用户的回复内容做铺垫。</sys_internal>\n\n"
+        else:
+            if raw_messages[0]["role"] == "system" or raw_messages[0]["role"] == "developer":
+                system = raw_messages[0]["content"]
+                raw_messages = raw_messages[1:]
         messages = []
         messages_len = len(raw_messages)
         if messages_len % 2 == 0:
@@ -232,12 +301,15 @@ class ErnieProcessor(BaseDataProcessor):
         for message in raw_messages:
             messages.append(message["content"])
 
-
-        tokens = self._convert_to_ids(messages, max_seq_len, system)
+        if self.is_thinking:
+            tokens = self._convert_to_ids_thinking(messages, max_seq_len, system)
+        else:
+            tokens = self._convert_to_ids(messages, max_seq_len, system)
         data_processor_logger.debug(f"processed data : {''.join(tokens)}")
         input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
         return input_ids
 
+    
     def ids2tokens(self, token_id, task_id):
         """
         token ids to strings
@@ -249,38 +321,63 @@ class ErnieProcessor(BaseDataProcessor):
         Returns:
             List[str]: strings
         """
-        if self.use_hf_tokenizer:
-            if task_id not in self.decode_status:
-                # history token ids & history token strings & befer decode str
-                self.decode_status[task_id] = [[], [], ""]
 
-            previous_token_ids = self.decode_status[task_id][0]
-            decode_str = self.tokenizer.batch_decode([previous_token_ids + token_id],
-                                        skip_special_tokens=True,
-                                        clean_up_tokenization_spaces=False)
-            if isinstance(decode_str, list) and len(decode_str):
-                new_str = decode_str[0].replace(self.decode_status[task_id][2], "", 1)
-                self.decode_status[task_id][1].append(new_str)
-                self.decode_status[task_id][2] = decode_str[0]
-            else:
-                new_str = ""
-            self.decode_status[task_id][0] += token_id
-            return new_str
+        if task_id not in self.decode_status:
+            # prefix offset & read offset & history token ids & history token strings
+            self.decode_status[task_id] = [0, 0, [], "", ""]
+
+        prefix_offset = self.decode_status[task_id][0]
+        read_offset = self.decode_status[task_id][1]
+        previous_token_ids = self.decode_status[task_id][2]
+        decode_str, prefix_offset, read_offset = self.tokenizer.decode_token(
+            previous_token_ids + token_id, prefix_offset, read_offset)
+        self.decode_status[task_id][0] = prefix_offset
+        self.decode_status[task_id][1] = read_offset
+        self.decode_status[task_id][2] += token_id
+        self.decode_status[task_id][3] += decode_str
+        return decode_str
+
+    def ids2tokens_thinking(self, token_id, task_id):
+        """
+        token ids to strings
+
+        Args:
+            token_ids (List[int]): token ids
+			task_id (str): task id
+
+        Returns:
+            List[str]: strings
+        """
+
+        if task_id not in self.decode_status:
+            # prefix offset & read offset & history token ids & history token strings
+            self.decode_status[task_id] = [0, 0, [], "", ""]
+
+        prefix_offset = self.decode_status[task_id][0]
+        read_offset = self.decode_status[task_id][1]
+        previous_token_ids = self.decode_status[task_id][2]
+        decode_str, prefix_offset, read_offset = self.tokenizer.decode_token(
+            previous_token_ids + token_id, prefix_offset, read_offset)
+        self.decode_status[task_id][0] = prefix_offset
+        self.decode_status[task_id][1] = read_offset
+        self.decode_status[task_id][2] += token_id
+
+        data_processor_logger.info(f"{token_id}, {decode_str}")
+        reasoning_content = ""
+        content = ""
+        if decode_str == "<|prefixoftext|>":
+            self.decode_status[task_id][4] = decode_str
+        elif self.decode_status[task_id][4] == "":
+            self.decode_status[task_id][3] += decode_str
         else:
-            if task_id not in self.decode_status:
-                # prefix offset & read offset & history token ids & history token strings
-                self.decode_status[task_id] = [0, 0, [], []]
+            self.decode_status[task_id][4] += decode_str
 
-            prefix_offset = self.decode_status[task_id][0]
-            read_offset = self.decode_status[task_id][1]
-            previous_token_ids = self.decode_status[task_id][2]
-            decode_str, prefix_offset, read_offset = self.tokenizer.decode_token(
-                previous_token_ids + token_id, prefix_offset, read_offset)
-            self.decode_status[task_id][0] = prefix_offset
-            self.decode_status[task_id][1] = read_offset
-            self.decode_status[task_id][2] += token_id
-            self.decode_status[task_id][3].append(decode_str)
-            return decode_str
+        if self.decode_status[task_id][4] == "":
+            content = decode_str
+        elif '<|middleoftext|>' in self.decode_status[task_id][4] and decode_str != "<|middleoftext|>": 
+            reasoning_content = decode_str
+        return reasoning_content, content
+
 
     def _load_tokenizer(self):
         """

@@ -4,7 +4,7 @@ import asyncio
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from collections.abc import Sequence as GenericSequence
-from typing import Optional, Union, cast, TypeVar
+from typing import Optional, Union, cast, TypeVar, List
 import uuid
 from fastapi import Request
 
@@ -106,8 +106,8 @@ class OpenAIServingCompletion:
         except ValueError as e:
             return ErrorResponse(message=str(e), code=400)
 
-    async def merge_async_generators(self, generators: list[AsyncGenerator]):
-        """修复后的异步生成器合并方法"""
+    async def merge_async_generators(self, generators: List[AsyncGenerator]):
+        """合并多个异步生成器为一个异步生成器"""
         task_to_index = {}
         # 初始化任务池
         for idx, gen in enumerate(generators):
@@ -146,7 +146,6 @@ class OpenAIServingCompletion:
                              request_id: str,
                              created_time: int,
                              model_name: str):
-        """修复后的非流式响应处理"""
         final_outputs = dict()
         try:
             async for idx, res in generator:
@@ -172,7 +171,6 @@ class OpenAIServingCompletion:
                                         request_id: str,
                                         created_time: int,
                                         model_name: str):
-        """优化后的流式响应生成"""
         try:
             async for idx, res in generator:
                 # 处理每个响应块
@@ -183,7 +181,8 @@ class OpenAIServingCompletion:
                     model=model_name,
                     choices=[CompletionResponseStreamChoice(
                         index=output['index'],
-                        text=output['text']
+                        text=output['text'],
+                        reasoning_content=output['reasoning_content']
                     )]
                 )
                 yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
@@ -208,13 +207,13 @@ class OpenAIServingCompletion:
 
     def request_output_to_completion_response(
         self,
-        final_res_batch: list[RequestOutput],
+        final_res_batch: List[RequestOutput],
         request: CompletionRequest,
         request_id: str,
         created_time: int,
         model_name: str,
     ) -> CompletionResponse:
-        choices: list[CompletionResponseChoice] = []
+        choices: List[CompletionResponseChoice] = []
         num_prompt_tokens = 0
         num_generated_tokens = 0
 
@@ -240,6 +239,7 @@ class OpenAIServingCompletion:
             choice_data = CompletionResponseChoice(
                 index=len(choices),
                 text=output_text,
+                reasoning_content=output['reasoning_content'],
                 logprobs=None,
                 finish_reason=None
             )

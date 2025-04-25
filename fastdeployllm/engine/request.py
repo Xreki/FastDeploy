@@ -94,11 +94,13 @@ class CompletionOutput:
     index: int
     token_ids: list[int]
     text: Optional[str] = None
+    reasoning_content: Optional[str] = None
 
     def __repr__(self) -> str:
         return (f"CompletionOutput(index={self.index}, "
                 f"text={self.text!r}, "
-                f"token_ids={self.token_ids}")
+                f"token_ids={self.token_ids}, "
+                f"reasoning_content={self.reasoning_content!r}")
 
 
 

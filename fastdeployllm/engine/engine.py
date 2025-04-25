@@ -14,7 +14,7 @@
 # limitations under the License.
 """
 
-
+from __future__ import annotations
 import sys
 import asyncio
 import multiprocessing
@@ -563,6 +563,8 @@ class LLMEngine(object):
             is_end = result.finished
             if stream:
                 processed = self.data_processor.process_response(result)
+                if processed is None:
+                    continue
                 output = processed.todict()
                 if not is_end:
                     yield output
@@ -576,6 +578,7 @@ class LLMEngine(object):
                     yield output
                 else:
                     output["outputs"]["text"] = ""
+                    output["outputs"]["reasoning_content"] = ""
                     yield output
                 break
 

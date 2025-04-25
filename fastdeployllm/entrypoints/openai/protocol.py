@@ -5,7 +5,7 @@
 # https://github.com/lm-sys/FastChat/blob/168ccc29d3f7edc50823016105c024fe2282732a/fastchat/protocol/openai_api_protocol.py
 
 """
-
+from __future__ import annotations
 import time
 from typing import Any, ClassVar, Literal, Optional, Union, List, Dict
 
@@ -55,6 +55,7 @@ class ChatMessage(BaseModel):
     """
     role: str
     content: str
+    reasoning_content: Optional[str] = None
 
 
 class ChatCompletionResponseChoice(BaseModel):
@@ -85,6 +86,7 @@ class DeltaMessage(BaseModel):
     role: Optional[str] = None
     content: Optional[str] = None
     token_ids: Optional[List[int]] = None
+    reasoning_content: Optional[str] = None
 
 
 class ChatCompletionResponseStreamChoice(BaseModel):
@@ -114,6 +116,7 @@ class CompletionResponseChoice(BaseModel):
     index: int
     text: str
     logprobs: Optional[int] = None
+    reasoning_content: Optional[str] = None
     finish_reason: Optional[Literal["stop", "length"]]
 
 
@@ -136,6 +139,7 @@ class CompletionResponseStreamChoice(BaseModel):
     index: int
     text: str
     logprobs: Optional[float] = None
+    reasoning_content: Optional[str] = None
     finish_reason: Optional[Literal["stop", "length"]] = None
 
 
@@ -166,7 +170,7 @@ class CompletionRequest(BaseModel):
     # Ordered by official OpenAI API documentation
     # https://platform.openai.com/docs/api-reference/completions/create
     model: Optional[str] = "default"
-    prompt: Union[list[int], list[list[int]], str, list[str]]
+    prompt: Union[List[int], List[List[int]], str, List[str]]
     best_of: Optional[int] = None
     echo: Optional[bool] = False
     frequency_penalty: Optional[float] = 0.0
@@ -175,7 +179,7 @@ class CompletionRequest(BaseModel):
     n: int = 1
     presence_penalty: Optional[float] = 0.0
     seed: Optional[int] = None
-    stop: Optional[Union[str, list[str]]] = Field(default_factory=list)
+    stop: Optional[Union[str, List[str]]] = Field(default_factory=list)
     stream: Optional[bool] = False
     stream_options: Optional[StreamOptions] = None
     suffix: Optional[str] = None
@@ -186,7 +190,7 @@ class CompletionRequest(BaseModel):
 
     # doc: begin-completion-sampling-params
     repetition_penalty: Optional[float] = None
-    stop_token_ids: Optional[list[int]] = Field(default_factory=list)
+    stop_token_ids: Optional[List[int]] = Field(default_factory=list)
     min_tokens: int = 0
     # doc: end-completion-sampling-params
 
@@ -226,7 +230,7 @@ class ChatCompletionRequest(BaseModel):
     """
     # Ordered by official OpenAI API documentation
     # https://platform.openai.com/docs/api-reference/chat/create
-    messages: Union[list[ChatCompletionMessageParam], list[int]]
+    messages: Union[List[ChatCompletionMessageParam], List[int]]
     model: Optional[str] = "default"
     frequency_penalty: Optional[float] = 0.0
     # remove max_tokens when field is removed from OpenAI API
@@ -237,7 +241,7 @@ class ChatCompletionRequest(BaseModel):
     n: Optional[int] = 1
     presence_penalty: Optional[float] = 0.0
     seed: Optional[int] = None
-    stop: Optional[Union[str, list[str]]] = Field(default_factory=list)
+    stop: Optional[Union[str, List[str]]] = Field(default_factory=list)
     stream: Optional[bool] = False
     stream_options: Optional[StreamOptions] = None
     temperature: Optional[float] = None
@@ -247,7 +251,7 @@ class ChatCompletionRequest(BaseModel):
 
     # doc: begin-chat-completion-sampling-params
     repetition_penalty: Optional[float] = None
-    stop_token_ids: Optional[list[int]] = Field(default_factory=list)
+    stop_token_ids: Optional[List[int]] = Field(default_factory=list)
     min_tokens: int = 0
     # doc: end-chat-completion-sampling-params
 

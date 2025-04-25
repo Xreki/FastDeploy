@@ -18,7 +18,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
-from typing import Callable, Optional, Union
+from typing import Callable, Optional, Union, List
 import uuid
 
 from fastapi import Request
@@ -153,11 +153,12 @@ class OpenAIServingChat:
                             )
                         yield f"data: {chunk.model_dump_json(exclude_unset=True)} \n\n"
                     first_iteration = False
+                http_server_logger.info(f"The chat completion stream chu{res}")
                 output = res["outputs"]
                 delta_text = output["text"]
 
                 previous_num_tokens[0] += len(output["token_ids"])
-                delta_message = DeltaMessage(content=delta_text)
+                delta_message = DeltaMessage(content=delta_text, reasoning_content=output["reasoning_content"])
                 
                 choice = ChatCompletionResponseStreamChoice(
                     index=output["index"],
@@ -234,7 +235,8 @@ class OpenAIServingChat:
         output = final_res["outputs"]
         message = ChatMessage(
             role="assistant",
-            content=output["text"]
+            content=output["text"],
+            reasoning_content=output["reasoning_content"]
         )
 
         choice = ChatCompletionResponseChoice(
