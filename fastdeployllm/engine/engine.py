@@ -449,7 +449,10 @@ class LLMEngine(object):
         # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
         self.infer_healthy_live_recorded_time_array = np.zeros(shape=[self.cfg.mp_num], dtype=np.float32)
         self.infer_healthy_live_signal = IPCSignal(name="infer_healthy_live_signal",
-                    array=self.infer_healthy_live_recorded_time_array, dtype=np.float32, create=True)
+                    array=self.infer_healthy_live_recorded_time_array, 
+					dtype=np.float32, 
+                    suffix=os.getpid(),
+					create=True)
         
         if self.do_profile:
             get_profile_block_num = np.zeros([self.cfg.mp_num], dtype=np.int32)

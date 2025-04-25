@@ -54,7 +54,8 @@ class ModelRunner(ModelRunnerBase):
             speculate_method=None,
             speculate_max_draft_token_num=5,
             return_all_hidden_states=False,
-            is_int4_moe=True,
+            moe_quant_type="wint4",
+            use_safetensors=self.model_cfg.is_unified_ckpt,
         )
         model.eval()
         self.model = model

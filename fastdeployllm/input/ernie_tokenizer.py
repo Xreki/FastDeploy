@@ -40,7 +40,7 @@ class ErnieBotTokenizer(PretrainedTokenizer):
     """
 
     resource_files_names = {
-        "vocab_file": "ernie_token_100k.model",
+        "vocab_file": "spm.model",
     }
     pretrained_resource_files_map = {"vocab_file": {"ernie-bot": None}}
     pretrained_init_configuration = {
@@ -85,6 +85,7 @@ class ErnieBotTokenizer(PretrainedTokenizer):
             split_special_tokens=split_special_tokens,
             **kwargs,
         )
+        self.verbose = False
         self.vocab_file = vocab_file
         self.model = spm.ModelProto()
         with open(vocab_file, "rb") as fp:

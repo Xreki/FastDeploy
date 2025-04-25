@@ -116,7 +116,10 @@ class Worker:
         # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
         self.infer_healthy_live_recorded_time_array = np.zeros(shape=[self.nranks], dtype=np.float32)
         self.infer_healthy_live_signal = IPCSignal(name="infer_healthy_live_signal",
-                    array=self.infer_healthy_live_recorded_time_array, dtype=np.float32, create=False)
+                    array=self.infer_healthy_live_recorded_time_array, 
+					dtype=np.float32,
+                    suffix=self.args.engine_pid,
+					create=False)
         self.infer_healthy_live_signal.value[self.rank] = time.time()
 
         # exist_task_signal 用于各worker进程感知是否有新Task需要处理

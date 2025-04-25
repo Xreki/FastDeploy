@@ -19,9 +19,8 @@ import os
 from datetime import datetime
 import re
 import uuid
-from fastdeployllm.utils import llm_logger
+from fastdeployllm.utils import llm_logger, check_unified_ckpt
 from fastdeployllm.download_model import download_from_txt
-
 from typing import Literal,Optional,Dict,List,Any
 
 
@@ -37,6 +36,8 @@ class ModelConfig:
         ):
 
         self.model_dir = model_name_or_path
+        
+        self.is_unified_ckpt = check_unified_ckpt(self.model_dir)
 
         config_file = os.path.join(model_name_or_path, config_json_file)
         if os.path.isfile(model_name_or_path):
@@ -72,7 +73,7 @@ class ModelConfig:
         从导出模型的配置文件中加载
         """
 
-        if hasattr(self, "infer_model_mp_num"):
+        if not self.is_unified_ckpt and hasattr(self, "infer_model_mp_num"):
             self.mp_num = self.infer_model_mp_num
             del self.infer_model_mp_num
         if hasattr(self, "num_hidden_layers"):

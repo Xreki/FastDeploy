@@ -338,6 +338,35 @@ class FlexibleArgumentParser(argparse.ArgumentParser):
             return dict(items)
         return _flatten(d)
 
+def check_unified_ckpt(model_dir):
+    """
+    Check if the model is a PaddleNLP unified checkpoint
+    """
+    model_files = list()
+    all_files = os.listdir(model_dir)     
+    for x in all_files:
+        if x.startswith("model") and x.endswith(".safetensors"):
+            model_files.append(x)
+
+    is_unified_ckpt = len(model_files) > 0
+    if not is_unified_ckpt:
+        return False
+    
+    if len(model_files) == 1 and model_files[0] == "model.safetensors":
+        return True
+    
+    try:
+        # check all the file exists
+        safetensors_num = int(model_files[0].strip(".safetensors").split("-")[-1])
+        flags = [0] * safetensors_num   
+        for x in model_files:
+            current_index = int(x.strip(".safetensors").split("-")[1])
+            flags[current_index - 1] = 1
+        assert sum(flags) == safetensors_num, "Number of safetensor files should be {}, but now it's {}".format(len(model_files), sum(flags))
+    except Exception as e:
+        raise Exception(f"Failed to check unified checkpoint, details: {e}.")
+    return is_unified_ckpt
+
 
 llm_logger = get_logger("model_server", "infer_server.log")
 data_processor_logger = get_logger("data_processor", "data_processor.log")
