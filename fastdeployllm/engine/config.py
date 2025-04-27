@@ -82,11 +82,6 @@ class ModelConfig:
             self.tensor_parallel_size = self.infer_model_mp_num
             del self.infer_model_mp_num
 
-        self.device_ids = ",".join([str(i) for i in range(self.tensor_parallel_size)])
-        self.device_ids = os.getenv("CUDA_VISIBLE_DEVICES",
-                                    self.device_ids)
-        assert len(self.device_ids.split(",")) == self.tensor_parallel_size
-
         if hasattr(self, "num_hidden_layers"):
             self.num_layers = self.num_hidden_layers
             del self.num_hidden_layers
