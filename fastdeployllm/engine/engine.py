@@ -100,7 +100,8 @@ class LLMEngine(object):
         # TODO
         # 1. 增加engine hostname
         address = ('0.0.0.0', self.cfg.engine_worker_queue_port)
-        self.engine_worker_queue = EngineWorkerQueue(address=address, is_server=True, num_client=self.cfg.mp_num)
+        self.engine_worker_queue = EngineWorkerQueue(
+            address=address, is_server=True, num_client=self.cfg.tensor_parallel_size)
 
         self.is_started = False
 
@@ -421,10 +422,10 @@ class LLMEngine(object):
 
 
         # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
-        self.worker_healthy_live_recorded_time_array = np.zeros(shape=[self.cfg.mp_num], dtype=np.float32)
+        self.worker_healthy_live_recorded_time_array = np.zeros(shape=[self.cfg.tensor_parallel_size], dtype=np.float32)
         self.worker_healthy_live_signal = IPCSignal(name="worker_healthy_live_signal",
-                    array=self.worker_healthy_live_recorded_time_array, 
-					dtype=np.float32, 
+                    array=self.worker_healthy_live_recorded_time_array,
+					dtype=np.float32,
                     suffix=os.getpid(),
 					create=True)
 

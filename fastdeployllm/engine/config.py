@@ -253,7 +253,7 @@ class Config:
         pod_ips: Optional[List[str]] = None,
         mm_processor_kwargs: Optional[Dict[str, Any]] = None,
         speculative_config: Optional[Dict[str, Any]] = None,
-        use_warmup: bool = False
+        use_warmup: bool = False,
         engine_worker_queue_port: int = 8002,
     ):
         """
@@ -294,7 +294,7 @@ class Config:
         self.max_prefill_batch = 3
 
         self.engine_worker_queue_port = engine_worker_queue_port
-        self.device_ids = ",".join([str(i) for i in range(self.mp_num)])
+        self.device_ids = ",".join([str(i) for i in range(self.tensor_parallel_size)])
         self.device_ids = os.getenv("CUDA_VISIBLE_DEVICES",
                                     self.device_ids)
 
