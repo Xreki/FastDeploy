@@ -381,6 +381,7 @@ def is_port_available(host, port):
     Check the port is available
     """
     import socket
+    import errno
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
