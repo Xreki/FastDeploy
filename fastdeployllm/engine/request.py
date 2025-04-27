@@ -4,14 +4,12 @@ import enum
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Union, Any
-from fastdeployllm.engine.sampling_params import SamplingParams
 
+from fastdeployllm.engine.sampling_params import SamplingParams
 from fastdeployllm.utils import data_processor_logger
 
 
-
 class Request:
-
     def __init__(
         self,
         request_id: str,
@@ -78,9 +76,6 @@ class Request:
                 f"sampling_params={self.sampling_params})")
 
 
-
-
-
 @dataclass
 class CompletionOutput:
     """The output data of one completion output of a request.
@@ -101,8 +96,6 @@ class CompletionOutput:
                 f"text={self.text!r}, "
                 f"token_ids={self.token_ids}, "
                 f"reasoning_content={self.reasoning_content!r}")
-
-
 
 
 @dataclass

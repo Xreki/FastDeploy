@@ -194,8 +194,8 @@ class CompletionRequest(BaseModel):
     min_tokens: int = 0
     # doc: end-completion-sampling-params
 
-    
-    def to_dict_for_infer(self, request_id=None):
+
+    def to_dict_for_infer(self, request_id=None, prompt=None):
         """
         Convert the request parameters into a dictionary
 
@@ -208,6 +208,8 @@ class CompletionRequest(BaseModel):
         for key, value in self.dict().items():
             if value is not None:
                 req_dict[key] = value
+        if prompt is not None:
+            req_dict['prompt'] = prompt
         return req_dict
 
 

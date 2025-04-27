@@ -108,7 +108,7 @@ class SamplingParams:
         seed=None,
         stop=None,
         stop_token_ids=None,
-        max_tokens=2048,
+        max_tokens=None,
         min_tokens=1,
         logprobs=None,
         bad_words=None
@@ -125,7 +125,7 @@ class SamplingParams:
             seed=seed,
             stop=stop,
             stop_token_ids=stop_token_ids,
-            max_tokens=max_tokens if max_tokens is not None else 2048,
+            max_tokens=max_tokens if max_tokens is not None else 8192,
             min_tokens=min_tokens,
             logprobs=logprobs,
             bad_words=bad_words
@@ -172,7 +172,7 @@ class SamplingParams:
         if self.logprobs is not None and self.logprobs < 0:
             raise ValueError(
                 f"logprobs must be non-negative, got {self.logprobs}.")
-        
+
         if not 0 <= self.seed <= 922337203685477580:
             raise ValueError("seed must be in [0, 922337203685477580], got "
                              f"{self.seed}.")

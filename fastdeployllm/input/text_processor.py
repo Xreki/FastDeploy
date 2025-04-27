@@ -75,7 +75,7 @@ class BaseDataProcessor(ABC):
         """
         raise NotImplementedError
 
-    def text2ids(self, text, max_seq_len=None):
+    def text2ids(self, text, max_model_len=None):
         """
         text to token ids
 
@@ -127,14 +127,14 @@ class DataProcessor(BaseDataProcessor):
     def __init__(self, model_name_or_path):
         """
             Initializes the DecodeStatus object.
-        
+
         Args:
             model_name_or_path (str): The name or path of the pre-trained model to be loaded.
                 Can also be a path to a directory containing the pre-trained model file.
-        
+
         Returns:
             None.
-        
+
         Raises:
             None.
         """
@@ -156,13 +156,13 @@ class DataProcessor(BaseDataProcessor):
     def _init_config(self):
         """
             初始化配置，包括模型名称、使用Hugging Face Tokenizer等。
-        
+
         Args:
             无参数，但是会从环境变量中获取一些配置信息。
-        
+
         Returns:
             无返回值，直接修改了类的属性。
-        
+
         Raises:
             无异常抛出。
         """
@@ -178,7 +178,7 @@ class DataProcessor(BaseDataProcessor):
             self.generation_config = None
 
 
-    def process_request(self, request, max_seq_len=None):
+    def process_request(self, request, max_model_len=None):
         """
         Preprocess the request
 
@@ -197,11 +197,11 @@ class DataProcessor(BaseDataProcessor):
             stop_seqs, stop_seqs_len = self.update_stop_seq(stop_sequences)
             request.set("stop_token_ids", stop_seqs)
             request.set("stop_seqs_len", stop_seqs_len)
-        
+
 
         if request.prompt_token_ids is None or len(request.prompt_token_ids) == 0:
             if request.prompt is not None:
-                request.prompt_token_ids = self.text2ids(request.prompt, max_seq_len)
+                request.prompt_token_ids = self.text2ids(request.prompt, max_model_len)
             elif request.messages is not None:
                 if self.tokenizer.chat_template is None:
                     raise ValueError(f"This model does not support chat_template.")
@@ -209,8 +209,8 @@ class DataProcessor(BaseDataProcessor):
             else:
                 raise ValueError(f"The request should have `input_ids`, `text` or `messages`: {request}.")
 
-        if max_seq_len is not None and len(request.prompt_token_ids) > max_seq_len:
-            request.prompt_token_ids = request.prompt_token_ids[:max_seq_len - 1]
+        if max_model_len is not None and len(request.prompt_token_ids) > max_model_len:
+            request.prompt_token_ids = request.prompt_token_ids[:max_model_len - 1]
 
 
     def process_response(self, response_dict, **kwargs):
@@ -225,11 +225,6 @@ class DataProcessor(BaseDataProcessor):
         """
         is_end = response_dict.finished
         req_id = response_dict.request_id
-        # TODO openai format
-        # if "choices" in response_dict:
-        #     for i in range(len(response_dict["choices"])):
-        #         response_dict["token"] = self.ids2tokens(response_dict["choices"][i]["token_ids"], req_id)
-        #     return response_dict
 
         token_ids = response_dict.outputs.token_ids
         response_dict.outputs.text = self.ids2tokens(token_ids, req_id)
@@ -237,12 +232,12 @@ class DataProcessor(BaseDataProcessor):
 
         if is_end:
             self.clear_request_status(req_id)
-            data_processor_logger.info("Request id: {} has been completed.".format(token_ids))
+            data_processor_logger.debug("Request id: {} has been completed.".format(token_ids))
             response_dict.outputs.text = self.ids2tokens(token_ids, req_id)
         return response_dict
 
 
-    def text2ids(self, text, max_seq_len):
+    def text2ids(self, text, max_model_len):
         """
         text to token ids
 
@@ -269,7 +264,7 @@ class DataProcessor(BaseDataProcessor):
                 return_tensors="np",
                 padding=True,
                 truncation=True,
-                max_length=max_seq_len,
+                max_length=max_model_len,
                 add_special_tokens=self.tokenizer.chat_template is None,
             )
         return tokens["input_ids"][0]

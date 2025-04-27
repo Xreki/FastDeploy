@@ -72,6 +72,7 @@ class Worker:
             rank=self.rank
         )
 
+        # TODO 多机
         address = ('0.0.0.0', self.args.engine_worker_queue_port)
         self.engine_worker_queue = EngineWorkerQueue(
             address=address, is_server=False, num_client=self.nranks, client_id=self.rank)
@@ -198,7 +199,7 @@ class Worker:
             Raises:
                 None.
         """
-        infer_seed_increment = paddle.full(shape=[self.args.max_batch_size, 1], fill_value=4, dtype="int64")
+        infer_seed_increment = paddle.full(shape=[self.args.max_num_seqs, 1], fill_value=4, dtype="int64")
         self.nnode = 1
         while True:
 
@@ -332,11 +333,11 @@ class Worker:
         """
         run profile
         """
-        infer_seed_increment = paddle.full(shape=[self.args.max_batch_size, 1], fill_value=4, dtype="int64")
+        infer_seed_increment = paddle.full(shape=[self.args.max_num_seqs, 1], fill_value=4, dtype="int64")
         mp_num_per_node = self.nranks
 
 
-        self.infer_engine.dummy_input(self.args.max_seq_len, self.args.max_batch_size)
+        self.infer_engine.dummy_input(self.args.max_model_len, self.args.max_num_seqs)
         while True:
             if self.nranks > 1:
                 paddle.distributed.barrier()
@@ -354,11 +355,11 @@ def parse_args():
     """
     parser = argparse.ArgumentParser("FastDeploy LLM Inference")
     parser.add_argument("-m", "--model_name_or_path", type=str, default="./output", help="model dir")
-    parser.add_argument("-mbs", "--max_batch_size", type=int, default=34, help="max batch size")
+    parser.add_argument("-mbs", "--max_num_seqs", type=int, default=34, help="max batch size")
     parser.add_argument("--max_block_num", type=int, default=2000)
     parser.add_argument("--block_size", type=int, default=64)
     parser.add_argument("--engine_worker_queue_port", type=int, default=9923)
-    parser.add_argument("--max_seq_len", type=int, default=3072, help="max_seq_len")
+    parser.add_argument("--max_model_len", type=int, default=3072, help="max model len")
     parser.add_argument("--device_ids", type=str, default="0", help="cuda visible devices")
     parser.add_argument("--dtype", type=str, default="bfloat16", help="input dtype")
     parser.add_argument("--enc_dec_block_num", type=int, default=1, help="encoder's decoder num")

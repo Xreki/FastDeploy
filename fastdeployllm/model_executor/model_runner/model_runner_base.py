@@ -24,14 +24,14 @@ class ModelRunnerBase(ABC):
 
     """
         Initializes the model and sets up necessary parameters.
-    
+
     Args:
         config (Config): The configuration object for the model.
         args (Namespace): The arguments passed to the script.
-    
+
     Returns:
         None.
-    
+
     Raises:
         None.
     """
@@ -44,10 +44,10 @@ class ModelRunnerBase(ABC):
         self._load_model(config.model_name_or_path)
 
 
-        self._init_share_inputs(args.max_batch_size)
+        self._init_share_inputs(args.max_num_seqs)
 
         self._init_kvcache(args.max_block_num)
-        self.init_rotary_position_embedding(args.max_seq_len)
+        self.init_rotary_position_embedding(args.max_model_len)
 
     def init_dist_env(self, seed=20):
         """
@@ -84,16 +84,16 @@ class ModelRunnerBase(ABC):
         self.frequency_score = _get_attr("frequency_score", 0.0)
         self.presence_score = _get_attr("presence_score", 0.0)
         self.min_length = _get_attr("min_length", 1)
-        self.max_length = _get_attr("max_length", 1024)
+        self.max_length = self.args.max_model_len
 
-    def _init_share_inputs(self, max_batch_size):
+    def _init_share_inputs(self, max_num_seqs):
         """
         初始化共享的输入，包括预测和训练。
             将所有需要的张量都初始化为零或者特定值。
-        
+
             Args:
-                max_batch_size (int): 最大批次大小，用于初始化张量。
-        
+                max_num_seqs (int): 最大批次大小，用于初始化张量。
+
             Returns:
                 None.
         """
@@ -107,51 +107,51 @@ class ModelRunnerBase(ABC):
 
         # 批量初始化张量
         self.share_inputs.update({
-            "pre_ids": paddle.full([max_batch_size, self.max_length], -1, **int64_config),
-            "input_ids": paddle.full([max_batch_size, self.args.max_seq_len], self.args.pad_token_id, **int64_config),
+            "pre_ids": paddle.full([max_num_seqs, self.max_length], -1, **int64_config),
+            "input_ids": paddle.full([max_num_seqs, self.args.max_model_len], self.args.pad_token_id, **int64_config),
             "eos_token_id": paddle.full([self.args.eos_tokens_lens, 1], 0, **int64_config),
-            "top_p": paddle.full([max_batch_size, 1], self.top_p, **float32_config),
-            "temperature": paddle.full([max_batch_size, 1], self.temperature, **float32_config),
-            "penalty_score": paddle.full([max_batch_size, 1], self.penalty_score, **float32_config),
-            "frequency_score": paddle.full([max_batch_size, 1], self.frequency_score, **float32_config),
-            "presence_score": paddle.full([max_batch_size, 1], self.presence_score, **float32_config),
+            "top_p": paddle.full([max_num_seqs, 1], self.top_p, **float32_config),
+            "temperature": paddle.full([max_num_seqs, 1], self.temperature, **float32_config),
+            "penalty_score": paddle.full([max_num_seqs, 1], self.penalty_score, **float32_config),
+            "frequency_score": paddle.full([max_num_seqs, 1], self.frequency_score, **float32_config),
+            "presence_score": paddle.full([max_num_seqs, 1], self.presence_score, **float32_config),
             # TODO 名称统一
-            "min_dec_len": paddle.full([max_batch_size, 1], self.min_length, **int64_config),
-            "max_dec_len": paddle.full([max_batch_size, 1], self.max_length, **int64_config),
-            "min_length": paddle.full([max_batch_size, 1], self.min_length, **int64_config),
-            "max_length": paddle.full([max_batch_size, 1], self.max_length, **int64_config),
-            "seq_lens_this_time": paddle.full([max_batch_size, 1], 0, **int32_config),
-            "seq_lens_encoder": paddle.full([max_batch_size, 1], 0, **int32_config),
-            "step_seq_lens_encoder": paddle.full([max_batch_size, 1], 0, **int32_config),
-            "seq_lens_decoder": paddle.full([max_batch_size, 1], 0, **int32_config),
-            "step_idx": paddle.full([max_batch_size, 1], 0, **int64_config),
+            "min_dec_len": paddle.full([max_num_seqs, 1], self.min_length, **int64_config),
+            "max_dec_len": paddle.full([max_num_seqs, 1], self.max_length, **int64_config),
+            "min_length": paddle.full([max_num_seqs, 1], self.min_length, **int64_config),
+            "max_length": paddle.full([max_num_seqs, 1], self.max_length, **int64_config),
+            "seq_lens_this_time": paddle.full(max_num_seqs, 0, **int32_config),
+            "seq_lens_encoder": paddle.full([max_num_seqs, 1], 0, **int32_config),
+            "step_seq_lens_encoder": paddle.full([max_num_seqs, 1], 0, **int32_config),
+            "seq_lens_decoder": paddle.full([max_num_seqs, 1], 0, **int32_config),
+            "step_idx": paddle.full([max_num_seqs, 1], 0, **int64_config),
             "not_need_stop": paddle.full([1], False, **bool_config).cpu(),
-            "stop_flags": paddle.full([max_batch_size, 1], True, **bool_config),
-            "stop_nums": paddle.full([1], max_batch_size, **int64_config),
+            "stop_flags": paddle.full([max_num_seqs, 1], True, **bool_config),
+            "stop_nums": paddle.full([1], max_num_seqs, **int64_config),
             "bad_tokens": paddle.full([1], -1, **int64_config),
-            "next_tokens": paddle.full([max_batch_size, 1], -1, **int64_config),
-            "is_block_step": paddle.full([max_batch_size], False, **bool_config),
-            "encoder_block_lens": paddle.full([max_batch_size], 0, **int32_config),
-            "step_block_list": paddle.full([max_batch_size], -1, **int32_config),
+            "next_tokens": paddle.full([max_num_seqs, 1], -1, **int64_config),
+            "is_block_step": paddle.full([max_num_seqs], False, **bool_config),
+            "encoder_block_lens": paddle.full([max_num_seqs], 0, **int32_config),
+            "step_block_list": paddle.full([max_num_seqs], -1, **int32_config),
             "step_lens": paddle.full([1], 0, **int32_config),
-            "recover_block_list": paddle.full([max_batch_size], -1, **int32_config),
+            "recover_block_list": paddle.full([max_num_seqs], -1, **int32_config),
             "recover_lens": paddle.full([1], 0, **int32_config),
-            "need_block_list": paddle.full([max_batch_size], -1, **int32_config),
+            "need_block_list": paddle.full([max_num_seqs], -1, **int32_config),
             "need_block_len": paddle.full([1], 0, **int32_config),
-            "used_list_len": paddle.full([max_batch_size], 0, **int32_config),
-            "infer_seed": paddle.full([max_batch_size, 1], 0, **int64_config),
-            "first_token_ids": paddle.full([max_batch_size, 1], -1, **int64_config),
-            "ori_seq_lens_encoder": paddle.full([max_batch_size, 1], 0, **int32_config),
-            "system_lens": paddle.full([max_batch_size, 1], 0, **int32_config),
-            "system_ids": paddle.full([max_batch_size, 1], -1, **int32_config),
+            "used_list_len": paddle.full([max_num_seqs], 0, **int32_config),
+            "infer_seed": paddle.full([max_num_seqs, 1], 0, **int64_config),
+            "first_token_ids": paddle.full([max_num_seqs, 1], -1, **int64_config),
+            "ori_seq_lens_encoder": paddle.full([max_num_seqs, 1], 0, **int32_config),
+            "system_lens": paddle.full([max_num_seqs, 1], 0, **int32_config),
+            "system_ids": paddle.full([max_num_seqs, 1], -1, **int32_config),
         })
 
         # 计算block tables相关参数
         pre_max_block_num = (
-            self.args.max_seq_len + self.args.block_size - 1
+            self.args.max_model_len + self.args.block_size - 1
         ) // self.args.block_size + self.args.enc_dec_block_num
         self.share_inputs["block_tables"] = paddle.full(
-            [max_batch_size, pre_max_block_num], -1, **int32_config
+            [max_num_seqs, pre_max_block_num], -1, **int32_config
         )
 
         # 初始化free list
@@ -173,10 +173,10 @@ class ModelRunnerBase(ABC):
         })
 
     @abstractmethod
-    def init_rotary_position_embedding(self, max_seq_len):
+    def init_rotary_position_embedding(self, max_model_len):
         """
             初始化旋转位置编码，需要重写该方法。
-            参数max_seq_len（int）：序列的最大长度。
+            参数max_model_len（int）：序列的最大长度。
             返回值（None）：无返回值，需要在方法内完成初始化操作。
         """
         raise NotImplementedError
@@ -186,13 +186,13 @@ class ModelRunnerBase(ABC):
         """
             加载模型，包括模型参数和优化器等。
         需要子类实现该方法。
-        
+
         Args:
             model_dir (str): 模型保存的目录路径。
-        
+
         Raises:
             NotImplementedError: 当前方法未被实现。
-        
+
         Returns:
             None.
         """
@@ -203,10 +203,10 @@ class ModelRunnerBase(ABC):
         """
             初始化kv缓存，用于快速查找数据块。
         该方法需要被子类实现。
-        
+
         Args:
             max_block_num (int): 最大的数据块数量。
-        
+
         Raises:
             NotImplementedError: 当该方法未被子类实现时会引发此异常。
         """
@@ -218,9 +218,8 @@ class ModelRunnerBase(ABC):
             预处理输入数据，用于计算dy。
             该函数需要在每次forward之前调用，并且只能调用一次。
             默认实现抛出NotImplementedError。子类可以根据具体的模型实现此功能。
-            
+
             Raises:
                 NotImplementedError: 如果没有实现该方法。
         """
         raise NotImplementedError
-

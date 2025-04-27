@@ -17,6 +17,7 @@ import codecs
 import logging
 import os
 import pickle
+import socket
 import re
 import subprocess
 import time
@@ -343,7 +344,7 @@ def check_unified_ckpt(model_dir):
     Check if the model is a PaddleNLP unified checkpoint
     """
     model_files = list()
-    all_files = os.listdir(model_dir)     
+    all_files = os.listdir(model_dir)
     for x in all_files:
         if x.startswith("model") and x.endswith(".safetensors"):
             model_files.append(x)
@@ -351,14 +352,14 @@ def check_unified_ckpt(model_dir):
     is_unified_ckpt = len(model_files) > 0
     if not is_unified_ckpt:
         return False
-    
+
     if len(model_files) == 1 and model_files[0] == "model.safetensors":
         return True
-    
+
     try:
         # check all the file exists
         safetensors_num = int(model_files[0].strip(".safetensors").split("-")[-1])
-        flags = [0] * safetensors_num   
+        flags = [0] * safetensors_num
         for x in model_files:
             current_index = int(x.strip(".safetensors").split("-")[1])
             flags[current_index - 1] = 1
@@ -367,6 +368,14 @@ def check_unified_ckpt(model_dir):
         raise Exception(f"Failed to check unified checkpoint, details: {e}.")
     return is_unified_ckpt
 
+
+
+def get_host_ip():
+    """
+    Get host IP address
+    """
+    ip = socket.gethostbyname(socket.gethostname())
+    return ip
 
 llm_logger = get_logger("fastdeploy", "llm.log")
 data_processor_logger = get_logger("fastdeploy", "data_processor.log")

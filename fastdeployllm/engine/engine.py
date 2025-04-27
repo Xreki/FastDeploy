@@ -44,16 +44,33 @@ from fastdeployllm.utils import llm_logger
 
 class LLMEngine(object):
     """
-    Engine Class
+    Engine class responsible for managing the Large Language Model (LLM) operations.
+
+    Attributes:
+        cfg (Config): Configuration object containing all the parameters.
+        cached_generated_tokens (queue.Queue): Queue to store generated tokens.
+        cached_task_deque (collections.deque): Deque to store cached tasks.
+        req_output (dict): Dictionary to store request outputs.
+        req_output_completion (dict): Dictionary to track request completion status.
+        input_processor (InputPreprocessor): Preprocessor for input data.
+        resource_manager (ResourceManager): Manager for resource allocation.
+        token_processor (TokenProcessor): Processor for token generation.
+        engine_worker_queue (EngineWorkerQueue): Queue for communication between engine and workers.
+        is_started (bool): Flag indicating if the engine has started.
+        do_profile (int): Flag indicating if profiling is enabled.
     """
 
     @classmethod
-    def from_engine_args(
-        cls,
-        engine_args: EngineArgs,
-    ):
-        """Creates an LLM engine from the engine arguments."""
+    def from_engine_args(cls, engine_args: EngineArgs):
+        """
+        Creates an LLM engine from the provided engine arguments.
 
+        Args:
+            engine_args (EngineArgs): Engine arguments object.
+
+        Returns:
+            LLMEngine: Instance of the LLMEngine class.
+        """
         # Create the engine configs.
         config = engine_args.create_engine_config()
         # Create the LLMEngine.
@@ -61,14 +78,10 @@ class LLMEngine(object):
 
     def __init__(self, cfg):
         """
-            Args:
+        Initializes the LLMEngine with the provided configuration.
+
+        Args:
             cfg (Config): Config object containing all the configuration parameters.
-
-        Raises:
-            None
-
-        Returns:
-            None
         """
         self.cfg = cfg
 
@@ -77,12 +90,12 @@ class LLMEngine(object):
         self.req_output = dict()
         self.req_output_completion = dict()
 
-        self.input_processor = InputPreprocessor(cfg.model_dir)
-        self.resource_manager = ResourceManager(cfg.max_batch_size, cfg.cache_config)
+        self.input_processor = InputPreprocessor(cfg.tokenizer)
+        self.resource_manager = ResourceManager(cfg.max_num_seqs, cfg.cache_config)
 
         self.token_processor = TokenProcessor(cfg=self.cfg, cached_generated_tokens=self.cached_generated_tokens)
         self.token_processor.set_resource_manager(self.resource_manager)
-        time.sleep(1) # TODO ????
+        time.sleep(1)  # TODO: Investigate the purpose of this sleep.
 
         # TODO
         # 1. 增加engine hostname
@@ -99,12 +112,11 @@ class LLMEngine(object):
         self._init_worker_signals()
         self._finalizer = weakref.finalize(self, self._exit_sub_services)
 
-
     def start(self):
         """
-        initialize engine and start sub services
+        Initializes the engine and starts its sub-services.
         """
-        assert not self.is_started, "The engine is already started.!"
+        assert not self.is_started, "The engine is already started."
         start_time = time.time()
 
         self.data_processor = self.input_processor.create_processor()
@@ -116,18 +128,15 @@ class LLMEngine(object):
             if self.worker_proc.poll() is not None:
                 llm_logger.error("The worker process is not alive, check log/worklog.* for more details.")
                 return False
-            time.sleep(1)
-        self.is_started = True
 
 
-        # start warmup
+        # Start warmup if enabled
         if self.cfg.use_warmup:
-            llm_logger.info("Start warmup")
+            llm_logger.info("Starting warmup")
             self._set_warmup_token_processor()
             self.warmup()
             self._del_warmup_token_processor()
-            llm_logger.info("Warmup finish")
-
+            llm_logger.info("Warmup finished")
 
         self.token_processor.tasks_queue = self.engine_worker_queue
 
@@ -135,35 +144,23 @@ class LLMEngine(object):
         self.insert_task_to_worker_thread.daemon = True
         self.insert_task_to_worker_thread.start()
 
-        # start TokenProcessor thread
+        # Start TokenProcessor thread
         self.token_processor.run()
 
-        self.start_push_sender_thread()
+        self._receive_output_thread = threading.Thread(target=self._recieve_output, args=())
+        self._receive_output_thread.daemon = True
+        self._receive_output_thread.start()
+
         if self.do_profile:
             self._stop_profile()
         llm_logger.info("Worker processes are launched with {} seconds.".format(time.time() - start_time))
         return True
 
 
-    def start_push_sender_thread(self):
-        """
-            启动推送模式发送线程，该线程会不断地向服务器发送数据。
-        当客户端处于推送模式时，需要定期将数据发送到服务器以保持连接的有效性。
-        该函数会在客户端初始化后自动调用一次。
 
-        Args:
-            无参数。
-
-        Returns:
-            无返回值，通过修改类成员变量 push_mode_sender_thread 来实现。
+    def _recieve_output(self):
         """
-        self.push_mode_sender_thread = threading.Thread(target=self._push_mode_sender_thread, args=())
-        self.push_mode_sender_thread.daemon = True
-        self.push_mode_sender_thread.start()
-
-    def _push_mode_sender_thread(self):
-        """
-        push mode sender thread
+        Recieve output from token processor and store them in cache
         """
         while True:
             try:
@@ -198,7 +195,7 @@ class LLMEngine(object):
 
     def _get_tasks(self, num=1):
        """
-       获取批量任务进行推理
+       Get tasks from cached_task_deque.
        """
        if len(self.cached_task_deque) == 0:
            return []
@@ -247,16 +244,6 @@ class LLMEngine(object):
                 "insert_task_to_worker thread exit " f"unexpectedly, {e}. {str(traceback.format_exc())}"
             )
 
-    def unfinished_requests_num(self):
-        """
-            返回还没有完成的请求数量，即最大批处理大小减去当前可用批处理大小。
-
-        Returns:
-            int -- 还没有完成的请求数量，即最大批处理大小减去当前可用批处理大小。
-        """
-        return self.cfg.max_batch_size - self.resource_manager.available_batch()
-
-
 
     def add_requests(self, task, sampling_params=None):
         """
@@ -269,33 +256,34 @@ class LLMEngine(object):
         Returns:
             None
         """
+        # TODO 输入输出长度确认
 
         request = Request.from_dict(task)
         if sampling_params is not None:
             request.sampling_params = sampling_params
         request.preprocess_start_time = datetime.now()
         if int(task.get("enable_text_truncate", 1)):
-            real_seq_len = self.cfg.max_seq_len - task.get("max_dec_len", 800)
-            self.data_processor.process_request(request, max_seq_len=real_seq_len)
+            real_seq_len = self.cfg.max_model_len - task.get("max_dec_len", 800)
+            self.data_processor.process_request(request, max_model_len=real_seq_len)
         else:
-            self.data_processor.process_request(request, self.cfg.max_seq_len)
+            self.data_processor.process_request(request, self.cfg.max_model_len)
 
 
         request.prompt_token_ids_len = len(request.prompt_token_ids)
         input_ids_len = request.prompt_token_ids_len
-        request.set("max_tokens", min(self.cfg.max_seq_len - input_ids_len , request.get("max_tokens")))
+        request.set("max_tokens", min(self.cfg.max_model_len - input_ids_len , request.get("max_tokens")))
         min_tokens = request.get("min_tokens")
-        if input_ids_len + min_tokens >= self.cfg.max_seq_len:
+        if input_ids_len + min_tokens >= self.cfg.max_model_len:
             error_msg = (
                 f"Input text is too long, input_ids_len ({input_ids_len}) "
-                f"+ min_dec_len ({min_tokens}) >= max_seq_len "
+                f"+ min_dec_len ({min_tokens}) >= max_model_len "
             )
             llm_logger.error(error_msg)
             return
 
-        if input_ids_len > self.cfg.max_seq_len:
+        if input_ids_len > self.cfg.max_model_len:
             error_msg = (
-                f"Length of input token({input_ids_len}) exceeds the limit MAX_SEQ_LEN({self.cfg.max_seq_len})."
+                f"Length of input token({input_ids_len}) exceeds the limit max_model_len({self.cfg.max_model_len})."
             )
             llm_logger.error(error_msg)
             return
@@ -322,15 +310,10 @@ class LLMEngine(object):
         """
         # get eos_token_id
         pass
+
     def insert_tasks(self, tasks):
         """
-        insert tasks to the engine
-
-        Args:
-            tasks: list of tasks
-
-        Returns:
-            return: True if success, False otherwise
+        Insert tasks to engine.
         """
         if not isinstance(tasks, list):
             tasks = [tasks]
@@ -361,12 +344,6 @@ class LLMEngine(object):
     def task_is_finished(self, index):
         """
         judge if the task is finished
-
-        Args:
-            index: task index
-
-        Returns:
-            return: True if finished, False otherwise
         """
         assert index < len(self.resource_manager.stop_flags)
         return self.resource_manager.stop_flags[index]
@@ -375,9 +352,6 @@ class LLMEngine(object):
     def all_tasks_finished(self):
         """
         judge if all tasks are finished
-
-        Returns:
-            return: True if all finished, False otherwise
         """
         return np.sum(self.resource_manager.stop_flags) == len(self.resource_manager.stop_flags)
 
@@ -411,10 +385,8 @@ class LLMEngine(object):
         """
         judge if all worker processes are ready
 
-        Returns:
-            return: True if all ready, False otherwise
         """
-        if np.sum(self.worker_ready_signal.value) == self.cfg.mp_num_per_node:
+        if np.sum(self.worker_ready_signal.value) == self.cfg.tp_num_per_node:
             return True
         return False
 
@@ -423,7 +395,7 @@ class LLMEngine(object):
         Initialize shared memory to indicate engine status
         """
         # worker_ready_signal 用于engine感知各worker进程是否Ready
-        worker_ready_signal_data = np.zeros(shape=[self.cfg.mp_num], dtype=np.int32)
+        worker_ready_signal_data = np.zeros(shape=[self.cfg.tensor_parallel_size], dtype=np.int32)
         self.worker_ready_signal = IPCSignal(name="worker_ready_singnal",
                                              array=worker_ready_signal_data,
                       						 dtype=np.int32,
@@ -455,9 +427,9 @@ class LLMEngine(object):
 					dtype=np.float32, 
                     suffix=os.getpid(),
 					create=True)
-        
+
         if self.do_profile:
-            get_profile_block_num = np.zeros([self.cfg.mp_num], dtype=np.int32)
+            get_profile_block_num = np.zeros([self.cfg.tensor_parallel_size], dtype=np.int32)
             self.get_profile_block_num_signal = IPCSignal(
                 name="get_profile_block_num",
 				array=get_profile_block_num,
@@ -476,12 +448,10 @@ class LLMEngine(object):
         if hasattr(self, "worker_proc") and self.worker_proc is not None:
             os.killpg(self.worker_proc.pid, signal.SIGTERM)
 
-    def _start_gpu_worker_service(self):
+    def _start_worker_service(self):
         """
         start gpu worker service
 
-        Returns:
-            p: process handle
         """
         current_file_path = os.path.abspath(__file__)
         current_dir_path = os.path.split(current_file_path)[0]
@@ -489,9 +459,9 @@ class LLMEngine(object):
         py_script = os.path.join(current_dir_path, "../model_executor/worker.py")
         arguments = (f" --nnodes {str(self.cfg.nnode)}"
                     f" --devices {self.cfg.device_ids} {py_script}"
-                    f" --max_batch_size {self.cfg.max_batch_size} --max_seq_len {self.cfg.max_seq_len}"
+                    f" --max_num_seqs {self.cfg.max_num_seqs} --max_model_len {self.cfg.max_model_len}"
                     f" --gpu_memory_utilization {self.cfg.cache_config.gpu_memory_utilization}"
-                    f" --model_name_or_path {str(self.cfg.model_dir)}"
+                    f" --model_name_or_path {str(self.cfg.model_name_or_path)}"
                     f" --device_ids {self.cfg.device_ids}"
                     f" --engine_worker_queue_port {str(self.cfg.engine_worker_queue_port)}"
                     f" --max_block_num {self.cfg.cache_config.total_block_num} "
@@ -514,12 +484,6 @@ class LLMEngine(object):
         )
         return p
 
-    def _start_worker_service(self):
-        """
-        start worker service
-        """
-        return self._start_gpu_worker_service()
-
 
     def _format_and_add_data(self, prompts: dict):
 
@@ -537,29 +501,29 @@ class LLMEngine(object):
                     prompts["prompt"] = query_list
 
         if "max_tokens" not in prompts:
-            prompts["max_tokens"] = self.cfg.max_seq_len
+            prompts["max_tokens"] = self.cfg.max_model_len
 
         self.add_requests(prompts)
         return request_id
 
     def generate(self, prompts, stream):
         """
-        Generate a response based on the given prompt using the model.
+        Generates a response based on the given prompt using the model.
 
         Args:
             prompts (dict): The prompt to use for generating the response.
             stream (bool): Whether to stream the output or wait until completion.
 
         Yields:
-            str: The generated response.
+            dict: The generated response.
         """
-        llm_logger.info(f"Start generate prompt: {prompts}")
+        llm_logger.info(f"Starting generation for prompt: {prompts}")
         req_id = self._format_and_add_data(prompts)
 
         while True:
             result = self.get_result(req_id)
             if result is None:
-                time.sleep(0.01)  # 避免忙等待
+                time.sleep(0.01)  # Avoid busy waiting
                 continue
 
             is_end = result.finished
@@ -571,11 +535,12 @@ class LLMEngine(object):
                 if not is_end:
                     yield output
 
-            # 遇到终止条件时退出循环
+            # Exit loop if termination condition is met
             if is_end:
                 processed = self.data_processor.process_response(result)
                 del self.req_output[req_id]
                 output = processed.todict()
+                llm_logger.debug(f"Generate result: {output}")
                 if not stream:
                     yield output
                 else:
@@ -591,7 +556,7 @@ class LLMEngine(object):
         """
         self.do_profile = 0
         num_gpu_blocks = -1
-        for i in range(self.cfg.mp_num):
+        for i in range(self.cfg.tensor_parallel_size):
             while self.get_profile_block_num_signal.value[i] == 0:
                 time.sleep(1)
             if num_gpu_blocks < 0:
@@ -608,8 +573,6 @@ class LLMEngine(object):
         """
         Check the health of the model server by checking whether all workers are alive.
 
-        Returns:
-            bool: True if all workers are alive, False otherwise.
         """
         if self.worker_healthy_live_recorded_time_array[0]:
             elapsed_time = time.time() - self.worker_healthy_live_recorded_time_array[0]
@@ -617,5 +580,3 @@ class LLMEngine(object):
                 return False, "Worker Service Not Healthy"
 
         return True, ""
-
-

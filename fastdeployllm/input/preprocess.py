@@ -17,7 +17,6 @@ import os
 
 
 
-
 class InputPreprocessor:
     """
         Args:
@@ -50,10 +49,10 @@ class InputPreprocessor:
         """
             创建数据处理器。如果启用了多模态注册表，则使用该表中的模型；否则，使用传递给构造函数的模型名称或路径。
         返回值：DataProcessor（如果不启用多模态注册表）或MultiModalRegistry.Processor（如果启用多模态注册表）。
-        
+
         Args:
             无参数。
-        
+
         Returns:
             DataProcessor or MultiModalRegistry.Processor (Union[DataProcessor, MultiModalRegistry.Processor]): 数据处理器。
         """
@@ -68,4 +67,3 @@ class InputPreprocessor:
             from fastdeployllm.input.mm_register import MultiModalRegistry
             self.processor = MultiModalRegistry.create_processor(self.model_name_or_path)
         return self.processor
-

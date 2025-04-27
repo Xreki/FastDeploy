@@ -162,7 +162,7 @@ class TokenProcessor(object):
             task_id = task.request_id
 
             self.total_step += 1
-            
+
             if self.tokens_counter[task_id] == 0:
                 metrics = RequestMetrics(
                     arrival_time=task.arrival_time,
@@ -181,7 +181,7 @@ class TokenProcessor(object):
             result = RequestOutput(
                 request_id=task_id,
                 outputs = CompletionOutput(
-                    index=self.tokens_counter[task_id],
+                    index=i,
                     token_ids=[]
                 ),
                 finished=False,
@@ -193,7 +193,7 @@ class TokenProcessor(object):
                 result.prompt_token_ids = task.prompt_token_ids
 
             for token_id in token_ids:
-                self.tokens_counter[task_id] += 1 
+                self.tokens_counter[task_id] += 1
                 if token_id in task.eos_token_ids:
                     result.finished = True
                     result.prompt = task.prompt

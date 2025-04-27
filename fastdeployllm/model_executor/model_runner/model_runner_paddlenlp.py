@@ -13,16 +13,16 @@ class ModelRunner(ModelRunnerBase):
     def __init__(self, config, args, nranks, rank):
         """
             Initializes the model and sets up the necessary parameters for distributed training.
-        
+
         Args:
             config (DictConfig): Config dictionary for the model.
             args (argparse.Namespace): Arguments for the model.
             nranks (int): Number of GPUs used in parallel training.
             rank (int): Rank of the current GPU used in parallel training.
-        
+
         Returns:
             None.
-        
+
         Raises:
             None.
         """
@@ -33,10 +33,10 @@ class ModelRunner(ModelRunnerBase):
     def _load_model(self, model_name):
         """
             加载模型，并设置缓存。
-        
+
         Args:
             model_name (str): 模型名称或路径。
-        
+
         Returns:
             None.
         """
@@ -46,9 +46,9 @@ class ModelRunner(ModelRunnerBase):
         model_args = ModelArgument()
 
         predictor_args.model_name_or_path = self.args.model_name_or_path
-        predictor_args.max_length = self.args.max_seq_len
+        predictor_args.max_length = self.args.max_model_len
         predictor_args.dtype = self.args.dtype
-        predictor_args.total_max_length = self.args.max_seq_len
+        predictor_args.total_max_length = self.args.max_model_len
         predictor_args.inference_model = True
         predictor_args.mode = "dynamic"
         predictor_args.block_attn = True
@@ -69,18 +69,11 @@ class ModelRunner(ModelRunnerBase):
             tensor_parallel_rank=self.rank,
         )
 
-    def init_rotary_position_embedding(self, max_seq_len):
+    def init_rotary_position_embedding(self, max_model_len):
         """
-            初始化旋转位置嵌入，并将其保存在模型中。
-        该函数会创建一个长度为max_seq_len的位置ID序列，并使用get_rotary_position_embedding函数生成相应的旋转位置嵌入。
-        
-        Args:
-            max_seq_len (int): 最大序列长度。
-        
-        Returns:
-            None. 直接修改模型中的share_inputs字典，添加名称为"rope_emb"的键值对，包含旋转位置嵌入。
+        init rotary position embedding
         """
-        tmp_position_ids = paddle.arange(max_seq_len).reshape((1, -1))
+        tmp_position_ids = paddle.arange(max_model_len).reshape((1, -1))
         self.share_inputs["rope_emb"] = get_rotary_position_embedding(
             tmp_position_ids,
             self.model_cfg.hidden_size // self.model_cfg.num_attention_heads,
@@ -187,7 +180,7 @@ class ModelRunner(ModelRunnerBase):
                     task.get("stop_token_ids"), dtype="int64"
                 )
 
- 
+
     def _cal_theortical_kvcache(self):
         """
         计算理论的kvcache大小
@@ -202,7 +195,7 @@ class ModelRunner(ModelRunnerBase):
         hidden_dim = hidden_size / attention_heads * self.model_cfg.kv_num_head
         theoretical_kv_cache_memory = (2 * byte_of_cache * self.args.block_size * num_layers * hidden_dim)
         return theoretical_kv_cache_memory
-    
+
 
 
     def _update_share_input_block_num(self, num_gpu_blocks):
@@ -211,7 +204,7 @@ class ModelRunner(ModelRunnerBase):
 
         del self.share_inputs["block_tables"]
         self.share_inputs["block_tables"] = paddle.full(
-            [self.args.max_batch_size, num_gpu_blocks], -1, dtype="int32"
+            [self.args.max_num_seqs, num_gpu_blocks], -1, dtype="int32"
         )
 
         # 初始化free list
@@ -223,7 +216,7 @@ class ModelRunner(ModelRunnerBase):
             "free_list": paddle.to_tensor(free_list, dtype="int32"),
             "free_list_len": paddle.full([1], self.free_list_len, dtype="int32"),
         })
-    
+
 
     def dummy_input(self, num_total_tokens, number_of_tasks):
         """
@@ -231,7 +224,7 @@ class ModelRunner(ModelRunnerBase):
         """
         full_length = num_total_tokens // number_of_tasks
         input_length = int(full_length * self.args.block_ratio)
-        block_num = (input_length + self.args.block_size - 1 + self.args.enc_dec_block_num) // self.args.block_size 
+        block_num = (input_length + self.args.block_size - 1 + self.args.enc_dec_block_num) // self.args.block_size
 
         for i in range(number_of_tasks):
             idx = i

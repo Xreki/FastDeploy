@@ -22,7 +22,7 @@ async def async_wrapper(sync_gen):
         try:
             # 直接传递 next 和生成器对象
             item = await asyncio.get_event_loop().run_in_executor(
-                None, 
+                None,
                 next,  # 直接使用 next 函数
                 sync_gen  # 传递生成器对象
             )
@@ -63,23 +63,19 @@ class OpenAIServingCompletion:
         if request_prompt_ids is not None:
             request_prompts = request_prompt_ids
 
-        current_req_dict = request.to_dict_for_infer(request_id)
-        
+
         try:
             # 创建异步生成器列表
             async_generators = []
             for idx, prompt in enumerate(request_prompts):
                 # 创建同步生成器
-                if request_prompt_ids is not None:
-                    current_req_dict["prompt_token_ids"] = request_prompt_ids[idx]
-                else:
-                    current_req_dict["prompt"] = request_prompts[idx]
+                request_id_idx = f"{request_id}-{idx}"
+                current_req_dict = request.to_dict_for_infer(request_id_idx, prompt)
                 sync_gen = self.engine_client.generate(
                     current_req_dict,
                     request.stream
                 )
                 # 转换为异步生成器
-
                 async_gen = async_wrapper(sync_gen)
                 async_generators.append(async_gen)
 
@@ -120,15 +116,14 @@ class OpenAIServingCompletion:
                 task_to_index.keys(),
                 return_when=asyncio.FIRST_COMPLETED
             )
-            
+
             for task in done:
                 # 获取对应的生成器索引
                 idx = task_to_index.pop(task)
-                
+
                 try:
                     result = await task  # 显式获取结果
                     yield idx, result
-                    
                     # 重新调度该生成器
                     new_task = asyncio.create_task(generators[idx].__anext__())
                     task_to_index[new_task] = idx
@@ -140,7 +135,8 @@ class OpenAIServingCompletion:
                     api_server_logger.exception(e)
         
 
-    async def handle_non_streaming(self, 
+
+    async def handle_non_streaming(self,
                              generator: AsyncGenerator,
                              request: CompletionRequest,
                              request_id: str,
@@ -154,7 +150,7 @@ class OpenAIServingCompletion:
 
             # 过滤可能的空值（当生成器数量不固定时）
             valid_results = [res for idx, res in final_outputs.items() if res is not None]
-            
+
             return self.request_output_to_completion_response(
                 final_res_batch=valid_results,
                 request=request,
@@ -172,21 +168,21 @@ class OpenAIServingCompletion:
                                         created_time: int,
                                         model_name: str):
         try:
+
             async for idx, res in generator:
-                # 处理每个响应块
                 output = res['outputs']
                 chunk = CompletionStreamResponse(
                     id=request_id,
                     created=created_time,
                     model=model_name,
                     choices=[CompletionResponseStreamChoice(
-                        index=output['index'],
+                        index=idx,
                         text=output['text'],
                         reasoning_content=output['reasoning_content']
                     )]
                 )
                 yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
-            
+
             # 最终统计信息
             if request.stream_options and request.stream_options.include_usage:
                 usage_chunk = CompletionStreamResponse(
@@ -199,7 +195,7 @@ class OpenAIServingCompletion:
                     )
                 )
                 yield f"data: {usage_chunk.model_dump_json(exclude_unset=True)}\n\n"
-            
+
             yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"{ErrorResponse(message=str(e), code=400)}\n\n"
@@ -235,7 +231,6 @@ class OpenAIServingCompletion:
                 token_ids = output["token_ids"]
                 output_text = output["text"]
 
-
             choice_data = CompletionResponseChoice(
                 index=len(choices),
                 text=output_text,
@@ -262,4 +257,3 @@ class OpenAIServingCompletion:
             choices=choices,
             usage=usage,
         )
-

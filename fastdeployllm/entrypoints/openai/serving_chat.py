@@ -39,21 +39,20 @@ from fastdeployllm.utils import api_server_logger
 
 from fastdeployllm.engine.request import RequestOutput
 
+
 async def async_wrapper(sync_gen):
-    """正确转换同步生成器的异步包装器"""
+    loop = asyncio.get_event_loop()
     while True:
         try:
-            item = await asyncio.get_event_loop().run_in_executor(
-                None, 
-                next,  
-                sync_gen  
-            )
-            yield item
+            # 在独立线程中执行同步生成器
+            item = await loop.run_in_executor(None, next, sync_gen)
             if item.get("finished", False):
                 break
+            yield item
         except StopIteration:  
             api_server_logger.info("Sync generator has been fully traversed.")
             break
+
 
 class OpenAIServingChat:
     """
@@ -159,7 +158,7 @@ class OpenAIServingChat:
 
                 previous_num_tokens[0] += len(output["token_ids"])
                 delta_message = DeltaMessage(content=delta_text, reasoning_content=output["reasoning_content"])
-                
+
                 choice = ChatCompletionResponseStreamChoice(
                     index=output["index"],
                     delta=delta_message
@@ -227,7 +226,7 @@ class OpenAIServingChat:
                 final_res = res
         except asyncio.CancelledError:
             return ErrorResponse(code=499, message="Client disconnected")
-        
+
         if not final_res:
             return ErrorResponse(code=500, message="No response generated")
 
@@ -245,7 +244,7 @@ class OpenAIServingChat:
             finish_reason=None
         )
         if request.max_tokens is None or output["index"] + 1 != request.max_tokens:
-            
+
             choice.finish_reason = "stop"
         else:
             choice.finish_reason = "length"

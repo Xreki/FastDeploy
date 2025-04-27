@@ -28,6 +28,13 @@ from fastdeployllm.engine.sampling_params import SamplingParams
 from fastdeployllm.utils import llm_logger
 
 
+import logging
+root_logger = logging.getLogger()
+for handler in root_logger.handlers[:]:
+    if isinstance(handler, logging.StreamHandler):
+        root_logger.removeHandler(handler)
+
+
 class LLM:
     """
     Initializes a Language Model instance.
@@ -69,7 +76,7 @@ class LLM:
         self.llm_engine = LLMEngine.from_engine_args(
             engine_args=engine_args)
 
-        self.default_sampling_params = SamplingParams(max_tokens = self.llm_engine.cfg.max_seq_len)
+        self.default_sampling_params = SamplingParams(max_tokens = self.llm_engine.cfg.max_model_len)
 
         self.llm_engine.start()
 
@@ -116,7 +123,7 @@ class LLM:
                 raise ValueError("prompts must be a input dict")
             prompts = [prompts]
             sampling_params = None
-        
+
 
         if sampling_params_len != 1 and len(prompts) != sampling_params_len:
             raise ValueError("prompts and sampling_params must be the same length.")
@@ -219,7 +226,7 @@ class LLM:
                         continue
                     is_end = result.finished
                     result = self.llm_engine.data_processor.process_response(result)
-                    llm_logger.debug(f"Send result to client under push mode: {result}")
+                    llm_logger.info(f"Send result to client under push mode: {result}")
                     if is_end:
                         output.append(result)
                         num_requests -= 1
@@ -238,7 +245,7 @@ if __name__ == "__main__":
     # llm = LLM(model="llama_model")
     # output = llm.generate(prompts="who are you？", use_tqdm=True)
     # print(output)
-    llm = LLM(model="/opt/baidu/paddle_internal/FastDeploy/fastdeployllm/llama_model", tensor_parallel_size=1)
+    llm = LLM(model="/opt/baidu/paddle_internal/FastDeploy/Qwen2.5-7B", tensor_parallel_size=2)
     sampling_params = SamplingParams(temperature=0.1, max_tokens=30)
     output = llm.generate(prompts="who are you？", use_tqdm=True, sampling_params=sampling_params)
     print(output)
@@ -247,5 +254,5 @@ if __name__ == "__main__":
     output = llm.generate(prompts=["who are you？", "what can you do？"], sampling_params = SamplingParams(temperature=1, max_tokens=50), use_tqdm=True)
     print(output)
 
-    output = llm.generate(prompts=["who are you？", "what can you do？"], sampling_params = [SamplingParams(temperature=1, max_tokens=50), SamplingParams(temperature=1, max_tokens=20)], use_tqdm=True)
+    output = llm.generate(prompts=["who are you？", "I miss you"], sampling_params = [SamplingParams(temperature=1, max_tokens=50), SamplingParams(temperature=1, max_tokens=20)], use_tqdm=True)
     print(output)

@@ -47,7 +47,7 @@ class ErnieProcessor(BaseDataProcessor):
         self._init_config()
 
         self.is_thinking = False
-        #TODO 规范 
+        #TODO 规范
         if "X1" in model_name_or_path:
             self.is_thinking = True
             self.thinking_template = "<|prefixoftext|>思考<|middleoftext|>"
@@ -61,7 +61,7 @@ class ErnieProcessor(BaseDataProcessor):
                                    eos_token is {self.tokenizer.eos_token}, {self.tokenizer.eos_token_id} ")
         self.eos_token_ids = [self.tokenizer.eos_token_id]
         self.eos_token_id_len = len(self.eos_token_ids)
-        self.pad_token_id = self.get_pad_id() 
+        self.pad_token_id = self.get_pad_id()
 
     def _init_config(self):
         self.use_hf_tokenizer = int(os.getenv("USE_HF_TOKENIZER", 0)) == 1
@@ -75,8 +75,8 @@ class ErnieProcessor(BaseDataProcessor):
             )
             self.generation_config = None
 
-        
-    def process_request(self, request, max_seq_len=None):
+
+    def process_request(self, request, max_model_len=None):
         """
         Preprocess the request
 
@@ -100,15 +100,15 @@ class ErnieProcessor(BaseDataProcessor):
             system = request.get("system")
             if request.prompt is not None:
                 history_qa = request.get("history")
-                request.prompt_token_ids = self.text2ids(request.prompt, history_qa, max_seq_len, system)
+                request.prompt_token_ids = self.text2ids(request.prompt, history_qa, max_model_len, system)
             elif request.messages is not None:
-                
-                request.prompt_token_ids = self.messages2ids(request.messages, max_seq_len)
+
+                request.prompt_token_ids = self.messages2ids(request.messages, max_model_len)
             else:
                 raise ValueError(f"The request should have `input_ids`, `text` or `messages`: {request}.")
 
-        if max_seq_len is not None and len(request.prompt_token_ids) > max_seq_len:
-            request.prompt_token_ids = request.prompt_token_ids[:max_seq_len - 1]
+        if max_model_len is not None and len(request.prompt_token_ids) > max_model_len:
+            request.prompt_token_ids = request.prompt_token_ids[:max_model_len - 1]
         data_processor_logger.info(f"processed request: {request}")
         return request
 
@@ -138,12 +138,15 @@ class ErnieProcessor(BaseDataProcessor):
             if self.is_thinking:
                 text, reasoning_content = self.ids2tokens_thinking(token_ids, req_id)
                 response_dict.outputs.text = text
-                response_dict.outputs.reasoning_content = reasoning_content
+                pattern = re.compile(
+                    r'^([\s\S]*?)<\|prefixoftext\|>开始回复<\|middleoftext\|>([\s\S]*)$',
+                    flags=re.DOTALL | re.MULTILINE
+                )
                 if reasoning_content != "":
-                    match = re.search(r'^(.*?)<\|prefixoftext\|>开始回复<\|middleoftext\|>(.*)$', reasoning_content)
+                    match = pattern.search(reasoning_content)
                     if match:
-                        response_dict.outputs.text = match.group(1)
-                        response_dict.outputs.reasoning_content = match.group(2)
+                        response_dict.outputs.text = match.group(2)
+                        response_dict.outputs.reasoning_content = match.group(1)
             else:
                 response_dict.outputs.text = self.ids2tokens(token_ids, req_id)
         if response_dict.outputs.text == "" and response_dict.outputs.reasoning_content == "":
@@ -152,16 +155,16 @@ class ErnieProcessor(BaseDataProcessor):
 
 
 
-    def text2ids(self, text, history_qa=None, max_seq_len=None, system=None):
+    def text2ids(self, text, history_qa=None, max_model_len=None, system=None):
         """
         将文本转换为对应的 ID。如果有history_qa，会将text和history_qa进行拼接。
-        
+
         Args:
             text (str): 待转换的文本。
             history_qa (List[str], optional): 历史多轮对话，默认None。
                 history_qa示例[[Q1, A1],[Q2, A2],[Q3, A3],[Q4, A4].....], Q1,A1表示最近时间的对话
             system (str): 系统设定，如“你是一位高超的程序员”
-        
+
         Returns:
             List[int]: 转换后的 ID 列表。
         """
@@ -179,21 +182,21 @@ class ErnieProcessor(BaseDataProcessor):
         if self.is_thinking:
             system = "<sys_internal>【高优系统设定】必须最优先遵循<br/>启动思考模式：在采取任何行动前，\
                 都需要先写下自己的思考过程，为后续的决策或对用户的回复内容做铺垫。</sys_internal>\n\n"
-            tokens = self._convert_to_ids_thinking(messages, max_seq_len, system)
+            tokens = self._convert_to_ids_thinking(messages, max_model_len, system)
         else:
-            tokens = self._convert_to_ids(messages, max_seq_len, system)
+            tokens = self._convert_to_ids(messages, max_model_len, system)
         data_processor_logger.debug(f"processed data : {''.join(tokens)}")
         input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
         return input_ids
 
-    def _convert_to_ids(self, messages, max_seq_len=None, system=None):
+    def _convert_to_ids(self, messages, max_model_len=None, system=None):
         """
         将多轮对话转换为对话ID序列。
-        
+
         Args:
             messages (List[str]): 包含所有对话轮的文本列表。
                 messages示例[Q1, A1, Q2, A2, Q3, A3, Q4], Q3,A3表示最近时间的对话，Q4表示需要回答的问题
-        
+
         Returns:
             List[int]: 对话ID序列，每个ID都是整数。
         """
@@ -214,42 +217,43 @@ class ErnieProcessor(BaseDataProcessor):
                 self.tokenizer.tokenize(messages[idx - 1]) + self.tokenizer.tokenize("\n")
             cur_turn_tokens += self.tokenizer.tokenize("Assistant: ") + \
                 self.tokenizer.tokenize(messages[idx]) + [self.tokenizer.sep_token]
-            if max_seq_len is not None and len(prefix_tokens) + len(context_tokens) + len(suffix_tokens) + \
-                                               len(cur_turn_tokens) >= max_seq_len:
+            if max_model_len is not None and len(prefix_tokens) + len(context_tokens) + len(suffix_tokens) + \
+                                               len(cur_turn_tokens) >= max_model_len:
                 data_processor_logger.warning(f"Truncate messages into: {messages[idx + 1:]}")
                 break
             context_tokens = cur_turn_tokens + context_tokens
         new_length =  len(system_tokens) + len(prefix_tokens) + len(context_tokens) + len(suffix_tokens) + 1
         context_tokens = system_tokens + context_tokens
-        if max_seq_len is not None and len(prefix_tokens) + len(context_tokens) + len(suffix_tokens) + 1 >= max_seq_len:
+        if max_model_len is not None and len(prefix_tokens) + len(context_tokens) + \
+                                             len(suffix_tokens) + 1 >= max_model_len:
             data_processor_logger.warning(
                 "The length of the knowledge and the last user content "
                 f"({len(prefix_tokens) + len(context_tokens) + len(suffix_tokens)}) is greater than "
-                f"max input length ({max_seq_len}). We will truncate it."
+                f"max input length ({max_model_len}). We will truncate it."
             )
 
-            context_tokens = context_tokens[-(max_seq_len - len(prefix_tokens) - len(suffix_tokens) - 1):]
+            context_tokens = context_tokens[-(max_model_len - len(prefix_tokens) - len(suffix_tokens) - 1):]
             return prefix_tokens + context_tokens + suffix_tokens
-        
+
         return prefix_tokens + context_tokens + suffix_tokens
 
 
 
-    def _convert_to_ids_thinking(self, messages, max_seq_len=None, system=None):
+    def _convert_to_ids_thinking(self, messages, max_model_len=None, system=None):
         """
         将多轮对话转换为对话ID序列。
-        
+
         Args:
             messages (List[str]): 包含所有对话轮的文本列表。
                 messages示例[Q1, A1, Q2, A2, Q3, A3, Q4], Q3,A3表示最近时间的对话，Q4表示需要回答的问题
-        
+
         Returns:
             List[int]: 对话ID序列，每个ID都是整数。
         """
         if len(messages) % 2 == 0:
             raise ValueError(f"The number of the messages context ({len(messages)}) must be odd.")
 
-        
+
         suffix_tokens = self.tokenizer.tokenize("<role>\nassistant<br/>\n<|prefixoftext|>思考<|middleoftext|>")
 
         system_tokens = self.tokenizer.tokenize(system)
@@ -265,8 +269,8 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
         for idx in range(len(messages) - 2, -1, -2):
             cur_turn_tokens = self.tokenizer.tokenize(user_template.safe_substitute({"question": messages[idx - 1]}))
             cur_turn_tokens += self.tokenizer.tokenize(assistant_template.safe_substitute({"answer": messages[idx]}))
-            if max_seq_len is not None and len(system_tokens) + len(context_tokens) + len(suffix_tokens) + \
-                                               len(cur_turn_tokens) >= max_seq_len:
+            if max_model_len is not None and len(system_tokens) + len(context_tokens) + len(suffix_tokens) + \
+                                               len(cur_turn_tokens) >= max_model_len:
                 data_processor_logger.warning(f"Truncate messages into: {messages[idx + 1:]}")
                 break
             context_tokens = cur_turn_tokens + context_tokens
@@ -275,13 +279,13 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
 
 
 
-    def messages2ids(self, raw_messages, max_seq_len):
+    def messages2ids(self, raw_messages, max_model_len):
         """
         Convert multi-turn messages into ID sequences.
 
         Args:
             messages (List[Dict[str, Any]]): multi-turn messages.
-            max_seq_len : support max length
+            max_model_len : support max length
 
         Returns:
             List[int]: ID sequences
@@ -302,14 +306,14 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
             messages.append(message["content"])
 
         if self.is_thinking:
-            tokens = self._convert_to_ids_thinking(messages, max_seq_len, system)
+            tokens = self._convert_to_ids_thinking(messages, max_model_len, system)
         else:
-            tokens = self._convert_to_ids(messages, max_seq_len, system)
+            tokens = self._convert_to_ids(messages, max_model_len, system)
         data_processor_logger.debug(f"processed data : {''.join(tokens)}")
         input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
         return input_ids
 
-    
+
     def ids2tokens(self, token_id, task_id):
         """
         token ids to strings
@@ -374,7 +378,7 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
 
         if self.decode_status[task_id][4] == "":
             content = decode_str
-        elif '<|middleoftext|>' in self.decode_status[task_id][4] and decode_str != "<|middleoftext|>": 
+        elif '<|middleoftext|>' in self.decode_status[task_id][4] and decode_str != "<|middleoftext|>":
             reasoning_content = decode_str
         return reasoning_content, content
 

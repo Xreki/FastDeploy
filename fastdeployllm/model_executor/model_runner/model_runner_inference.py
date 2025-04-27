@@ -31,10 +31,10 @@ class ModelRunner(ModelRunnerBase):
         self._reset_paddle_env()
 
 
-    
+
     def _reset_paddle_env(self):
         #FLAGS_gqa_use_tensorcore
-        #FLAGS_ffn2_use_hardamard 
+        #FLAGS_ffn2_use_hardamard
         # gqa .etc paddle Flags set
         pass
 
@@ -45,7 +45,7 @@ class ModelRunner(ModelRunnerBase):
             self.args.model_name_or_path,
             self.args.dtype,
             block_size=self.args.block_size,
-            max_len=self.args.max_seq_len,
+            max_len=self.args.max_model_len,
             stage_flag="msgid-1 predict",
             export_model_type="wint8",
             use_fake_parameter=False,
@@ -60,8 +60,8 @@ class ModelRunner(ModelRunnerBase):
         model.eval()
         self.model = model
 
-    def init_rotary_position_embedding(self, max_seq_len):
-        tmp_position_ids = paddle.arange(max_seq_len).reshape((1, -1))
+    def init_rotary_position_embedding(self, max_model_len):
+        tmp_position_ids = paddle.arange(max_model_len).reshape((1, -1))
         self.share_inputs["rope_emb"] = self.get_rotary_position_embedding(
             tmp_position_ids,
             self.model_cfg.hidden_size // self.model_cfg.num_attention_heads
@@ -71,7 +71,7 @@ class ModelRunner(ModelRunnerBase):
         """
         分享不拷贝数据
         """
-        
+
         self.cache_kvs = {}
 
         if (
@@ -111,7 +111,7 @@ class ModelRunner(ModelRunnerBase):
         self.share_inputs["caches"] = list(self.cache_kvs.values())
         for value in self.cache_kvs.values():
             del value
-  
+
     def dy_input_preprocess(self, tasks):
         """
         dynamic insertion
@@ -144,7 +144,7 @@ class ModelRunner(ModelRunnerBase):
             self.share_inputs["ori_seq_lens_encoder"][idx : idx + 1] = length
 
             if task.get("seed") is not None:
-                self.share_inputs["infer_seed"][idx : idx + 1] = task.get("seed") 
+                self.share_inputs["infer_seed"][idx : idx + 1] = task.get("seed")
             encoder_block_num = len(task.get("block_tables"))
             self.share_inputs["encoder_block_lens"][idx : idx + 1] = encoder_block_num
             self.share_inputs["block_tables"][idx : idx + 1, :] = -1
@@ -171,9 +171,9 @@ class ModelRunner(ModelRunnerBase):
             head_dim: D
 
         Returns:
-            rot_emb: [2, 1, S, 1, D // 2] or [2, 1, S, 1, D], cos + sin 
+            rot_emb: [2, 1, S, 1, D // 2] or [2, 1, S, 1, D], cos + sin
         """
-        bsz, max_seq_len = position_ids.shape[:2]
+        bsz, max_model_len = position_ids.shape[:2]
         inv_freq = rope_theta ** (-paddle.arange(0, head_dim, 2, dtype="float32") / head_dim)
 
         # shape: [B, S, D/2]
@@ -183,8 +183,8 @@ class ModelRunner(ModelRunnerBase):
         freqs = paddle.einsum("ij,k->ijk", compressed_position_ids.cast("float32"),
                             inv_freq)
 
-        rot_emb = paddle.zeros((2, bsz, max_seq_len, 1, head_dim // 2), dtype="float32")
-        emb = paddle.stack([freqs], axis=-1).reshape((bsz, max_seq_len, head_dim // 2))
+        rot_emb = paddle.zeros((2, bsz, max_model_len, 1, head_dim // 2), dtype="float32")
+        emb = paddle.stack([freqs], axis=-1).reshape((bsz, max_model_len, head_dim // 2))
         # shape: [B, S, 1, D]
         emb = paddle.unsqueeze(emb, 2)
 
@@ -210,7 +210,7 @@ class ModelRunner(ModelRunnerBase):
         hidden_dim = hidden_size / attention_heads * self.model_cfg.kv_num_head
         theoretical_kv_cache_memory = (2 * byte_of_cache * self.args.block_size * num_layers * hidden_dim)
         return theoretical_kv_cache_memory
-    
+
 
     def _update_share_input_block_num(self, num_gpu_blocks):
         del self.share_inputs["caches"]
@@ -218,7 +218,7 @@ class ModelRunner(ModelRunnerBase):
 
         del self.share_inputs["block_tables"]
         self.share_inputs["block_tables"] = paddle.full(
-            [self.args.max_batch_size, num_gpu_blocks], -1, dtype="int32"
+            [self.args.max_num_seqs, num_gpu_blocks], -1, dtype="int32"
         )
 
         # 初始化free list
@@ -231,14 +231,14 @@ class ModelRunner(ModelRunnerBase):
             "free_list_len": paddle.full([1], self.free_list_len, dtype="int32"),
         })
 
-    
+
     def dummy_input(self, num_total_tokens, number_of_tasks):
         """
         fake input to profile
         """
         full_length = num_total_tokens // number_of_tasks
         input_length = int(full_length * self.args.block_ratio)
-        block_num = (input_length + self.args.block_size - 1 + self.args.enc_dec_block_num) // self.args.block_size 
+        block_num = (input_length + self.args.block_size - 1 + self.args.enc_dec_block_num) // self.args.block_size
 
         for i in range(number_of_tasks):
             idx = i
@@ -259,7 +259,3 @@ class ModelRunner(ModelRunnerBase):
             self.share_inputs["encoder_block_lens"][idx : idx + 1] = block_num
             self.share_inputs["block_tables"][idx : idx + 1, :block_num] = np.arange(idx * block_num, \
                                                                                 (idx + 1) * block_num, 1)
-
-
-
-

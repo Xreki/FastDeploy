@@ -28,25 +28,25 @@ class ResourceManager(object):
     """
     record and allocate resources for the engine
     """
-    def __init__(self, max_batch_size, cache_config):
+    def __init__(self, max_num_seqs, cache_config):
         """
             Args:
             cfg (Config): config object containing parameters for the engine
                           initialization
-        
+
         Returns:
             None
-        
+
         Initializes the engine with the given configuration and sets up necessary
         data structures to manage tasks and blocks.
         """
         self.cfg = cache_config
-        self.max_batch_size = max_batch_size
-        self.stop_flags = [True] * max_batch_size
+        self.max_num_seqs = max_num_seqs
+        self.stop_flags = [True] * max_num_seqs
 
 
         self.free_list = list(range(self.cfg.max_block_num - 1, -1, -1))
-        self.tasks_list = [None] * max_batch_size
+        self.tasks_list = [None] * max_num_seqs
         # current batch status of the engine
         self.real_bsz = 0
         llm_logger.info(f"{self.info()}")
@@ -194,12 +194,12 @@ class ResourceManager(object):
         allocated_position = 0
         processing_task_index = 0
         processed_tasks = list()
-        while allocated_position < self.max_batch_size:
+        while allocated_position < self.max_num_seqs:
             if processing_task_index >= len(tasks):
                 break
 
             can_insert = False
-            while allocated_position + 1 <= self.max_batch_size:
+            while allocated_position + 1 <= self.max_num_seqs:
                 if sum(self.stop_flags[allocated_position : allocated_position + 1]) == 1:
                     can_insert = True
                     break
@@ -232,7 +232,7 @@ class ResourceManager(object):
             processing_task_index += 1
 
         # batch size when the statistical engine is inferring
-        for i in range(self.max_batch_size - 1, -1, -1):
+        for i in range(self.max_num_seqs - 1, -1, -1):
             if not self.stop_flags[i]:
                 self.real_bsz = i + 1
                 break
