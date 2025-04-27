@@ -35,8 +35,7 @@ from fastdeployllm.utils import get_logger
 from fastdeployllm.inter_communicator import EngineWorkerQueue
 
 
-logger = get_logger("infer_server", "infer.log")
-
+logger = get_logger("fastdeploy", "worker.log")
 
 
 class Worker:
@@ -73,7 +72,7 @@ class Worker:
             rank=self.rank
         )
 
-        address = ('0.0.0.0', self.args.infer_port)
+        address = ('0.0.0.0', self.args.engine_worker_queue_port)
         self.engine_worker_queue = EngineWorkerQueue(
             address=address, is_server=False, num_client=self.nranks, client_id=self.rank)
 
@@ -114,13 +113,13 @@ class Worker:
 
 
         # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
-        self.infer_healthy_live_recorded_time_array = np.zeros(shape=[self.nranks], dtype=np.float32)
-        self.infer_healthy_live_signal = IPCSignal(name="infer_healthy_live_signal",
-                    array=self.infer_healthy_live_recorded_time_array, 
+        self.worker_healthy_live_recorded_time_array = np.zeros(shape=[self.nranks], dtype=np.float32)
+        self.worker_healthy_live_signal = IPCSignal(name="worker_healthy_live_signal",
+                    array=self.worker_healthy_live_recorded_time_array, 
 					dtype=np.float32,
                     suffix=self.args.engine_pid,
 					create=False)
-        self.infer_healthy_live_signal.value[self.rank] = time.time()
+        self.worker_healthy_live_signal.value[self.rank] = time.time()
 
         # exist_task_signal 用于各worker进程感知是否有新Task需要处理
         exist_task_signal_data = np.zeros([1], dtype=np.int32)
@@ -205,7 +204,7 @@ class Worker:
 
             self.insert_step = False
 
-            self.infer_healthy_live_recorded_time_array[self.rank] = time.time()
+            self.worker_healthy_live_recorded_time_array[self.rank] = time.time()
             mp_num_per_node = self.nranks
 
             if self.rank % mp_num_per_node == 0:
@@ -358,7 +357,7 @@ def parse_args():
     parser.add_argument("-mbs", "--max_batch_size", type=int, default=34, help="max batch size")
     parser.add_argument("--max_block_num", type=int, default=2000)
     parser.add_argument("--block_size", type=int, default=64)
-    parser.add_argument("--infer_port", type=int, default=9923)
+    parser.add_argument("--engine_worker_queue_port", type=int, default=9923)
     parser.add_argument("--max_seq_len", type=int, default=3072, help="max_seq_len")
     parser.add_argument("--device_ids", type=str, default="0", help="cuda visible devices")
     parser.add_argument("--dtype", type=str, default="bfloat16", help="input dtype")

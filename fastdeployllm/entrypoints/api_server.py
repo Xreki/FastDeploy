@@ -19,11 +19,10 @@ import json
 from fastapi import FastAPI
 from fastapi.responses import Response, StreamingResponse
 
-from fastdeployllm.utils import FlexibleArgumentParser, get_logger
+from fastdeployllm.utils import FlexibleArgumentParser, api_server_logger
 from fastdeployllm.engine.args_utils import EngineArgs
 from fastdeployllm.engine.engine import LLMEngine
 
-api_server_logger = get_logger("fastdeploy", "api_server.log")
 app = FastAPI()
 
 llm_engine = None
@@ -36,8 +35,12 @@ def init_app(args):
     global llm_engine
     engine_args = EngineArgs.from_cli_args(args)
     llm_engine = LLMEngine.from_engine_args(engine_args)
-    llm_engine.start()
-    api_server_logger.info(f"LLM engine inited")
+    if not llm_engine.start():
+        api_server_logger.error("Failed to initialize FastDeploy LLM engine, service exit now!")
+        return False
+
+    api_server_logger.info(f"FastDeploy LLM engine initialized!")
+    return True
 
 
 @app.get("/health")
@@ -67,14 +70,16 @@ def launch_api_server(args) -> None:
     api_server_logger.info(f"launch Fastdeploy api server... port: {args.port}")
     api_server_logger.info(f"args: {args.__dict__}")
 
-    init_app(args)
+    if not init_app(args):
+        api_server_logger.error("API Server launch failed.")
+        return
 
     try:
         uvicorn.run(app=app,
                     host=args.host,
                     port=args.port,
                     workers=args.workers,
-                    log_level="error")  # set log level to error to avoid log
+                    log_level="info")  # set log level to error to avoid log
     except Exception as e:
         api_server_logger.error(f"launch sync http server error, {e}")
 

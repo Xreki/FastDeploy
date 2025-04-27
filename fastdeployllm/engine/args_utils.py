@@ -124,6 +124,12 @@ class EngineArgs:
             help="speculative config path"
         )
 
+        model_group.add_argument(
+            "--engine_worker_queue_port",
+            type=int,
+            default=8002,
+            help="port for engine worker queue"
+        )
 
         # Parallel processing parameters group
         parallel_group = parser.add_argument_group("Parallel Configuration")

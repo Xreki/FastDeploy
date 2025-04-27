@@ -10,7 +10,7 @@ from fastapi import Request
 
 # yapf: disable
 from fastdeployllm.entrypoints.openai.protocol import ErrorResponse, CompletionRequest, CompletionResponse, CompletionStreamResponse, CompletionResponseStreamChoice, CompletionResponseChoice,UsageInfo
-from fastdeployllm.utils import http_server_logger 
+from fastdeployllm.utils import api_server_logger 
 
 from asyncio import FIRST_COMPLETED, AbstractEventLoop, Task
 from fastdeployllm.engine.request import RequestOutput
@@ -30,7 +30,7 @@ async def async_wrapper(sync_gen):
             if item.get("finished", False):
                 break
         except StopIteration:  # 显式捕获同步结束信号
-            http_server_logger.info("Sync generator has been fully traversed.")
+            api_server_logger.info("Sync generator has been fully traversed.")
             break
 
 class OpenAIServingCompletion:
@@ -134,10 +134,10 @@ class OpenAIServingCompletion:
                     task_to_index[new_task] = idx
                 except StopAsyncIteration:  # 正确捕获异步结束信号
                     del generators[idx]
-                    http_server_logger.info("Sync generator %s has been fully traversed.", idx)
+                    api_server_logger.info("Sync generator %s has been fully traversed.", idx)
                 except Exception as e:
                     # 处理其他异常
-                    http_server_logger.exception(e)
+                    api_server_logger.exception(e)
         
 
     async def handle_non_streaming(self, 
@@ -163,7 +163,7 @@ class OpenAIServingCompletion:
                 model_name=model_name
             )
         except Exception as e:
-            http_server_logger.info(f"{e}")
+            api_server_logger.info(f"{e}")
 
     async def completion_stream_generator(self,
                                         request: CompletionRequest,

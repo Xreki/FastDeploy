@@ -241,6 +241,7 @@ class Config:
         speculative_config: Optional[Dict[str, Any]] = None,
         use_warmup: bool = False,
         use_tqdm_on_load: bool = True,
+        engine_worker_queue_port: int = 8002,
         ):
 
         self.model_config = model_config
@@ -262,7 +263,7 @@ class Config:
         self.use_tqdm_on_load = use_tqdm_on_load
         self.max_prefill_batch = 3
 
-        self.infer_port = int(os.getenv("INFER_PORT", "5289"))
+        self.engine_worker_queue_port = engine_worker_queue_port
         self.device_ids = ",".join([str(i) for i in range(self.mp_num)])
         self.device_ids = os.getenv("CUDA_VISIBLE_DEVICES",
                                     self.device_ids)

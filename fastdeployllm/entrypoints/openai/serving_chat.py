@@ -35,7 +35,7 @@ from fastdeployllm.entrypoints.openai.protocol import (
     ErrorResponse,
 )
 
-from fastdeployllm.utils import http_server_logger 
+from fastdeployllm.utils import api_server_logger 
 
 from fastdeployllm.engine.request import RequestOutput
 
@@ -52,7 +52,7 @@ async def async_wrapper(sync_gen):
             if item.get("finished", False):
                 break
         except StopIteration:  
-            http_server_logger.info("Sync generator has been fully traversed.")
+            api_server_logger.info("Sync generator has been fully traversed.")
             break
 
 class OpenAIServingChat:
@@ -71,7 +71,7 @@ class OpenAIServingChat:
         Create a new chat completion using the specified parameters.
         """
         request_id = f"chatcmpl-{uuid.uuid4()}"
-        http_server_logger.info(f"create chat completion request: {request_id}")
+        api_server_logger.info(f"create chat completion request: {request_id}")
 
         try:
             current_req_dict = request.to_dict_for_infer()
@@ -124,7 +124,7 @@ class OpenAIServingChat:
         else:
             include_usage = stream_options.include_usage
             include_continuous_usage = stream_options.continuous_usage_stats
-        http_server_logger.info(f"include usage: {include_usage}, include cont usage: {include_continuous_usage}")
+        api_server_logger.info(f"include usage: {include_usage}, include cont usage: {include_continuous_usage}")
 
         try:
             async for res in result_generator:
@@ -153,7 +153,7 @@ class OpenAIServingChat:
                             )
                         yield f"data: {chunk.model_dump_json(exclude_unset=True)} \n\n"
                     first_iteration = False
-                http_server_logger.info(f"The chat completion stream chu{res}")
+                api_server_logger.info(f"The chat completion stream chu{res}")
                 output = res["outputs"]
                 delta_text = output["text"]
 

@@ -86,8 +86,7 @@ class LLMEngine(object):
 
         # TODO
         # 1. 增加engine hostname
-        # 2. self.cfg.infer_port -> self.cfg.engine_worker_queue_port
-        address = ('0.0.0.0', self.cfg.infer_port)
+        address = ('0.0.0.0', self.cfg.engine_worker_queue_port)
         self.engine_worker_queue = EngineWorkerQueue(address=address, is_server=True, num_client=self.cfg.mp_num)
 
         self.is_started = False
@@ -108,13 +107,15 @@ class LLMEngine(object):
         assert not self.is_started, "The engine is already started.!"
         start_time = time.time()
 
-
         self.data_processor = self.input_processor.create_processor()
 
-        self.infer_proc = self._start_infer_service()
-        llm_logger.info("Waitting infer processes ready...")
-        while not self._infer_processes_ready():
-            #llm_logger.info(f"{self.engine_ready_check_flag_array[0]} GPU KV blocks can be allocated.")
+        self.worker_proc = self._start_worker_service()
+        llm_logger.info("Waitting worker processes ready...")
+        time.sleep(5)
+        while not self._worker_processes_ready():
+            if self.worker_proc.poll() is not None:
+                llm_logger.error("The worker process is not alive, check log/worklog.* for more details.")
+                return False
             time.sleep(1)
         self.is_started = True
 
@@ -140,7 +141,8 @@ class LLMEngine(object):
         self.start_push_sender_thread()
         if self.do_profile:
             self._stop_profile()
-        llm_logger.info("Infer processes are launched with {} seconds.".format(time.time() - start_time))
+        llm_logger.info("Worker processes are launched with {} seconds.".format(time.time() - start_time))
+        return True
 
 
     def start_push_sender_thread(self):
@@ -316,7 +318,7 @@ class LLMEngine(object):
 
     def warmup(self):
         """
-        construct test tasks and avoid out of memory problem in the infer process
+        construct test tasks and avoid out of memory problem in the worker process
         """
         # get eos_token_id
         pass
@@ -405,9 +407,9 @@ class LLMEngine(object):
         self.token_processor = self.token_processor_backup
         del self.token_processor_backup
 
-    def _infer_processes_ready(self):
+    def _worker_processes_ready(self):
         """
-        judge if all infer processes are ready
+        judge if all worker processes are ready
 
         Returns:
             return: True if all ready, False otherwise
@@ -447,9 +449,9 @@ class LLMEngine(object):
 
 
         # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
-        self.infer_healthy_live_recorded_time_array = np.zeros(shape=[self.cfg.mp_num], dtype=np.float32)
-        self.infer_healthy_live_signal = IPCSignal(name="infer_healthy_live_signal",
-                    array=self.infer_healthy_live_recorded_time_array, 
+        self.worker_healthy_live_recorded_time_array = np.zeros(shape=[self.cfg.mp_num], dtype=np.float32)
+        self.worker_healthy_live_signal = IPCSignal(name="worker_healthy_live_signal",
+                    array=self.worker_healthy_live_recorded_time_array, 
 					dtype=np.float32, 
                     suffix=os.getpid(),
 					create=True)
@@ -470,13 +472,13 @@ class LLMEngine(object):
         self.worker_ready_signal.clear()
         self.exist_task_signal.clear()
         self.exist_swapped_task_signal.clear()
-        self.infer_healthy_live_signal.clear()
-        if hasattr(self, "infer_proc") and self.infer_proc is not None:
-            os.killpg(self.infer_proc.pid, signal.SIGTERM)
+        self.worker_healthy_live_signal.clear()
+        if hasattr(self, "worker_proc") and self.worker_proc is not None:
+            os.killpg(self.worker_proc.pid, signal.SIGTERM)
 
-    def _start_gpu_infer_service(self):
+    def _start_gpu_worker_service(self):
         """
-        start gpu infer service
+        start gpu worker service
 
         Returns:
             p: process handle
@@ -491,7 +493,7 @@ class LLMEngine(object):
                     f" --gpu_memory_utilization {self.cfg.cache_config.gpu_memory_utilization}"
                     f" --model_name_or_path {str(self.cfg.model_dir)}"
                     f" --device_ids {self.cfg.device_ids}"
-                    f" --infer_port {str(self.cfg.infer_port)}"
+                    f" --engine_worker_queue_port {str(self.cfg.engine_worker_queue_port)}"
                     f" --max_block_num {self.cfg.cache_config.total_block_num} "
                     f"--block_size {self.cfg.cache_config.block_size}"
                     f" --enc_dec_block_num {self.cfg.cache_config.enc_dec_block_num}"
@@ -503,8 +505,8 @@ class LLMEngine(object):
         if self.cfg.nnode > 1:
             pd_cmd = pd_cmd + f" --ips {self.cfg.ips}"
         log_dir = os.getenv("FD_LOG_DIR", default="log")
-        pd_cmd = pd_cmd + arguments + f" >{log_dir}/launch_infer.log 2>&1"
-        llm_logger.info("Launch infer service command: {}".format(pd_cmd))
+        pd_cmd = pd_cmd + arguments + f" >{log_dir}/launch_worker.log 2>&1"
+        llm_logger.info("Launch worker service command: {}".format(pd_cmd))
         p = subprocess.Popen(
             pd_cmd,
             shell=True,
@@ -512,11 +514,11 @@ class LLMEngine(object):
         )
         return p
 
-    def _start_infer_service(self):
+    def _start_worker_service(self):
         """
-        start infer service
+        start worker service
         """
-        return self._start_gpu_infer_service()
+        return self._start_gpu_worker_service()
 
 
     def _format_and_add_data(self, prompts: dict):
@@ -609,10 +611,10 @@ class LLMEngine(object):
         Returns:
             bool: True if all workers are alive, False otherwise.
         """
-        if self.infer_healthy_live_recorded_time_array[0]:
-            elapsed_time = time.time() - self.infer_healthy_live_recorded_time_array[0]
+        if self.worker_healthy_live_recorded_time_array[0]:
+            elapsed_time = time.time() - self.worker_healthy_live_recorded_time_array[0]
             if elapsed_time > time_interval_threashold:
-                return False, "Infer Service Not Healthy"
+                return False, "Worker Service Not Healthy"
 
         return True, ""
 
