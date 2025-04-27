@@ -376,20 +376,20 @@ def get_host_ip():
     return ip
 
 
-def is_port_available(host, port, protocol="tcp"):
+def is_port_available(host, port):
     """
     Check the port is available
     """
     import socket
-    sock_type = socket.SOCK_STREAM if protocol.lower() == 'tcp' else socket.SOCK_DGRAM
-    with socket.socket(socket.AF_INET, sock_type) as s:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
-            s.settimeout(1) 
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind((host, port))
             return True
-        except socket.error:
-            return False
-
+        except socket.error as e:
+            if e.errno == errno.EADDRINUSE:
+                return False
+            return True
 llm_logger = get_logger("fastdeploy", "llm.log")
 data_processor_logger = get_logger("fastdeploy", "data_processor.log")
 api_server_logger = get_logger("fastdeploy", "api_server_server.log")
