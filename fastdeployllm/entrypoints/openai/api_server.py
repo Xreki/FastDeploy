@@ -19,7 +19,7 @@ import json
 from fastapi import FastAPI, APIRouter, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from fastdeployllm.utils import FlexibleArgumentParser, api_server_logger
+from fastdeployllm.utils import FlexibleArgumentParser, api_server_logger, is_port_available
 from fastdeployllm.engine.args_utils import EngineArgs
 from fastdeployllm.engine.engine import LLMEngine
 from fastdeployllm.entrypoints.openai.protocol import (
@@ -151,6 +151,10 @@ def launch_api_server(args) -> None:
     """
     启动http服务
     """
+    if not is_port_available(args.host, args.port):
+        api_server_logger.error(f"The parameter `port`:{args.port} is already in use.")
+        return
+
     api_server_logger.info(f"launch Fastdeploy api server... port: {args.port}")
     api_server_logger.info(f"args: {args.__dict__}")
 

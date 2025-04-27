@@ -368,14 +368,27 @@ def check_unified_ckpt(model_dir):
         raise Exception(f"Failed to check unified checkpoint, details: {e}.")
     return is_unified_ckpt
 
-
-
 def get_host_ip():
     """
     Get host IP address
     """
     ip = socket.gethostbyname(socket.gethostname())
     return ip
+
+
+def is_port_available(host, port, protocol="tcp"):
+    """
+    Check the port is available
+    """
+    import socket
+    sock_type = socket.SOCK_STREAM if protocol.lower() == 'tcp' else socket.SOCK_DGRAM
+    with socket.socket(socket.AF_INET, sock_type) as s:
+        try:
+            s.settimeout(1) 
+            s.bind((host, port))
+            return True
+        except socket.error:
+            return False
 
 llm_logger = get_logger("fastdeploy", "llm.log")
 data_processor_logger = get_logger("fastdeploy", "data_processor.log")

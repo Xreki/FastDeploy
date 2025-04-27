@@ -21,7 +21,7 @@ import re
 import uuid
 from typing import Literal, Optional, Dict, List, Any
 
-from fastdeployllm.utils import llm_logger, check_unified_ckpt, get_host_ip
+from fastdeployllm.utils import llm_logger, check_unified_ckpt, get_host_ip, is_port_available
 from fastdeployllm.download_model import download_from_txt
 
 TaskOption = Literal["generate"]
@@ -81,6 +81,12 @@ class ModelConfig:
         if not self.is_unified_ckpt and hasattr(self, "infer_model_mp_num"):
             self.tensor_parallel_size = self.infer_model_mp_num
             del self.infer_model_mp_num
+
+        self.device_ids = ",".join([str(i) for i in range(self.tensor_parallel_size)])
+        self.device_ids = os.getenv("CUDA_VISIBLE_DEVICES",
+                                    self.device_ids)
+        assert len(self.device_ids.split(",")) == self.tensor_parallel_size
+
         if hasattr(self, "num_hidden_layers"):
             self.num_layers = self.num_hidden_layers
             del self.num_hidden_layers
@@ -308,6 +314,9 @@ class Config:
         """
         calculate some parameters
         """
+        if len(self.device_ids.split(',')) > self.tensor_parallel_size:
+            self.device_ids = ",".join(self.device_ids.split(',')[:self.tensor_parallel_size:])
+        assert len(self.device_ids.split(',')) == self.tensor_parallel_size
 
         assert self.tensor_parallel_size % self.nnode == 0, f"tensor_parallel_size: {self.tensor_parallel_size} should be divisible by nnode: {self.nnode}"
         self.tp_num_per_node = self.tensor_parallel_size // self.nnode
@@ -331,6 +340,8 @@ class Config:
         ), "The parameter `max_num_seqs` is not allowed to exceed 256, " "but now it's {}.".format(
             self.max_num_seqs
         )
+        assert (is_port_available('0.0.0.0', self.engine_worker_queue_port)
+				), f"The parameter `engine_worker_queue_port`:{self.engine_worker_queue_port} is already in use."
         assert (8 >= self.tensor_parallel_size > 0), f"tensor_parallel_size: {self.tensor_parallel_size} should be between 1 and 8"
         assert (self.nnode >= 1), f"nnode: {self.nnode} should no less than 1"
         assert (self.max_cached_task_num >= 0), f"max_cached_task_num: {self.max_cached_task_num} should be larger than 0"
