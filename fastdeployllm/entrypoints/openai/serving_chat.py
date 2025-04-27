@@ -35,7 +35,7 @@ from fastdeployllm.entrypoints.openai.protocol import (
     ErrorResponse,
 )
 
-from fastdeployllm.utils import api_server_logger 
+from fastdeployllm.utils import api_server_logger
 
 from fastdeployllm.engine.request import RequestOutput
 
@@ -46,10 +46,10 @@ async def async_wrapper(sync_gen):
         try:
             # 在独立线程中执行同步生成器
             item = await loop.run_in_executor(None, next, sync_gen)
+            yield item
             if item.get("finished", False):
                 break
-            yield item
-        except StopIteration:  
+        except StopIteration:
             api_server_logger.info("Sync generator has been fully traversed.")
             break
 
