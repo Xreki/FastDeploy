@@ -279,7 +279,7 @@ class EngineArgs:
         Create and return a Config object based on the current settings.
         """
         model_cfg = self.create_model_config()
-        if not model_cfg.is_unified_ckpt:
+        if not model_cfg.is_unified_ckpt and hasattr(model_cfg, 'tensor_parallel_size'):
             self.tensor_parallel_size = model_cfg.tensor_parallel_size
         return Config(
             model_name_or_path=self.model,
