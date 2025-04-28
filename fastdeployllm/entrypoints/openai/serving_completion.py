@@ -9,11 +9,11 @@ import uuid
 from fastapi import Request
 
 # yapf: disable
-from fastdeployllm.entrypoints.openai.protocol import ErrorResponse, CompletionRequest, CompletionResponse, CompletionStreamResponse, CompletionResponseStreamChoice, CompletionResponseChoice,UsageInfo
-from fastdeployllm.utils import api_server_logger 
+from fastdeploy.entrypoints.openai.protocol import ErrorResponse, CompletionRequest, CompletionResponse, CompletionStreamResponse, CompletionResponseStreamChoice, CompletionResponseChoice,UsageInfo
+from fastdeploy.utils import api_server_logger 
 
 from asyncio import FIRST_COMPLETED, AbstractEventLoop, Task
-from fastdeployllm.engine.request import RequestOutput
+from fastdeploy.engine.request import RequestOutput
 
 
 async def async_wrapper(sync_gen):

@@ -17,7 +17,7 @@ export PYTHONPATH=${PWD}:$PYTHONPATH
 
 ## LLM API使用
 ```
-from fastdeployllm import LLM, SamplingParams
+from fastdeploy import LLM, SamplingParams
 
 # Define a list of input prompts
 prompts = [

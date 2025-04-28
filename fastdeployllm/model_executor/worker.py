@@ -13,7 +13,7 @@ import paddle
 import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
 from paddle.base.framework import use_pir_api
-from fastdeployllm.inter_communicator import IPCSignal
+from fastdeploy.inter_communicator import IPCSignal
 
 
 if int(os.getenv("OPEN_SOURCE", "0")) == 1:
@@ -22,17 +22,17 @@ if int(os.getenv("OPEN_SOURCE", "0")) == 1:
         EagleProposer,
         InferenceWithReferenceProposer,
         )
-    from fastdeployllm.model_executor.model_runner.model_runner_paddlenlp import ModelRunner
+    from fastdeploy.model_executor.model_runner.model_runner_paddlenlp import ModelRunner
 
 else:
     from efficientllm.gpu import *
-    from fastdeployllm.model_executor.model_runner.model_runner_inference import ModelRunner
+    from fastdeploy.model_executor.model_runner.model_runner_inference import ModelRunner
 
 
 
-from fastdeployllm.engine.config import ModelConfig
-from fastdeployllm.utils import get_logger
-from fastdeployllm.inter_communicator import EngineWorkerQueue
+from fastdeploy.engine.config import ModelConfig
+from fastdeploy.utils import get_logger
+from fastdeploy.inter_communicator import EngineWorkerQueue
 
 
 logger = get_logger("fastdeploy", "worker.log")

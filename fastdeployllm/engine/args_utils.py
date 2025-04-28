@@ -3,8 +3,8 @@ import json
 from dataclasses import dataclass, fields as dataclass_fields
 from typing import Any, Dict, List, Optional
 
-from fastdeployllm.engine.config import Config, ModelConfig, CacheConfig, TaskOption
-from fastdeployllm.utils import FlexibleArgumentParser
+from fastdeploy.engine.config import Config, ModelConfig, CacheConfig, TaskOption
+from fastdeploy.utils import FlexibleArgumentParser
 
 def nullable_str(x: str) -> Optional[str]:
     """

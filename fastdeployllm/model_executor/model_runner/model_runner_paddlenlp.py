@@ -6,8 +6,8 @@ import random
 from paddlenlp.trl import llm_utils
 from paddlenlp.trl.llm_utils import get_rotary_position_embedding
 import numpy as np
-from fastdeployllm.model_executor.model_runner.model_runner_base import ModelRunnerBase
-from fastdeployllm.model_executor.utils import PredictorArgument, ModelArgument
+from fastdeploy.model_executor.model_runner.model_runner_base import ModelRunnerBase
+from fastdeploy.model_executor.utils import PredictorArgument, ModelArgument
 
 class ModelRunner(ModelRunnerBase):
     def __init__(self, config, args, nranks, rank):

@@ -21,7 +21,7 @@ from abc import ABC, abstractmethod
 
 from paddlenlp.transformers import Llama3Tokenizer, LlamaTokenizer
 
-from fastdeployllm.utils import data_processor_logger
+from fastdeploy.utils import data_processor_logger
 from paddlenlp.generation import GenerationConfig
 
 

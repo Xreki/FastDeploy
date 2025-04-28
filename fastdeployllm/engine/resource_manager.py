@@ -21,7 +21,7 @@ import threading
 import time
 
 import numpy as np
-from fastdeployllm.utils import llm_logger
+from fastdeploy.utils import llm_logger
 
 
 class ResourceManager(object):

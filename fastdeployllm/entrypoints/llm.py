@@ -21,11 +21,11 @@ import time
 from typing import Optional, Dict, List, Any, Union, overload
 from tqdm import tqdm
 
-from fastdeployllm.engine.args_utils import EngineArgs
-from fastdeployllm.engine.engine import LLMEngine
-from fastdeployllm.engine.sampling_params import SamplingParams
+from fastdeploy.engine.args_utils import EngineArgs
+from fastdeploy.engine.engine import LLMEngine
+from fastdeploy.engine.sampling_params import SamplingParams
 
-from fastdeployllm.utils import llm_logger
+from fastdeploy.utils import llm_logger
 
 
 import logging

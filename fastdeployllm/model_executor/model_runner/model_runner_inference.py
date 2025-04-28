@@ -21,7 +21,7 @@ import paddle
 import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
 
-from fastdeployllm.model_executor.model_runner.model_runner_base import ModelRunnerBase
+from fastdeploy.model_executor.model_runner.model_runner_base import ModelRunnerBase
 
 class ModelRunner(ModelRunnerBase):
     def __init__(self, config, args, nranks, rank):

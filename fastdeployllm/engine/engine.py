@@ -32,14 +32,14 @@ from collections import deque
 import threading
 import numpy as np
 
-from fastdeployllm.input.preprocess import InputPreprocessor
-from fastdeployllm.engine.args_utils import EngineArgs
-from fastdeployllm.engine.request import Request
-from fastdeployllm.engine.resource_manager import ResourceManager
-from fastdeployllm.inter_communicator import EngineWorkerQueue
-from fastdeployllm.output.token_processor import TokenProcessor, WarmUpTokenProcessor
-from fastdeployllm.inter_communicator import IPCSignal
-from fastdeployllm.utils import llm_logger
+from fastdeploy.input.preprocess import InputPreprocessor
+from fastdeploy.engine.args_utils import EngineArgs
+from fastdeploy.engine.request import Request
+from fastdeploy.engine.resource_manager import ResourceManager
+from fastdeploy.inter_communicator import EngineWorkerQueue
+from fastdeploy.output.token_processor import TokenProcessor, WarmUpTokenProcessor
+from fastdeploy.inter_communicator import IPCSignal
+from fastdeploy.utils import llm_logger
 
 
 class LLMEngine(object):

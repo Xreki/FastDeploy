@@ -5,8 +5,8 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Union, Any
 
-from fastdeployllm.engine.sampling_params import SamplingParams
-from fastdeployllm.utils import data_processor_logger
+from fastdeploy.engine.sampling_params import SamplingParams
+from fastdeploy.utils import data_processor_logger
 
 
 class Request:

@@ -21,8 +21,8 @@ import re
 import uuid
 from typing import Literal, Optional, Dict, List, Any
 
-from fastdeployllm.utils import llm_logger, check_unified_ckpt, get_host_ip, is_port_available
-from fastdeployllm.download_model import download_from_txt
+from fastdeploy.utils import llm_logger, check_unified_ckpt, get_host_ip, is_port_available
+from fastdeploy.download_model import download_from_txt
 
 TaskOption = Literal["generate"]
 

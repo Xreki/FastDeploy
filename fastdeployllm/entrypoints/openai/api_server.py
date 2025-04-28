@@ -19,10 +19,10 @@ import json
 from fastapi import FastAPI, APIRouter, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from fastdeployllm.utils import FlexibleArgumentParser, api_server_logger, is_port_available
-from fastdeployllm.engine.args_utils import EngineArgs
-from fastdeployllm.engine.engine import LLMEngine
-from fastdeployllm.entrypoints.openai.protocol import (
+from fastdeploy.utils import FlexibleArgumentParser, api_server_logger, is_port_available
+from fastdeploy.engine.args_utils import EngineArgs
+from fastdeploy.engine.engine import LLMEngine
+from fastdeploy.entrypoints.openai.protocol import (
     CompletionRequest, 
     ChatCompletionRequest, 
     ErrorResponse, 
@@ -30,8 +30,8 @@ from fastdeployllm.entrypoints.openai.protocol import (
     CompletionResponse
 )
 
-from fastdeployllm.entrypoints.openai.serving_chat import OpenAIServingChat
-from fastdeployllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
+from fastdeploy.entrypoints.openai.serving_chat import OpenAIServingChat
+from fastdeploy.entrypoints.openai.serving_completion import OpenAIServingCompletion
 
 app = FastAPI()
 

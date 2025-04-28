@@ -20,7 +20,7 @@ from openai.types.chat import (ChatCompletionContentPartRefusalParam,
                                ChatCompletionContentPartTextParam)
 from openai.types.chat import ChatCompletionMessageParam
 
-from fastdeployllm.engine.sampling_params import SamplingParams
+from fastdeploy.engine.sampling_params import SamplingParams
 
 
 class ErrorResponse(BaseModel):

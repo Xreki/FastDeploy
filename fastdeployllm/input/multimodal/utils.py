@@ -11,7 +11,7 @@ import ipaddress
 
 import requests
 from PIL import Image, ImageOps
-from fastdeployllm.utils import data_processor_logger
+from fastdeploy.utils import data_processor_logger
 
 import pyheif
 from pdf2image import convert_from_path

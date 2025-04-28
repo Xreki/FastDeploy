@@ -10,7 +10,7 @@ import numpy as np
 from multiprocessing.managers import (AcquirerProxy, BaseManager, ListProxy,
                                       Value, ValueProxy)
 from queue import Queue
-from fastdeployllm.utils import llm_logger
+from fastdeploy.utils import llm_logger
 import multiprocessing
 from multiprocessing.shared_memory import SharedMemory
 from typing import Optional, Dict, Tuple, List, Any

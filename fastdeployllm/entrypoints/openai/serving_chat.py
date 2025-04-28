@@ -23,7 +23,7 @@ import uuid
 
 from fastapi import Request
 from pydantic import BaseModel
-from fastdeployllm.entrypoints.openai.protocol import (
+from fastdeploy.entrypoints.openai.protocol import (
     ChatCompletionRequest,
     DeltaMessage,
     ChatCompletionResponseChoice,
@@ -35,9 +35,9 @@ from fastdeployllm.entrypoints.openai.protocol import (
     ErrorResponse,
 )
 
-from fastdeployllm.utils import api_server_logger
+from fastdeploy.utils import api_server_logger
 
-from fastdeployllm.engine.request import RequestOutput
+from fastdeploy.engine.request import RequestOutput
 
 
 async def async_wrapper(sync_gen):

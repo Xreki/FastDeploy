@@ -14,8 +14,8 @@
 # limitations under the License.
 """
 
-from fastdeployllm.entrypoints.llm import LLM
-from fastdeployllm.engine.sampling_params import SamplingParams
+from fastdeploy.entrypoints.llm import LLM
+from fastdeploy.engine.sampling_params import SamplingParams
 model_name_or_path = "llama-7b"
 
 # 超参设置

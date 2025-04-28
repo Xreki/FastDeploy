@@ -19,9 +19,9 @@ import json
 from fastapi import FastAPI
 from fastapi.responses import Response, StreamingResponse
 
-from fastdeployllm.utils import FlexibleArgumentParser, api_server_logger, is_port_available
-from fastdeployllm.engine.args_utils import EngineArgs
-from fastdeployllm.engine.engine import LLMEngine
+from fastdeploy.utils import FlexibleArgumentParser, api_server_logger, is_port_available
+from fastdeploy.engine.args_utils import EngineArgs
+from fastdeploy.engine.engine import LLMEngine
 
 app = FastAPI()
 
