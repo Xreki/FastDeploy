@@ -10,7 +10,7 @@ from fastapi import Request
 
 # yapf: disable
 from fastdeploy.entrypoints.openai.protocol import ErrorResponse, CompletionRequest, CompletionResponse, CompletionStreamResponse, CompletionResponseStreamChoice, CompletionResponseChoice,UsageInfo
-from fastdeploy.utils import api_server_logger 
+from fastdeploy.utils import api_server_logger
 
 from asyncio import FIRST_COMPLETED, AbstractEventLoop, Task
 from fastdeploy.engine.request import RequestOutput
@@ -62,6 +62,7 @@ class OpenAIServingCompletion:
 
         if request_prompt_ids is not None:
             request_prompts = request_prompt_ids
+         num_choices = len(request_prompts)
 
 
         try:
@@ -86,6 +87,7 @@ class OpenAIServingCompletion:
                 return self.completion_stream_generator(
                     request=request,
                     generator=merged_generator,
+                    num_choices = num_choices,
                     request_id=request_id,
                     created_time=created_time,
                     model_name=request.model
@@ -133,7 +135,7 @@ class OpenAIServingCompletion:
                 except Exception as e:
                     # 处理其他异常
                     api_server_logger.exception(e)
-        
+
 
 
     async def handle_non_streaming(self,
@@ -164,37 +166,45 @@ class OpenAIServingCompletion:
     async def completion_stream_generator(self,
                                         request: CompletionRequest,
                                         generator: AsyncGenerator,
+                                        num_choices: int,
                                         request_id: str,
                                         created_time: int,
                                         model_name: str):
         try:
-
+            output_tokens = [0] * num_choices
             async for idx, res in generator:
                 output = res['outputs']
+                if res['metrics']['model_forward_time'] is None:
+                    arrival_time = res['metrics']['first_token_time']
+                else:
+                    arrival_time = res['metrics']['model_forward_time']
                 chunk = CompletionStreamResponse(
                     id=request_id,
                     created=created_time,
                     model=model_name,
                     choices=[CompletionResponseStreamChoice(
-                        index=idx,
+                        index=output['index'],
                         text=output['text'],
-                        reasoning_content=output['reasoning_content']
+                        reasoning_content=output['reasoning_content'],
+                        arrival_time = arrival_time
                     )]
                 )
+                output_tokens[idx] += 1
                 yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
 
-            # 最终统计信息
-            if request.stream_options and request.stream_options.include_usage:
-                usage_chunk = CompletionStreamResponse(
-                    id=request_id,
-                    created=created_time,
-                    model=model_name,
-                    usage=UsageInfo(
-                        prompt_tokens=sum(res['prompt_tokens']),
-                        completion_tokens=sum(res['completion_tokens'])
+                # 最终统计信息
+                if res['finished'] and request.stream_options and request.stream_options.include_usage:
+                    usage_chunk = CompletionStreamResponse(
+                        id=request_id,
+                        created=created_time,
+                        model=model_name,
+                        choices = [],
+                        usage=UsageInfo(
+                            prompt_tokens=int(len(res['prompt_token_ids'])),
+                            completion_tokens=output_tokens[idx]
+                        )
                     )
-                )
-                yield f"data: {usage_chunk.model_dump_json(exclude_unset=True)}\n\n"
+                    yield f"data: {usage_chunk.model_dump_json(exclude_unset=True)}\n\n"
 
             yield "data: [DONE]\n\n"
         except Exception as e:

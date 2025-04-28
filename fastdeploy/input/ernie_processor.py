@@ -366,7 +366,7 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
         self.decode_status[task_id][1] = read_offset
         self.decode_status[task_id][2] += token_id
 
-        data_processor_logger.info(f"{token_id}, {decode_str}")
+        data_processor_logger.debug(f"{token_id}, {decode_str}")
         reasoning_content = ""
         content = ""
         if decode_str == "<|prefixoftext|>":
@@ -377,10 +377,10 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
             self.decode_status[task_id][4] += decode_str
 
         if self.decode_status[task_id][4] == "":
-            content = decode_str
-        elif '<|middleoftext|>' in self.decode_status[task_id][4] and decode_str != "<|middleoftext|>":
             reasoning_content = decode_str
-        return reasoning_content, content
+        elif '<|middleoftext|>' in self.decode_status[task_id][4] and decode_str != "<|middleoftext|>":
+            content = decode_str
+        return content, reasoning_content
 
 
     def _load_tokenizer(self):

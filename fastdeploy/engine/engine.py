@@ -172,6 +172,8 @@ class LLMEngine(object):
                         self.req_output_completion[result.request_id] = result
                     else:
                         self.req_output_completion[result.request_id].add(result)
+                        result.metrics.model_forward_time = \
+                            self.req_output_completion[result.request_id].metrics.model_forward_time
 
                     if result.finished:
                         result = self.req_output_completion[result.request_id]

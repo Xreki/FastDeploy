@@ -115,6 +115,7 @@ class CompletionResponseChoice(BaseModel):
     """
     index: int
     text: str
+    arrival_time: Optional[float] = None
     logprobs: Optional[int] = None
     reasoning_content: Optional[str] = None
     finish_reason: Optional[Literal["stop", "length"]]
@@ -138,6 +139,7 @@ class CompletionResponseStreamChoice(BaseModel):
     """
     index: int
     text: str
+    arrival_time: float
     logprobs: Optional[float] = None
     reasoning_content: Optional[str] = None
     finish_reason: Optional[Literal["stop", "length"]] = None
@@ -152,6 +154,7 @@ class CompletionStreamResponse(BaseModel):
     created: int = Field(default_factory=lambda: int(time.time()))
     model: str
     choices: List[CompletionResponseStreamChoice]
+    usage: Optional[UsageInfo] = None
 
 
 class StreamOptions(BaseModel):
@@ -256,8 +259,6 @@ class ChatCompletionRequest(BaseModel):
     stop_token_ids: Optional[List[int]] = Field(default_factory=list)
     min_tokens: int = 0
     # doc: end-chat-completion-sampling-params
-
-    # training: Optional[bool] = True
 
     def to_dict_for_infer(self, request_id=None):
         """

@@ -186,6 +186,10 @@ class RequestOutput:
                 f"num_cached_tokens={self.num_cached_tokens})")
 
     def todict(self):
+        if self.prompt_token_ids is None:
+            self.prompt_token_ids = []
+        else:
+            self.prompt_token_ids = [int(x) for x in self.prompt_token_ids]
         return {
             "request_id": self.request_id,
             "prompt": self.prompt,
