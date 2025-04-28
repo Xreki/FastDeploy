@@ -56,7 +56,7 @@ class Request:
 
     @classmethod
     def from_dict(cls, d: dict):
-        data_processor_logger.info(f"{d}")
+        data_processor_logger.debug(f"{d}")
         sampling_params = SamplingParams.from_dict(d)
         return cls(
             request_id=d["req_id"],

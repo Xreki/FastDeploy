@@ -53,7 +53,7 @@ class ErnieProcessor(BaseDataProcessor):
             self.thinking_template = "<|prefixoftext|>思考<|middleoftext|>"
             self.response_template = "<|prefixoftext|>开始回复<|middleoftext|>"
 
-
+        data_processor_logger.info(f"Thinking mode is {self.is_thinking}")
         self.decode_status = dict()
         self._load_tokenizer()
         data_processor_logger.info(f"tokenizer information: bos_token is {self.tokenizer.bos_token} \

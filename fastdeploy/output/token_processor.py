@@ -169,12 +169,8 @@ class TokenProcessor(object):
                     arrival_time=task.arrival_time,
                     inference_start_time=task.inference_start_time,
                     first_token_time=time.time() - task.inference_start_time,
-                    time_in_queue =datetime_diff(
-                        task.preprocess_end_time, task.schedule_start_time
-                    ),
-                    preprocess_cost_time = datetime_diff(
-                        task.preprocess_start_time, task.preprocess_end_time
-                    )
+                    time_in_queue = task.schedule_start_time - task.preprocess_end_time,
+                    preprocess_cost_time = task.preprocess_end_time - task.preprocess_start_time
                 )
             else:
                 metrics = RequestMetrics(arrival_time=time.time())

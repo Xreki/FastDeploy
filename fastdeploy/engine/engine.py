@@ -39,7 +39,7 @@ from fastdeploy.engine.resource_manager import ResourceManager
 from fastdeploy.inter_communicator import EngineWorkerQueue
 from fastdeploy.output.token_processor import TokenProcessor, WarmUpTokenProcessor
 from fastdeploy.inter_communicator import IPCSignal
-from fastdeploy.utils import llm_logger
+from fastdeploy.utils import llm_logger, EngineError
 
 
 class LLMEngine(object):
@@ -264,7 +264,7 @@ class LLMEngine(object):
         request = Request.from_dict(task)
         if sampling_params is not None:
             request.sampling_params = sampling_params
-        request.preprocess_start_time = datetime.now()
+        request.preprocess_start_time = time.time()
         if int(task.get("enable_text_truncate", 1)):
             real_seq_len = self.cfg.max_model_len - task.get("max_dec_len", 800)
             self.data_processor.process_request(request, max_model_len=real_seq_len)
@@ -282,29 +282,22 @@ class LLMEngine(object):
                 f"+ min_dec_len ({min_tokens}) >= max_model_len "
             )
             llm_logger.error(error_msg)
-            return
+            raise EngineError(error_msg, error_code=5001)
 
         if input_ids_len > self.cfg.max_model_len:
             error_msg = (
                 f"Length of input token({input_ids_len}) exceeds the limit max_model_len({self.cfg.max_model_len})."
             )
             llm_logger.error(error_msg)
-            return
+            raise EngineError(error_msg, error_code=5001)
 
-
-        required_block_num = self.resource_manager.get_required_block_number(input_ids_len)
-        if required_block_num > self.resource_manager.total_block_number():
-            error_msg = f"The input task required resources is exceed the limit, task={task}."
-            llm_logger.error(error_msg)
-            return
-
-        request.preprocess_end_time = datetime.now()
+        request.preprocess_end_time = time.time()
         self.cached_task_deque.appendleft(request)
         llm_logger.info(
             f"cache task with req_id ({request.get('request_id')}), "
             f"cached_task_num: {len(self.cached_task_deque)}."
         )
-        llm_logger.debug(f"cache task: {request}")
+        llm_logger.info(f"Recieve task: {request}")
 
 
     def warmup(self):
@@ -322,7 +315,7 @@ class LLMEngine(object):
             tasks = [tasks]
 
         for item in tasks:
-            item.schedule_start_time = datetime.now()
+            item.schedule_start_time = time.time()
 
         available_batch = np.sum(self.resource_manager.stop_flags)
         if len(tasks) > available_batch:
@@ -331,15 +324,19 @@ class LLMEngine(object):
             llm_logger.error("The exceeded part will be ignored!")
             tasks = tasks[:available_batch]
 
+        req_ids = [t.request_id for t in tasks]
+
         tasks = self.resource_manager.allocate_resources_for_new_tasks(tasks)
         if not tasks:
-            return False
+            error_msg = f"The input task required resources is exceed the limit, tasks_id={req_ids}."
+            llm_logger.error(error_msg)
+            raise EngineError(error_msg, error_code=5002)
 
         self.token_processor.number_of_tasks += len(tasks)
         for i in range(len(tasks)):
             self.token_processor.number_of_input_tokens += tasks[i].prompt_token_ids_len
 
-        req_ids = [t.request_id for t in tasks]
+
         llm_logger.info(f"Tasks are sent to engine, req_ids={req_ids}")
         self.engine_worker_queue.put_tasks((tasks, self.resource_manager.real_bsz))
         return True
@@ -467,8 +464,8 @@ class LLMEngine(object):
                     f" --model_name_or_path {str(self.cfg.model_name_or_path)}"
                     f" --device_ids {self.cfg.device_ids}"
                     f" --engine_worker_queue_port {str(self.cfg.engine_worker_queue_port)}"
-                    f" --max_block_num {self.cfg.cache_config.total_block_num} "
-                    f"--block_size {self.cfg.cache_config.block_size}"
+                    f" --max_block_num {self.cfg.cache_config.total_block_num}"
+                    f" --block_size {self.cfg.cache_config.block_size}"
                     f" --enc_dec_block_num {self.cfg.cache_config.enc_dec_block_num}"
                     f" --eos_tokens_lens {self.data_processor.eos_token_id_len}"
                     f" --pad_token_id {self.data_processor.pad_token_id}"
@@ -490,6 +487,9 @@ class LLMEngine(object):
 
     def _format_and_add_data(self, prompts: dict):
 
+        if "request_id" in prompts:
+            prompts["req_id"] = prompts["request_id"]
+
         if "req_id" not in prompts:
             request_id = str(uuid.uuid4())
             prompts["req_id"] = request_id
@@ -507,7 +507,7 @@ class LLMEngine(object):
             prompts["max_tokens"] = self.cfg.max_model_len
 
         self.add_requests(prompts)
-        return request_id
+        return prompts["req_id"]
 
     def generate(self, prompts, stream):
         """

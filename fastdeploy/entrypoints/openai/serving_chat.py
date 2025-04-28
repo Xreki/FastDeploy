@@ -80,7 +80,8 @@ class OpenAIServingChat:
             )
             async_gen = async_wrapper(generator)
         except ValueError as e:
-            return ErrorResponse(code=400, message=str(e))
+            return ErrorResponse(code=4001, message=str(e))
+
 
         if request.stream:
             return self.chat_completion_stream_generator(
@@ -90,14 +91,8 @@ class OpenAIServingChat:
                 return await self.chat_completion_full_generator(
                     request, async_gen, request_id, request.model)
             except ValueError as e:
-                return ErrorResponse(code=400, message=str(e))
+                return ErrorResponse(code=4002, message=str(e))
 
-    def _create_streaming_error_response(self, message: str) -> str:
-        error_response = ErrorResponse(
-            code=400,
-            message=message,
-        )
-        return error_response.model_dump_json()
 
     async def chat_completion_stream_generator(
         self,
@@ -123,7 +118,7 @@ class OpenAIServingChat:
         else:
             include_usage = stream_options.include_usage
             include_continuous_usage = stream_options.continuous_usage_stats
-        api_server_logger.info(f"include usage: {include_usage}, include cont usage: {include_continuous_usage}")
+        api_server_logger.debug(f"include usage: {include_usage}, include cont usage: {include_continuous_usage}")
 
         try:
             async for res in result_generator:
@@ -204,7 +199,7 @@ class OpenAIServingChat:
                 yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
 
         except Exception as e:
-            error_data = self._create_streaming_error_response(str(e))
+            error_data = ErrorResponse(code=4003, message=str(e)).model_dump_json(exclude_unset=True)
             yield f"data: {error_data}\n\n"
         yield "data: [DONE]\n\n"
 

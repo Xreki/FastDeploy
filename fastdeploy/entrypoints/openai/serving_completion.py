@@ -15,6 +15,7 @@
 """
 
 import asyncio
+from asyncio import FIRST_COMPLETED, AbstractEventLoop, Task
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from collections.abc import Sequence as GenericSequence
@@ -22,11 +23,8 @@ from typing import Optional, Union, cast, TypeVar, List
 import uuid
 from fastapi import Request
 
-# yapf: disable
 from fastdeploy.entrypoints.openai.protocol import ErrorResponse, CompletionRequest, CompletionResponse, CompletionStreamResponse, CompletionResponseStreamChoice, CompletionResponseChoice,UsageInfo
 from fastdeploy.utils import api_server_logger
-
-from asyncio import FIRST_COMPLETED, AbstractEventLoop, Task
 from fastdeploy.engine.request import RequestOutput
 
 
@@ -34,16 +32,15 @@ async def async_wrapper(sync_gen):
     """正确转换同步生成器的异步包装器"""
     while True:
         try:
-            # 直接传递 next 和生成器对象
             item = await asyncio.get_event_loop().run_in_executor(
                 None,
-                next,  # 直接使用 next 函数
-                sync_gen  # 传递生成器对象
+                next,
+                sync_gen
             )
             yield item
             if item.get("finished", False):
                 break
-        except StopIteration:  # 显式捕获同步结束信号
+        except StopIteration:
             api_server_logger.info("Sync generator has been fully traversed.")
             break
 
@@ -52,31 +49,35 @@ class OpenAIServingCompletion:
         self.engine_client = engine_client
 
     async def create_completion(self, request: CompletionRequest):
-        """重构后的异步处理方法"""
+        """
+        Create a completion for the given prompt.
+        """
         created_time = int(time.time())
         request_id = f"cmpl-{uuid.uuid4()}"
         request_prompt_ids = None
         request_prompts = None
-
-        if isinstance(request.prompt, str):
-            request_prompts = [request.prompt]
-        elif isinstance(request.prompt, list) and all(isinstance(item,  int) for item in request.prompt):
-            request_prompt_ids = [request.prompt]
-        elif isinstance(request.prompt, list) and all(isinstance(item, str) for item in request.prompt):
-            request_prompts = request.prompt
-        elif isinstance(request.prompt, list):
-            for item in request.prompt:
-                if isinstance(item, list) and all(isinstance(x, int) for x in item):
-                    continue
-                else:
-                    raise ValueError("Prompt must be a string, a list of strings or a list of integers.")
-            request_prompt_ids = request.prompt
-        else:
-            raise ValueError("Prompt must be a string, a list of strings or a list of integers.")
+        try:
+            if isinstance(request.prompt, str):
+                request_prompts = [request.prompt]
+            elif isinstance(request.prompt, list) and all(isinstance(item,  int) for item in request.prompt):
+                request_prompt_ids = [request.prompt]
+            elif isinstance(request.prompt, list) and all(isinstance(item, str) for item in request.prompt):
+                request_prompts = request.prompt
+            elif isinstance(request.prompt, list):
+                for item in request.prompt:
+                    if isinstance(item, list) and all(isinstance(x, int) for x in item):
+                        continue
+                    else:
+                        raise ValueError("Prompt must be a string, a list of strings or a list of integers.")
+                request_prompt_ids = request.prompt
+            else:
+                raise ValueError("Prompt must be a string, a list of strings or a list of integers.")
+        except Exception as e:
+            return ErrorResponse(message=str(e), code=5001)
 
         if request_prompt_ids is not None:
             request_prompts = request_prompt_ids
-         num_choices = len(request_prompts)
+        num_choices = len(request_prompts)
 
 
         try:
@@ -107,16 +108,19 @@ class OpenAIServingCompletion:
                     model_name=request.model
                 )
             else:
-                return await self.handle_non_streaming(
-                    merged_generator,
-                    request,
-                    request_id,
-                    created_time,
-                    model_name=request.model
-                )
+                try:
+                    return await self.handle_non_streaming(
+                        merged_generator,
+                        request,
+                        request_id,
+                        created_time,
+                        model_name=request.model
+                    )
+                except ValueError as e:
+                    return ErrorResponse(code=5002, message=str(e))
 
         except ValueError as e:
-            return ErrorResponse(message=str(e), code=400)
+            return ErrorResponse(message=str(e), code=5002)
 
     async def merge_async_generators(self, generators: List[AsyncGenerator]):
         """合并多个异步生成器为一个异步生成器"""
@@ -149,6 +153,7 @@ class OpenAIServingCompletion:
                 except Exception as e:
                     # 处理其他异常
                     api_server_logger.exception(e)
+                    yield False, ErrorResponse(code=5002, message=str(e))
 
 
 
@@ -222,7 +227,7 @@ class OpenAIServingCompletion:
 
             yield "data: [DONE]\n\n"
         except Exception as e:
-            yield f"{ErrorResponse(message=str(e), code=400)}\n\n"
+            yield f"data: {ErrorResponse(message=str(e), code=5002).model_dump_json(exclude_unset=True)}\n\n"
             yield "data: [DONE]\n\n"
 
     def request_output_to_completion_response(

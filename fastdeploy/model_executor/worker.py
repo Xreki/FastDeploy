@@ -20,17 +20,18 @@ import json
 import os
 import sys
 import time
-
-
 from multiprocessing import shared_memory
-
 import numpy as np
 import paddle
 import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
 from paddle.base.framework import use_pir_api
-from fastdeploy.inter_communicator import IPCSignal
 
+
+from fastdeploy.inter_communicator import IPCSignal
+from fastdeploy.engine.config import ModelConfig
+from fastdeploy.utils import get_logger
+from fastdeploy.inter_communicator import EngineWorkerQueue
 
 if int(os.getenv("OPEN_SOURCE", "0")) == 1:
     from paddlenlp_ops import speculate_step_paddle, step_paddle
@@ -43,13 +44,6 @@ if int(os.getenv("OPEN_SOURCE", "0")) == 1:
 else:
     from efficientllm.gpu import *
     from fastdeploy.model_executor.model_runner.model_runner_inference import ModelRunner
-
-
-
-from fastdeploy.engine.config import ModelConfig
-from fastdeploy.utils import get_logger
-from fastdeploy.inter_communicator import EngineWorkerQueue
-
 
 logger = get_logger("fastdeploy", "worker.log")
 
@@ -74,6 +68,7 @@ class Worker:
 
 
         self.model_cfg = ModelConfig(args.model_name_or_path)
+
         self.init_dist_env()
 
         self.format_print_configuration()
@@ -132,7 +127,7 @@ class Worker:
         # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
         self.worker_healthy_live_recorded_time_array = np.zeros(shape=[self.nranks], dtype=np.float32)
         self.worker_healthy_live_signal = IPCSignal(name="worker_healthy_live_signal",
-                    array=self.worker_healthy_live_recorded_time_array, 
+                    array=self.worker_healthy_live_recorded_time_array,
 					dtype=np.float32,
                     suffix=self.args.engine_pid,
 					create=False)
