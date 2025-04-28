@@ -52,10 +52,7 @@ python api_server.py --config test.yaml --port 9904
 curl 0.0.0.0:9904/generate    -H 'Content-Type: application/json'    -d '{"prompt": "hello, llm","stream":1}'
 ```
 
-## 代码提交规范
 
-- 本仓库已添加pre-commit hook，代码clone至本地后，进入主目录，执行```pre-commit install```，即可安装代码提交自动格式化工具（git commit时会自动执行)。
-- Python代码遵循PEP-8风格
-- 所有新增函数鼓励增加注释（英文），核心函数/用户API接口强制增加注释
-- 配置参数均需注释说明作用
-- 开源代码遵循Apache 2.0开源协议，如存在拷贝或借鉴自外部开源代码，请务必在文件头说明引用来源
+# 开源协议
+
+FastDeploy遵循[Apache-2.0开源协议](./LICENSE)。 在本项目的开发中，为了对齐[vLLM](https://github.com/vllm-project/vllm)使用接口，参考或直接使用了部分vLLM代码，在此表示感谢。
