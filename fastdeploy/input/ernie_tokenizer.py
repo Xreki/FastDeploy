@@ -26,8 +26,9 @@ from paddlenlp.transformers import PretrainedTokenizer
 from paddlenlp.transformers.tokenizer_utils_base import PaddingStrategy
 from paddlenlp.utils.log import logger
 from sentencepiece import SentencePieceProcessor
-
 import paddle
+
+from . import spm_pb2 as spm
 
 __all__ = ["ErnieBotTokenizer"]
 
@@ -85,9 +86,6 @@ class ErnieBotTokenizer(PretrainedTokenizer):
         )
         self.verbose = False
         self.vocab_file = vocab_file
-        os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
-        from . import spm_pb2 as spm
-
 
         self.model = spm.ModelProto()
         with open(vocab_file, "rb") as fp:
