@@ -422,9 +422,9 @@ class LLMEngine(object):
 
 
         # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
-        self.worker_healthy_live_recorded_time_array = np.zeros(shape=[self.cfg.tensor_parallel_size], dtype=np.float32)
+        worker_healthy_live_recorded_time_array = np.zeros(shape=[self.cfg.tensor_parallel_size], dtype=np.float32)
         self.worker_healthy_live_signal = IPCSignal(name="worker_healthy_live_signal",
-                    array=self.worker_healthy_live_recorded_time_array,
+                    array=worker_healthy_live_recorded_time_array,
 					dtype=np.float32,
                     suffix=os.getpid(),
 					create=True)
@@ -575,8 +575,8 @@ class LLMEngine(object):
         Check the health of the model server by checking whether all workers are alive.
 
         """
-        if self.worker_healthy_live_recorded_time_array[0]:
-            elapsed_time = time.time() - self.worker_healthy_live_recorded_time_array[0]
+        if self.worker_healthy_live_signal.value[0]:
+            elapsed_time = time.time() - self.worker_healthy_live_signal.value[0]
             if elapsed_time > time_interval_threashold:
                 return False, "Worker Service Not Healthy"
 
