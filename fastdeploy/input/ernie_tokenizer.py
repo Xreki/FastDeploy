@@ -29,8 +29,6 @@ from sentencepiece import SentencePieceProcessor
 
 import paddle
 
-from . import spm_pb2 as spm
-
 __all__ = ["ErnieBotTokenizer"]
 
 
@@ -87,6 +85,10 @@ class ErnieBotTokenizer(PretrainedTokenizer):
         )
         self.verbose = False
         self.vocab_file = vocab_file
+        os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+        from . import spm_pb2 as spm
+
+
         self.model = spm.ModelProto()
         with open(vocab_file, "rb") as fp:
             self.model.ParseFromString(fp.read())
