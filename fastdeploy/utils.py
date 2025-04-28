@@ -394,6 +394,6 @@ def is_port_available(host, port):
             if e.errno == errno.EADDRINUSE:
                 return False
             return True
-llm_logger = get_logger("fastdeploy", "llm.log")
+llm_logger = get_logger("fastdeploy", "fastdeploy.log")
 data_processor_logger = get_logger("fastdeploy", "data_processor.log")
 api_server_logger = get_logger("fastdeploy", "api_server_server.log")
