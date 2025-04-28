@@ -152,7 +152,7 @@ class OpenAIServingChat:
                             )
                         yield f"data: {chunk.model_dump_json(exclude_unset=True)} \n\n"
                     first_iteration = False
-                api_server_logger.info(f"The chat completion stream chu{res}")
+                api_server_logger.debug(f"The chat completion stream chunk {res}")
                 output = res["outputs"]
                 delta_text = output["text"]
 
