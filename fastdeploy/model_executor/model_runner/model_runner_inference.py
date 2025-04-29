@@ -224,7 +224,7 @@ class ModelRunner(ModelRunnerBase):
 
         # 初始化free list
         free_list = list(
-            range(num_gpu_blocks - 1, int(num_gpu_blocks * self.args.block_ratio) - 1, -1)
+            range(num_gpu_blocks - 1, int(num_gpu_blocks * self.args.kv_cache_ratio) - 1, -1)
         )
         self.free_list_len = len(free_list)
         self.share_inputs.update({
@@ -238,7 +238,7 @@ class ModelRunner(ModelRunnerBase):
         fake input to profile
         """
         full_length = num_total_tokens // number_of_tasks
-        input_length = int(full_length * self.args.block_ratio)
+        input_length = int(full_length * self.args.kv_cache_ratio)
         block_num = (input_length + self.args.block_size - 1 + self.args.enc_dec_block_num) // self.args.block_size
 
         for i in range(number_of_tasks):

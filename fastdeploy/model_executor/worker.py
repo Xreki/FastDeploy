@@ -377,7 +377,7 @@ def parse_args():
     parser.add_argument("--device_ids", type=str, default="0", help="cuda visible devices")
     parser.add_argument("--dtype", type=str, default="bfloat16", help="input dtype")
     parser.add_argument("--enc_dec_block_num", type=int, default=1, help="encoder's decoder num")
-    parser.add_argument("--block_ratio", type=float, default=0.7, help="block ratio")
+    parser.add_argument("--kv_cache_ratio", type=float, default=0.7, help="kv cache ratio for input")
     parser.add_argument("--first_token_id", type=int, default=1, help="first token id")
     parser.add_argument("--gpu_memory_utilization", type=float, default=0.9, help="gpu memory utilization")
     parser.add_argument("--engine_pid", type=int, default=None, help="Process ID of engine")

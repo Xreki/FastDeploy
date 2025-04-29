@@ -85,7 +85,7 @@ class EngineArgs:
     """
     Maximum number of tokens to batch together.
     """
-    block_ratio: float = 0.75
+    kv_cache_ratio: float = 0.75
     """
     Ratio of tokens to process in a block.
     """
@@ -97,9 +97,9 @@ class EngineArgs:
     """
     List of IP addresses for nodes in the cluster.
     """
-    max_cached_task_num: int = 128
+    max_cached_request_num: int = 128
     """
-    Maximum number of tasks in the cache waiting list.
+    Maximum number of requests in the cache waiting list.
     """
 
     # System configuration parameters
@@ -223,14 +223,14 @@ class EngineArgs:
         parallel_group.add_argument(
             "--block-ratio",
             type=float,
-            default=EngineArgs.block_ratio,
+            default=EngineArgs.kv_cache_ratio,
             help="Ratio of tokens to process in a block."
         )
         parallel_group.add_argument(
-            "--max_cached_task_num",
+            "--max-cached-request-num",
             type=int,
-            default=EngineArgs.max_cached_task_num,
-            help="Maximum number of tasks in the cache waiting list."
+            default=EngineArgs.max_cached_request_num,
+            help="Maximum number of requests in the cache waiting list."
         )
 
         # Cluster system parameters group
@@ -286,7 +286,7 @@ class EngineArgs:
             block_size=self.block_size,
             gpu_memory_utilization=self.gpu_memory_utilization,
             num_gpu_blocks_override=self.num_gpu_blocks_override,
-            block_ratio=self.block_ratio,
+            kv_cache_ratio=self.kv_cache_ratio,
             enable_prefix_caching=self.enable_prefix_caching
         )
 
@@ -310,7 +310,7 @@ class EngineArgs:
             max_num_batched_tokens=self.max_num_batched_tokens,
             nnode=self.nnode,
             pod_ips=self.pod_ips,
-            max_cached_task_num=self.max_cached_task_num,
+            max_cached_request_num=self.max_cached_request_num,
             use_warmup=self.use_warmup,
             engine_worker_queue_port=self.engine_worker_queue_port
         )

@@ -156,7 +156,7 @@ class ModelRunnerBase(ABC):
 
         # 初始化free list
         free_list = list(
-            range(self.args.max_block_num - 1, int(self.args.max_block_num * self.args.block_ratio) - 1, -1)
+            range(self.args.max_block_num - 1, int(self.args.max_block_num * self.args.kv_cache_ratio) - 1, -1)
         )
         self.free_list_len = len(free_list)
         self.share_inputs.update({

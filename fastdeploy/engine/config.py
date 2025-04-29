@@ -136,7 +136,7 @@ class CacheConfig:
         gpu_memory_utilization (float): Fraction of GPU memory to use for model execution.
         cache_dtype (str): Data type for kv cache storage. Default is 'bfloat16'.
         num_gpu_blocks_override (Optional[int]): Number of GPU blocks to use. Overrides profiled num_gpu_blocks if provided.
-        block_ratio (float): Ratio for calculating the maximum block number.
+        kv_cache_ratio (float): Ratio for calculating the maximum block number.
         enc_dec_block_num (int): Number of encoder-decoder blocks.
         enable_prefix_caching (bool): Flag to enable prefix caching.
     """
@@ -146,7 +146,7 @@ class CacheConfig:
         gpu_memory_utilization: float,
         cache_dtype: str = "bfloat16",
         num_gpu_blocks_override: Optional[int] = None,
-        block_ratio: float = 0.75,
+        kv_cache_ratio: float = 0.75,
         enc_dec_block_num: int = 2,
         enable_prefix_caching: bool = False,
     ):
@@ -158,14 +158,14 @@ class CacheConfig:
             gpu_memory_utilization (float): Fraction of GPU memory to use.
             cache_dtype (str): Data type for cache storage. Default is 'bfloat16'.
             num_gpu_blocks_override (Optional[int]): Override for number of GPU blocks.
-            block_ratio (float): Ratio for max block calculation.
+            kv_cache_ratio (float): Ratio for max block calculation.
             enc_dec_block_num (int): Number of encoder-decoder blocks.
             enable_prefix_caching (bool): Enable prefix caching.
         """
         self.block_size = block_size
         self.gpu_memory_utilization = gpu_memory_utilization
         self.num_gpu_blocks_override = num_gpu_blocks_override
-        self.block_ratio = block_ratio
+        self.kv_cache_ratio = kv_cache_ratio
         self.enc_dec_block_num = enc_dec_block_num
         self.cache_dtype = cache_dtype
         self.enable_prefix_caching = enable_prefix_caching
@@ -180,10 +180,10 @@ class CacheConfig:
             raise ValueError(
                 "GPU memory utilization must be less than 1.0. Got "
                 f"{self.gpu_memory_utilization}.")
-        if self.block_ratio > 1.0:
+        if self.kv_cache_ratio > 1.0:
             raise ValueError(
-                "Block ratio must be less than 1.0. Got "
-                f"{self.block_ratio}.")
+                "KV cache ratio must be less than 1.0. Got "
+                f"{self.kv_cache_ratio}.")
 
 
     def postprocess(self, num_total_tokens, number_of_tasks):
@@ -198,14 +198,14 @@ class CacheConfig:
             block_num = (length + self.block_size - 1 + self.enc_dec_block_num) // self.block_size
             self.total_block_num =  block_num * number_of_tasks
             llm_logger.info(f"Doing profile, the total_block_num:{self.total_block_num}")
-        self.max_block_num = int(self.total_block_num * self.block_ratio)
+        self.max_block_num = int(self.total_block_num * self.kv_cache_ratio)
 
     def reset(self, num_gpu_blocks):
         """
         reset gpu block number
         """
         self.total_block_num  = num_gpu_blocks
-        self.max_block_num = int(self.total_block_num * self.block_ratio)
+        self.max_block_num = int(self.total_block_num * self.kv_cache_ratio)
         llm_logger.info((f"Reset block num, the total_block_num:{self.total_block_num},"
             f" max_block_num:{self.max_block_num}"))
 
@@ -232,7 +232,7 @@ class Config:
         max_num_batched_tokens (Optional[int]): Maximum number of batched tokens.
         tensor_parallel_size (int): Tensor parallel size.
         nnode (int): Number of nodes.
-        max_cached_task_num (int): Maximum number of cached tasks.
+        max_cached_request_num (int): Maximum number of cached requests.
         max_model_len (int): Maximum model length. Default is 8192.
         max_num_seqs (int): Maximum number of sequences. Default is 8.
         mm_processor_kwargs (Optional[Dict[str, Any]]): Additional arguments for multi-modal processor.
@@ -247,7 +247,7 @@ class Config:
         tokenizer: str = None,
         tensor_parallel_size: int = 8,
         nnode: int = 1,
-        max_cached_task_num: int = 128,
+        max_cached_request_num: int = 128,
         max_model_len: int = 8192,
         max_num_seqs: int = 8,
         max_num_batched_tokens: Optional[int] = None,
@@ -267,7 +267,7 @@ class Config:
             tokenizer (str): Default is the model.
             tensor_parallel_size (int): Tensor parallel size. Default is 8.
             nnode (int): Number of nodes. Default is 1.
-            max_cached_task_num (int): Maximum number of cached tasks. Default is 128.
+            max_cached_request_num (int): Maximum number of cached requests. Default is 128.
             max_model_len (int): Maximum model length. Default is 8192.
             max_num_seqs (int): Maximum number of sequences. Default is 8.
             max_num_batched_tokens (Optional[int]): Maximum number of batched tokens. Default is None.
@@ -287,7 +287,7 @@ class Config:
         self.max_model_len = max_model_len
         self.max_num_seqs = max_num_seqs
         self.mm_processor_kwargs = mm_processor_kwargs
-        self.max_cached_task_num = max_cached_task_num
+        self.max_cached_request_num = max_cached_request_num
         self.speculative_config = speculative_config
         self.use_warmup = use_warmup
 
@@ -339,7 +339,7 @@ class Config:
 				), f"The parameter `engine_worker_queue_port`:{self.engine_worker_queue_port} is already in use."
         assert (8 >= self.tensor_parallel_size > 0), f"tensor_parallel_size: {self.tensor_parallel_size} should be between 1 and 8"
         assert (self.nnode >= 1), f"nnode: {self.nnode} should no less than 1"
-        assert (self.max_cached_task_num >= 0), f"max_cached_task_num: {self.max_cached_task_num} should be larger than 0"
+        assert (self.max_cached_request_num >= 0), f"max_cached_request_num: {self.max_cached_request_num} should be larger than 0"
         assert (self.max_model_len >= 16), f"max_model_len: {self.max_model_len} should be larger than 16"
         assert (self.max_num_seqs >= 1), f"max_num_seqs: {self.max_num_seqs} should be larger than 1"
 

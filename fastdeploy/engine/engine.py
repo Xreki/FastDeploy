@@ -491,7 +491,7 @@ class LLMEngine(object):
                     f" --pad_token_id {self.data_processor.pad_token_id}"
                     f" --engine_pid {os.getpid()}"
                     f" --do_profile {self.do_profile}"
-                    f" --block_ratio {self.cfg.cache_config.block_ratio} --dtype {self.cfg.cache_config.cache_dtype}")
+                    f" --kv_cache_ratio {self.cfg.cache_config.kv_cache_ratio} --dtype {self.cfg.cache_config.cache_dtype}")
         if self.cfg.nnode > 1:
             pd_cmd = pd_cmd + f" --ips {self.cfg.ips}"
         log_dir = os.getenv("FD_LOG_DIR", default="log")
