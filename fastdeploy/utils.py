@@ -35,6 +35,15 @@ from pathlib import Path
 import argparse
 import yaml
 
+
+class EngineError(Exception):
+    """Base exception class for engine errors"""
+    def __init__(self, message, error_code=400):
+        super().__init__(message)
+        self.error_code = error_code
+
+
+
 class DailyRotatingFileHandler(BaseRotatingHandler):
     """
     like `logging.TimedRotatingFileHandler`, but this class support multi-process
