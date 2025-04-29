@@ -64,7 +64,8 @@ class ModelRunner(ModelRunnerBase):
         tmp_position_ids = paddle.arange(max_model_len).reshape((1, -1))
         self.share_inputs["rope_emb"] = self.get_rotary_position_embedding(
             tmp_position_ids,
-            self.model_cfg.hidden_size // self.model_cfg.num_attention_heads
+            self.model_cfg.hidden_size // self.model_cfg.num_attention_heads,
+            self.rope_theta
         )
 
     def _init_kvcache(self, max_block_num):
