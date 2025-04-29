@@ -22,11 +22,6 @@ from collections import Counter
 from datetime import datetime
 
 
-if int(os.getenv("OPEN_SOURCE", "0")) == 1:
-    from paddlenlp_ops import get_output, speculate_get_output
-else:
-    from efficientllm.gpu import get_output
-
 from paddlenlp.utils.env import MAX_BSZ, MAX_DRAFT_TOKENS, SPECULATE_MAX_BSZ
 
 from fastdeploy.utils import datetime_diff, llm_logger
@@ -89,7 +84,11 @@ class TokenProcessor(object):
         """
         read tokens from paddle inference engine and process
         """
-
+        if int(os.getenv("OPEN_SOURCE", "0")) == 1:
+            from paddlenlp_ops import get_output, speculate_get_output
+        else:
+            os.environ["ELLM_LOG_LEVEL"] = "3"
+            from efficientllm.gpu import get_output
         while True:
             try:
                 rank_id = 0

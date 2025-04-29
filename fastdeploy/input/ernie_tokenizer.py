@@ -25,9 +25,8 @@ from paddlenlp.transformers import PretrainedTokenizer
 from paddlenlp.transformers.tokenizer_utils_base import PaddingStrategy
 from paddlenlp.utils.log import logger
 from sentencepiece import SentencePieceProcessor
+from sentencepiece import sentencepiece_model_pb2 as spm
 import paddle
-
-from . import spm_pb2 as spm
 
 __all__ = ["ErnieBotTokenizer"]
 

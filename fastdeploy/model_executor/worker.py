@@ -33,18 +33,6 @@ from fastdeploy.engine.config import ModelConfig
 from fastdeploy.utils import get_logger
 from fastdeploy.inter_communicator import EngineWorkerQueue
 
-if int(os.getenv("OPEN_SOURCE", "0")) == 1:
-    from paddlenlp_ops import speculate_step_paddle, step_paddle
-    from paddlenlp.experimental.transformers import (
-        EagleProposer,
-        InferenceWithReferenceProposer,
-        )
-    from fastdeploy.model_executor.model_runner.model_runner_paddlenlp import ModelRunner
-
-else:
-    from efficientllm.gpu import *
-    from fastdeploy.model_executor.model_runner.model_runner_inference import ModelRunner
-
 logger = get_logger("fastdeploy", "worker.log")
 
 
@@ -60,6 +48,12 @@ class Worker:
         Raises:
             None, 没有异常抛出。
         """
+        if int(os.getenv("OPEN_SOURCE", "0")) == 1:
+            from fastdeploy.model_executor.model_runner.model_runner_paddlenlp import ModelRunner
+        
+        else:
+            from fastdeploy.model_executor.model_runner.model_runner_inference import ModelRunner
+
         self.args = args
         self.MAX_INFER_SEED = 9223372036854775806
         paddle.set_default_dtype(args.dtype)
@@ -168,6 +162,14 @@ class Worker:
         """
         step cuda
         """
+        if int(os.getenv("OPEN_SOURCE", "0")) == 1:
+            from paddlenlp_ops import step_paddle
+            from fastdeploy.model_executor.model_runner.model_runner_paddlenlp import ModelRunner
+        
+        else:
+            from efficientllm.gpu import step_paddle
+            from fastdeploy.model_executor.model_runner.model_runner_inference import ModelRunner
+
         step_paddle(
             self.infer_engine.share_inputs["stop_flags"],
             self.infer_engine.share_inputs["seq_lens_this_time"],

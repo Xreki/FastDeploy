@@ -448,14 +448,34 @@ class LLMEngine(object):
         if hasattr(self, "worker_proc") and self.worker_proc is not None:
             os.killpg(self.worker_proc.pid, signal.SIGTERM)
 
+    def _setting_environ_variables(self):
+       """
+       配置环境变量
+       """
+       variables = {
+           "PADDLE_TRAINER_ID": 0,
+           "PADDLE_TRAINERS_NUM": 1,
+           "TRAINER_INSTANCES_NUM": 1,
+           "TRAINER_INSTANCES": "0.0.0.0",
+           "ENABLE_EFFICIENTLLM_LOAD_MODEL_CONCURRENCY": 0,
+           "LOAD_STATE_DICT_THREAD_NUM": 8,
+           "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION": "python",
+           "FLAGS_use_append_attn": 1,
+       }
+       command_prefix = ""
+       for k, v in variables.items():
+           command_prefix += f"{k}={v} "
+       return command_prefix
+
     def _start_worker_service(self):
         """
         start gpu worker service
 
         """
+        command_prefix = self._setting_environ_variables()
         current_file_path = os.path.abspath(__file__)
         current_dir_path = os.path.split(current_file_path)[0]
-        pd_cmd = f"{sys.executable} -m paddle.distributed.launch "
+        pd_cmd = f"{command_prefix} {sys.executable} -m paddle.distributed.launch "
         py_script = os.path.join(current_dir_path, "../model_executor/worker.py")
         arguments = (f" --nnodes {str(self.cfg.nnode)}"
                     f" --devices {self.cfg.device_ids} {py_script}"

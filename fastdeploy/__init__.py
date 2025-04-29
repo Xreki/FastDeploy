@@ -14,7 +14,6 @@
 # limitations under the License.
 """
 
-import os
 from fastdeploy.entrypoints.llm import LLM
 from fastdeploy.engine.sampling_params import SamplingParams
 

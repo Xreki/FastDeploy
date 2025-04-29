@@ -152,8 +152,7 @@ def launch_api_server(args) -> None:
     启动http服务
     """
     if not is_port_available(args.host, args.port):
-        api_server_logger.error(f"The parameter `port`:{args.port} is already in use.")
-        return
+        raise Exception(f"The parameter `port`:{args.port} is already in use.")
 
     api_server_logger.info(f"launch Fastdeploy api server... port: {args.port}")
     api_server_logger.info(f"args: {args.__dict__}")
