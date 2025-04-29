@@ -304,7 +304,7 @@ class Worker:
         logger.info(f"used cache gpu memory: {used_cache_gpu_memory} GiB.")
         model_weights_memory = used_gpu_memory - used_cache_gpu_memory
         paddle_peak_increase = current_max_peak_gpu_memory - before_activation_gpu_memory
-        memory_for_current_instance = total_gpu_memory * 0.9
+        memory_for_current_instance = total_gpu_memory * self.args.gpu_memory_utilization
         available_kv_cache_memory = memory_for_current_instance - used_gpu_memory - \
                                     paddle_peak_increase + used_cache_gpu_memory
 
@@ -338,6 +338,7 @@ class Worker:
         self.get_profile_block_num_signal.value[self.rank] = int(num_gpu_blocks)
         logger.info(f"{self.get_profile_block_num_signal.value[self.rank]} GPU KV blocks can be allocated.")
         self.infer_engine._update_share_input_block_num(num_gpu_blocks)
+        paddle.device.cuda.empty_cache()
         gc.collect()
 
     def run_profile(self):
