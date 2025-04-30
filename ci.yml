@@ -1,17 +1,21 @@
 Global:
-  version: "2.0"
-  group_email: demo@baidu.com
-
+    version: "2.0"
+    group_email: fastdeploy@baidu.com
 Default:
-  profile: [publish]
-
+    profile:
+        - fastdeploy
 Profiles:
-  - profile:
-    name: publish
-    mode: AGENT
-    environment:
-      image: DECK_STD_CENTOS7
-      tools:
-        - python: 3.9.16
-    build:
-    command: python setup.py bdist && mkdir output && cp -r dist/* output
+    - profile:
+      name: fastdeploy
+      mode: AGENT
+      environment:
+        image: DECK_STD_CENTOS7
+        tools:
+            - python: 3.9.16
+      build:
+        command: python setup.py bdist_wheel && mkdir -p output && cp -r dist/* output
+      artifacts:
+        release: true
+      check:
+        - enable: false
+          reuse: TASK
