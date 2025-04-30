@@ -244,7 +244,8 @@ class Worker:
                 for req_dict, bsz in tasks:
                     num_running_requests = int(bsz)
                     req_dicts.extend(req_dict)
-                    logger.info(f"Rank: {self.rank}, num_running_requests: {num_running_requests}, num_insert_requests: {len(req_dicts)}")
+                    logger.info(f"Rank: {self.rank}, num_running_requests: {num_running_requests}, " \
+				f"num_insert_requests: {len(req_dicts)}")
 
                 self.infer_engine.dy_input_preprocess(req_dicts)
                 self.infer_engine.share_inputs["not_need_stop"][0] = True
