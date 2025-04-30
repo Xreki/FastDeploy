@@ -13,7 +13,7 @@ Profiles:
         tools:
             - python: 3.9.16
       build:
-        command: python setup.py bdist_wheel && mkdir -p output && cp -r dist/* output
+        command: sh build.sh
       artifacts:
         release: true
       check:
