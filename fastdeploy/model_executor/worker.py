@@ -112,9 +112,9 @@ class Worker:
         worker_ready_signal_data = np.zeros(shape=[self.nranks], dtype=np.int32)
         self.worker_ready_signal = IPCSignal(name="worker_ready_singnal",
                                              array=worker_ready_signal_data,
-											 dtype=np.int32,
- 											 suffix=self.args.engine_pid,
-											 create=False)
+                                             dtype=np.int32,
+                                              suffix=self.args.engine_pid,
+                                             create=False)
         self.worker_ready_signal.value[self.rank] = 1
 
 
@@ -122,28 +122,28 @@ class Worker:
         self.worker_healthy_live_recorded_time_array = np.zeros(shape=[self.nranks], dtype=np.float32)
         self.worker_healthy_live_signal = IPCSignal(name="worker_healthy_live_signal",
                     array=self.worker_healthy_live_recorded_time_array,
-					dtype=np.float32,
+                    dtype=np.float32,
                     suffix=self.args.engine_pid,
-					create=False)
+                    create=False)
         self.worker_healthy_live_signal.value[self.rank] = time.time()
 
         # exist_task_signal 用于各worker进程感知是否有新Task需要处理
         exist_task_signal_data = np.zeros([1], dtype=np.int32)
         self.exist_task_signal = IPCSignal(
             name="exist_task_signal",
-			array=exist_task_signal_data,
-			dtype=np.int32,
-			suffix=self.args.engine_pid,
-			create=False)
+            array=exist_task_signal_data,
+            dtype=np.int32,
+            suffix=self.args.engine_pid,
+            create=False)
 
         # exist_swapped_task_signal 用于engine感知worker中是否存在swapped task
         exist_swapped_task_signal_data = np.zeros([1], dtype=np.int32)
         self.exist_swapped_task_signal = IPCSignal(
             name="exist_swapped_task_signal",
-			array=exist_swapped_task_signal_data,
-			dtype=np.int32,
-			suffix=self.args.engine_pid,
-			create=False)
+            array=exist_swapped_task_signal_data,
+            dtype=np.int32,
+            suffix=self.args.engine_pid,
+            create=False)
 
     def format_print_configuration(self):
         """
@@ -244,8 +244,8 @@ class Worker:
                 for req_dict, bsz in tasks:
                     num_running_requests = int(bsz)
                     req_dicts.extend(req_dict)
-                    logger.info(f"Rank: {self.rank}, num_running_requests: {num_running_requests}, " \
-				f"num_insert_requests: {len(req_dicts)}")
+                logger.info(f"Rank: {self.rank}, num_running_requests: {num_running_requests}, " \
+                            f"num_insert_requests: {len(req_dicts)}")
 
                 self.infer_engine.dy_input_preprocess(req_dicts)
                 self.infer_engine.share_inputs["not_need_stop"][0] = True
@@ -334,10 +334,10 @@ class Worker:
         get_profile_block_num = np.zeros(shape=[self.nranks], dtype=np.int32)
         self.get_profile_block_num_signal = IPCSignal(
             name="get_profile_block_num",
-			array=get_profile_block_num,
-			dtype=np.int32,
+            array=get_profile_block_num,
+            dtype=np.int32,
             suffix=self.args.engine_pid,
-			create=False)
+            create=False)
         self.get_profile_block_num_signal.value[self.rank] = int(num_gpu_blocks)
         logger.info(f"{self.get_profile_block_num_signal.value[self.rank]} GPU KV blocks can be allocated.")
         self.infer_engine._update_share_input_block_num(num_gpu_blocks)
