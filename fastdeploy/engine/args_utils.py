@@ -221,7 +221,7 @@ class EngineArgs:
             help="Fraction of GPU memory to be utilized."
         )
         parallel_group.add_argument(
-            "--block-ratio",
+            "--kv-cache-ratio",
             type=float,
             default=EngineArgs.kv_cache_ratio,
             help="Ratio of tokens to process in a block."
