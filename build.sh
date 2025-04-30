@@ -2,4 +2,4 @@ if [[ ! -d output ]]; then
 	mkdir -p output/
 fi
 
-cp -r fastdeploy setup.py output
+cp -r fastdeploy setup.py requirements.txt output
