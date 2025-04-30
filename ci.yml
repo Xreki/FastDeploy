@@ -14,4 +14,4 @@ Profiles:
       tools:
         - python: 3.9.16
     build:
-    command: python setup.py
+    command: python setup.py bdist && mkdir output && cp -r dist/* output
