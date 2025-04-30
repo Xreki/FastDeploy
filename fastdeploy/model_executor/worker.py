@@ -33,7 +33,7 @@ from fastdeploy.engine.config import ModelConfig
 from fastdeploy.utils import get_logger
 from fastdeploy.inter_communicator import EngineWorkerQueue
 
-logger = get_logger("fastdeploy", "worker.log")
+logger = get_logger("worker", "worker.log")
 
 
 class Worker:
