@@ -73,31 +73,33 @@ class OpenAIServingChat:
         api_server_logger.info(f"create chat completion request: {request_id}")
 
         try:
-            current_req_dict = request.to_dict_for_infer()
-            generator = self.engine_client.generate(
-                current_req_dict,
-                request.stream
-            )
-            async_gen = async_wrapper(generator)
+            current_req_dict = request.to_dict_for_infer(request_id)
+            self.engine_client._format_and_add_data(current_req_dict)
+
         except ValueError as e:
             return ErrorResponse(code=4001, message=str(e))
 
 
         if request.stream:
             return self.chat_completion_stream_generator(
-                request, async_gen, request_id, request.model)
+                request, request_id, request.model)
         else:
             try:
                 return await self.chat_completion_full_generator(
-                    request, async_gen, request_id, request.model)
+                    request, request_id, request.model)
             except ValueError as e:
-                return ErrorResponse(code=4002, message=str(e))
+                return ErrorResponse(code=400, message=str(e))
 
+    def _create_streaming_error_response(self, message: str) -> str:
+        error_response = ErrorResponse(
+            code=400,
+            message=message,
+        )
+        return error_response.model_dump_json()
 
     async def chat_completion_stream_generator(
         self,
         request: ChatCompletionRequest,
-        result_generator: AsyncGenerator,
         request_id: str,
         model_name: str
     ):
@@ -107,9 +109,10 @@ class OpenAIServingChat:
         created_time = int(time.time())
         chunk_object_type: str = "chat.completion.chunk"
         first_iteration = True
-        num_choices = 1
-        previous_num_tokens = [0] * num_choices
+        previous_num_tokens = 0
         num_prompt_tokens = 0
+        num_choices = 1
+        queue = asyncio.Queue()
 
         stream_options = request.stream_options
         if stream_options is None:
@@ -118,10 +121,31 @@ class OpenAIServingChat:
         else:
             include_usage = stream_options.include_usage
             include_continuous_usage = stream_options.continuous_usage_stats
-        api_server_logger.debug(f"include usage: {include_usage}, include cont usage: {include_continuous_usage}")
 
         try:
-            async for res in result_generator:
+            async def producer(req_id: str):
+                while True:
+                    # 等待结果可用
+                    while req_id not in self.engine_client.req_output or not self.engine_client.req_output[req_id]:
+                        await asyncio.sleep(0.02)
+
+                    result = self.engine_client.req_output[req_id].pop()
+                    is_end = result.finished
+                    if is_end:
+                        result.outputs.token_ids = []
+                        processed = result
+                    else:
+                        processed = self.engine_client.data_processor.process_response(result)
+                    if processed is not None:
+                        output = processed.todict()
+                        await queue.put({"data": output, "is_end": is_end})
+                    if is_end:
+                        del self.engine_client.req_output[req_id]
+                        break
+            task = asyncio.create_task(producer(request_id))
+            while num_choices > 0:
+                item = await queue.get()
+                res = item["data"]
                 if first_iteration:
                     num_prompt_tokens = len(res["prompt_token_ids"])
                     num_cached_tokens = res["num_cached_tokens"]
@@ -147,11 +171,11 @@ class OpenAIServingChat:
                             )
                         yield f"data: {chunk.model_dump_json(exclude_unset=True)} \n\n"
                     first_iteration = False
-                api_server_logger.debug(f"The chat completion stream chunk {res}")
+
                 output = res["outputs"]
                 delta_text = output["text"]
 
-                previous_num_tokens[0] += len(output["token_ids"])
+                previous_num_tokens += len(output["token_ids"])
                 delta_message = DeltaMessage(content=delta_text, reasoning_content=output["reasoning_content"])
 
                 choice = ChatCompletionResponseStreamChoice(
@@ -159,6 +183,7 @@ class OpenAIServingChat:
                     delta=delta_message
                 )
                 if res["finished"]:
+                    num_choices -= 1
                     if request.max_tokens is None or output["index"] + 1 != request.max_tokens:
                         choice.finish_reason = "stop"
                     else:
@@ -199,14 +224,13 @@ class OpenAIServingChat:
                 yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
 
         except Exception as e:
-            error_data = ErrorResponse(code=4003, message=str(e)).model_dump_json(exclude_unset=True)
+            error_data = self._create_streaming_error_response(str(e))
             yield f"data: {error_data}\n\n"
         yield "data: [DONE]\n\n"
 
     async def chat_completion_full_generator(
         self,
         request: ChatCompletionRequest,
-        result_generator: AsyncGenerator,
         request_id: str,
         model_name: str
     ):
@@ -216,12 +240,21 @@ class OpenAIServingChat:
         created_time = int(time.time())
         final_res = None
 
-        try:
-            async for res in result_generator:
-                final_res = res
-        except asyncio.CancelledError:
-            return ErrorResponse(code=499, message="Client disconnected")
+        while True:
+            # 等待结果可用
+            while request_id not in self.engine_client.req_output or not self.engine_client.req_output[request_id]:
+                await asyncio.sleep(0.02)
 
+            # 取出结果（先进先出）
+            result = self.engine_client.req_output[request_id].pop()  # 改为pop(0确保顺序
+            is_end = result.finished
+
+            if is_end:
+                del self.engine_client.req_output[request_id]
+                processed = self.engine_client.data_processor.process_response(result)
+                output = processed.todict()
+                final_res = output
+                break
         if not final_res:
             return ErrorResponse(code=500, message="No response generated")
 

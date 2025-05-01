@@ -28,22 +28,6 @@ from fastdeploy.utils import api_server_logger
 from fastdeploy.engine.request import RequestOutput
 
 
-async def async_wrapper(sync_gen):
-    """正确转换同步生成器的异步包装器"""
-    while True:
-        try:
-            item = await asyncio.get_event_loop().run_in_executor(
-                None,
-                next,
-                sync_gen
-            )
-            yield item
-            if item.get("finished", False):
-                break
-        except StopIteration:
-            api_server_logger.info("Sync generator has been fully traversed.")
-            break
-
 class OpenAIServingCompletion:
     def __init__(self, engine_client):
         self.engine_client = engine_client
@@ -54,6 +38,7 @@ class OpenAIServingCompletion:
         """
         created_time = int(time.time())
         request_id = f"cmpl-{uuid.uuid4()}"
+        api_server_logger.info(f"initialize request {request_id}")
         request_prompt_ids = None
         request_prompts = None
         try:
@@ -79,29 +64,19 @@ class OpenAIServingCompletion:
             request_prompts = request_prompt_ids
         num_choices = len(request_prompts)
 
+        api_server_logger.info(f"start inference for request {num_choices}")
 
         try:
-            # 创建异步生成器列表
-            async_generators = []
             for idx, prompt in enumerate(request_prompts):
-                # 创建同步生成器
                 request_id_idx = f"{request_id}-{idx}"
+                api_server_logger.info(f"{prompt}")
                 current_req_dict = request.to_dict_for_infer(request_id_idx, prompt)
-                sync_gen = self.engine_client.generate(
-                    current_req_dict,
-                    request.stream
-                )
-                # 转换为异步生成器
-                async_gen = async_wrapper(sync_gen)
-                async_generators.append(async_gen)
+                self.engine_client._format_and_add_data(current_req_dict)
 
-            # 合并生成器
-            merged_generator = self.merge_async_generators(async_generators)
 
             if request.stream:
                 return self.completion_stream_generator(
                     request=request,
-                    generator=merged_generator,
                     num_choices = num_choices,
                     request_id=request_id,
                     created_time=created_time,
@@ -109,11 +84,11 @@ class OpenAIServingCompletion:
                 )
             else:
                 try:
-                    return await self.handle_non_streaming(
-                        merged_generator,
-                        request,
-                        request_id,
-                        created_time,
+                    return await self.completion_full_generator(
+                        request=request,
+                        num_choices=num_choices,
+                        request_id=request_id,
+                        created_time=created_time,
                         model_name=request.model
                     )
                 except ValueError as e:
@@ -122,55 +97,24 @@ class OpenAIServingCompletion:
         except ValueError as e:
             return ErrorResponse(message=str(e), code=5002)
 
-    async def merge_async_generators(self, generators: List[AsyncGenerator]):
-        """合并多个异步生成器为一个异步生成器"""
-        task_to_index = {}
-        # 初始化任务池
-        for idx, gen in enumerate(generators):
-            task = asyncio.create_task(gen.__anext__())
-            task_to_index[task] = idx
 
-        while task_to_index:
-            # 等待至少一个任务完成
-            done, pending = await asyncio.wait(
-                task_to_index.keys(),
-                return_when=asyncio.FIRST_COMPLETED
-            )
-
-            for task in done:
-                # 获取对应的生成器索引
-                idx = task_to_index.pop(task)
-
-                try:
-                    result = await task  # 显式获取结果
-                    yield idx, result
-                    # 重新调度该生成器
-                    new_task = asyncio.create_task(generators[idx].__anext__())
-                    task_to_index[new_task] = idx
-                except StopAsyncIteration:  # 正确捕获异步结束信号
-                    del generators[idx]
-                    api_server_logger.info("Sync generator %s has been fully traversed.", idx)
-                except Exception as e:
-                    # 处理其他异常
-                    api_server_logger.exception(e)
-                    yield False, ErrorResponse(code=5002, message=str(e))
-
-
-
-    async def handle_non_streaming(self,
-                             generator: AsyncGenerator,
+    async def completion_full_generator(self,
                              request: CompletionRequest,
+                             num_choices: int,
                              request_id: str,
                              created_time: int,
                              model_name: str):
-        final_outputs = dict()
+        """
+        Process the full completion request.
+        """
         try:
-            async for idx, res in generator:
-                # 确保结果按生成器顺序存储
-                final_outputs[idx] = res
+            tasks = []
+            for i in range(num_choices):
+                choice_request_id = f"{request_id}-{i}"
+                task = self._process_single_choice(choice_request_id)
+                tasks.append(task)
 
-            # 过滤可能的空值（当生成器数量不固定时）
-            valid_results = [res for idx, res in final_outputs.items() if res is not None]
+            valid_results = await asyncio.gather(*tasks)
 
             return self.request_output_to_completion_response(
                 final_res_batch=valid_results,
@@ -180,56 +124,116 @@ class OpenAIServingCompletion:
                 model_name=model_name
             )
         except Exception as e:
-            api_server_logger.info(f"{e}")
+            api_server_logger.error(f"Error in completion_full_generator: {e}", exc_info=True)
+            raise
 
-    async def completion_stream_generator(self,
-                                        request: CompletionRequest,
-                                        generator: AsyncGenerator,
-                                        num_choices: int,
-                                        request_id: str,
-                                        created_time: int,
-                                        model_name: str):
+    async def _process_single_choice(self, choice_request_id: str):
+        """
+        Process a single choice of the completion request.
+        """
+        while True:
+            while (choice_request_id not in self.engine_client.req_output or
+                not self.engine_client.req_output[choice_request_id]):
+                await asyncio.sleep(0.02)
+
+            result = self.engine_client.req_output[choice_request_id].pop()
+            is_end = result.finished
+
+            if is_end:
+                del self.engine_client.req_output[choice_request_id]
+                processed = self.engine_client.data_processor.process_response(result)
+                return processed.todict()
+
+    async def completion_stream_generator(
+        self,
+        request: CompletionRequest,
+        num_choices: int,
+        request_id: str,
+        created_time: int,
+        model_name: str
+    ):
+        """
+        Process the stream completion request.
+        """
         try:
             output_tokens = [0] * num_choices
-            async for idx, res in generator:
-                output = res['outputs']
+            queue = asyncio.Queue()
+
+            async def producer(idx: int):
+                """
+                Produce results for a single choice of the completion request.
+                """
+                req_id = f"{request_id}-{idx}"
+                while True:
+                    while req_id not in self.engine_client.req_output or not self.engine_client.req_output[req_id]:
+                        await asyncio.sleep(0.01)
+
+                    result = self.engine_client.req_output[req_id].pop()  # 改为pop(0确保顺序
+                    is_end = result.finished
+
+                    processed = self.engine_client.data_processor.process_response(result)
+                    if processed is not None:
+                        output = processed.todict()
+                        await queue.put({"idx": idx, "data": output, "is_end": is_end})
+
+                    if is_end:
+                        del self.engine_client.req_output[req_id]
+                        break
+
+            tasks = [asyncio.create_task(producer(idx)) for idx in range(num_choices)]
+
+            while num_choices > 0 :
+                item = await queue.get()
+                res = item["data"]
                 if res['metrics']['model_forward_time'] is None:
                     arrival_time = res['metrics']['first_token_time']
                 else:
                     arrival_time = res['metrics']['model_forward_time']
+                output = res["outputs"]
                 chunk = CompletionStreamResponse(
                     id=request_id,
                     created=created_time,
                     model=model_name,
                     choices=[CompletionResponseStreamChoice(
-                        index=output['index'],
-                        text=output['text'],
-                        reasoning_content=output['reasoning_content'],
-                        arrival_time = arrival_time
+                        index=item["idx"],
+                        text=output["text"],
+                        reasoning_content=output["reasoning_content"],
+                        arrival_time=arrival_time
                     )]
                 )
-                output_tokens[idx] += 1
+
+                # 更新token计数
+                output_tokens[0] += 1
+
+                # 流式输出
+                # api_server_logger.info(f"{chunk}")
                 yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
 
-                # 最终统计信息
-                if res['finished'] and request.stream_options and request.stream_options.include_usage:
-                    usage_chunk = CompletionStreamResponse(
-                        id=request_id,
-                        created=created_time,
-                        model=model_name,
-                        choices = [],
-                        usage=UsageInfo(
-                            prompt_tokens=int(len(res['prompt_token_ids'])),
-                            completion_tokens=output_tokens[idx]
+                if item["is_end"]:
+                    num_choices -= 1
+                    if getattr(request, "stream_options", None) and request.stream_options.include_usage:
+                        usage_chunk = CompletionStreamResponse(
+                            id=request_id,
+                            created=created_time,
+                            model=model_name,
+                            usage=UsageInfo(
+                                prompt_tokens=len(res.get("prompt_token_ids", [])),
+                                completion_tokens=output_tokens[0]
+                            )
                         )
-                    )
-                    yield f"data: {usage_chunk.model_dump_json(exclude_unset=True)}\n\n"
+                        yield f"data: {usage_chunk.model_dump_json(exclude_unset=True)}\n\n"
 
+                    continue
+
+
+                queue.task_done()
+
+            # 所有任务完成后发送结束标记
             yield "data: [DONE]\n\n"
+
         except Exception as e:
             yield f"data: {ErrorResponse(message=str(e), code=5002).model_dump_json(exclude_unset=True)}\n\n"
             yield "data: [DONE]\n\n"
-
     def request_output_to_completion_response(
         self,
         final_res_batch: List[RequestOutput],
