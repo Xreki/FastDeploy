@@ -71,8 +71,10 @@ class OpenAIServingCompletion:
                 request_id_idx = f"{request_id}-{idx}"
                 api_server_logger.info(f"{prompt}")
                 current_req_dict = request.to_dict_for_infer(request_id_idx, prompt)
-                self.engine_client._format_and_add_data(current_req_dict)
-
+                try:
+                    self.engine_client._format_and_add_data(current_req_dict)
+                except Exception as e:
+                    return ErrorResponse(message=str(e), code=400) 
 
             if request.stream:
                 return self.completion_stream_generator(

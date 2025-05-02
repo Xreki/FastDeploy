@@ -75,10 +75,8 @@ class OpenAIServingChat:
         try:
             current_req_dict = request.to_dict_for_infer(request_id)
             self.engine_client._format_and_add_data(current_req_dict)
-
         except ValueError as e:
-            return ErrorResponse(code=4001, message=str(e))
-
+            return ErrorResponse(code=400, message=str(e))
 
         if request.stream:
             return self.chat_completion_stream_generator(

@@ -225,9 +225,9 @@ class ResourceManager(object):
                     task.inference_time_cost = -1.0
                     task.tokens_all_num = int(0)
                     self.tasks_list[allocated_position] = task
-                    llm_logger.info(f"allocate req_id: {task.request_id}, "
+                    llm_logger.info(f"Allocate request: {task.request_id}, "
                                             f"allocated_position:{allocated_position}, "
-                                            f"input_ids_length: {task.prompt_token_ids_len}")
+                                            f"length of prompt token: {task.prompt_token_ids_len}")
                 allocated_position += 1
             processing_task_index += 1
 
@@ -237,8 +237,8 @@ class ResourceManager(object):
                 self.real_bsz = i + 1
                 break
 
-        llm_logger.info("in num:{0} new task num:{1} real_bsz is:{2}".format(
-            len(tasks), len(processed_tasks), self.real_bsz))
+        llm_logger.info(f"Number of allocated requests: {len(tasks)}, number of "
+                        f"running requests in worker: {self.real_bsz}")
         llm_logger.info(f"{self.info()}")
         return processed_tasks
 

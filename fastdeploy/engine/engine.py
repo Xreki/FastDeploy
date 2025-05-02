@@ -247,7 +247,6 @@ class LLMEngine(object):
                 "insert_task_to_worker thread exit " f"unexpectedly, {e}. {str(traceback.format_exc())}"
             )
 
-
     def add_requests(self, task, sampling_params=None):
         """
         Add a new request to the queue.
@@ -278,7 +277,7 @@ class LLMEngine(object):
         min_tokens = request.get("min_tokens")
         if input_ids_len + min_tokens >= self.cfg.max_model_len:
             error_msg = (
-                f"Input text is too long, input_ids_len ({input_ids_len}) "
+                f"Input text is too long, length of prompt token({input_ids_len}) "
                 f"+ min_dec_len ({min_tokens}) >= max_model_len "
             )
             llm_logger.error(error_msg)
@@ -294,11 +293,10 @@ class LLMEngine(object):
         request.preprocess_end_time = time.time()
         self.cached_task_deque.appendleft(request)
         llm_logger.info(
-            f"cache task with req_id ({request.get('request_id')}), "
-            f"cached_task_num: {len(self.cached_task_deque)}."
+            f"Cache request ({request.get('request_id')}), "
+            f"request queue size: {len(self.cached_task_deque)}."
         )
-        llm_logger.info(f"Recieve task: {request}")
-
+        llm_logger.info(f"Recieve request: {request}")
 
     def warmup(self):
         """
@@ -328,7 +326,7 @@ class LLMEngine(object):
 
         tasks = self.resource_manager.allocate_resources_for_new_tasks(tasks)
         if not tasks:
-            error_msg = f"The input task required resources is exceed the limit, tasks_id={req_ids}."
+            error_msg = f"The request required resources is exceed the limit, request id={req_ids}."
             llm_logger.error(error_msg)
             raise EngineError(error_msg, error_code=5002)
 
@@ -336,8 +334,7 @@ class LLMEngine(object):
         for i in range(len(tasks)):
             self.token_processor.number_of_input_tokens += tasks[i].prompt_token_ids_len
 
-
-        llm_logger.info(f"Tasks are sent to engine, req_ids={req_ids}")
+        llm_logger.info(f"Requests are insert to worker, request ids: {req_ids}, request queue size: {len(self.cached_task_deque)}")
         self.engine_worker_queue.put_tasks((tasks, self.resource_manager.real_bsz))
         return True
 
@@ -398,44 +395,44 @@ class LLMEngine(object):
         worker_ready_signal_data = np.zeros(shape=[self.cfg.tensor_parallel_size], dtype=np.int32)
         self.worker_ready_signal = IPCSignal(name="worker_ready_singnal",
                                              array=worker_ready_signal_data,
-                      						 dtype=np.int32,
-  											 suffix=os.getpid(),
-											 create=True)
+                                               dtype=np.int32,
+                                               suffix=os.getpid(),
+                                             create=True)
 
         # exist_task_signal 用于各worker进程感知是否有新Task需要处理
         exist_task_signal_data = np.zeros([1], dtype=np.int32)
         self.exist_task_signal = IPCSignal(name="exist_task_signal",
                                            array=exist_task_signal_data,
-										   dtype=np.int32,
+                                           dtype=np.int32,
                                            suffix=os.getpid(),
-										   create=True)
+                                           create=True)
 
         # exist_swapped_task_signal 用于engine感知worker中是否存在swapped task
         exist_swapped_task_signal_data = np.zeros([1], dtype=np.int32)
         self.exist_swapped_task_signal = IPCSignal(
             name="exist_swapped_task_signal",
-			array=exist_swapped_task_signal_data,
-			dtype=np.int32,
+            array=exist_swapped_task_signal_data,
+            dtype=np.int32,
             suffix=os.getpid(),
-			create=True)
+            create=True)
 
 
         # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
         worker_healthy_live_recorded_time_array = np.zeros(shape=[self.cfg.tensor_parallel_size], dtype=np.float32)
         self.worker_healthy_live_signal = IPCSignal(name="worker_healthy_live_signal",
                     array=worker_healthy_live_recorded_time_array,
-					dtype=np.float32,
+                    dtype=np.float32,
                     suffix=os.getpid(),
-					create=True)
+                    create=True)
 
         if self.do_profile:
             get_profile_block_num = np.zeros([self.cfg.tensor_parallel_size], dtype=np.int32)
             self.get_profile_block_num_signal = IPCSignal(
                 name="get_profile_block_num",
-				array=get_profile_block_num,
-				dtype=np.int32,
+                array=get_profile_block_num,
+                dtype=np.int32,
                 suffix=os.getpid(),
-				create=True)
+                create=True)
 
     def _exit_sub_services(self):
         """

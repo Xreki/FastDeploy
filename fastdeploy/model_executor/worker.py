@@ -232,7 +232,7 @@ class Worker:
                 paddle.distributed.barrier()
 
             if self.exist_task_signal.value[0] == 1 or self.engine_worker_queue.read_finish_flag.get() == 1:
-                logger.info(f"rank: {self.rank} start to get")
+                logger.info(f"Rank: {self.rank} Detected new requests.")
                 self.insert_step = True
 
                 tasks, read_finish = self.engine_worker_queue.get_tasks()

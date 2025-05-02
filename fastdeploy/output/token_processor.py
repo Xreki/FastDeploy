@@ -195,7 +195,8 @@ class TokenProcessor(object):
                     result.prompt = task.prompt
                     result.prompt_token_ids = task.prompt_token_ids
                     self._recycle_resources(task_id, i, task)
-                    llm_logger.info("req_id: {0} finished".format(task_id))
+                    llm_logger.info(f"Request: {task_id} finished, number of "
+									f"generated tokens: {self.tokens_counter[task_id]}.")
                     llm_logger.info(f"{self.resource_manager.info()}")
                     llm_logger.info(
                         f"Speculate accept ratio: {1 - self.total_step * 1.0 / self.number_of_output_tokens}"
