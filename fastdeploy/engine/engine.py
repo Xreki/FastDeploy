@@ -334,7 +334,8 @@ class LLMEngine(object):
         for i in range(len(tasks)):
             self.token_processor.number_of_input_tokens += tasks[i].prompt_token_ids_len
 
-        llm_logger.info(f"Requests are insert to worker, request ids: {req_ids}, request queue size: {len(self.cached_task_deque)}")
+        llm_logger.info(f"Requests are insert to worker, request ids: {req_ids}, "
+                        f"request queue size: {len(self.cached_task_deque)}")
         self.engine_worker_queue.put_tasks((tasks, self.resource_manager.real_bsz))
         return True
 
