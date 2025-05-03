@@ -281,14 +281,14 @@ class LLMEngine(object):
                 f"+ min_dec_len ({min_tokens}) >= max_model_len "
             )
             llm_logger.error(error_msg)
-            raise EngineError(error_msg, error_code=5001)
+            raise EngineError(error_msg, error_code=400)
 
         if input_ids_len > self.cfg.max_model_len:
             error_msg = (
                 f"Length of input token({input_ids_len}) exceeds the limit max_model_len({self.cfg.max_model_len})."
             )
             llm_logger.error(error_msg)
-            raise EngineError(error_msg, error_code=5001)
+            raise EngineError(error_msg, error_code=400)
 
         request.preprocess_end_time = time.time()
         self.cached_task_deque.appendleft(request)
@@ -328,7 +328,7 @@ class LLMEngine(object):
         if not tasks:
             error_msg = f"The request required resources is exceed the limit, request id={req_ids}."
             llm_logger.error(error_msg)
-            raise EngineError(error_msg, error_code=5002)
+            raise EngineError(error_msg, error_code=500)
 
         self.token_processor.number_of_tasks += len(tasks)
         for i in range(len(tasks)):
