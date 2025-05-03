@@ -625,7 +625,8 @@ class LLMEngine(object):
                 if match := re.search(r'Loading checkpoint shards:\s*(\d+)', line):
                     self.worker_init_status["weight_loadding"] = eval(match.group(1)) * 1.0 / 100
                 elif match := re.search(r'Start load layer (\d+)', line):
-                    self.worker_init_status["layer_loadding"] = eval(match.group(1)) * 1.0 / self.cfg.model_config.num_layers
+                    progress = eval(match.group(1)) * 1.0 / self.cfg.model_config.num_layers
+                    self.worker_init_status["layer_loadding"] = progress 
                     if self.worker_init_status["layer_loadding"] == self.cfg.model_config.num_layers - 1:
                         self.worker_init_status["finished"] = True 
         self.checking_worker_status_thread = threading.Thread(target=detect_thread, args=())
