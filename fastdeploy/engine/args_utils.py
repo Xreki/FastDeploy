@@ -31,7 +31,7 @@ def nullable_str(x: str) -> Optional[str]:
 @dataclass
 class EngineArgs:
     # Model configuration parameters
-    model: str = "facebook/opt-125m"
+    model: str = "baidu/ernie-45-turbo"
     """
     The name or path of the model to be used.
     """

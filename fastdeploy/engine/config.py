@@ -321,7 +321,7 @@ class Config:
         self.paddle_commit_id = paddle.version.commit
 
         if self.max_num_batched_tokens is None:
-            self.max_num_batched_tokens = self.max_model_len * self.max_num_seqs
+            self.max_num_batched_tokens = self.max_model_len
 
         self.cache_config.postprocess(self.max_num_batched_tokens, self.max_num_seqs)
 

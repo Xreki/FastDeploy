@@ -635,11 +635,11 @@ class LLMEngine(object):
 
         # display weight loadding progress
         with tqdm(total=100, desc="Loading Weights") as pbar:
-            while True:
+            progress = 0
+            while progress < 100:
                 progress = int(self.worker_init_status.get("weight_loadding", 0) * 100)
                 if self.worker_init_status.get("layer_loadding", 0) > 0 or self._worker_processes_ready():
                     progress = 100
-                    break
                 pbar.update(progress - pbar.n)
                 pbar.refresh()
                 time.sleep(0.5)
@@ -648,15 +648,17 @@ class LLMEngine(object):
 
         # display layer loadding progress
         with tqdm(total=100, desc="Loading Layers") as pbar:
-            while True:
+            progress = 0
+            while progress < 100:
                 progress = int(self.worker_init_status.get("layer_loadding", 0) * 100)
                 if self._worker_processes_ready():
                     progress = 100
-                    break
                 pbar.update(progress - pbar.n)
                 pbar.refresh()
                 time.sleep(0.5)
                 if self.worker_proc.poll() is not None:
                     return False
+
+        self.worker_init_status["finished"] = True
         self.checking_worker_status_thread.join()
         return True
