@@ -26,11 +26,13 @@ import time
 import uuid
 import traceback
 import weakref
+from tqdm import tqdm
 from datetime import datetime
 from multiprocessing import shared_memory
 from collections import deque
 import threading
 import numpy as np
+import re
 
 from fastdeploy.input.preprocess import InputPreprocessor
 from fastdeploy.engine.args_utils import EngineArgs
@@ -39,7 +41,7 @@ from fastdeploy.engine.resource_manager import ResourceManager
 from fastdeploy.inter_communicator import EngineWorkerQueue
 from fastdeploy.output.token_processor import TokenProcessor, WarmUpTokenProcessor
 from fastdeploy.inter_communicator import IPCSignal
-from fastdeploy.utils import llm_logger, EngineError
+from fastdeploy.utils import llm_logger, console_logger, EngineError
 
 
 class LLMEngine(object):
@@ -123,21 +125,20 @@ class LLMEngine(object):
         self.data_processor = self.input_processor.create_processor()
 
         self.worker_proc = self._start_worker_service()
-        llm_logger.info("Waitting worker processes ready...")
+        console_logger.info("Waitting worker processes ready...")
         time.sleep(5)
-        while not self._worker_processes_ready():
-            if self.worker_proc.poll() is not None:
-                llm_logger.error("The worker process is not alive, check log/worklog.* for more details.")
-                return False
-
+        self.worker_init_status = dict()
+        if not self.check_worker_initialize_status():
+            console_logger.error("Failed to launch worker processes, check log/workerlog.* for more details.")
+            return False
 
         # Start warmup if enabled
         if self.cfg.use_warmup:
-            llm_logger.info("Starting warmup")
+            console_logger.info("Starting warmup")
             self._set_warmup_token_processor()
             self.warmup()
             self._del_warmup_token_processor()
-            llm_logger.info("Warmup finished")
+            console_logger.info("Warmup finished")
 
         self.token_processor.tasks_queue = self.engine_worker_queue
 
@@ -154,7 +155,7 @@ class LLMEngine(object):
 
         if self.do_profile:
             self._stop_profile()
-        llm_logger.info("Worker processes are launched with {} seconds.".format(time.time() - start_time))
+        console_logger.info("Worker processes are launched with {} seconds.".format(time.time() - start_time))
         return True
 
 
@@ -443,8 +444,12 @@ class LLMEngine(object):
         self.exist_task_signal.clear()
         self.exist_swapped_task_signal.clear()
         self.worker_healthy_live_signal.clear()
+        self.get_profile_block_num_signal.clear()
         if hasattr(self, "worker_proc") and self.worker_proc is not None:
-            os.killpg(self.worker_proc.pid, signal.SIGTERM)
+            try:
+                os.killpg(self.worker_proc.pid, signal.SIGTERM)
+            except:
+                pass
 
     def _setting_environ_variables(self):
        """
@@ -473,7 +478,9 @@ class LLMEngine(object):
         command_prefix = self._setting_environ_variables()
         current_file_path = os.path.abspath(__file__)
         current_dir_path = os.path.split(current_file_path)[0]
-        pd_cmd = f"{command_prefix} {sys.executable} -m paddle.distributed.launch "
+        # TODO
+        uncache_worker_stdout = "" if os.getenv("UNCACHE_WORKER_STDOUT", "0") == 1 else "-u"
+        pd_cmd = f"{command_prefix} {sys.executable} {uncache_worker_stdout} -m paddle.distributed.launch "
         py_script = os.path.join(current_dir_path, "../model_executor/worker.py")
         arguments = (f" --nnodes {str(self.cfg.nnode)}"
                     f" --devices {self.cfg.device_ids} {py_script}"
@@ -493,10 +500,11 @@ class LLMEngine(object):
         if self.cfg.nnode > 1:
             pd_cmd = pd_cmd + f" --ips {self.cfg.ips}"
         log_dir = os.getenv("FD_LOG_DIR", default="log")
-        pd_cmd = pd_cmd + arguments + f" >{log_dir}/launch_worker.log 2>&1"
+        pd_cmd = pd_cmd + arguments + f" 2>{log_dir}/launch_worker.log"
         llm_logger.info("Launch worker service command: {}".format(pd_cmd))
         p = subprocess.Popen(
             pd_cmd,
+            stdout=subprocess.PIPE,
             shell=True,
             preexec_fn=os.setsid,
         )
@@ -539,7 +547,11 @@ class LLMEngine(object):
             dict: The generated response.
         """
         llm_logger.info(f"Starting generation for prompt: {prompts}")
-        req_id = self._format_and_add_data(prompts)
+        try:
+            req_id = self._format_and_add_data(prompts)
+        except Exception as e:
+            llm_logger.error(f"Error happend while adding request, details={e}")
+            raise EngineError(str(e), error_code=400)
 
         while True:
             result = self.get_result(req_id)
@@ -585,8 +597,7 @@ class LLMEngine(object):
             else:
                 num_gpu_blocks = min(num_gpu_blocks, self.get_profile_block_num_signal.value[i])
 
-        self.get_profile_block_num_signal.clear()
-        llm_logger.info(f"Stop profile, num_gpu_blocks:  {num_gpu_blocks}")
+        console_logger.info(f"Stop profile, num_gpu_blocks:  {num_gpu_blocks}")
         self.cfg.cache_config.reset(num_gpu_blocks)
         self.resource_manager.reset_cache_config(self.cfg.cache_config)
 
@@ -601,3 +612,50 @@ class LLMEngine(object):
                 return False, "Worker Service Not Healthy"
 
         return True, ""
+
+    def check_worker_initialize_status(self):
+        """
+        Check the initlialize status of workers by stdout logging
+        """
+        def detect_thread():
+            for line in self.worker_proc.stdout:
+                line = line.decode('utf-8', errors='ignore')    
+                if self.worker_init_status.get("finished", False):
+                    break
+                if match := re.search(r'Loading checkpoint shards:\s*(\d+)', line):
+                    self.worker_init_status["weight_loadding"] = eval(match.group(1)) * 1.0 / 100
+                elif match := re.search(r'Start load layer (\d+)', line):
+                    self.worker_init_status["layer_loadding"] = eval(match.group(1)) * 1.0 / self.cfg.model_config.num_layers
+                    if self.worker_init_status["layer_loadding"] == self.cfg.model_config.num_layers - 1:
+                        self.worker_init_status["finished"] = True 
+        self.checking_worker_status_thread = threading.Thread(target=detect_thread, args=())
+        self.checking_worker_status_thread.daemon = True
+        self.checking_worker_status_thread.start()
+
+        # display weight loadding progress
+        with tqdm(total=100, desc="Loading Weights") as pbar:
+            while True:
+                progress = int(self.worker_init_status.get("weight_loadding", 0) * 100)
+                if self.worker_init_status.get("layer_loadding", 0) > 0 or self._worker_processes_ready():
+                    progress = 100
+                    break
+                pbar.update(progress - pbar.n)
+                pbar.refresh()
+                time.sleep(0.5)
+                if self.worker_proc.poll() is not None:
+                    return False
+
+        # display layer loadding progress
+        with tqdm(total=100, desc="Loading Layers") as pbar:
+            while True:
+                progress = int(self.worker_init_status.get("layer_loadding", 0) * 100)
+                if self._worker_processes_ready():
+                    progress = 100
+                    break
+                pbar.update(progress - pbar.n)
+                pbar.refresh()
+                time.sleep(0.5)
+                if self.worker_proc.poll() is not None:
+                    return False
+        self.checking_worker_status_thread.join()
+        return True

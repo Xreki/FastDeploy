@@ -48,20 +48,26 @@ def health() -> Response:
     """Health check."""
     return Response(status_code=200)
 
-
 @app.post("/generate")
 def generate(request: dict):
     """
     generate stream api
     """
-    api_server_logger.info(f"receive request: {request}")
+    api_server_logger.info(f"Receive request: {request}")
     stream = request.get("stream", 0)
+
     def event_generator():
-        for result in llm_engine.generate(request, stream):
-            yield json.dumps(result)
+        try:
+            # 将生成过程包裹在try块中以捕获异常
+            for result in llm_engine.generate(request, stream):
+                yield json.dumps(result)
+        except Exception as e:
+            # 记录完整的异常堆栈信息
+            api_server_logger.error(f"Error during generation: {str(e)}", exc_info=True)
+            # 返回结构化的错误消息并终止流
+            error_msg = {"error": str(e), "error_type": e.__class__.__name__}
+            yield json.dumps(error_msg)
     return StreamingResponse(event_generator(), media_type="text/event-stream")
-
-
 
 def launch_api_server(args) -> None:
     """

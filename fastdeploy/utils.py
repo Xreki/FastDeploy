@@ -42,6 +42,22 @@ class EngineError(Exception):
         super().__init__(message)
         self.error_code = error_code
 
+class ColoredFormatter(logging.Formatter):
+    """自定义日志格式器，用于控制台输出带颜色"""
+    COLOR_CODES = {
+        logging.WARNING: 33,  # 黄色
+        logging.ERROR: 31,     # 红色
+        logging.CRITICAL: 31,  # 红色
+    }
+
+    def format(self, record):
+        color_code = self.COLOR_CODES.get(record.levelno, 0)
+        prefix = f'\033[{color_code}m'
+        suffix = '\033[0m'
+        message = super().format(record)
+        if color_code:
+            message = f"{prefix}{message}{suffix}"
+        return message
 
 
 class DailyRotatingFileHandler(BaseRotatingHandler):
@@ -163,7 +179,7 @@ class DailyRotatingFileHandler(BaseRotatingHandler):
             os.remove(str(self.base_log_path.with_name(file_name)))
 
 
-def get_logger(name, file_name, without_formater=False):
+def get_logger(name, file_name, without_formater=False, print_to_console=False):
     """
     get logger
     """
@@ -177,17 +193,25 @@ def get_logger(name, file_name, without_formater=False):
     else:
         logger.setLevel(level=logging.INFO)
 
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+
     LOG_FILE = "{0}/{1}".format(log_dir, file_name)
     backup_count = int(os.getenv("FD_LOG_BACKUP_COUNT", "7"))
     handler = DailyRotatingFileHandler(LOG_FILE, backupCount=backup_count)
-
-    formatter = logging.Formatter(
+    formatter = ColoredFormatter(
         "%(levelname)-8s %(asctime)s %(process)-5s %(filename)s[line:%(lineno)d] %(message)s"
     )
+
+    console_handler = logging.StreamHandler()
     if not without_formater:
         handler.setFormatter(formatter)
+        console_handler.setFormatter(formatter)
     logger.addHandler(handler)
+    if print_to_console:
+        logger.addHandler(console_handler)
     handler.propagate = False
+    console_handler.propagate = False
     return logger
 
 
@@ -406,3 +430,4 @@ def is_port_available(host, port):
 llm_logger = get_logger("fastdeploy", "fastdeploy.log")
 data_processor_logger = get_logger("data_processor", "data_processor.log")
 api_server_logger = get_logger("api_server", "api_server.log")
+console_logger = get_logger("console", "console.log", print_to_console=True)

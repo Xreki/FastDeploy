@@ -58,7 +58,7 @@ class OpenAIServingCompletion:
             else:
                 raise ValueError("Prompt must be a string, a list of strings or a list of integers.")
         except Exception as e:
-            return ErrorResponse(message=str(e), code=5001)
+            return ErrorResponse(message=str(e), code=400)
 
         if request_prompt_ids is not None:
             request_prompts = request_prompt_ids
@@ -94,10 +94,10 @@ class OpenAIServingCompletion:
                         model_name=request.model
                     )
                 except ValueError as e:
-                    return ErrorResponse(code=5002, message=str(e))
+                    return ErrorResponse(code=400, message=str(e))
 
         except ValueError as e:
-            return ErrorResponse(message=str(e), code=5002)
+            return ErrorResponse(message=str(e), code=400)
 
 
     async def completion_full_generator(self,
@@ -234,7 +234,7 @@ class OpenAIServingCompletion:
             yield "data: [DONE]\n\n"
 
         except Exception as e:
-            yield f"data: {ErrorResponse(message=str(e), code=5002).model_dump_json(exclude_unset=True)}\n\n"
+            yield f"data: {ErrorResponse(message=str(e), code=400).model_dump_json(exclude_unset=True)}\n\n"
             yield "data: [DONE]\n\n"
     def request_output_to_completion_response(
         self,
