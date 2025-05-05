@@ -223,14 +223,14 @@ class LLMEngine(object):
        """
        Get tasks from cached_task_deque.
        """
-
-       while True:
-            data = self.zmq_server.receive_once()
-            if data is None:
-                break
-            else:
-                request = Request.from_dict(data)
-                self.cached_task_deque.appendleft(request)
+       if self.zmq_server is not None:
+            while True:
+                data = self.zmq_server.receive_once()
+                if data is None:
+                    break
+                else:
+                    request = Request.from_dict(data)
+                    self.cached_task_deque.appendleft(request)
 
        if len(self.cached_task_deque) == 0:
            return []
