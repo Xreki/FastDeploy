@@ -145,9 +145,9 @@ class ErnieProcessor(BaseDataProcessor):
                     history_qa,
                     max_model_len,
                     system
-                ).tolist()
+                )
             elif 'messages' in request:
-                request['prompt_token_ids'] = self.messages2ids(request['messages'], max_model_len).tolist()
+                request['prompt_token_ids'] = self.messages2ids(request['messages'], max_model_len)
             else:
                 raise ValueError(f"Request must contain 'prompt_token_ids', 'prompt', or 'messages': {request}")
 
