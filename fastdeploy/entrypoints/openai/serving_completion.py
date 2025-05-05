@@ -15,6 +15,9 @@
 """
 
 import asyncio
+import aiozmq
+import json
+from aiozmq import zmq
 from asyncio import FIRST_COMPLETED, AbstractEventLoop, Task
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
@@ -69,10 +72,10 @@ class OpenAIServingCompletion:
         try:
             for idx, prompt in enumerate(request_prompts):
                 request_id_idx = f"{request_id}-{idx}"
-                api_server_logger.info(f"{prompt}")
                 current_req_dict = request.to_dict_for_infer(request_id_idx, prompt)
                 try:
-                    self.engine_client._format_and_add_data(current_req_dict)
+                    current_req_dict["arrival_time"] = time.time()
+                    self.engine_client.format_and_add_data(current_req_dict)
                 except Exception as e:
                     return ErrorResponse(message=str(e), code=400) 
 
@@ -100,23 +103,41 @@ class OpenAIServingCompletion:
             return ErrorResponse(message=str(e), code=400)
 
 
-    async def completion_full_generator(self,
-                             request: CompletionRequest,
-                             num_choices: int,
-                             request_id: str,
-                             created_time: int,
-                             model_name: str):
+    async def completion_full_generator(
+        self,
+        request: CompletionRequest,
+        num_choices: int,
+        request_id: str,
+        created_time: int,
+        model_name: str,
+    ):
         """
-        Process the full completion request.
+        Process the full completion request with multiple choices.
         """
+        dealer = None
         try:
-            tasks = []
-            for i in range(num_choices):
-                choice_request_id = f"{request_id}-{i}"
-                task = self._process_single_choice(choice_request_id)
-                tasks.append(task)
+            request_ids = [f"{request_id}-{i}" for i in range(num_choices)]
+            # create dealer
+            dealer = await aiozmq.create_zmq_stream(
+                zmq.DEALER,
+                connect="ipc:///dev/shm/router.ipc"
+            )
 
-            valid_results = await asyncio.gather(*tasks)
+            for rid in request_ids:
+                dealer.write([b"", rid.encode("utf-8")])
+
+            valid_results = [dict()] * num_choices
+            while num_choices > 0:
+                raw_data = await dealer.read()
+                data = json.loads(raw_data[-1].decode("utf-8"))
+                rid = int(data["request_id"].split("-")[-1])
+
+                self.engine_client.data_processor.process_response_dict(
+                    data, stream=False
+                )
+                if data.get("finished", False):
+                    valid_results[rid] = data
+                    num_choices -= 1
 
             return self.request_output_to_completion_response(
                 final_res_batch=valid_results,
@@ -126,25 +147,14 @@ class OpenAIServingCompletion:
                 model_name=model_name
             )
         except Exception as e:
-            api_server_logger.error(f"Error in completion_full_generator: {e}", exc_info=True)
+            api_server_logger.error(
+                f"Error in completion_full_generator: {e}", exc_info=True
+            )
             raise
+        finally:
+            if dealer is not None:
+                dealer.close()
 
-    async def _process_single_choice(self, choice_request_id: str):
-        """
-        Process a single choice of the completion request.
-        """
-        while True:
-            while (choice_request_id not in self.engine_client.req_output or
-                not self.engine_client.req_output[choice_request_id]):
-                await asyncio.sleep(0.02)
-
-            result = self.engine_client.req_output[choice_request_id].pop()
-            is_end = result.finished
-
-            if is_end:
-                del self.engine_client.req_output[choice_request_id]
-                processed = self.engine_client.data_processor.process_response(result)
-                return processed.todict()
 
     async def completion_stream_generator(
         self,
@@ -158,84 +168,69 @@ class OpenAIServingCompletion:
         Process the stream completion request.
         """
         try:
+            dealer = await aiozmq.create_zmq_stream(
+                zmq.DEALER,
+                connect="ipc:///dev/shm/router.ipc"
+            )
+
+            for i in range(num_choices):
+                req_id = f"{request_id}-{i}"
+                dealer.write([b"", req_id.encode('utf-8')])  # 发送多路请求
             output_tokens = [0] * num_choices
-            queue = asyncio.Queue()
-
-            async def producer(idx: int):
-                """
-                Produce results for a single choice of the completion request.
-                """
-                req_id = f"{request_id}-{idx}"
-                while True:
-                    while req_id not in self.engine_client.req_output or not self.engine_client.req_output[req_id]:
-                        await asyncio.sleep(0.01)
-
-                    result = self.engine_client.req_output[req_id].pop()  # 改为pop(0确保顺序
-                    is_end = result.finished
-
-                    processed = self.engine_client.data_processor.process_response(result)
-                    if processed is not None:
-                        output = processed.todict()
-                        await queue.put({"idx": idx, "data": output, "is_end": is_end})
-
-                    if is_end:
-                        del self.engine_client.req_output[req_id]
-                        break
-
-            tasks = [asyncio.create_task(producer(idx)) for idx in range(num_choices)]
-
-            while num_choices > 0 :
-                item = await queue.get()
-                res = item["data"]
-                if res['metrics']['model_forward_time'] is None:
+            inference_start_time = [0] * num_choices
+            while num_choices > 0:
+                raw_data = await dealer.read()
+                res = json.loads(raw_data[-1].decode('utf-8'))
+                idx = int(res["request_id"].split("-")[-1])
+                self.engine_client.data_processor.process_response_dict(res, stream=True)
+                if res['metrics']['first_token_time'] is not None:
                     arrival_time = res['metrics']['first_token_time']
+                    inference_start_time[idx] = res['metrics']['inference_start_time']
                 else:
-                    arrival_time = res['metrics']['model_forward_time']
+                    arrival_time = res['metrics']['arrival_time'] - inference_start_time[idx]
+                # api_server_logger.info(f"{arrival_time}")
+
                 output = res["outputs"]
                 chunk = CompletionStreamResponse(
                     id=request_id,
                     created=created_time,
                     model=model_name,
                     choices=[CompletionResponseStreamChoice(
-                        index=item["idx"],
+                        index=idx,
                         text=output["text"],
                         reasoning_content=output["reasoning_content"],
                         arrival_time=arrival_time
                     )]
                 )
 
-                # 更新token计数
-                output_tokens[0] += 1
+                output_tokens[idx] += 1
 
-                # 流式输出
-                # api_server_logger.info(f"{chunk}")
                 yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
 
-                if item["is_end"]:
+                if res["finished"]:
                     num_choices -= 1
                     if getattr(request, "stream_options", None) and request.stream_options.include_usage:
                         usage_chunk = CompletionStreamResponse(
                             id=request_id,
                             created=created_time,
                             model=model_name,
+                            choices=[],
                             usage=UsageInfo(
                                 prompt_tokens=len(res.get("prompt_token_ids", [])),
-                                completion_tokens=output_tokens[0]
+                                completion_tokens=output_tokens[idx]
                             )
                         )
                         yield f"data: {usage_chunk.model_dump_json(exclude_unset=True)}\n\n"
 
-                    continue
-
-
-                queue.task_done()
-
-            # 所有任务完成后发送结束标记
-            yield "data: [DONE]\n\n"
 
         except Exception as e:
             yield f"data: {ErrorResponse(message=str(e), code=400).model_dump_json(exclude_unset=True)}\n\n"
+        finally:
+            if dealer is not None:
+                dealer.close()
             yield "data: [DONE]\n\n"
+
+
     def request_output_to_completion_response(
         self,
         final_res_batch: List[RequestOutput],

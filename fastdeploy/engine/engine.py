@@ -17,6 +17,8 @@
 from __future__ import annotations
 import sys
 import asyncio
+import json
+import zmq
 import multiprocessing
 import os
 import signal
@@ -40,7 +42,7 @@ from fastdeploy.engine.request import Request
 from fastdeploy.engine.resource_manager import ResourceManager
 from fastdeploy.inter_communicator import EngineWorkerQueue
 from fastdeploy.output.token_processor import TokenProcessor, WarmUpTokenProcessor
-from fastdeploy.inter_communicator import IPCSignal
+from fastdeploy.inter_communicator import IPCSignal, ZmqClient
 from fastdeploy.utils import llm_logger, console_logger, EngineError
 
 
@@ -112,17 +114,32 @@ class LLMEngine(object):
         else:
             self.do_profile = 0
 
-        self._init_worker_signals()
         self._finalizer = weakref.finalize(self, self._exit_sub_services)
 
-    def start(self):
+    def start(self, model=None, pid=None):
         """
         Initializes the engine and starts its sub-services.
         """
         assert not self.is_started, "The engine is already started."
         start_time = time.time()
+        self.engine_pid = pid
+        self._init_worker_signals()
 
         self.data_processor = self.input_processor.create_processor()
+
+        if model is not None:
+            # TODO checke model name
+            self.zmq_server = ZmqClient(name="default", mode=zmq.PULL)
+            try:
+                self.zmq_server.start_server()
+                self.zmq_server.create_router()
+                time.sleep(3)
+            except Exception as e:
+                llm_logger.error(f"{str(e)}")
+                raise EngineError(f'Failed to start server: {str(e)}')
+
+        else:
+            self.zmq_server = None
 
         self.worker_proc = self._start_worker_service()
         console_logger.info("Waitting worker processes ready...")
@@ -168,19 +185,24 @@ class LLMEngine(object):
             try:
                 batch_result = self.cached_generated_tokens.get()
                 for result in batch_result:
-                    if result.request_id not in self.req_output:
-                        self.req_output[result.request_id] = deque()
-                        self.req_output_completion[result.request_id] = result
+                    if self.zmq_server is not None:
+                        # send result
+                        self.zmq_server.send_multipart(result.request_id, json.dumps(result.todict()).encode('utf-8'))
+                        if result.finished:
+                            del self.zmq_server.req_dict[result.request_id]
                     else:
-                        self.req_output_completion[result.request_id].add(result)
-                        result.metrics.model_forward_time = \
-                            self.req_output_completion[result.request_id].metrics.model_forward_time
+                        if result.request_id not in self.req_output:
+                            self.req_output[result.request_id] = deque()
+                            self.req_output_completion[result.request_id] = result
+                        else:
+                            self.req_output_completion[result.request_id].add(result)
+                            result.metrics.model_forward_time = \
+                                self.req_output_completion[result.request_id].metrics.model_forward_time
 
-                    if result.finished:
-                        result = self.req_output_completion[result.request_id]
-                        del self.req_output_completion[result.request_id]
-
-                    self.req_output[result.request_id].appendleft(result)
+                        if result.finished:
+                            result = self.req_output_completion[result.request_id]
+                            del self.req_output_completion[result.request_id]
+                        self.req_output[result.request_id].appendleft(result)
 
             except Exception as e:
                 llm_logger.error("Unexcepted error happend: {}, {}".format(e, str(traceback.format_exc())))
@@ -201,6 +223,15 @@ class LLMEngine(object):
        """
        Get tasks from cached_task_deque.
        """
+
+       while True:
+            data = self.zmq_server.receive_once()
+            if data is None:
+                break
+            else:
+                request = Request.from_dict(data)
+                self.cached_task_deque.appendleft(request)
+
        if len(self.cached_task_deque) == 0:
            return []
 
@@ -394,47 +425,50 @@ class LLMEngine(object):
         Initialize shared memory to indicate engine status
         """
         # worker_ready_signal 用于engine感知各worker进程是否Ready
+
+        if self.engine_pid is None:
+            self.engine_pid = os.getpid()
         worker_ready_signal_data = np.zeros(shape=[self.cfg.tensor_parallel_size], dtype=np.int32)
         self.worker_ready_signal = IPCSignal(name="worker_ready_singnal",
                                              array=worker_ready_signal_data,
-                                               dtype=np.int32,
-                                               suffix=os.getpid(),
-                                             create=True)
+                      						 dtype=np.int32,
+  											 suffix=self.engine_pid,
+											 create=True)
 
         # exist_task_signal 用于各worker进程感知是否有新Task需要处理
         exist_task_signal_data = np.zeros([1], dtype=np.int32)
         self.exist_task_signal = IPCSignal(name="exist_task_signal",
                                            array=exist_task_signal_data,
-                                           dtype=np.int32,
-                                           suffix=os.getpid(),
-                                           create=True)
+										   dtype=np.int32,
+                                           suffix=self.engine_pid,
+										   create=True)
 
         # exist_swapped_task_signal 用于engine感知worker中是否存在swapped task
         exist_swapped_task_signal_data = np.zeros([1], dtype=np.int32)
         self.exist_swapped_task_signal = IPCSignal(
             name="exist_swapped_task_signal",
-            array=exist_swapped_task_signal_data,
-            dtype=np.int32,
-            suffix=os.getpid(),
-            create=True)
+			array=exist_swapped_task_signal_data,
+			dtype=np.int32,
+            suffix=self.engine_pid,
+			create=True)
 
 
         # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
         worker_healthy_live_recorded_time_array = np.zeros(shape=[self.cfg.tensor_parallel_size], dtype=np.float32)
         self.worker_healthy_live_signal = IPCSignal(name="worker_healthy_live_signal",
                     array=worker_healthy_live_recorded_time_array,
-                    dtype=np.float32,
-                    suffix=os.getpid(),
-                    create=True)
+					dtype=np.float32,
+                    suffix=self.engine_pid,
+					create=True)
 
         if self.do_profile:
             get_profile_block_num = np.zeros([self.cfg.tensor_parallel_size], dtype=np.int32)
             self.get_profile_block_num_signal = IPCSignal(
                 name="get_profile_block_num",
-                array=get_profile_block_num,
-                dtype=np.int32,
-                suffix=os.getpid(),
-                create=True)
+				array=get_profile_block_num,
+				dtype=np.int32,
+                suffix=self.engine_pid,
+				create=True)
 
     def _exit_sub_services(self):
         """
@@ -450,6 +484,8 @@ class LLMEngine(object):
                 os.killpg(self.worker_proc.pid, signal.SIGTERM)
             except:
                 pass
+        if hasattr(self, "zmq_server") and self.zmq_server is not None:
+            self.zmq_server.close()
 
     def _setting_environ_variables(self):
        """
@@ -494,7 +530,7 @@ class LLMEngine(object):
                     f" --enc_dec_block_num {self.cfg.cache_config.enc_dec_block_num}"
                     f" --eos_tokens_lens {self.data_processor.eos_token_id_len}"
                     f" --pad_token_id {self.data_processor.pad_token_id}"
-                    f" --engine_pid {os.getpid()}"
+                    f" --engine_pid {self.engine_pid}"
                     f" --do_profile {self.do_profile}"
                     f" --kv_cache_ratio {self.cfg.cache_config.kv_cache_ratio} --dtype {self.cfg.cache_config.cache_dtype}")
         if self.cfg.nnode > 1:
@@ -619,16 +655,16 @@ class LLMEngine(object):
         """
         def detect_thread():
             for line in self.worker_proc.stdout:
-                line = line.decode('utf-8', errors='ignore')    
+                line = line.decode('utf-8', errors='ignore')
                 if self.worker_init_status.get("finished", False):
                     break
                 if match := re.search(r'Loading checkpoint shards:\s*(\d+)', line):
                     self.worker_init_status["weight_loadding"] = eval(match.group(1)) * 1.0 / 100
                 elif match := re.search(r'Start load layer (\d+)', line):
                     progress = eval(match.group(1)) * 1.0 / self.cfg.model_config.num_layers
-                    self.worker_init_status["layer_loadding"] = progress 
+                    self.worker_init_status["layer_loadding"] = progress
                     if self.worker_init_status["layer_loadding"] == self.cfg.model_config.num_layers - 1:
-                        self.worker_init_status["finished"] = True 
+                        self.worker_init_status["finished"] = True
         self.checking_worker_status_thread = threading.Thread(target=detect_thread, args=())
         self.checking_worker_status_thread.daemon = True
         self.checking_worker_status_thread.start()

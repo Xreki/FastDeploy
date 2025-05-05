@@ -15,6 +15,8 @@
 """
 
 import asyncio
+import aiozmq
+from aiozmq import zmq
 import json
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
@@ -74,7 +76,9 @@ class OpenAIServingChat:
 
         try:
             current_req_dict = request.to_dict_for_infer(request_id)
-            self.engine_client._format_and_add_data(current_req_dict)
+            current_req_dict["arrival_time"] = time.time()
+            self.engine_client.format_and_add_data(current_req_dict)
+
         except ValueError as e:
             return ErrorResponse(code=400, message=str(e))
 
@@ -110,7 +114,6 @@ class OpenAIServingChat:
         previous_num_tokens = 0
         num_prompt_tokens = 0
         num_choices = 1
-        queue = asyncio.Queue()
 
         stream_options = request.stream_options
         if stream_options is None:
@@ -121,29 +124,15 @@ class OpenAIServingChat:
             include_continuous_usage = stream_options.continuous_usage_stats
 
         try:
-            async def producer(req_id: str):
-                while True:
-                    # 等待结果可用
-                    while req_id not in self.engine_client.req_output or not self.engine_client.req_output[req_id]:
-                        await asyncio.sleep(0.02)
-
-                    result = self.engine_client.req_output[req_id].pop()
-                    is_end = result.finished
-                    if is_end:
-                        result.outputs.token_ids = []
-                        processed = result
-                    else:
-                        processed = self.engine_client.data_processor.process_response(result)
-                    if processed is not None:
-                        output = processed.todict()
-                        await queue.put({"data": output, "is_end": is_end})
-                    if is_end:
-                        del self.engine_client.req_output[req_id]
-                        break
-            task = asyncio.create_task(producer(request_id))
+            dealer = await aiozmq.create_zmq_stream(
+                zmq.DEALER,
+                connect="ipc:///dev/shm/router.ipc"
+            )
+            dealer.write([b"", request_id.encode('utf-8')])
             while num_choices > 0:
-                item = await queue.get()
-                res = item["data"]
+                raw_data = await dealer.read()
+                res = json.loads(raw_data[-1].decode('utf-8'))
+                self.engine_client.data_processor.process_response_dict(res, stream=True)
                 if first_iteration:
                     num_prompt_tokens = len(res["prompt_token_ids"])
                     num_cached_tokens = res["num_cached_tokens"]
@@ -224,7 +213,9 @@ class OpenAIServingChat:
         except Exception as e:
             error_data = self._create_streaming_error_response(str(e))
             yield f"data: {error_data}\n\n"
-        yield "data: [DONE]\n\n"
+        finally:
+            dealer.close()
+            yield "data: [DONE]\n\n"
 
     async def chat_completion_full_generator(
         self,
@@ -237,24 +228,23 @@ class OpenAIServingChat:
         """
         created_time = int(time.time())
         final_res = None
-
-        while True:
-            # 等待结果可用
-            while request_id not in self.engine_client.req_output or not self.engine_client.req_output[request_id]:
-                await asyncio.sleep(0.02)
-
-            # 取出结果（先进先出）
-            result = self.engine_client.req_output[request_id].pop()  # 改为pop(0确保顺序
-            is_end = result.finished
-
-            if is_end:
-                del self.engine_client.req_output[request_id]
-                processed = self.engine_client.data_processor.process_response(result)
-                output = processed.todict()
-                final_res = output
-                break
-        if not final_res:
-            return ErrorResponse(code=500, message="No response generated")
+        try:
+            dealer = await aiozmq.create_zmq_stream(
+                zmq.DEALER,
+                connect="ipc:///dev/shm/router.ipc"
+            )
+            dealer.write([b"", request_id.encode('utf-8')])
+            final_res = None
+            while True:
+                raw_data = await dealer.read()
+                data = json.loads(raw_data[-1].decode('utf-8'))
+                data = self.engine_client.data_processor.process_response_dict(data, stream=False)
+                api_server_logger.info(f"Client {request_id} received: {data}")
+                if data["finished"]:
+                    final_res = data
+                    break
+        finally:
+            dealer.close()
 
         choices = []
         output = final_res["outputs"]

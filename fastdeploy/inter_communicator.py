@@ -23,10 +23,12 @@ import numpy as np
 from multiprocessing.managers import (AcquirerProxy, BaseManager, ListProxy,
                                       Value, ValueProxy)
 from queue import Queue
-from fastdeploy.utils import llm_logger
-import multiprocessing
+import zmq
+import time
 from multiprocessing.shared_memory import SharedMemory
 from typing import Optional, Dict, Tuple, List, Any
+
+from fastdeploy.utils import llm_logger
 
 
 def shared_memory_exists(name: str) -> bool:
@@ -47,6 +49,117 @@ def shared_memory_exists(name: str) -> bool:
     except Exception as e:
         print(f"Unexpected error: {e}")
         return False
+
+
+
+class ZmqClient:
+    """
+    ZmqClient is a class that provides a client-side interface for sending and receiving messages using ZeroMQ.
+    """
+    def __init__(self, name, mode):
+        self.context = zmq.Context()
+        self.socket = self.context.socket(mode)
+        self.file_name = f"/dev/shm/{name}.socket"
+        self.router_path = f"/dev/shm/router.ipc"
+
+        self.req_dict = dict()
+        self.router = None
+        self.poller = None
+
+    def connect(self):
+        """
+        Connect to the server using the file name specified in the constructor.
+        """
+        self.socket.connect(f"ipc://{self.file_name}")
+
+    def start_server(self):
+        """
+        Start the server using the file name specified in the constructor.
+        """
+        self.socket.bind(f"ipc://{self.file_name}")
+        self.poller = zmq.Poller()
+        self.poller.register(self.socket, zmq.POLLIN)
+
+    def create_router(self):
+        """
+        Create a ROUTER socket and bind it to the specified router path.
+        """
+        self.router = self.context.socket(zmq.ROUTER)
+        self.router.bind(f"ipc://{self.router_path}")
+
+    def send_json(self, data):
+        """
+        Send a JSON-serializable object over the socket.
+        """
+        self.socket.send_json(data)
+
+    def recv_json(self):
+        """
+        Receive a JSON-serializable object from the socket.
+        """
+        return self.socket.recv_json()
+
+    def send_multipart(self, req_id, data):
+        """
+        Send a multipart message to the router socket.
+        """
+        if self.router is None:
+            raise RuntimeError("Router socket not created. Call create_router() first.")
+
+        while True:
+            if req_id not in self.req_dict:
+                try:
+                    client, _, request_id = self.router.recv_multipart(flags=zmq.NOBLOCK)
+                    req_id_str = request_id.decode('utf-8')
+                    self.req_dict[req_id_str] = client
+                except zmq.Again:
+                    continue
+            else:
+                break
+        self.router.send_multipart([self.req_dict[req_id], b'', data], zmq.DONTWAIT)
+
+    def receive_once(self):
+        """
+        Receive a single message from the socket.
+        """
+        if self.socket is None or self.socket.closed:
+            return None
+        try:
+            return self.socket.recv_json(flags=zmq.NOBLOCK)
+        except zmq.Again:
+            return None
+        except Exception as e:
+            self.close()
+            llm_logger.warning(f"{e}")
+
+    def _clear_ipc(self, name):
+        """
+        Remove the IPC file with the given name.
+        """
+        if os.path.exists(name):
+            try:
+                os.remove(name)
+            except OSError as e:
+                llm_logger.warning(f"Failed to remove IPC file {name} - {e}")
+
+    def close(self):
+        """
+        Close the socket and context, and remove the IPC files.
+        """
+        if hasattr(self, 'socket') and not self.socket.closed:
+            self.socket.close()
+
+        if self.router is not None and not self.router.closed:
+            self.router.close()
+
+        if not self.context.closed:
+            self.context.term()
+
+        self._clear_ipc(self.file_name)
+        self._clear_ipc(self.router_path)
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
 
 class IPCSignal:

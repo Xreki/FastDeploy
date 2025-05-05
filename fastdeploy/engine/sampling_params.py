@@ -50,7 +50,7 @@ class SamplingParams:
             values make the model more deterministic, while higher values make
             the model more random. Zero means greedy sampling.
         top_p: Float that controls the cumulative probability of the top tokens
-            to consider. Must be in (0, 1]. Set to 1 to consider all tokens.
+            to consider. Must be in [0, 1]. Set to 1 to consider all tokens.
         seed: Random seed to use for the generation.
         stop: list of strings that stop the generation when they are generated.
             The returned output will not contain the stop strings.
@@ -157,8 +157,8 @@ class SamplingParams:
         if self.temperature < 0.0:
             raise ValueError(
                 f"temperature must be non-negative, got {self.temperature}.")
-        if not 0.0 < self.top_p <= 1.0:
-            raise ValueError(f"top_p must be in (0, 1], got {self.top_p}.")
+        if not 0.0 <= self.top_p <= 1.0:
+            raise ValueError(f"top_p must be in [0, 1], got {self.top_p}.")
 
         if self.max_tokens is not None and self.max_tokens < 1:
             raise ValueError(

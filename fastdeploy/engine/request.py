@@ -24,23 +24,29 @@ from fastdeploy.engine.sampling_params import SamplingParams
 from fastdeploy.utils import data_processor_logger
 
 
+@dataclass
 class Request:
     def __init__(
         self,
         request_id: str,
         prompt: Optional[Union[str, list[str]]],
         prompt_token_ids: Optional[list[int]],
+        prompt_token_ids_len: Optional[int],
         messages: Optional[list[list[dict[str, Any]]]],
         history: Optional[list[list[str]]],
         system: Optional[Union[str, list[str]]],
         sampling_params: SamplingParams,
         eos_token_ids: Optional[list[int]],
         arrival_time: float,
+        preprocess_start_time: Optional[float] = None,
+        preprocess_end_time: Optional[float] = None,
         multi_modal_inputs: Optional[dict] = None,
+        raw_request: bool = True
     ) -> None:
         self.request_id = request_id
         self.prompt = prompt
         self.prompt_token_ids = prompt_token_ids
+        self.prompt_token_ids_len = prompt_token_ids_len
         self.messages = messages
         self.system = system
         self.sampling_params = sampling_params
@@ -48,6 +54,9 @@ class Request:
         self.eos_token_ids = eos_token_ids
 
         self.arrival_time = arrival_time
+        self.preprocess_start_time = preprocess_start_time
+        self.preprocess_end_time = preprocess_end_time
+        self.raw_request = raw_request
 
 
         # Multi-modal related
@@ -62,13 +71,17 @@ class Request:
             request_id=d["req_id"],
             prompt=d.get("prompt"),
             prompt_token_ids=d.get("prompt_token_ids"),
+            prompt_token_ids_len=d.get("prompt_token_ids_len"),
             messages=d.get("messages"),
             system=d.get("system"),
             history=d.get("history"),
             sampling_params=sampling_params,
             eos_token_ids=d.get("eos_token_ids"),
             arrival_time=d.get("arrival_time", time.time()),
+            preprocess_start_time=d.get("preprocess_start_time"),
+            preprocess_end_time=d.get("preprocess_end_time"),
             multi_modal_inputs=d.get("multi_modal_inputs"),
+            raw_request=d.get("raw_request", True)
         )
     def get(self, key: str, default_value=None):
         if hasattr(self, key):
@@ -203,8 +216,7 @@ class RequestOutput:
     def todict(self):
         if self.prompt_token_ids is None:
             self.prompt_token_ids = []
-        else:
-            self.prompt_token_ids = [int(x) for x in self.prompt_token_ids]
+
         return {
             "request_id": self.request_id,
             "prompt": self.prompt,

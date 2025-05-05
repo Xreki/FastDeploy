@@ -232,6 +232,7 @@ class LLM:
                         output.append(result)
                         num_requests -= 1
                         req_ids.remove(req_id)
+                        del self.llm_engine.req_output[req_id]
                         llm_logger.debug("Request id: {} has been completed.".format(req_id))
                         if use_tqdm:
                             pbar.update(1)

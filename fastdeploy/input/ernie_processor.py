@@ -112,6 +112,51 @@ class ErnieProcessor(BaseDataProcessor):
         data_processor_logger.info(f"processed request: {request}")
         return request
 
+
+    def process_request_dict(self, request, max_model_len=None):
+        """
+        Preprocess the request
+
+        Args:
+            request (Dict): may contain text and messages fields
+
+        Returns:
+            bool: Whether preprocessing is successful
+            str: error message
+        """
+        if not request.get('eos_token_ids'):
+            request['eos_token_ids'] = self.eos_token_ids
+
+        # 处理stop_sequences
+        stop_sequences = request.get('stop', [])
+        if stop_sequences:
+            stop_seqs, stop_seqs_len = self.update_stop_seq(stop_sequences)
+            request['stop_token_ids'] = stop_seqs
+            request['stop_seqs_len'] = stop_seqs_len
+
+        # 处理prompt_token_ids
+        if not request.get('prompt_token_ids'):
+            system = request.get("system")
+            if 'prompt' in request:
+                raw_request = request.get('raw_request', False)
+                history_qa = request.get("history")
+                request['prompt_token_ids'] = self.text2ids(
+                    request['prompt'],
+                    history_qa,
+                    max_model_len,
+                    system
+                ).tolist()
+            elif 'messages' in request:
+                request['prompt_token_ids'] = self.messages2ids(request['messages'], max_model_len).tolist()
+            else:
+                raise ValueError(f"Request must contain 'prompt_token_ids', 'prompt', or 'messages': {request}")
+
+        # 截断超过长度限制的prompt
+        if max_model_len is not None and len(request['prompt_token_ids']) > max_model_len:
+            request['prompt_token_ids'] = request['prompt_token_ids'][:max_model_len - 1]
+
+        return request
+
     def process_response(self, response_dict, **kwargs):
         """
         Preprocess the response
@@ -149,10 +194,54 @@ class ErnieProcessor(BaseDataProcessor):
                         response_dict.outputs.reasoning_content = match.group(1)
             else:
                 response_dict.outputs.text = self.ids2tokens(token_ids, req_id)
+
+            data_processor_logger.debug("Request id: {} has been completed.".format(token_ids))
+            self.clear_request_status(req_id)
         if response_dict.outputs.text == "" and response_dict.outputs.reasoning_content == "":
             return None
         return response_dict
 
+    def process_response_dict(self, response_dict, stream=True):
+        """
+        Preprocess the response
+
+        Args:
+            response_dict (Dict): response for engine, contain ids fields
+
+        Returns:
+            Dict: response contain text fields
+        """
+        is_end = response_dict["finished"]
+        req_id = response_dict["request_id"]
+
+        token_ids = response_dict["outputs"]["token_ids"]
+        if self.is_thinking:
+            text, reasoning_content = self.ids2tokens_thinking(token_ids, req_id)
+            response_dict["outputs"]["text"] = text
+            response_dict["outputs"]["reasoning_content"] = reasoning_content
+        else:
+            response_dict["outputs"]["text"] = self.ids2tokens(token_ids, req_id)
+
+        if is_end:
+            if self.is_thinking:
+                text, reasoning_content = self.ids2tokens_thinking(token_ids, req_id)
+                response_dict["outputs"]["text"] = text
+                pattern = re.compile(
+                    r'^([\s\S]*?)<\|prefixoftext\|>开始回复<\|middleoftext\|>([\s\S]*)$',
+                    flags=re.DOTALL | re.MULTILINE
+                )
+                if reasoning_content != "":
+                    match = pattern.search(reasoning_content)
+                    if match:
+                        response_dict["outputs"]["text"] = match.group(2)
+                        response_dict["outputs"]["reasoning_content"] = match.group(1)
+            else:
+                response_dict["outputs"]["text"] = self.ids2tokens(token_ids, req_id)
+            data_processor_logger.debug("Request id: {} has been completed.".format(token_ids))
+            full_text = self.clear_request_status(req_id)
+            if not stream:
+                response_dict["outputs"]["text"] = full_text
+        return response_dict
 
 
     def text2ids(self, text, history_qa=None, max_model_len=None, system=None):

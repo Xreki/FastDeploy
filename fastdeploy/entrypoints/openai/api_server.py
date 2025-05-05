@@ -16,54 +16,91 @@
 
 import uvicorn
 import json
+import zmq
+import os
 from fastapi import FastAPI, APIRouter, Request
+from multiprocessing import current_process
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-
+from contextlib import asynccontextmanager
 from fastdeploy.utils import FlexibleArgumentParser, api_server_logger, is_port_available
 from fastdeploy.engine.args_utils import EngineArgs
 from fastdeploy.engine.engine import LLMEngine
 from fastdeploy.entrypoints.openai.protocol import (
-    CompletionRequest, 
-    ChatCompletionRequest, 
-    ErrorResponse, 
-    ChatCompletionResponse, 
+    CompletionRequest,
+    ChatCompletionRequest,
+    ErrorResponse,
+    ChatCompletionResponse,
     CompletionResponse
 )
 
 from fastdeploy.entrypoints.openai.serving_chat import OpenAIServingChat
 from fastdeploy.entrypoints.openai.serving_completion import OpenAIServingCompletion
+from fastdeploy.entrypoints.engine_client import EngineClient
 
-app = FastAPI()
+parser = FlexibleArgumentParser()
+parser.add_argument("--port", default=9904, type=int, help="port to the http server")
+parser.add_argument("--host", default="0.0.0.0", type=str, help="host to the http server")
+parser.add_argument("--workers", default=1, type=int, help="number of workers")
+parser = EngineArgs.add_cli_args(parser)
+args = parser.parse_args()
 
-llm_engine = None
-chat_handler = None
-completion_handler = None
 
 
-def init_app(args):
+def load_engine():
     """
-    init LLMEngine
+    load engine
     """
- 
-    global llm_engine
-    global chat_handler
-    global completion_handler
-
+    api_server_logger.info(f"FastDeploy LLM API server starting... {os.getpid()}")
     engine_args = EngineArgs.from_cli_args(args)
     llm_engine = LLMEngine.from_engine_args(engine_args)
-    if not llm_engine.start():
+
+    if not llm_engine.start("default", os.getpid()):
         api_server_logger.error("Failed to initialize FastDeploy LLM engine, service exit now!")
-        return False
+        exit(-1)
+    else:
+        api_server_logger.info(f"FastDeploy LLM engine initialized!\n")
 
-    chat_handler = OpenAIServingChat(llm_engine)
-    completion_handler = OpenAIServingCompletion(llm_engine)
-    api_server_logger.info(f"FastDeploy LLM engine initialized!")
-    return True
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    async context manager for FastAPI lifespan
+    """
+
+    if args.tokenizer is None:
+        args.tokenizer = args.model
+    if current_process().name != 'MainProcess':
+        pid = os.getppid()
+    else:
+        pid = os.getpid()
+    api_server_logger.info(f"{pid}")
+    engine_client = EngineClient(args.tokenizer, args.max_model_len, args.tensor_parallel_size, pid)
+    chat_handler = OpenAIServingChat(engine_client)
+    completion_handler = OpenAIServingCompletion(engine_client)
+    engine_client.create_zmq_client(model="default", mode=zmq.PUSH)
+    engine_client.pid = pid
+    app.state.engine_client = engine_client
+    app.state.chat_handler = chat_handler
+    app.state.completion_handler = completion_handler
+    yield
+    # close zmq
+    try:
+        engine_client.zmq_client.close()
+    except Exception as e:
+        api_server_logger.warning(e)
+
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+# TODO 传递真实引擎值 通过pid 获取状态
 @app.get("/health")
 def health(request: Request) -> Response:
     """Health check."""
-    status, msg = llm_engine.check_health()
+
+    status, msg = app.state.engine_client.check_health()
     if not status:
         return Response(content=msg, status_code=404)
     return Response(status_code=200)
@@ -119,7 +156,7 @@ async def create_chat_completion(request: ChatCompletionRequest):
     """
     Create a chat completion for the provided prompt and parameters.
     """
-    generator = await chat_handler.create_chat_completion(request)
+    generator = await app.state.chat_handler.create_chat_completion(request)
 
     if isinstance(generator, ErrorResponse):
         return JSONResponse(content=generator.model_dump(),
@@ -137,7 +174,7 @@ async def create_completion(request: CompletionRequest):
     Create a completion for the provided prompt and parameters.
     """
 
-    generator = await completion_handler.create_completion(request)
+    generator = await app.state.completion_handler.create_completion(request)
     if isinstance(generator, ErrorResponse):
         return JSONResponse(content=generator.model_dump(),
                             status_code=generator.code)
@@ -157,12 +194,8 @@ def launch_api_server(args) -> None:
     api_server_logger.info(f"launch Fastdeploy api server... port: {args.port}")
     api_server_logger.info(f"args: {args.__dict__}")
 
-    if not init_app(args):
-        api_server_logger.error("API Server launch failed.")
-        return False
-
     try:
-        uvicorn.run(app=app,
+        uvicorn.run(app="api_server:app",
                     host=args.host,
                     port=args.port,
                     workers=args.workers,
@@ -173,14 +206,10 @@ def launch_api_server(args) -> None:
 
 def main():
     """main函数"""
-    parser = FlexibleArgumentParser()
-    parser.add_argument("--port", default=9904, type=int, help="port to the http server")
-    parser.add_argument("--host", default="0.0.0.0", type=str, help="host to the http server")
-    parser.add_argument("--workers", default=1, type=int, help="number of workers")
-    parser = EngineArgs.add_cli_args(parser)
-    args = parser.parse_args()
+
+    load_engine()
     launch_api_server(args)
-    
+
 
 if __name__ == "__main__":
     main()
