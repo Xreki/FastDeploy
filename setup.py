@@ -15,10 +15,12 @@
 """
 
 import setuptools
+import os
 
 long_description = "FastDeploy: Large Language Model Serving.\n\n"
 long_description += "GitHub: https://github.com/PaddlePaddle/FastDeploy\n"
 long_description += "Email: dltp@baidu.com"
+
 
 def load_requirements():
     """加载requirements.txt中的依赖"""
