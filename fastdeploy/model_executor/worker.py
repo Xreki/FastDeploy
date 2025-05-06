@@ -339,6 +339,10 @@ class Worker:
             suffix=self.args.engine_pid,
             create=False)
         self.get_profile_block_num_signal.value[self.rank] = int(num_gpu_blocks)
+        while np.any(self.get_profile_block_num_signal.value <= 0):
+            time.sleep(0.01)
+        num_gpu_blocks = self.get_profile_block_num_signal.value.min().item()
+        self.get_profile_block_num_signal.value[self.rank] = int(num_gpu_blocks)
         logger.info(f"{self.get_profile_block_num_signal.value[self.rank]} GPU KV blocks can be allocated.")
         self.infer_engine._update_share_input_block_num(num_gpu_blocks)
         paddle.device.cuda.empty_cache()
