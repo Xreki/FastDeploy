@@ -239,7 +239,7 @@ class OpenAIServingChat:
                 raw_data = await dealer.read()
                 data = json.loads(raw_data[-1].decode('utf-8'))
                 data = self.engine_client.data_processor.process_response_dict(data, stream=False)
-                api_server_logger.info(f"Client {request_id} received: {data}")
+                api_server_logger.debug(f"Client {request_id} received: {data}")
                 if data["finished"]:
                     final_res = data
                     break

@@ -130,7 +130,7 @@ class ResourceManager(object):
         for _ in range(block_num):
             used_block_id = self.free_list.pop()
             block_list.append(used_block_id)
-        llm_logger.info(f"dispatch {len(block_list)} blocks.")
+        llm_logger.debug(f"dispatch {len(block_list)} blocks.")
         return block_list
 
     def _recycle_block_tables(self, block_tables):
