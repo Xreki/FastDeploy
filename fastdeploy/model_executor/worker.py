@@ -218,7 +218,7 @@ class Worker:
 
             self.insert_step = False
 
-            self.worker_healthy_live_recorded_time_array[self.rank] = time.time()
+            self.worker_healthy_live_signal.value[self.rank] = time.time()
             mp_num_per_node = self.nranks
 
             if self.rank % mp_num_per_node == 0:

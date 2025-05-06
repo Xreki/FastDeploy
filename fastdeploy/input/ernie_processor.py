@@ -487,6 +487,11 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
         Returns:
             tokenizer (AutoTokenizer)
         """
+        vocab_file_names = ["tokenizer.model", "spm.model", "ernie_token_100k.model"]
+        for i in range(len(vocab_file_names)):
+            if os.path.exists(os.path.join(self.model_name_or_path, vocab_file_names[i])):
+                ErnieBotTokenizer.resource_files_names["vocab_file"] = vocab_file_names[i]
+                break
         self.tokenizer = ErnieBotTokenizer.from_pretrained(self.model_name_or_path)
     def clear_request_status(self, task_id):
         """

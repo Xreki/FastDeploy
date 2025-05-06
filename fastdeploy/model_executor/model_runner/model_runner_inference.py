@@ -40,6 +40,12 @@ class ModelRunner(ModelRunnerBase):
 
     def _load_model(self, model_name):
         from efficientllm.models.export_model import build_stream_line_model
+        from efficientllm.models.tokenizer import ErnieBotTokenizer
+        vocab_file_names = ["tokenizer.model", "spm.model", "ernie_token_100k.model"]
+        for i in range(len(vocab_file_names)):
+            if os.path.exists(os.path.join(self.args.model_name_or_path, vocab_file_names[i])):
+                ErnieBotTokenizer.resource_files_names["vocab_file"] = vocab_file_names[i]
+                break
         config, tokenizer, model = build_stream_line_model(
             os.path.join(self.args.model_name_or_path, os.getenv("CONFIG_JSON_FILE", "config.json")),
             self.args.model_name_or_path,

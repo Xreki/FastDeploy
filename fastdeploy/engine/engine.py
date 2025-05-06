@@ -648,6 +648,7 @@ class LLMEngine(object):
         """
         if self.worker_healthy_live_signal.value[0]:
             elapsed_time = time.time() - self.worker_healthy_live_signal.value[0]
+            llm_logger.info(f"Check health {elapsed_time}")
             if elapsed_time > time_interval_threashold:
                 return False, "Worker Service Not Healthy"
 
@@ -700,5 +701,8 @@ class LLMEngine(object):
                     return False
 
         self.worker_init_status["finished"] = True
-        self.checking_worker_status_thread.join()
+        try:
+            self.checking_worker_status_thread.join(timeout=1)
+        except Exception as e:
+            pass
         return True
