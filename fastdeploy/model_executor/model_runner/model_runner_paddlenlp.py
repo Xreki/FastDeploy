@@ -68,6 +68,7 @@ class ModelRunner(ModelRunnerBase):
         predictor_args.inference_model = True
         predictor_args.mode = "dynamic"
         predictor_args.block_attn = True
+        predictor_args.append_attn = True
 
         paddle.set_device(predictor_args.device)
         paddle.set_default_dtype(predictor_args.dtype)
