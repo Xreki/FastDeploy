@@ -21,8 +21,9 @@ import re
 
 from fastdeploy.utils import data_processor_logger
 from paddlenlp.generation import GenerationConfig
-from .ernie_tokenizer import ErnieBotTokenizer
+from fastdeploy.input.ernie_tokenizer import ErnieBotTokenizer
 from fastdeploy.input.text_processor import BaseDataProcessor
+from fastdeploy.engine.config import ModelConfig
 from fastdeploy.utils import data_processor_logger
 
 class ErnieProcessor(BaseDataProcessor):
@@ -45,10 +46,10 @@ class ErnieProcessor(BaseDataProcessor):
         self.model_name_or_path = model_name_or_path
         data_processor_logger.info(f"model_name_or_path: {model_name_or_path}")
         self._init_config()
+        self.model_name = ModelConfig(model_name_or_path).model_name
 
-        self.is_thinking = False
-        #TODO 规范
-        if "X1" in model_name_or_path:
+        self.is_thinking = (self.model_name == "x1")
+        if self.is_thinking:
             self.is_thinking = True
             self.thinking_template = "<|prefixoftext|>思考<|middleoftext|>"
             self.response_template = "<|prefixoftext|>开始回复<|middleoftext|>"
@@ -99,19 +100,19 @@ class ErnieProcessor(BaseDataProcessor):
         if request.prompt_token_ids is None or len(request.prompt_token_ids) == 0:
             system = request.get("system")
             if request.prompt is not None:
-                history_qa = request.get("history")
-                request.prompt_token_ids = self.text2ids(request.prompt, history_qa, max_model_len, system)
+                request.prompt_token_ids = self.text2ids(request.prompt, max_model_len, system)
             elif request.messages is not None:
-
                 request.prompt_token_ids = self.messages2ids(request.messages, max_model_len)
             else:
                 raise ValueError(f"The request should have `input_ids`, `text` or `messages`: {request}.")
+            if self.model_name == "base":
+                assert (system is None or system == ""), "The loadding model is a base model, `system` is not supported."
+                assert request.messages is None, "The loadding model is a base model, `messages` is not supported."
 
         if max_model_len is not None and len(request.prompt_token_ids) > max_model_len:
             request.prompt_token_ids = request.prompt_token_ids[:max_model_len - 1]
         data_processor_logger.info(f"processed request: {request}")
         return request
-
 
     def process_request_dict(self, request, max_model_len=None):
         """
@@ -134,15 +135,13 @@ class ErnieProcessor(BaseDataProcessor):
             request['stop_token_ids'] = stop_seqs
             request['stop_seqs_len'] = stop_seqs_len
 
+        system = request.get("system")
         # 处理prompt_token_ids
         if not request.get('prompt_token_ids'):
-            system = request.get("system")
             if 'prompt' in request:
                 raw_request = request.get('raw_request', False)
-                history_qa = request.get("history")
                 request['prompt_token_ids'] = self.text2ids(
                     request['prompt'],
-                    history_qa,
                     max_model_len,
                     system
                 )
@@ -150,6 +149,12 @@ class ErnieProcessor(BaseDataProcessor):
                 request['prompt_token_ids'] = self.messages2ids(request['messages'], max_model_len)
             else:
                 raise ValueError(f"Request must contain 'prompt_token_ids', 'prompt', or 'messages': {request}")
+        if self.model_name == "base":
+            assert isinstance(request['prompt'], str), "the loadding model is a base model, `prompt` must be a string type."
+            assert (system is None or system == ""), "The loadding model is a base model, `system` is not supported."
+            assert request.get('messages') is None, "The loadding model is a base model, `messages` is not supported."
+
+
 
         # 截断超过长度限制的prompt
         if max_model_len is not None and len(request['prompt_token_ids']) > max_model_len:
@@ -244,26 +249,18 @@ class ErnieProcessor(BaseDataProcessor):
         return response_dict
 
 
-    def text2ids(self, text, history_qa=None, max_model_len=None, system=None):
+    def text2ids(self, text, max_model_len=None, system=None):
         """
-        将文本转换为对应的 ID。如果有history_qa，会将text和history_qa进行拼接。
+        将文本转换为对应的 ID。
 
         Args:
             text (str): 待转换的文本。
-            history_qa (List[str], optional): 历史多轮对话，默认None。
-                history_qa示例[[Q1, A1],[Q2, A2],[Q3, A3],[Q4, A4].....], Q1,A1表示最近时间的对话
             system (str): 系统设定，如“你是一位高超的程序员”
 
         Returns:
             List[int]: 转换后的 ID 列表。
         """
         messages = []
-        if history_qa is not None:
-            for item in reversed(history_qa):
-                if len(item) != 2:
-                    raise ValueError(f"The history_qa should be a list of [Q, A] pairs: {history_qa}.")
-                messages.append(item[0])
-                messages.append(item[1])
         if isinstance(text, list):
             messages.extend(text)
         else:
@@ -291,6 +288,11 @@ class ErnieProcessor(BaseDataProcessor):
         """
         if len(messages) % 2 == 0:
             raise ValueError(f"The number of the messages context ({len(messages)}) must be odd.")
+
+        if self.model_name == "base":
+            # for base model, the length of messages should be 1
+            # and it only need to convert the input prompt to token ids
+            tokens = self.tokenizer.tokenize(messages[0])
 
         prefix_tokens = [self.tokenizer.cls_token]
         suffix_tokens = self.tokenizer.tokenize("Assistant: ")
@@ -341,7 +343,6 @@ class ErnieProcessor(BaseDataProcessor):
         """
         if len(messages) % 2 == 0:
             raise ValueError(f"The number of the messages context ({len(messages)}) must be odd.")
-
 
         suffix_tokens = self.tokenizer.tokenize("<role>\nassistant<br/>\n<|prefixoftext|>思考<|middleoftext|>")
 
