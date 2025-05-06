@@ -106,7 +106,9 @@ class ErnieProcessor(BaseDataProcessor):
             else:
                 raise ValueError(f"The request should have `input_ids`, `text` or `messages`: {request}.")
             if self.model_name == "base":
-                assert (system is None or system == ""), "The loadding model is a base model, `system` is not supported."
+                assert (
+                    system is None or system == ""
+                ), "The loadding model is a base model, `system` is not supported."
                 assert request.messages is None, "The loadding model is a base model, `messages` is not supported."
 
         if max_model_len is not None and len(request.prompt_token_ids) > max_model_len:
@@ -150,9 +152,15 @@ class ErnieProcessor(BaseDataProcessor):
             else:
                 raise ValueError(f"Request must contain 'prompt_token_ids', 'prompt', or 'messages': {request}")
         if self.model_name == "base":
-            assert isinstance(request['prompt'], str), "the loadding model is a base model, `prompt` must be a string type."
-            assert (system is None or system == ""), "The loadding model is a base model, `system` is not supported."
-            assert request.get('messages') is None, "The loadding model is a base model, `messages` is not supported."
+            assert isinstance(
+                request['prompt'], str
+            ), "the loadding model is a base model, `prompt` must be a string type."
+            assert (
+                system is None or system == ""
+            ), "The loadding model is a base model, `system` is not supported."
+            assert request.get(
+                'messages'
+            ) is None, "The loadding model is a base model, `messages` is not supported."
 
 
 

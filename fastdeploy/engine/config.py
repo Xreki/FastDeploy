@@ -112,7 +112,7 @@ class ModelConfig:
 
         if not hasattr(self, "model_name"):
             self.model_name = os.getenv("FD_MODEL_NAME")
-            assert self.model_name is not None, "There is no parameter model_name in config.json or FD_MODEL_NAME in environment variables.")
+            assert self.model_name is not None, "There is no parameter model_name in config.json or FD_MODEL_NAME in environment variables."
             assert self.model_name.lower() in ["base", "x1", "vl", "chat"], "The parameter 'model_name' should be one of base/x1/vl/chat."
 
         reset_config_value("COMPRESSION_RATIO", 1.0)
