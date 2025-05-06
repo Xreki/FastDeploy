@@ -32,8 +32,9 @@ from fastdeploy.engine.request import RequestOutput
 
 
 class OpenAIServingCompletion:
-    def __init__(self, engine_client):
+    def __init__(self, engine_client, pid):
         self.engine_client = engine_client
+        self.pid = pid
 
     async def create_completion(self, request: CompletionRequest):
         """
@@ -77,7 +78,9 @@ class OpenAIServingCompletion:
                     current_req_dict["arrival_time"] = time.time()
                     self.engine_client.format_and_add_data(current_req_dict)
                 except Exception as e:
-                    return ErrorResponse(message=str(e), code=400) 
+                    return ErrorResponse(message=str(e), code=400)
+
+                del current_req_dict
 
             if request.stream:
                 return self.completion_stream_generator(
@@ -120,7 +123,7 @@ class OpenAIServingCompletion:
             # create dealer
             dealer = await aiozmq.create_zmq_stream(
                 zmq.DEALER,
-                connect="ipc:///dev/shm/router.ipc"
+                connect=f"ipc:///dev/shm/router_{self.pid}.ipc"
             )
 
             for rid in request_ids:
@@ -170,7 +173,7 @@ class OpenAIServingCompletion:
         try:
             dealer = await aiozmq.create_zmq_stream(
                 zmq.DEALER,
-                connect="ipc:///dev/shm/router.ipc"
+                connect=f"ipc:///dev/shm/router_{self.pid}.ipc"
             )
 
             for i in range(num_choices):
@@ -183,7 +186,7 @@ class OpenAIServingCompletion:
                 res = json.loads(raw_data[-1].decode('utf-8'))
                 idx = int(res["request_id"].split("-")[-1])
                 self.engine_client.data_processor.process_response_dict(res, stream=True)
-                if res['metrics']['first_token_time'] is not None:
+                if res['metrics'].get('first_token_time') is not None:
                     arrival_time = res['metrics']['first_token_time']
                     inference_start_time[idx] = res['metrics']['inference_start_time']
                 else:
@@ -198,7 +201,7 @@ class OpenAIServingCompletion:
                     choices=[CompletionResponseStreamChoice(
                         index=idx,
                         text=output["text"],
-                        reasoning_content=output["reasoning_content"],
+                        reasoning_content=output.get("reasoning_content"),
                         arrival_time=arrival_time
                     )]
                 )
@@ -226,6 +229,7 @@ class OpenAIServingCompletion:
         except Exception as e:
             yield f"data: {ErrorResponse(message=str(e), code=400).model_dump_json(exclude_unset=True)}\n\n"
         finally:
+            del request
             if dealer is not None:
                 dealer.close()
             yield "data: [DONE]\n\n"
@@ -264,7 +268,7 @@ class OpenAIServingCompletion:
             choice_data = CompletionResponseChoice(
                 index=len(choices),
                 text=output_text,
-                reasoning_content=output['reasoning_content'],
+                reasoning_content=output.get('reasoning_content'),
                 logprobs=None,
                 finish_reason=None
             )
@@ -279,6 +283,7 @@ class OpenAIServingCompletion:
             completion_tokens=num_generated_tokens,
             total_tokens=num_prompt_tokens + num_generated_tokens,
         )
+        del request
 
         return CompletionResponse(
             id=request_id,

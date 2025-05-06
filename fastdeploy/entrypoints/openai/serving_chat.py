@@ -42,27 +42,15 @@ from fastdeploy.utils import api_server_logger
 from fastdeploy.engine.request import RequestOutput
 
 
-async def async_wrapper(sync_gen):
-    loop = asyncio.get_event_loop()
-    while True:
-        try:
-            # 在独立线程中执行同步生成器
-            item = await loop.run_in_executor(None, next, sync_gen)
-            yield item
-            if item.get("finished", False):
-                break
-        except StopIteration:
-            api_server_logger.info("Sync generator has been fully traversed.")
-            break
-
 
 class OpenAIServingChat:
     """
     OpenAI-style chat completions serving
     """
 
-    def __init__(self, engine_client):
+    def __init__(self, engine_client, pid):
         self.engine_client = engine_client
+        self.pid = pid
 
     async def create_chat_completion(
         self,
@@ -81,6 +69,8 @@ class OpenAIServingChat:
 
         except ValueError as e:
             return ErrorResponse(code=400, message=str(e))
+
+        del current_req_dict
 
         if request.stream:
             return self.chat_completion_stream_generator(
@@ -126,7 +116,7 @@ class OpenAIServingChat:
         try:
             dealer = await aiozmq.create_zmq_stream(
                 zmq.DEALER,
-                connect="ipc:///dev/shm/router.ipc"
+                connect=f"ipc:///dev/shm/router_{self.pid}.ipc"
             )
             dealer.write([b"", request_id.encode('utf-8')])
             while num_choices > 0:
@@ -135,7 +125,7 @@ class OpenAIServingChat:
                 self.engine_client.data_processor.process_response_dict(res, stream=True)
                 if first_iteration:
                     num_prompt_tokens = len(res["prompt_token_ids"])
-                    num_cached_tokens = res["num_cached_tokens"]
+                    num_cached_tokens = res.get("num_cached_tokens", 0)
                     for i in range(num_choices):
                         choice = ChatCompletionResponseStreamChoice(
                             index=i,
@@ -163,7 +153,7 @@ class OpenAIServingChat:
                 delta_text = output["text"]
 
                 previous_num_tokens += len(output["token_ids"])
-                delta_message = DeltaMessage(content=delta_text, reasoning_content=output["reasoning_content"])
+                delta_message = DeltaMessage(content=delta_text, reasoning_content=output.get("reasoning_content"))
 
                 choice = ChatCompletionResponseStreamChoice(
                     index=output["index"],
@@ -231,7 +221,7 @@ class OpenAIServingChat:
         try:
             dealer = await aiozmq.create_zmq_stream(
                 zmq.DEALER,
-                connect="ipc:///dev/shm/router.ipc"
+                connect=f"ipc:///dev/shm/router_{self.pid}.ipc"
             )
             dealer.write([b"", request_id.encode('utf-8')])
             final_res = None
@@ -251,7 +241,7 @@ class OpenAIServingChat:
         message = ChatMessage(
             role="assistant",
             content=output["text"],
-            reasoning_content=output["reasoning_content"]
+            reasoning_content=output.get("reasoning_content")
         )
 
         choice = ChatCompletionResponseChoice(

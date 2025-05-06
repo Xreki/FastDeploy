@@ -76,9 +76,9 @@ async def lifespan(app: FastAPI):
         pid = os.getpid()
     api_server_logger.info(f"{pid}")
     engine_client = EngineClient(args.tokenizer, args.max_model_len, args.tensor_parallel_size, pid)
-    chat_handler = OpenAIServingChat(engine_client)
-    completion_handler = OpenAIServingCompletion(engine_client)
-    engine_client.create_zmq_client(model="default", mode=zmq.PUSH)
+    chat_handler = OpenAIServingChat(engine_client, pid)
+    completion_handler = OpenAIServingCompletion(engine_client, pid)
+    engine_client.create_zmq_client(model=pid, mode=zmq.PUSH)
     engine_client.pid = pid
     app.state.engine_client = engine_client
     app.state.chat_handler = chat_handler
