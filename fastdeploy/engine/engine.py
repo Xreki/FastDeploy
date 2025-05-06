@@ -700,5 +700,8 @@ class LLMEngine(object):
                     return False
 
         self.worker_init_status["finished"] = True
-        self.checking_worker_status_thread.join()
+        try:
+            self.checking_worker_status_thread.join(timeout=1)
+        except Exception as e:
+            pass
         return True

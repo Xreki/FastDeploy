@@ -101,7 +101,6 @@ class ModelConfig:
         # 动态图推理是否使用停止序列
         self.ellm_dynamic_use_stop_seqs = int(os.getenv("ELLM_DYNAMIC_USE_STOP_SEQS", "0")) == 1
 
-
         def reset_config_value(key, value):
             if not hasattr(self, key.lower()):
                 if os.getenv(key, None):
@@ -110,6 +109,13 @@ class ModelConfig:
                 else:
                     llm_logger.info(f"Parameter `{key}` will use default value {value}.")
                 setattr(self, key.lower(), value)
+
+        if not hasattr(self, "model_name"):
+            self.model_name = os.getenv("FD_MODEL_NAME")
+            assert self.model_name is not None, (
+                "There is no parameter model_name in config.json or "
+                "FD_MODEL_NAME in environment variables."
+            )
 
         reset_config_value("COMPRESSION_RATIO", 1.0)
         reset_config_value("ROPE_THETA", 10000)

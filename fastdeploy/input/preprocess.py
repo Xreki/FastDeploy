@@ -17,7 +17,6 @@
 import os
 
 
-
 class InputPreprocessor:
     """
         Args:

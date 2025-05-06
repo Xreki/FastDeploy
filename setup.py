@@ -15,10 +15,18 @@
 """
 
 import setuptools
+import os
 
 long_description = "FastDeploy: Large Language Model Serving.\n\n"
 long_description += "GitHub: https://github.com/PaddlePaddle/FastDeploy\n"
 long_description += "Email: dltp@baidu.com"
+
+
+def load_requirements():
+    """加载requirements.txt中的依赖"""
+    requirements_path = os.path.join(os.path.dirname(__file__), 'requirements.txt')
+    with open(requirements_path, 'r') as f:
+        return [line.strip() for line in f if line.strip() and not line.startswith('#')]
 
 setuptools.setup(
     name="fastdeploy",
@@ -30,6 +38,7 @@ setuptools.setup(
     long_description_content_type="text/plain",
     url="https://github.com/PaddlePaddle/FastDeploy",
     packages=setuptools.find_packages(),
+    install_requires=load_requirements(),
     classifiers=[
         "Programming Language :: Python :: 3", 
         "License :: OSI Approved :: Apache Software License",
