@@ -50,7 +50,7 @@ class Worker:
         """
         if int(os.getenv("OPEN_SOURCE", "0")) == 1:
             from fastdeploy.model_executor.model_runner.model_runner_paddlenlp import ModelRunner
-        
+
         else:
             from fastdeploy.model_executor.model_runner.model_runner_inference import ModelRunner
 
@@ -165,7 +165,7 @@ class Worker:
         if int(os.getenv("OPEN_SOURCE", "0")) == 1:
             from paddlenlp_ops import step_paddle
             from fastdeploy.model_executor.model_runner.model_runner_paddlenlp import ModelRunner
-        
+
         else:
             from efficientllm.gpu import step_paddle
             from fastdeploy.model_executor.model_runner.model_runner_inference import ModelRunner
@@ -338,6 +338,10 @@ class Worker:
             dtype=np.int32,
             suffix=self.args.engine_pid,
             create=False)
+        self.get_profile_block_num_signal.value[self.rank] = int(num_gpu_blocks)
+        while np.any(self.get_profile_block_num_signal.value <= 0):
+            time.sleep(0.01)
+        num_gpu_blocks = self.get_profile_block_num_signal.value.min().item()
         self.get_profile_block_num_signal.value[self.rank] = int(num_gpu_blocks)
         logger.info(f"{self.get_profile_block_num_signal.value[self.rank]} GPU KV blocks can be allocated.")
         self.infer_engine._update_share_input_block_num(num_gpu_blocks)
