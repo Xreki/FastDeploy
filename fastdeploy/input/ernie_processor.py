@@ -50,7 +50,6 @@ class ErnieProcessor(BaseDataProcessor):
 
         self.is_thinking = (self.model_name == "x1")
         if self.is_thinking:
-            self.is_thinking = True
             self.thinking_template = "<|prefixoftext|>思考<|middleoftext|>"
             self.response_template = "<|prefixoftext|>开始回复<|middleoftext|>"
 
