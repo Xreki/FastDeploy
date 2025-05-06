@@ -60,7 +60,7 @@ class ZmqClient:
         self.context = zmq.Context()
         self.socket = self.context.socket(mode)
         self.file_name = f"/dev/shm/{name}.socket"
-        self.router_path = f"/dev/shm/router.ipc"
+        self.router_path = f"/dev/shm/router_{name}.ipc"
 
         self.req_dict = dict()
         self.router = None

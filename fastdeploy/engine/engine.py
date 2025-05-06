@@ -129,7 +129,7 @@ class LLMEngine(object):
 
         if model is not None:
             # TODO checke model name
-            self.zmq_server = ZmqClient(name="default", mode=zmq.PULL)
+            self.zmq_server = ZmqClient(name=pid, mode=zmq.PULL)
             try:
                 self.zmq_server.start_server()
                 self.zmq_server.create_router()
@@ -187,9 +187,12 @@ class LLMEngine(object):
                 for result in batch_result:
                     if self.zmq_server is not None:
                         # send result
-                        self.zmq_server.send_multipart(result.request_id, json.dumps(result.todict()).encode('utf-8'))
-                        if result.finished:
-                            del self.zmq_server.req_dict[result.request_id]
+                        cur_req_dict = result.todict()
+                        del result
+                        self.zmq_server.send_multipart(cur_req_dict["request_id"], json.dumps(cur_req_dict).encode('utf-8'))
+                        if cur_req_dict["finished"]:
+                            del self.zmq_server.req_dict[cur_req_dict["request_id"]]
+
                     else:
                         if result.request_id not in self.req_output:
                             self.req_output[result.request_id] = deque()
@@ -253,6 +256,7 @@ class LLMEngine(object):
         """
         try:
             while 1:
+
                 if self.resource_manager.available_batch() == 0:
                     time.sleep(0.001)
                     continue
