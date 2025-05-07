@@ -1,4 +1,6 @@
 setuptools==50.3.2
+zmq
+aiozmq
 tqdm
 pynvml
 uvicorn
