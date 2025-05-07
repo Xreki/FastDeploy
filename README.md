@@ -24,7 +24,7 @@ python -m pip install --pre paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/
 
 pip安装
 ```
-pip install https://paddle-qa.bj.bcebos.com/paddle-pipeline/fastdeploy/2a37e32371dfa21520d9e601f7830af0b3875413/fastdeploy-0.1.0-py3-none-any.whl
+pip install https://paddle-qa.bj.bcebos.com/paddle-pipeline/fastdeploy/8677bde0dd60c3ac6f416b823b0e3093ac74025a/fastdeploy-0.1.0-py3-none-any.whl
 ```
 
 源码安装
