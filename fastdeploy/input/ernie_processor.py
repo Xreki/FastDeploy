@@ -512,8 +512,8 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
             if self.use_hf_tokenizer:
                 results_all = self.decode_status[task_id][2]
             else:
-                results_all = "".join(self.decode_status[task_id][3])
-                reasoning_content = "".join(self.decode_status[task_id][4][36:])
+                reasoning_content = "".join(self.decode_status[task_id][3])
+                results_all = "".join(self.decode_status[task_id][4][36:])
             del self.decode_status[task_id]
         return results_all, reasoning_content
 
