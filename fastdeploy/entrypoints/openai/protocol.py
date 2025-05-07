@@ -105,6 +105,7 @@ class ChatCompletionResponseStreamChoice(BaseModel):
     index: int
     delta: DeltaMessage
     finish_reason: Optional[Literal["stop", "length"]] = None
+    arrival_time: Optional[float] = None
 
 
 class ChatCompletionStreamResponse(BaseModel):
@@ -116,6 +117,7 @@ class ChatCompletionStreamResponse(BaseModel):
     created: int = Field(default_factory=lambda: int(time.time()))
     model: str
     choices: List[ChatCompletionResponseStreamChoice]
+    usage: Optional[UsageInfo] = None
 
 
 class CompletionResponseChoice(BaseModel):

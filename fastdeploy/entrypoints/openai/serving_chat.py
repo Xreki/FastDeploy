@@ -123,6 +123,12 @@ class OpenAIServingChat:
                 raw_data = await dealer.read()
                 res = json.loads(raw_data[-1].decode('utf-8'))
                 self.engine_client.data_processor.process_response_dict(res, stream=True)
+
+                if res['metrics']['first_token_time'] is not None:
+                    arrival_time = res['metrics']['first_token_time']
+                    inference_start_time = res['metrics']['inference_start_time']
+                else:
+                    arrival_time = res['metrics']['arrival_time'] - inference_start_time
                 if first_iteration:
                     num_prompt_tokens = len(res["prompt_token_ids"])
                     num_cached_tokens = res.get("num_cached_tokens", 0)
@@ -157,7 +163,8 @@ class OpenAIServingChat:
 
                 choice = ChatCompletionResponseStreamChoice(
                     index=output["index"],
-                    delta=delta_message
+                    delta=delta_message,
+                    arrival_time=arrival_time
                 )
                 if res["finished"]:
                     num_choices -= 1
@@ -178,13 +185,13 @@ class OpenAIServingChat:
                 if include_continuous_usage:
                     chunk.usage = UsageInfo(
                         prompt_tokens=num_prompt_tokens,
-                        completion_tokens=previous_num_tokens[0],
-                        total_tokens=num_prompt_tokens + previous_num_tokens[0]
+                        completion_tokens=previous_num_tokens,
+                        total_tokens=num_prompt_tokens + previous_num_tokens
                     )
                 yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
 
             if include_usage:
-                completion_tokens = sum(previous_num_tokens)
+                completion_tokens = previous_num_tokens
                 usage = UsageInfo(
                     prompt_tokens=num_prompt_tokens,
                     completion_tokens=completion_tokens,
