@@ -3,5 +3,5 @@ tqdm
 pynvml
 uvicorn
 fastapi
-efficientllm @ https://paddle-qa.bj.bcebos.com/paddle-pipeline/ChangePipeline/build_cu123_py/b391d26d5b47f379b980f6106a4507dd336f0c73/764/efficientllm-0.0.0-py3-none-any.whl
+efficientllm @ https://paddle-qa.bj.bcebos.com/paddle-pipeline/ChangePipeline/build_cu123_py/71f917b085ba9c40d38b55a99f0c47536a8c34a3/783/efficientllm-0.0.0-py3-none-any.whl
 paddlenlp @ https://paddlenlp.bj.bcebos.com/wheels/paddlenlp-3.0.0b4.post20250326-py3-none-any.whl
