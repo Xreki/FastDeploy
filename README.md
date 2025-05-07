@@ -28,7 +28,7 @@ python setup.py install
 
 ## 快速使用
 
-在使用Docker或源码安装后，执行如下命令进行服务部署, 更多参数的配置与含义参考[参数说明](docs/parameters.md).
+在使用Docker或源码安装后，执行如下命令进行服务部署, 更多参数的配置与含义参考[参数说明](docs/serving.md).
 
 ```
 python -m fastdeploy.entrypoints.openai.api_server --model ernie-45-turbo --port 8188 --tensor-parallel-size 8
@@ -48,11 +48,8 @@ FastDeploy提供与OpenAI完全兼容的服务API(字段`model`与`api_key`目�
 
 ## 部署文档
 
-- [项目架构](docs/architecture.md)
 - [本地部署](docs/offline_inference.md)
 - [服务部署](docs/serving.md)
-- [参数说明](docs/parameters.md)
-- [日志说明](docs/log.md)
 
 # 代码说明
 - 当前仅包含服务层代码，模型组网代码依赖requirements.txt中的EfficentLLM模块，此模块将在5月底前完成代码合入。

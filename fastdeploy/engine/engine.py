@@ -166,7 +166,7 @@ class LLMEngine(object):
         # Start TokenProcessor thread
         self.token_processor.run()
 
-        self._receive_output_thread = threading.Thread(target=self._recieve_output, args=())
+        self._receive_output_thread = threading.Thread(target=self._receive_output, args=())
         self._receive_output_thread.daemon = True
         self._receive_output_thread.start()
 
@@ -175,9 +175,7 @@ class LLMEngine(object):
         console_logger.info("Worker processes are launched with {} seconds.".format(time.time() - start_time))
         return True
 
-
-
-    def _recieve_output(self):
+    def _receive_output(self):
         """
         Recieve output from token processor and store them in cache
         """
@@ -232,8 +230,12 @@ class LLMEngine(object):
                 if data is None:
                     break
                 else:
-                    request = Request.from_dict(data)
-                    self.cached_task_deque.appendleft(request)
+                    try:
+                        request = Request.from_dict(data)
+                        llm_logger.info(f"Receive request: {request}")
+                        self.cached_task_deque.appendleft(request)
+                    except Exception as e:
+                        llm_logger.error(f"Error happend while receving new request from zmq, details={e}")
 
        if len(self.cached_task_deque) == 0:
            return []
