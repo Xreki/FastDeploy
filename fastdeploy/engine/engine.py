@@ -506,6 +506,8 @@ class LLMEngine(object):
            "LOAD_STATE_DICT_THREAD_NUM": 8,
            "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION": "python",
            "FLAGS_use_append_attn": 1,
+           "NCCL_ALGO": "Ring",
+           "ELLM_DYNAMIC_MODE": 1,
        }
        command_prefix = ""
        for k, v in variables.items():
