@@ -97,10 +97,6 @@ class EngineArgs:
     """
     List of IP addresses for nodes in the cluster.
     """
-    max_cached_request_num: int = 128
-    """
-    Maximum number of requests in the cache waiting list.
-    """
 
     # System configuration parameters
     use_warmup: int = 0
@@ -226,12 +222,6 @@ class EngineArgs:
             default=EngineArgs.kv_cache_ratio,
             help="Ratio of tokens to process in a block."
         )
-        parallel_group.add_argument(
-            "--max-cached-request-num",
-            type=int,
-            default=EngineArgs.max_cached_request_num,
-            help="Maximum number of requests in the cache waiting list."
-        )
 
         # Cluster system parameters group
         system_group = parser.add_argument_group("System Configuration")
@@ -310,7 +300,6 @@ class EngineArgs:
             max_num_batched_tokens=self.max_num_batched_tokens,
             nnode=self.nnode,
             pod_ips=self.pod_ips,
-            max_cached_request_num=self.max_cached_request_num,
             use_warmup=self.use_warmup,
             engine_worker_queue_port=self.engine_worker_queue_port
         )

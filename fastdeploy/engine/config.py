@@ -238,7 +238,6 @@ class Config:
         max_num_batched_tokens (Optional[int]): Maximum number of batched tokens.
         tensor_parallel_size (int): Tensor parallel size.
         nnode (int): Number of nodes.
-        max_cached_request_num (int): Maximum number of cached requests.
         max_model_len (int): Maximum model length. Default is 8192.
         max_num_seqs (int): Maximum number of sequences. Default is 8.
         mm_processor_kwargs (Optional[Dict[str, Any]]): Additional arguments for multi-modal processor.
@@ -253,7 +252,6 @@ class Config:
         tokenizer: str = None,
         tensor_parallel_size: int = 8,
         nnode: int = 1,
-        max_cached_request_num: int = 128,
         max_model_len: int = 8192,
         max_num_seqs: int = 8,
         max_num_batched_tokens: Optional[int] = None,
@@ -273,7 +271,6 @@ class Config:
             tokenizer (str): Default is the model.
             tensor_parallel_size (int): Tensor parallel size. Default is 8.
             nnode (int): Number of nodes. Default is 1.
-            max_cached_request_num (int): Maximum number of cached requests. Default is 128.
             max_model_len (int): Maximum model length. Default is 8192.
             max_num_seqs (int): Maximum number of sequences. Default is 8.
             max_num_batched_tokens (Optional[int]): Maximum number of batched tokens. Default is None.
@@ -293,7 +290,6 @@ class Config:
         self.max_model_len = max_model_len
         self.max_num_seqs = max_num_seqs
         self.mm_processor_kwargs = mm_processor_kwargs
-        self.max_cached_request_num = max_cached_request_num
         self.speculative_config = speculative_config
         self.use_warmup = use_warmup
 
@@ -345,7 +341,6 @@ class Config:
 				), f"The parameter `engine_worker_queue_port`:{self.engine_worker_queue_port} is already in use."
         assert (8 >= self.tensor_parallel_size > 0), f"tensor_parallel_size: {self.tensor_parallel_size} should be between 1 and 8"
         assert (self.nnode >= 1), f"nnode: {self.nnode} should no less than 1"
-        assert (self.max_cached_request_num >= 0), f"max_cached_request_num: {self.max_cached_request_num} should be larger than 0"
         assert (self.max_model_len >= 16), f"max_model_len: {self.max_model_len} should be larger than 16"
         assert (self.max_num_seqs >= 1), f"max_num_seqs: {self.max_num_seqs} should be larger than 1"
 
