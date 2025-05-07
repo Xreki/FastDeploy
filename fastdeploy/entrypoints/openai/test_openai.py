@@ -28,7 +28,7 @@ response = client.completions.create(
     max_tokens=100,
     seed=13,
     stream=False,
-    top_p=0.0,
+#    top_p=0.0,
 )
 
 print(response)
