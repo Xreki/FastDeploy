@@ -195,7 +195,7 @@ def launch_api_server(args) -> None:
     api_server_logger.info(f"args: {args.__dict__}")
 
     try:
-        uvicorn.run(app="api_server:app",
+        uvicorn.run(app="fastdeploy.entrypoints.openai.api_server:app",
                     host=args.host,
                     port=args.port,
                     workers=args.workers,
