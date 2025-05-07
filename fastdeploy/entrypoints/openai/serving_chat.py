@@ -135,7 +135,7 @@ class OpenAIServingChat:
                     for i in range(num_choices):
                         choice = ChatCompletionResponseStreamChoice(
                             index=i,
-                            delta=DeltaMessage(role="assistant", content="")
+                            delta=DeltaMessage(role="assistant", content="", reasoning_content="")
                         )
                         if request.metadata is not None and request.metadata.get("training", False):
                             choice.delta.token_ids = list(res["prompt_token_ids"])
