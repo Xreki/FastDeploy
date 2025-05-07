@@ -15,7 +15,7 @@ docker pull xxxx
 ```
 
 ### 源码安装
-1. 安装PaddlePaddle GPU，详见[PaddlePaddle安装](https://www.paddlepaddle.org.cn/en/install/quick?docurl=/documentation/docs/en/develop/install/pip/linux-pip_en.html)，指定安装CUDA 12.6 develop(Nightly build)版本，如下命令可完成安装
+1. 安装PaddlePaddle GPU(nightly build，代码版本需新于2025.05.08)，详见[PaddlePaddle安装](https://www.paddlepaddle.org.cn/en/install/quick?docurl=/documentation/docs/en/develop/install/pip/linux-pip_en.html)，指定安装CUDA 12.6 develop(Nightly build)版本，如下命令可完成安装
 ```
 python -m pip install --pre paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/packages/nightly/cu126/
 ```
@@ -24,7 +24,7 @@ python -m pip install --pre paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/
 
 pip安装
 ```
-pip install https://paddle-qa.bj.bcebos.com/paddle-pipeline/fastdeploy/0182a2284f7b4bfedd1ac09ad3df24d87db74b51/fastdeploy-0.1.0-py3-none-any.whl
+pip install https://paddle-qa.bj.bcebos.com/paddle-pipeline/fastdeploy/2a37e32371dfa21520d9e601f7830af0b3875413/fastdeploy-0.1.0-py3-none-any.whl
 ```
 
 源码安装
