@@ -20,8 +20,16 @@ docker pull xxxx
 python -m pip install --pre paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/packages/nightly/cu126/
 ```
 
-2. 源码安装FastDeploy
+2. 安装FastDeploy
+
+pip安装
 ```
+pip install https://paddle-qa.bj.bcebos.com/paddle-pipeline/fastdeploy/0182a2284f7b4bfedd1ac09ad3df24d87db74b51/fastdeploy-0.1.0-py3-none-any.whl
+```
+
+源码安装
+```
+# git clone FastDeploy仓库
 cd FastDeploy
 python setup.py install
 ```
@@ -57,5 +65,4 @@ FastDeploy提供与OpenAI完全兼容的服务API(字段`model`与`api_key`目�
 
 # 开源说明
 
-FastDeploy遵循[Apache-2.0开源协议](./LICENSE)。 在本项目的开发中，为了对齐[vLLM](https://github.com/vllm-project/vllm)使用接口，参考或直接使用了部分vLLM代码，在此表示感谢。
-
+FastDeploy遵循[Apache-2.0开源协议](./LICENSE)。 在本项目的开发中，为了对齐[vLLM](https://github.com/vllm-project/vllm)使用接口，参考和直接使用了部分vLLM代码，在此表示感谢。
