@@ -94,18 +94,18 @@ for chunk in response:
 关于OpenAI协议的说明可参考文档 OpenAI Chat Compeltion API，需要说明的是，FastDeploy提供的服务在参数上存在如下差异，
 
 1. 仅支持OpenAI如下参数（其余参数配置会被服务忽略）
-  a. prompt (v1/completions)
-  b. messages(v1/chat/completions)
-  c. frequency_penalty: Optional[float] = 0.0
-  d. max_tokens: Optional[int] = 16
-  e. presence_penalty: Optional[float] = 0.0
-  f. seed: Optional[int] = None
-  g. stream: Optional[bool] = False
-  h. stream_options: Optional[StreamOptions] = None
-  i. temperature: Optional[float] = None
-  j. top_p: Optional[float] = None
+- prompt (v1/completions)
+- messages(v1/chat/completions)
+- frequency_penalty: Optional[float] = 0.0
+- max_tokens: Optional[int] = 16
+- presence_penalty: Optional[float] = 0.0
+- seed: Optional[int] = None
+- stream: Optional[bool] = False
+- stream_options: Optional[StreamOptions] = None
+- temperature: Optional[float] = None
+- top_p: Optional[float] = None
 
-注： 若为X1 模型 由于思考链默认打卡导致输出过长，max tokens 可以设置为模型最长输出，或无需设置
+> 注:若为X1 模型 由于思考链默认打卡导致输出过长，max tokens 可以设置为模型最长输出，或无需设置
 
 2. 在返回的信息
 
@@ -114,7 +114,7 @@ arrival_time ：每个token 的返回的累计耗时
 reasoning_content: 思考链返回结果
 
 ```python
-ChatCompletionStreamRespons:
+ChatCompletionStreamResponse:
     id: str
     object: str = "chat.completion.chunk"
     created: int = Field(default_factory=lambda: int(time.time()))
@@ -131,4 +131,3 @@ DeltaMessage:
     token_ids: Optional[List[int]] = None
     reasoning_content: Optional[str] = None
 ```
-
