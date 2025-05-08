@@ -60,6 +60,7 @@ class LLM:
         ValueError:
             If `model` is not in `LLMEngine.SUPPORTED_MODELS`.
     """
+
     def __init__(
         self,
         model: str,
@@ -77,10 +78,10 @@ class LLM:
         self.llm_engine = LLMEngine.from_engine_args(
             engine_args=engine_args)
 
-        self.default_sampling_params = SamplingParams(max_tokens = self.llm_engine.cfg.max_model_len)
+        self.default_sampling_params = SamplingParams(
+            max_tokens=self.llm_engine.cfg.max_model_len)
 
         self.llm_engine.start()
-
 
     def generate(
         self,
@@ -118,29 +119,24 @@ class LLM:
         if isinstance(prompts, list) and isinstance(prompts[0], int):
             prompts = [prompts]
 
-
         if isinstance(prompts, dict):
             if "prompts" not in prompts:
                 raise ValueError("prompts must be a input dict")
             prompts = [prompts]
             sampling_params = None
 
-
         if sampling_params_len != 1 and len(prompts) != sampling_params_len:
-            raise ValueError("prompts and sampling_params must be the same length.")
+            raise ValueError(
+                "prompts and sampling_params must be the same length.")
 
         req_ids = self._add_request(
             prompts=prompts,
             sampling_params=sampling_params
         )
 
-
         # get output
         outputs = self._run_engine(req_ids, use_tqdm=use_tqdm)
         return outputs
-
-
-
 
     def _add_request(
         self,
@@ -187,7 +183,6 @@ class LLM:
             self.llm_engine.add_requests(tasks, sampling_params)
         return req_ids
 
-
     def _run_engine(
         self, req_ids: list[str], use_tqdm: bool
     ):
@@ -219,25 +214,28 @@ class LLM:
 
         output = []
         while num_requests:
-            for req_id in req_ids:
+            finished = []
+            for i, req_id in enumerate(req_ids):
                 try:
-                    result = self.llm_engine.get_result(req_id)
-                    if result is None:
-                        time.sleep(0.01)
-                        continue
-                    is_end = result.finished
-                    result = self.llm_engine.data_processor.process_response(result)
-                    llm_logger.info(f"Send result to client under push mode: {result}")
-                    if is_end:
-                        output.append(result)
-                        num_requests -= 1
-                        req_ids.remove(req_id)
-                        del self.llm_engine.req_output[req_id]
-                        llm_logger.debug("Request id: {} has been completed.".format(req_id))
-                        if use_tqdm:
-                            pbar.update(1)
+                    for result in self.llm_engine.get_result(req_id):
+                        result = self.llm_engine.data_processor.process_response(
+                            result)
+                        llm_logger.debug(
+                            f"Send result to client under push mode: {result}")
+                        if result.finished:
+                            output.append(result)
+                            finished.append(i)
+                            llm_logger.debug(
+                                "Request id: {} has been completed.".format(req_id))
+                            if use_tqdm:
+                                pbar.update(1)
                 except Exception as e:
-                        llm_logger.error("Unexcepted error happend: {}".format(e))
+                    llm_logger.error("Unexcepted error happend: {}".format(e))
+
+            num_requests -= len(finished)
+            for i in finished:
+                req_ids.pop(i)
+
         if use_tqdm:
             pbar.close()
         return output
@@ -247,14 +245,17 @@ if __name__ == "__main__":
     # llm = LLM(model="llama_model")
     # output = llm.generate(prompts="who are you？", use_tqdm=True)
     # print(output)
-    llm = LLM(model="/opt/baidu/paddle_internal/FastDeploy/Qwen2.5-7B", tensor_parallel_size=2)
+    llm = LLM(model="/opt/baidu/paddle_internal/FastDeploy/Qwen2.5-7B",
+              tensor_parallel_size=2)
     sampling_params = SamplingParams(temperature=0.1, max_tokens=30)
-    output = llm.generate(prompts="who are you？", use_tqdm=True, sampling_params=sampling_params)
+    output = llm.generate(prompts="who are you？",
+                          use_tqdm=True, sampling_params=sampling_params)
     print(output)
 
-
-    output = llm.generate(prompts=["who are you？", "what can you do？"], sampling_params = SamplingParams(temperature=1, max_tokens=50), use_tqdm=True)
+    output = llm.generate(prompts=["who are you？", "what can you do？"], sampling_params=SamplingParams(
+        temperature=1, max_tokens=50), use_tqdm=True)
     print(output)
 
-    output = llm.generate(prompts=["who are you？", "I miss you"], sampling_params = [SamplingParams(temperature=1, max_tokens=50), SamplingParams(temperature=1, max_tokens=20)], use_tqdm=True)
+    output = llm.generate(prompts=["who are you？", "I miss you"], sampling_params=[SamplingParams(
+        temperature=1, max_tokens=50), SamplingParams(temperature=1, max_tokens=20)], use_tqdm=True)
     print(output)

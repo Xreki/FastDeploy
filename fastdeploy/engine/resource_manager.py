@@ -154,7 +154,7 @@ class ResourceManager(object):
         """
         return np.sum(self.stop_flags)
 
-    def availabel_block_num(self):
+    def available_block_num(self):
         """
         available block size for engine
 
@@ -176,7 +176,7 @@ class ResourceManager(object):
         if self.available_batch() < 1:
             return False
         block_num = self.get_required_block_number(input_token_num)
-        if block_num > self.availabel_block_num():
+        if block_num > self.available_block_num():
             return False
         return True
 
@@ -251,5 +251,5 @@ class ResourceManager(object):
         """
         info = f"ResourceManager info, " \
                f"total_block_number: {self.total_block_number()}, total_batch_number: {len(self.stop_flags)}, " \
-               f"availabel_block_num: {self.availabel_block_num()}, available_batch: {self.available_batch()}"
+               f"available_block_num: {self.available_block_num()}, available_batch: {self.available_batch()}"
         return info

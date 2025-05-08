@@ -19,7 +19,6 @@ import threading
 import time
 import traceback
 from collections import Counter
-from datetime import datetime
 
 
 from paddlenlp.utils.env import MAX_BSZ, MAX_DRAFT_TOKENS, SPECULATE_MAX_BSZ
@@ -112,7 +111,7 @@ class TokenProcessor(object):
         Args:
             batch_result (list): batch results
         """
-        self.cached_generated_tokens.put(batch_result)
+        self.cached_generated_tokens.put_results(batch_result)
 
 
     def _recycle_resources(self, task_id, index, task):

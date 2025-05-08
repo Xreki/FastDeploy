@@ -335,7 +335,7 @@ class DataProcessor(BaseDataProcessor):
                 max_length=max_model_len,
                 add_special_tokens=self.tokenizer.chat_template is None,
             )
-        return tokens["input_ids"][0]
+        return tokens["input_ids"][0].tolist()
 
     def messages2ids(self, messages):
         """
