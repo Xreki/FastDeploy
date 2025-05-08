@@ -198,7 +198,6 @@ class DataProcessor(BaseDataProcessor):
             request.set("stop_token_ids", stop_seqs)
             request.set("stop_seqs_len", stop_seqs_len)
 
-
         if request.prompt_token_ids is None or len(request.prompt_token_ids) == 0:
             if request.prompt is not None:
                 request.prompt_token_ids = self.text2ids(request.prompt, max_model_len)

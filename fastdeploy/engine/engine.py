@@ -257,6 +257,7 @@ class LLMEngine(object):
             self.data_processor.process_request(
                 request, self.cfg.max_model_len)
 
+        request.prompt_token_ids_len = len(request.prompt_token_ids)
         input_ids_len = request.prompt_token_ids_len
         request.set("max_tokens", min(self.cfg.max_model_len -
                     input_ids_len, request.get("max_tokens")))
