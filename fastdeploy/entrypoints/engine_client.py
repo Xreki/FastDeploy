@@ -41,7 +41,6 @@ class EngineClient:
                     suffix=pid,
                     create=False)
 
-
     def create_zmq_client(self, model, mode):
         """
         Create a ZMQ client.
@@ -94,7 +93,6 @@ class EngineClient:
         else:
             self.data_processor.process_request_dict(task, self.max_model_len)
 
-
         task["prompt_token_ids_len"] = len(task["prompt_token_ids"])
         input_ids_len = task["prompt_token_ids_len"]
         task["max_tokens"] = min(self.max_model_len - input_ids_len , task.get("max_tokens"))
@@ -105,14 +103,14 @@ class EngineClient:
                 f"+ min_dec_len ({min_tokens}) >= max_model_len "
             )
             api_server_logger.error(error_msg)
-            raise EngineError(error_msg, error_code=5001)
+            raise EngineError(error_msg, error_code=400)
 
         if input_ids_len > self.max_model_len:
             error_msg = (
                 f"Length of input token({input_ids_len}) exceeds the limit max_model_len({self.max_model_len})."
             )
             api_server_logger.error(error_msg)
-            raise EngineError(error_msg, error_code=5001)
+            raise EngineError(error_msg, error_code=400)
 
         task["preprocess_end_time"] = time.time()
         preprocess_cost_time = task["preprocess_end_time"] - task["preprocess_start_time"]
@@ -121,7 +119,6 @@ class EngineClient:
             f"cost {time.time() - preprocess_cost_time}"
         )
         api_server_logger.debug(f"Recieve task: {task}")
-
         self.zmq_client.send_json(task)
 
 
