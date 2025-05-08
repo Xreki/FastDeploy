@@ -44,29 +44,42 @@ def init_app(args):
 
 
 @app.get("/health")
-def health() -> Response:
+async def health() -> Response:
     """Health check."""
     return Response(status_code=200)
 
 @app.post("/generate")
-def generate(request: dict):
+async def generate(request: dict):
     """
     generate stream api
     """
     api_server_logger.info(f"Receive request: {request}")
     stream = request.get("stream", 0)
 
-    def event_generator():
+    if not stream:
+        output = {}
         try:
             # 将生成过程包裹在try块中以捕获异常
             for result in llm_engine.generate(request, stream):
-                yield json.dumps(result)
+                output = result
+        except Exception as e:
+            # 记录完整的异常堆栈信息
+            api_server_logger.error(f"Error during generation: {str(e)}", exc_info=True)
+            # 返回结构化的错误消息并终止流
+            output = {"error": str(e), "error_type": e.__class__.__name__}
+        return output
+
+    async def event_generator():
+        try:
+            # 将生成过程包裹在try块中以捕获异常
+            for result in llm_engine.generate(request, stream):
+                yield f"data: {json.dumps(result)}\n\n"
         except Exception as e:
             # 记录完整的异常堆栈信息
             api_server_logger.error(f"Error during generation: {str(e)}", exc_info=True)
             # 返回结构化的错误消息并终止流
             error_msg = {"error": str(e), "error_type": e.__class__.__name__}
-            yield json.dumps(error_msg)
+            yield  f"data: {json.dumps(error_msg)}\n\n"
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 def launch_api_server(args) -> None:
@@ -75,7 +88,6 @@ def launch_api_server(args) -> None:
     """
     if not is_port_available(args.host, args.port):
         raise Exception(f"The parameter `port`:{args.port} is already in use.")
-        return
 
     api_server_logger.info(f"launch Fastdeploy api server... port: {args.port}")
     api_server_logger.info(f"args: {args.__dict__}")

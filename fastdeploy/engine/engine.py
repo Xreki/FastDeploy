@@ -81,8 +81,8 @@ class LLMEngine(object):
         """
         self.cfg = cfg
 
-        self.scheduler = LocalScheduler()
-        # self.scheduler = GlobalScheduler()
+        # self.scheduler = LocalScheduler()
+        self.scheduler = GlobalScheduler()
 
         self.input_processor = InputPreprocessor(cfg.tokenizer)
         self.resource_manager = ResourceManager(
@@ -164,6 +164,7 @@ class LLMEngine(object):
             self._stop_profile()
         llm_logger.info("Worker processes are launched with {} seconds.".format(
             time.time() - start_time))
+        return True
 
     def get_result(self, request_id):
         """
