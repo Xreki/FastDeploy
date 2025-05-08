@@ -326,7 +326,7 @@ class DataProcessor(BaseDataProcessor):
         else:
             if not raw_request:
                 text = [text] if isinstance(text, str) else text
-                chat_template = None
+                chat_template = False
 
             elif self.tokenizer.chat_template is not None:
                 text = [text] if isinstance(text, str) else text
@@ -416,7 +416,7 @@ class DataProcessor(BaseDataProcessor):
         else:
             from paddlenlp.transformers import AutoTokenizer
             return AutoTokenizer.from_pretrained(
-                self.model_name_or_path, padding_side="left", use_fast=USE_FAST_TOKENIZER)
+                self.model_name_or_path, padding_side="left", use_fast=True)
 
     def clear_request_status(self, task_id):
         """
