@@ -1,0 +1,3 @@
+agent/ 维护rollout-worker-agent.py工具
+|-- physical_env 维护rollout-worker-agent.py启停工具，支持在物理机裸机启动，按单机启动X个实例、每个实例Y卡拆分脚本
+`-- virtual_env 维护rollout-worker-agent.py启停工具，支持在虚拟环境启动，按单机启动X个实例、每个实例Y卡拆分脚本
