@@ -201,7 +201,7 @@ class DataProcessor(BaseDataProcessor):
 
         if request.prompt_token_ids is None or len(request.prompt_token_ids) == 0:
             if request.prompt is not None:
-                request.prompt_token_ids = self.text2ids(request.prompt, max_model_len)
+                request.prompt_token_ids = self.text2ids(request.prompt, max_model_len, request.raw_request)
             elif request.messages is not None:
                 if self.tokenizer.chat_template is None:
                     raise ValueError(f"This model does not support chat_template.")
@@ -240,7 +240,8 @@ class DataProcessor(BaseDataProcessor):
                 raw_request = request.get('raw_request', False)
                 request['prompt_token_ids'] = self.text2ids(
                     request['prompt'],
-                    max_model_len
+                    max_model_len,
+                    raw_request
                 ).tolist()
             elif 'messages' in request:
                 if self.tokenizer.chat_template is None:
@@ -305,7 +306,7 @@ class DataProcessor(BaseDataProcessor):
         return response_dict
 
 
-    def text2ids(self, text, max_model_len):
+    def text2ids(self, text, max_model_len, raw_request=True):
         """
         text to token ids
 
@@ -323,17 +324,21 @@ class DataProcessor(BaseDataProcessor):
                 truncation=True,
             )
         else:
-            if self.tokenizer.chat_template is not None:
+            if not raw_request:
+                text = [text] if isinstance(text, str) else text
+                chat_template = None
+
+            elif self.tokenizer.chat_template is not None:
                 text = [text] if isinstance(text, str) else text
                 text = [self.tokenizer.apply_chat_template(sentence, tokenize=False) for sentence in text]
-
+                chat_template = self.tokenizer.chat_template
             tokens = self.tokenizer(
                 text,
                 return_tensors="np",
                 padding=True,
                 truncation=True,
                 max_length=max_model_len,
-                add_special_tokens=self.tokenizer.chat_template is None,
+                add_special_tokens=chat_template,
             )
         return tokens["input_ids"][0]
 

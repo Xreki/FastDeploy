@@ -290,6 +290,10 @@ class ChatCompletionRequest(BaseModel):
         if isinstance(self.messages[0], int):
             req_dict["prompt_token_ids"] = self.messages
             del req_dict["messages"]
+        if "raw_request" in req_dict and not req_dict["raw_request"]:
+            req_dict["prompt"] = req_dict["messages"][0]["content"]
+            del req_dict["messages"]
+
         return req_dict
 
     @model_validator(mode="before")
