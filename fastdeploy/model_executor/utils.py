@@ -141,6 +141,8 @@ class PredictorArgument:
         default=True,
         metadata={"help": "Controls whether the message queue is enabled for output"},
     )
+    dynamic_insert: bool = field(default=False, metadata={"help": "whether use dynamic insert"})
+    total_request_num: int = field(default=None, metadata={"help": "The total number of request data"})
 
     def __post_init__(self):
         if self.speculate_method is not None:
