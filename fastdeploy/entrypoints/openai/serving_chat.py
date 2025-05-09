@@ -120,7 +120,15 @@ class OpenAIServingChat:
             )
             dealer.write([b"", request_id.encode('utf-8')])
             while num_choices > 0:
-                raw_data = await dealer.read()
+                try:
+                    raw_data = await asyncio.wait_for(dealer.read(), timeout=300)
+                except asyncio.TimeoutError:
+                    status, msg = self.engine_client.check_health()
+                    if not status:
+                        raise ValueError(f"Engine is not healthy: {msg}")
+                    else:
+                        continue
+
                 res = json.loads(raw_data[-1].decode('utf-8'))
                 self.engine_client.data_processor.process_response_dict(res, stream=True)
 
@@ -233,7 +241,15 @@ class OpenAIServingChat:
             dealer.write([b"", request_id.encode('utf-8')])
             final_res = None
             while True:
-                raw_data = await dealer.read()
+                try:
+                    raw_data = await asyncio.wait_for(dealer.read(), timeout=300)
+                except asyncio.TimeoutError:
+                    status, msg = self.engine_client.check_health()
+                    if not status:
+                        raise ValueError(f"Engine is not healthy: {msg}")
+                    else:
+                        continue
+
                 data = json.loads(raw_data[-1].decode('utf-8'))
                 data = self.engine_client.data_processor.process_response_dict(data, stream=False)
                 api_server_logger.debug(f"Client {request_id} received: {data}")

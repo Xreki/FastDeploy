@@ -252,8 +252,11 @@ class ErnieProcessor(BaseDataProcessor):
             data_processor_logger.debug("Request id: {} has been completed.".format(token_ids))
             full_text, reasoning_content = self.clear_request_status(req_id)
             if not stream:
-                response_dict["outputs"]["text"] = full_text
-                response_dict["outputs"]["reasoning_content"] = reasoning_content
+                if self.is_thinking:
+                    response_dict["outputs"]["text"] = full_text
+                    response_dict["outputs"]["reasoning_content"] = reasoning_content
+                else:
+                    response_dict["outputs"]["text"] = reasoning_content
 
         return response_dict
 

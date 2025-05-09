@@ -131,7 +131,14 @@ class OpenAIServingCompletion:
 
             valid_results = [dict()] * num_choices
             while num_choices > 0:
-                raw_data = await dealer.read()
+                try:
+                    raw_data = await asyncio.wait_for(dealer.read(), timeout=300)
+                except asyncio.TimeoutError:
+                    status, msg = self.engine_client.check_health()
+                    if not status:
+                        raise ValueError(f"Engine is not healthy: {msg}")
+                    else:
+                        continue
                 data = json.loads(raw_data[-1].decode("utf-8"))
                 rid = int(data["request_id"].split("-")[-1])
 
@@ -182,7 +189,14 @@ class OpenAIServingCompletion:
             output_tokens = [0] * num_choices
             inference_start_time = [0] * num_choices
             while num_choices > 0:
-                raw_data = await dealer.read()
+                try:
+                    raw_data = await asyncio.wait_for(dealer.read(), timeout=300)
+                except asyncio.TimeoutError:
+                    status, msg = self.engine_client.check_health()
+                    if not status:
+                        raise ValueError(f"Engine is not healthy: {msg}")
+                    else:
+                        continue
                 res = json.loads(raw_data[-1].decode('utf-8'))
                 idx = int(res["request_id"].split("-")[-1])
                 self.engine_client.data_processor.process_response_dict(res, stream=True)
