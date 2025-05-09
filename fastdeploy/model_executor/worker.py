@@ -119,13 +119,13 @@ class Worker:
 
 
         # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
-        worker_healthy_live_recorded_time_array = np.zeros(shape=[self.nranks], dtype=np.float32)
+        worker_healthy_live_recorded_time_array = np.zeros(shape=[self.nranks], dtype=np.int32)
         self.worker_healthy_live_signal = IPCSignal(name="worker_healthy_live_signal",
                     array=worker_healthy_live_recorded_time_array,
-                    dtype=np.float32,
+                    dtype=np.int32,
                     suffix=self.args.engine_pid,
                     create=False)
-        self.worker_healthy_live_signal.value[self.rank] = time.time()
+        self.worker_healthy_live_signal.value[self.rank] = int(time.time())
 
         # exist_task_signal 用于各worker进程感知是否有新Task需要处理
         exist_task_signal_data = np.zeros([1], dtype=np.int32)
@@ -218,7 +218,7 @@ class Worker:
 
             self.insert_step = False
 
-            self.worker_healthy_live_signal.value[self.rank] = time.time()
+            self.worker_healthy_live_signal.value[self.rank] = int(time.time())
             mp_num_per_node = self.nranks
 
             if self.rank % mp_num_per_node == 0:

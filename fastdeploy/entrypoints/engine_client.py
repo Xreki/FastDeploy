@@ -34,10 +34,10 @@ class EngineClient:
         input_processor =  InputPreprocessor(tokenizer)
         self.data_processor = input_processor.create_processor()
         self.max_model_len = max_model_len
-        self.worker_healthy_live_recorded_time_array = np.zeros(shape=[tensor_parallel_size], dtype=np.float32)
+        self.worker_healthy_live_recorded_time_array = np.zeros(shape=[tensor_parallel_size], dtype=np.int32)
         self.worker_healthy_live_signal = IPCSignal(name="worker_healthy_live_signal",
                     array=self.worker_healthy_live_recorded_time_array,
-                    dtype=np.float32,
+                    dtype=np.int32,
                     suffix=pid,
                     create=False)
 

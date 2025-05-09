@@ -460,10 +460,10 @@ class LLMEngine(object):
 
 
         # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
-        worker_healthy_live_recorded_time_array = np.zeros(shape=[self.cfg.tensor_parallel_size], dtype=np.float32)
+        worker_healthy_live_recorded_time_array = np.zeros(shape=[self.cfg.tensor_parallel_size], dtype=np.int32)
         self.worker_healthy_live_signal = IPCSignal(name="worker_healthy_live_signal",
                     array=worker_healthy_live_recorded_time_array,
-					dtype=np.float32,
+					dtype=np.int32,
                     suffix=self.engine_pid,
 					create=True)
 
