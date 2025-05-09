@@ -14,6 +14,7 @@
 # limitations under the License.
 """
 
+import builtins
 import paddle
 import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
@@ -21,6 +22,7 @@ import random
 
 from paddlenlp.trl import llm_utils
 from paddlenlp.trl.llm_utils import get_rotary_position_embedding
+from paddlenlp.utils.import_utils import custom_import
 import numpy as np
 from fastdeploy.model_executor.model_runner.model_runner_base import ModelRunnerBase
 from fastdeploy.model_executor.utils import PredictorArgument, ModelArgument
@@ -45,6 +47,8 @@ class ModelRunner(ModelRunnerBase):
         self.nranks = nranks
         self.rank = rank
         super().__init__(config, args)
+        self.original_import = builtins.__import__
+        builtins.__import__ = custom_import
 
     def _load_model(self, model_name):
         """
