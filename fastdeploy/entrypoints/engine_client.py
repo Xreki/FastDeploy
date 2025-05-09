@@ -87,13 +87,7 @@ class EngineClient:
         """
 
         task["preprocess_start_time"] = time.time()
-
-        if int(task.get("enable_text_truncate", 1)):
-            real_seq_len = self.max_model_len - task.get("max_tokens", 800)
-            self.data_processor.process_request_dict(task, max_model_len=real_seq_len)
-        else:
-            self.data_processor.process_request_dict(task, self.max_model_len)
-
+        self.data_processor.process_request_dict(task, self.max_model_len)
 
         task["prompt_token_ids_len"] = len(task["prompt_token_ids"])
         input_ids_len = task["prompt_token_ids_len"]

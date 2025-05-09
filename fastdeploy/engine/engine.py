@@ -28,6 +28,7 @@ from tqdm import tqdm
 import threading
 import numpy as np
 import re
+import json
 
 from fastdeploy.input.preprocess import InputPreprocessor
 from fastdeploy.engine.args_utils import EngineArgs
@@ -156,6 +157,15 @@ class LLMEngine(object):
         self.insert_task_to_worker_thread.daemon = True
         self.insert_task_to_worker_thread.start()
 
+        if self.zmq_server:
+            self.insert_task_to_scheduler_thread = threading.Thread(target=self._insert_zmq_task_to_scheduler, args=())
+            self.insert_task_to_scheduler_thread.daemon = True
+            self.insert_task_to_scheduler_thread.start()
+
+            self.receive_output_thread = threading.Thread(target=self._zmp_receive_output, args=())
+            self.receive_output_thread.daemon = True
+            self.receive_output_thread.start()
+
         # Start TokenProcessor thread
         self.token_processor.run()
 
@@ -165,6 +175,25 @@ class LLMEngine(object):
         llm_logger.info("Worker processes are launched with {} seconds.".format(
             time.time() - start_time))
         return True
+
+    def _zmp_receive_output(self):
+        """
+        Recieve output for zmq
+        """
+        if self.zmq_server is None:
+            return
+        
+        while True:
+            try:
+                def get_results_handler(request_id):
+                    results = self.scheduler.get_results(request_id)
+                    for i in range(len(results)):
+                        results[i] = results[i].to_dict()
+                    return results
+                
+                self.zmq_server.send_multipart2(get_results_handler)
+            except Exception as e:
+                llm_logger.error("Unexcepted error happend: {}, {}".format(e, str(traceback.format_exc())))
 
     def get_result(self, request_id):
         """
@@ -197,7 +226,6 @@ class LLMEngine(object):
         """
         try:
             while 1:
-
                 if self.resource_manager.available_batch() == 0:
                     time.sleep(0.001)
                     continue
@@ -231,6 +259,21 @@ class LLMEngine(object):
             llm_logger.error(
                 "insert_task_to_worker thread exit " f"unexpectedly, {e}. {str(traceback.format_exc())}"
             )
+    
+    def _insert_zmq_task_to_scheduler(self):
+        if self.zmq_server is None:
+            return
+        
+        while True:
+            try:
+                data = self.zmq_server.receive_once(block=True)
+                if data is None:
+                    break
+                request = Request.from_dict(data)
+                self.scheduler.put_requests([request])
+                llm_logger.info(f"Receive request: {request}")
+            except Exception as e:
+                llm_logger.error(f"Error happend while receving new request from zmq, details={e}")
 
     def add_requests(self, task, sampling_params=None):
         """

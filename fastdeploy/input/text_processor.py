@@ -240,7 +240,7 @@ class DataProcessor(BaseDataProcessor):
                 request['prompt_token_ids'] = self.text2ids(
                     request['prompt'],
                     max_model_len
-                ).tolist()
+                )
             elif 'messages' in request:
                 if self.tokenizer.chat_template is None:
                     raise ValueError("This model does not support chat_template.")

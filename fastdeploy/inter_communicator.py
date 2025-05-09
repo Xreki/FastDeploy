@@ -18,6 +18,7 @@
 import os
 import threading
 import socket
+import json
 import time
 import numpy as np
 from multiprocessing.managers import (AcquirerProxy, BaseManager, ListProxy,
@@ -117,20 +118,49 @@ class ZmqClient:
             else:
                 break
         self.router.send_multipart([self.req_dict[req_id], b'', data], zmq.DONTWAIT)
+    
+    def send_multipart2(self, get_results_handler):
+        """
+        Send a multipart message to the router socket.
+        """
+        if self.router is None:
+            raise RuntimeError("Router socket not created. Call create_router() first.")
+        
+        while True:
+            try:
+                flags = 0 if len(self.req_dict) == 0 else zmq.NOBLOCK
+                client, _, request_id = self.router.recv_multipart(flags=flags)
+                req_id_str = request_id.decode('utf-8')
+                self.req_dict[req_id_str] = client
+            except zmq.Again:
+                time.sleep(0.01)
+                break
+        
+        req_ids = list(self.req_dict.keys())
+        for req_id in req_ids:
+            client = self.req_dict[req_id]
+            results = get_results_handler(req_id)
+            for data in results:
+                result = json.dumps(data).encode('utf-8')
+                self.router.send_multipart([client, b'', result], zmq.DONTWAIT)
+                if data["finished"]:
+                    del self.req_dict[data["request_id"]]
 
-    def receive_once(self):
+    def receive_once(self, block=False):
         """
         Receive a single message from the socket.
         """
         if self.socket is None or self.socket.closed:
             return None
         try:
-            return self.socket.recv_json(flags=zmq.NOBLOCK)
+            flags = zmq.NOBLOCK if not block else 0
+            return self.socket.recv_json(flags=flags)
         except zmq.Again:
             return None
         except Exception as e:
             self.close()
             llm_logger.warning(f"{e}")
+            return None
 
     def _clear_ipc(self, name):
         """
