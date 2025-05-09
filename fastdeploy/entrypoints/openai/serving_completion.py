@@ -130,6 +130,7 @@ class OpenAIServingCompletion:
                 dealer.write([b"", rid.encode("utf-8")])
 
             valid_results = [dict()] * num_choices
+            output_tokens = [0] * num_choices
             while num_choices > 0:
                 try:
                     raw_data = await asyncio.wait_for(dealer.read(), timeout=300)
@@ -145,7 +146,9 @@ class OpenAIServingCompletion:
                 self.engine_client.data_processor.process_response_dict(
                     data, stream=False
                 )
+                output_tokens[rid] += len(data["outputs"]["token_ids"])
                 if data.get("finished", False):
+                    data["output_token_ids"] = output_tokens[rid]
                     valid_results[rid] = data
                     num_choices -= 1
 
@@ -288,7 +291,7 @@ class OpenAIServingCompletion:
             )
             choices.append(choice_data)
 
-            num_generated_tokens += len(output["token_ids"])
+            num_generated_tokens += final_res["output_token_ids"]
 
             num_prompt_tokens += len(prompt_token_ids)
 

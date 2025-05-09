@@ -240,6 +240,7 @@ class OpenAIServingChat:
             )
             dealer.write([b"", request_id.encode('utf-8')])
             final_res = None
+            previous_num_tokens = 0
             while True:
                 try:
                     raw_data = await asyncio.wait_for(dealer.read(), timeout=300)
@@ -253,6 +254,7 @@ class OpenAIServingChat:
                 data = json.loads(raw_data[-1].decode('utf-8'))
                 data = self.engine_client.data_processor.process_response_dict(data, stream=False)
                 api_server_logger.debug(f"Client {request_id} received: {data}")
+                previous_num_tokens += len(data["outputs"]["token_ids"])
                 if data["finished"]:
                     final_res = data
                     break
@@ -280,7 +282,7 @@ class OpenAIServingChat:
         choices.append(choice)
 
         num_prompt_tokens = len(final_res["prompt_token_ids"])
-        num_generated_tokens = len(output["token_ids"])
+        num_generated_tokens = previous_num_tokens
         usage = UsageInfo(
             prompt_tokens=num_prompt_tokens,
             completion_tokens=num_generated_tokens,
