@@ -482,7 +482,8 @@ class LLMEngine(object):
         self.exist_task_signal.clear()
         self.exist_swapped_task_signal.clear()
         self.worker_healthy_live_signal.clear()
-        self.get_profile_block_num_signal.clear()
+        if hasattr(self,"get_profile_block_num_signal"):
+            self.get_profile_block_num_signal.clear()
         if hasattr(self, "worker_proc") and self.worker_proc is not None:
             try:
                 os.killpg(self.worker_proc.pid, signal.SIGTERM)

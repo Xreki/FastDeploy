@@ -152,6 +152,7 @@ class DataProcessor(BaseDataProcessor):
         self.eos_token_ids = get_eos_token_id(self.tokenizer, self.generation_config)
         self.eos_token_id_len = len(self.eos_token_ids)
         self.pad_token_id = self.get_pad_id()
+        self.tokenizer.pad_token_id = self.pad_token_id
 
     def _init_config(self):
         """
@@ -442,7 +443,7 @@ class DataProcessor(BaseDataProcessor):
             int: pad_token_id
         """
         if isinstance(self.tokenizer, (LlamaTokenizer, Llama3Tokenizer)) and not self.tokenizer.pad_token_id:
-            return self.tokenizer.eos_token
+            return self.tokenizer.eos_token_id
         return self.tokenizer.pad_token_id
 
     def pad_batch_data(self, insts, pad_id=0, return_seq_len=False, return_array=True, pad_style="right"):

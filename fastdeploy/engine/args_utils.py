@@ -183,7 +183,7 @@ class EngineArgs:
         model_group.add_argument(
             "--engine-worker-queue-port",
             type=int,
-            default=8002,
+            default=EngineArgs.engine_worker_queue_port,
             help="port for engine worker queue"
         )
 

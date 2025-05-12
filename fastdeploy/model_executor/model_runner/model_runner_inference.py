@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-
+import math
 import os
 import numpy as np
 import random
@@ -53,15 +53,13 @@ class ModelRunner(ModelRunnerBase):
             block_size=self.args.block_size,
             max_len=self.args.max_model_len,
             stage_flag="msgid-1 predict",
-            export_model_type="weight_only_int8",
+            export_model_type="default",
             use_fake_parameter=False,
             use_stop_seqs=self.model_cfg.ellm_dynamic_use_stop_seqs,
             use_beam_search=False,
             speculate_method=None,
             speculate_max_draft_token_num=5,
             return_all_hidden_states=False,
-            moe_quant_type="weight_only_int4",
-            use_safetensors=self.model_cfg.is_unified_ckpt,
         )
         model.eval()
         self.model = model
@@ -71,7 +69,8 @@ class ModelRunner(ModelRunnerBase):
         self.share_inputs["rope_emb"] = self.get_rotary_position_embedding(
             tmp_position_ids,
             self.model_cfg.hidden_size // self.model_cfg.num_attention_heads,
-            self.rope_theta
+            model_type=self.model_cfg.model_type,
+            rope_scaling=self.rope_scaling,
         )
 
     def _init_kvcache(self, max_block_num):
@@ -90,6 +89,7 @@ class ModelRunner(ModelRunnerBase):
             kv_num_head = int(self.model_cfg.num_key_value_heads) // self.nranks
         else:
             kv_num_head = self.model_cfg.num_attention_heads // self.nranks
+
         self.model_cfg.kv_num_head = kv_num_head
 
         for i in range(self.model_cfg.num_layers):
@@ -123,6 +123,7 @@ class ModelRunner(ModelRunnerBase):
         """
         dynamic insertion
         """
+
         for i in range(len(tasks)):
             task = tasks[i]
             idx = task.idx
@@ -169,7 +170,9 @@ class ModelRunner(ModelRunnerBase):
                     task.get("stop_token_ids"), dtype="int64"
                 )
 
-    def get_rotary_position_embedding(self,position_ids, head_dim, rope_theta=160000):
+
+
+    def get_rotary_position_embedding(self,position_ids, head_dim, rope_theta=160000,model_type="ernie_bot",rope_scaling=None):
         """
         Pre-calculate rotary position embedding for position_ids.
 
@@ -181,24 +184,63 @@ class ModelRunner(ModelRunnerBase):
             rot_emb: [2, 1, S, 1, D // 2] or [2, 1, S, 1, D], cos + sin
         """
         bsz, max_model_len = position_ids.shape[:2]
-        inv_freq = rope_theta ** (-paddle.arange(0, head_dim, 2, dtype="float32") / head_dim)
+        if model_type=="ernie_bot":
+            inv_freq = rope_theta ** (-paddle.arange(0, head_dim, 2, dtype="float32") / head_dim)
 
-        # shape: [B, S, D/2]
-        # eblite should divide compression_ratio, default 1.0 for eb3.5 or eb4
-        compression_ratio = 1.0
-        compressed_position_ids = position_ids / compression_ratio
-        freqs = paddle.einsum("ij,k->ijk", compressed_position_ids.cast("float32"),
-                            inv_freq)
+            # shape: [B, S, D/2]
+            # eblite should divide compression_ratio, default 1.0 for eb3.5 or eb4
+            compression_ratio = 1.0
+            compressed_position_ids = position_ids / compression_ratio
+            freqs = paddle.einsum("ij,k->ijk", compressed_position_ids.cast("float32"),
+                                inv_freq)
 
-        rot_emb = paddle.zeros((2, bsz, max_model_len, 1, head_dim // 2), dtype="float32")
-        emb = paddle.stack([freqs], axis=-1).reshape((bsz, max_model_len, head_dim // 2))
-        # shape: [B, S, 1, D]
-        emb = paddle.unsqueeze(emb, 2)
+            rot_emb = paddle.zeros((2, bsz, max_model_len, 1, head_dim // 2), dtype="float32")
+            emb = paddle.stack([freqs], axis=-1).reshape((bsz, max_model_len, head_dim // 2))
+            # shape: [B, S, 1, D]
+            emb = paddle.unsqueeze(emb, 2)
 
-        rot_emb[0] = paddle.cos(emb)
-        rot_emb[1] = paddle.sin(emb)
+            rot_emb[0] = paddle.cos(emb)
+            rot_emb[1] = paddle.sin(emb)
 
-        return rot_emb
+            return rot_emb
+        elif model_type=="llama":
+            rope_theta=10000.0
+            rot_emb = paddle.zeros((2, bsz, max_model_len, 1, head_dim), dtype="float32")
+            inv_freq = rope_theta ** (-paddle.arange(0, head_dim, 2, dtype="float32") / head_dim)
+
+            if rope_scaling is not None:
+                rope_type = rope_scaling.get("rope_type", None)
+                if rope_type is not None and rope_type == "llama3":
+                    factor = rope_scaling.get("factor", 8.0)
+                    low_freq_factor = rope_scaling.get("low_freq_factor", 1.0)
+                    high_freq_factor = rope_scaling.get("high_freq_factor", 4.0)
+                    original_max_position_embeddings = rope_scaling.get("original_max_position_embeddings", 8192)
+
+                    low_freq_wavelen = original_max_position_embeddings / low_freq_factor
+                    high_freq_wavelen = original_max_position_embeddings / high_freq_factor
+                    new_freqs = []
+                    for freq in inv_freq:
+                        wavelen = 2 * math.pi / freq
+                        if wavelen < high_freq_wavelen:
+                            new_freqs.append(freq)
+                        elif wavelen > low_freq_wavelen:
+                            new_freqs.append(freq / factor)
+                        else:
+                            assert low_freq_wavelen != high_freq_wavelen
+                            smooth = (original_max_position_embeddings / wavelen - low_freq_factor) / (
+                                high_freq_factor - low_freq_factor
+                            )
+                            new_freqs.append((1 - smooth) * freq / factor + smooth * freq)
+                    inv_freq = paddle.to_tensor(new_freqs, dtype=inv_freq.dtype)
+
+            # shape: [B, S, D/2]
+            freqs = paddle.einsum("ij,k->ijk", position_ids.cast("float32"), inv_freq)
+            # shape: [B, S, 1, D]
+            emb = paddle.concat([freqs, freqs], axis=-1).reshape((bsz, max_model_len, 1, head_dim))
+
+            rot_emb[0] = paddle.cos(emb)
+            rot_emb[1] = paddle.sin(emb)
+            return rot_emb
 
     def generate(self):
         self.model(**self.share_inputs)
@@ -237,7 +279,6 @@ class ModelRunner(ModelRunnerBase):
             "free_list": paddle.to_tensor(free_list, dtype="int32"),
             "free_list_len": paddle.full([1], self.free_list_len, dtype="int32"),
         })
-
 
     def dummy_input(self, num_total_tokens, number_of_tasks):
         """
