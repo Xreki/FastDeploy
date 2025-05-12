@@ -38,7 +38,6 @@ from fastdeploy.inter_communicator import EngineWorkerQueue
 from fastdeploy.output.token_processor import TokenProcessor, WarmUpTokenProcessor
 from fastdeploy.inter_communicator import IPCSignal, ZmqClient
 from fastdeploy.utils import llm_logger, console_logger, EngineError
-from fastdeploy.scheduler import LocalScheduler, GlobalScheduler
 from fastdeploy.engine.request import RequestOutput
 
 
@@ -82,9 +81,7 @@ class LLMEngine(object):
             cfg (Config): Config object containing all the configuration parameters.
         """
         self.cfg = cfg
-
-        self.scheduler = LocalScheduler()
-        # self.scheduler = GlobalScheduler()
+        self.scheduler = cfg.scheduler_config.scheduler()
 
         self.input_processor = InputPreprocessor(cfg.tokenizer)
         self.resource_manager = ResourceManager(

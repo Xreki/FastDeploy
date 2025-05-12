@@ -1,5 +1,5 @@
 """
-# Copyright (c) 2024 PaddlePaddle Authors. All Rights Reserved.
+# Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,10 +29,14 @@ class LocalScheduler(object):
     LocalScheduler Class
     """
 
-    def __init__(self):
+    def __init__(self,
+                 max_size: int,
+                 ttl: int,
+                 wait_response_timeout: float):
+        self.max_size = max_size
+        self.ttl = ttl
+
         self.mutex = threading.Lock()
-        self.max_size = 300
-        self.ttl = 180
         self.ids: Set[str] = set()
 
         self.request_read_cursor = 0
@@ -40,7 +44,7 @@ class LocalScheduler(object):
         self.responses: Dict[str, List[ScheduledResponse]] = dict()
 
         self.wait_request_timeout = 10
-        self.wait_response_timeout = 5  # required: wait_response_timeout < ttl
+        self.wait_response_timeout = wait_response_timeout
 
         self.requests_not_empty = threading.Condition(self.mutex)
         self.responses_not_empty = threading.Condition(self.mutex)
@@ -95,7 +99,6 @@ class LocalScheduler(object):
             self.requests_not_empty.notify_all()
 
             llm_logger.debug(f"local cached requests: {requests}")
-            
 
     def calc_required_blocks(self, token_num, block_size):
         """calculate required blocks for given token number"""
@@ -152,8 +155,9 @@ class LocalScheduler(object):
         """get results from local cache"""
         with self.responses_not_empty:
             if request_id not in self.ids:
-                raise ValueError(f"output of request_id {request_id} has expired")
-            
+                raise ValueError(
+                    f"output of request_id {request_id} has expired")
+
             responses = self.responses_not_empty.wait_for(
                 lambda: self.responses.get(request_id, []), self.wait_response_timeout)
             self.responses.pop(request_id, None)
