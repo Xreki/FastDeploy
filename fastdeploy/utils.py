@@ -186,7 +186,7 @@ def get_logger(name, file_name, without_formater=False, print_to_console=False):
     log_dir = os.getenv("FD_LOG_DIR", default="log")
     if not os.path.exists(log_dir):
         os.mkdir(log_dir)
-    is_debug = int(os.getenv("FD_DEBUG", default="1"))
+    is_debug = int(os.getenv("FD_DEBUG", default="0"))
     logger = logging.getLogger(name)
     if is_debug:
         logger.setLevel(level=logging.DEBUG)

@@ -7,3 +7,4 @@ uvicorn
 fastapi
 efficientllm @ https://paddle-qa.bj.bcebos.com/paddle-pipeline/ChangePipeline/build_cu123_py/221fbd936f2538ac41a85f09857bc4c41063bd21/794/efficientllm-0.0.0-py3-none-any.whl
 paddlenlp @ https://paddle-qa.bj.bcebos.com/paddlenlp/wheel/72dc85d2d7ccb1ec245de2a296319f429615dc69/paddlenlp-3.0.0b4.post20250508-py3-none-any.whl
+redis
