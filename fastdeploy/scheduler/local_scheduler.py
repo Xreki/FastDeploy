@@ -31,8 +31,8 @@ class LocalScheduler(object):
 
     def __init__(self):
         self.mutex = threading.Lock()
-        self.max_size = 300
-        self.ttl = 180
+        self.max_size = 10000000
+        self.ttl = 1800000
         self.ids: Set[str] = set()
 
         self.request_read_cursor = 0
@@ -40,7 +40,7 @@ class LocalScheduler(object):
         self.responses: Dict[str, List[ScheduledResponse]] = dict()
 
         self.wait_request_timeout = 10
-        self.wait_response_timeout = 5  # required: wait_response_timeout < ttl
+        self.wait_response_timeout = 0.001  # required: wait_response_timeout < ttl
 
         self.requests_not_empty = threading.Condition(self.mutex)
         self.responses_not_empty = threading.Condition(self.mutex)
