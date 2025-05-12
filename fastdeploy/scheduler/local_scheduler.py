@@ -31,7 +31,7 @@ class LocalScheduler(object):
 
     def __init__(self):
         self.mutex = threading.Lock()
-        self.max_size = 200
+        self.max_size = 300
         self.ttl = 180
         self.ids: Set[str] = set()
 

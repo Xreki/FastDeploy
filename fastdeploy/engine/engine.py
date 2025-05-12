@@ -39,6 +39,7 @@ from fastdeploy.output.token_processor import TokenProcessor, WarmUpTokenProcess
 from fastdeploy.inter_communicator import IPCSignal, ZmqClient
 from fastdeploy.utils import llm_logger, console_logger, EngineError
 from fastdeploy.scheduler import LocalScheduler, GlobalScheduler
+from fastdeploy.engine.request import RequestOutput
 
 
 class LLMEngine(object):
@@ -82,8 +83,8 @@ class LLMEngine(object):
         """
         self.cfg = cfg
 
-        # self.scheduler = LocalScheduler()
-        self.scheduler = GlobalScheduler()
+        self.scheduler = LocalScheduler()
+        # self.scheduler = GlobalScheduler()
 
         self.input_processor = InputPreprocessor(cfg.tokenizer)
         self.resource_manager = ResourceManager(
@@ -186,9 +187,14 @@ class LLMEngine(object):
         while True:
             try:
                 def get_results_handler(request_id):
-                    results = self.scheduler.get_results(request_id)
-                    for i in range(len(results)):
-                        results[i] = results[i].to_dict()
+                    try:
+                        results = self.scheduler.get_results(request_id)
+                        for i in range(len(results)):
+                            results[i] = results[i].to_dict()
+                    except Exception as e:
+                        llm_logger.error(f"failed to get results of request_id({request_id}): {e}")
+                        error_result = RequestOutput(request_id, finished=True)
+                        results = [error_result.to_dict()]
                     return results
                 
                 self.zmq_server.send_multipart2(get_results_handler)
