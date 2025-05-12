@@ -183,7 +183,7 @@ class LLMEngine(object):
         """
         if self.zmq_server is None:
             return
-        
+
         while True:
             try:
                 def get_results_handler(request_id):
@@ -196,7 +196,7 @@ class LLMEngine(object):
                         error_result = RequestOutput(request_id, finished=True)
                         results = [error_result.to_dict()]
                     return results
-                
+
                 self.zmq_server.send_multipart2(get_results_handler)
             except Exception as e:
                 llm_logger.error("Unexcepted error happend: {}, {}".format(e, str(traceback.format_exc())))
@@ -265,11 +265,12 @@ class LLMEngine(object):
             llm_logger.error(
                 "insert_task_to_worker thread exit " f"unexpectedly, {e}. {str(traceback.format_exc())}"
             )
-    
+
+
     def _insert_zmq_task_to_scheduler(self):
         if self.zmq_server is None:
             return
-        
+
         while True:
             try:
                 data = self.zmq_server.receive_once(block=True)
@@ -444,7 +445,7 @@ class LLMEngine(object):
 			dtype=np.int32,
             suffix=self.engine_pid,
 			create=True)
-        
+
         # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
         worker_healthy_live_recorded_time_array = np.zeros(shape=[self.cfg.tensor_parallel_size], dtype=np.int32)
         self.worker_healthy_live_signal = IPCSignal(name="worker_healthy_live_signal",
@@ -471,7 +472,8 @@ class LLMEngine(object):
         self.exist_task_signal.clear()
         self.exist_swapped_task_signal.clear()
         self.worker_healthy_live_signal.clear()
-        self.get_profile_block_num_signal.clear()
+        if hasattr(self,"get_profile_block_num_signal"):
+            self.get_profile_block_num_signal.clear()
         if hasattr(self, "worker_proc") and self.worker_proc is not None:
             try:
                 os.killpg(self.worker_proc.pid, signal.SIGTERM)
