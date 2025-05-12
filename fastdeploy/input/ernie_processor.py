@@ -258,9 +258,14 @@ class ErnieProcessor(BaseDataProcessor):
             else:
                 response_dict["outputs"]["text"] = self.ids2tokens(token_ids, req_id)
             data_processor_logger.debug("Request id: {} has been completed.".format(token_ids))
-            full_text = self.clear_request_status(req_id)
+            full_text, reasoning_content = self.clear_request_status(req_id)
             if not stream:
-                response_dict["outputs"]["text"] = full_text
+                if self.is_thinking:
+                    response_dict["outputs"]["text"] = full_text
+                    response_dict["outputs"]["reasoning_content"] = reasoning_content
+                else:
+                    response_dict["outputs"]["text"] = reasoning_content
+
         return response_dict
 
 
@@ -281,8 +286,8 @@ class ErnieProcessor(BaseDataProcessor):
         else:
             messages.append(text)
         if self.is_thinking:
-            system = "<sys_internal>【高优系统设定】必须最优先遵循<br/>启动思考模式：在采取任何行动前，\
-                都需要先写下自己的思考过程，为后续的决策或对用户的回复内容做铺垫。</sys_internal>\n\n"
+            system = "<sys_internal>\n【高优系统设定】必须最优先遵循<br/>\n启动思考模式：在采取任何行动前，\
+都需要先写下自己的思考过程，为后续的决策或对用户的回复内容做铺垫。\n</sys_internal>\n\n"
             tokens = self._convert_to_ids_thinking(messages, max_model_len, system)
         else:
             tokens = self._convert_to_ids(messages, max_model_len, system)
@@ -397,8 +402,8 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
         """
         system = None
         if self.is_thinking:
-            system = "<sys_internal>【高优系统设定】必须最优先遵循<br/>启动思考模式：在采取任何行动前，\
-                都需要先写下自己的思考过程，为后续的决策或对用户的回复内容做铺垫。</sys_internal>\n\n"
+            system = "<sys_internal>\n【高优系统设定】必须最优先遵循<br/>\n启动思考模式：在采取任何行动前，\
+都需要先写下自己的思考过程，为后续的决策或对用户的回复内容做铺垫。\n</sys_internal>\n\n"
         else:
             if raw_messages[0]["role"] == "system" or raw_messages[0]["role"] == "developer":
                 system = raw_messages[0]["content"]
@@ -512,13 +517,16 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
             results_all (str): all token strings
         """
         results_all = ""
+        reasoning_content = ""
+
         if task_id in self.decode_status:
             if self.use_hf_tokenizer:
                 results_all = self.decode_status[task_id][2]
             else:
-                results_all = "".join(self.decode_status[task_id][3])
+                reasoning_content = "".join(self.decode_status[task_id][3])
+                results_all = "".join(self.decode_status[task_id][4][36:])
             del self.decode_status[task_id]
-        return results_all
+        return results_all, reasoning_content
 
 
 

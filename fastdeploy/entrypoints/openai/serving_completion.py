@@ -130,15 +130,25 @@ class OpenAIServingCompletion:
                 dealer.write([b"", rid.encode("utf-8")])
 
             valid_results = [dict()] * num_choices
+            output_tokens = [0] * num_choices
             while num_choices > 0:
-                raw_data = await dealer.read()
+                try:
+                    raw_data = await asyncio.wait_for(dealer.read(), timeout=300)
+                except asyncio.TimeoutError:
+                    status, msg = self.engine_client.check_health()
+                    if not status:
+                        raise ValueError(f"Engine is not healthy: {msg}")
+                    else:
+                        continue
                 data = json.loads(raw_data[-1].decode("utf-8"))
                 rid = int(data["request_id"].split("-")[-1])
 
                 self.engine_client.data_processor.process_response_dict(
                     data, stream=False
                 )
+                output_tokens[rid] += len(data["outputs"]["token_ids"])
                 if data.get("finished", False):
+                    data["output_token_ids"] = output_tokens[rid]
                     valid_results[rid] = data
                     num_choices -= 1
 
@@ -182,7 +192,14 @@ class OpenAIServingCompletion:
             output_tokens = [0] * num_choices
             inference_start_time = [0] * num_choices
             while num_choices > 0:
-                raw_data = await dealer.read()
+                try:
+                    raw_data = await asyncio.wait_for(dealer.read(), timeout=300)
+                except asyncio.TimeoutError:
+                    status, msg = self.engine_client.check_health()
+                    if not status:
+                        raise ValueError(f"Engine is not healthy: {msg}")
+                    else:
+                        continue
                 res = json.loads(raw_data[-1].decode('utf-8'))
                 idx = int(res["request_id"].split("-")[-1])
                 self.engine_client.data_processor.process_response_dict(res, stream=True)
@@ -274,7 +291,7 @@ class OpenAIServingCompletion:
             )
             choices.append(choice_data)
 
-            num_generated_tokens += len(output["token_ids"])
+            num_generated_tokens += final_res["output_token_ids"]
 
             num_prompt_tokens += len(prompt_token_ids)
 

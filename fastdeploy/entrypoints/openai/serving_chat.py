@@ -120,16 +120,30 @@ class OpenAIServingChat:
             )
             dealer.write([b"", request_id.encode('utf-8')])
             while num_choices > 0:
-                raw_data = await dealer.read()
+                try:
+                    raw_data = await asyncio.wait_for(dealer.read(), timeout=300)
+                except asyncio.TimeoutError:
+                    status, msg = self.engine_client.check_health()
+                    if not status:
+                        raise ValueError(f"Engine is not healthy: {msg}")
+                    else:
+                        continue
+
                 res = json.loads(raw_data[-1].decode('utf-8'))
                 self.engine_client.data_processor.process_response_dict(res, stream=True)
+
+                if res['metrics']['first_token_time'] is not None:
+                    arrival_time = res['metrics']['first_token_time']
+                    inference_start_time = res['metrics']['inference_start_time']
+                else:
+                    arrival_time = res['metrics']['arrival_time'] - inference_start_time
                 if first_iteration:
                     num_prompt_tokens = len(res["prompt_token_ids"])
                     num_cached_tokens = res.get("num_cached_tokens", 0)
                     for i in range(num_choices):
                         choice = ChatCompletionResponseStreamChoice(
                             index=i,
-                            delta=DeltaMessage(role="assistant", content="")
+                            delta=DeltaMessage(role="assistant", content="", reasoning_content="")
                         )
                         if request.metadata is not None and request.metadata.get("training", False):
                             choice.delta.token_ids = list(res["prompt_token_ids"])
@@ -157,7 +171,8 @@ class OpenAIServingChat:
 
                 choice = ChatCompletionResponseStreamChoice(
                     index=output["index"],
-                    delta=delta_message
+                    delta=delta_message,
+                    arrival_time=arrival_time
                 )
                 if res["finished"]:
                     num_choices -= 1
@@ -178,13 +193,13 @@ class OpenAIServingChat:
                 if include_continuous_usage:
                     chunk.usage = UsageInfo(
                         prompt_tokens=num_prompt_tokens,
-                        completion_tokens=previous_num_tokens[0],
-                        total_tokens=num_prompt_tokens + previous_num_tokens[0]
+                        completion_tokens=previous_num_tokens,
+                        total_tokens=num_prompt_tokens + previous_num_tokens
                     )
                 yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
 
             if include_usage:
-                completion_tokens = sum(previous_num_tokens)
+                completion_tokens = previous_num_tokens
                 usage = UsageInfo(
                     prompt_tokens=num_prompt_tokens,
                     completion_tokens=completion_tokens,
@@ -225,11 +240,21 @@ class OpenAIServingChat:
             )
             dealer.write([b"", request_id.encode('utf-8')])
             final_res = None
+            previous_num_tokens = 0
             while True:
-                raw_data = await dealer.read()
+                try:
+                    raw_data = await asyncio.wait_for(dealer.read(), timeout=300)
+                except asyncio.TimeoutError:
+                    status, msg = self.engine_client.check_health()
+                    if not status:
+                        raise ValueError(f"Engine is not healthy: {msg}")
+                    else:
+                        continue
+
                 data = json.loads(raw_data[-1].decode('utf-8'))
                 data = self.engine_client.data_processor.process_response_dict(data, stream=False)
                 api_server_logger.debug(f"Client {request_id} received: {data}")
+                previous_num_tokens += len(data["outputs"]["token_ids"])
                 if data["finished"]:
                     final_res = data
                     break
@@ -257,7 +282,7 @@ class OpenAIServingChat:
         choices.append(choice)
 
         num_prompt_tokens = len(final_res["prompt_token_ids"])
-        num_generated_tokens = len(output["token_ids"])
+        num_generated_tokens = previous_num_tokens
         usage = UsageInfo(
             prompt_tokens=num_prompt_tokens,
             completion_tokens=num_generated_tokens,

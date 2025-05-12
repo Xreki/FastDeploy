@@ -30,7 +30,7 @@ def load_requirements():
 
 setuptools.setup(
     name="fastdeploy",
-    version="0.0.1",
+    version="0.1.0",
     author="PaddlePaddle",
     author_email="dltp@baidu.com",
     description="FastDeploy: Large Language Model Serving.",

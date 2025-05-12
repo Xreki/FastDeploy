@@ -17,11 +17,22 @@
 
 from fastdeploy.entrypoints.llm import LLM
 from fastdeploy.engine.sampling_params import SamplingParams
-# model_name_or_path = "/home/zexuli/baidu/paddle_internal/EfficientLLM/ErnieBot-Lite"
-model_name_or_path = "/home/zexuli/baidu/paddle_internal/EfficientLLM/Llama-2-7b-chat"
+model_name_or_path = "Llama-2-7b-chat"
 
 # 超参设置
 sampling_params = SamplingParams(temperature=0.1, max_tokens=100)
 llm = LLM(model=model_name_or_path, tensor_parallel_size=1,max_num_seqs=1,engine_worker_queue_port=8002)
 output = llm.generate(prompts="北京天安门广场在哪里?\n",use_tqdm=True)
 print(output)
+
+
+model_name_or_path = "./models/llama-7b"
+# 超参设置
+sampling_params = SamplingParams(temperature=0.1, max_tokens=30)
+llm = LLM(model=model_name_or_path, tensor_parallel_size=1)
+output = llm.generate(prompts="who are you？", use_tqdm=True)
+print(output)
+
+
+# output = llm.generate(prompts=["who are you？", "what can you do？"], use_tqdm=True)
+# print(output)

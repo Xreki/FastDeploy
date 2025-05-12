@@ -68,7 +68,7 @@ class ModelRunner(ModelRunnerBase):
         predictor_args.inference_model = True
         predictor_args.mode = "dynamic"
         predictor_args.block_attn = True
-        predictor_args.append_attn = True
+        # predictor_args.append_attn = True
 
         paddle.set_device(predictor_args.device)
         paddle.set_default_dtype(predictor_args.dtype)
@@ -159,7 +159,7 @@ class ModelRunner(ModelRunnerBase):
                 task.eos_token_ids.append(task.eos_token_ids[0])
             self.share_inputs["eos_token_id"][:] = np.array(task.eos_token_ids, dtype="int64").reshape(-1, 1)
             self.share_inputs["pre_ids"][idx : idx + 1] = -1
-            self.share_inputs["top_p"][idx : idx + 1] = task.get("topp", 0.7)
+            self.share_inputs["top_p"][idx : idx + 1] = task.get("top_p", 0.7)
             self.share_inputs["temperature"][idx : idx + 1] = task.get("temperature", 0.95)
             self.share_inputs["penalty_score"][idx : idx + 1] = task.get("repetition_penalty", 1.0)
             self.share_inputs["frequency_score"][idx : idx + 1] = task.get("frequency_penalty", 0.0)

@@ -15,10 +15,11 @@
 """
 
 from __future__ import annotations
-import enum
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict, fields
 from typing import TYPE_CHECKING, Optional, Union, Any
+from fastdeploy.engine.sampling_params import SamplingParams
+from fastdeploy.utils import data_processor_logger
 
 from fastdeploy.engine.sampling_params import SamplingParams
 from fastdeploy.utils import data_processor_logger
@@ -58,7 +59,6 @@ class Request:
         self.preprocess_end_time = preprocess_end_time
         self.raw_request = raw_request
 
-
         # Multi-modal related
         # TODO
         self.multi_modal_inputs = multi_modal_inputs
@@ -83,6 +83,27 @@ class Request:
             multi_modal_inputs=d.get("multi_modal_inputs"),
             raw_request=d.get("raw_request", True)
         )
+
+    def to_dict(self) -> dict:
+        """convert Request into a serializable dict """
+        data = {
+            "req_id": self.request_id,
+            "prompt": self.prompt,
+            "prompt_token_ids": self.prompt_token_ids,
+            "prompt_token_ids_len": self.prompt_token_ids_len,
+            "messages": self.messages,
+            "system": self.system,
+            "history": self.history,
+            "eos_token_ids": self.eos_token_ids,
+            "arrival_time": self.arrival_time,
+            "preprocess_start_time": self.preprocess_start_time,
+            "preprocess_end_time": self.preprocess_end_time,
+            "multi_modal_inputs": self.multi_modal_inputs,
+            "raw_request": self.raw_request
+        }
+        data.update(asdict(self.sampling_params))
+        return data
+
     def get(self, key: str, default_value=None):
         if hasattr(self, key):
             return getattr(self, key)
@@ -119,6 +140,14 @@ class CompletionOutput:
     text: Optional[str] = None
     reasoning_content: Optional[str] = None
 
+    @classmethod
+    def from_dict(cls, req_dict: dict[str, Any]) -> 'CompletionOutput':
+        """Create instance from dict arguments"""
+        return cls(**{
+            field.name: req_dict[field.name] if field.name in req_dict else field.default
+            for field in fields(cls)
+        })
+
     def __repr__(self) -> str:
         return (f"CompletionOutput(index={self.index}, "
                 f"text={self.text!r}, "
@@ -150,6 +179,13 @@ class RequestMetrics:
     model_forward_time: Optional[float] = None
     model_execute_time: Optional[float] = None
 
+    @classmethod
+    def from_dict(cls, req_dict: dict[str, Any]) -> 'RequestMetrics':
+        """Create instance from dict arguments"""
+        return cls(**{
+            field.name: req_dict[field.name] if field.name in req_dict else field.default
+            for field in fields(cls)
+        })
 
 
 class RequestOutput:
@@ -201,9 +237,12 @@ class RequestOutput:
         self.finished |= next_output.finished
         self.outputs.index = next_output.outputs.index
         self.outputs.token_ids.extend(next_output.outputs.token_ids)
-        self.metrics.model_forward_time = next_output.metrics.arrival_time - self.metrics.inference_start_time
-        self.metrics.model_execute_time = next_output.metrics.arrival_time - self.metrics.arrival_time
-
+        if next_output.metrics.arrival_time is not None and self.metrics.inference_start_time is not None:
+            self.metrics.model_forward_time = next_output.metrics.arrival_time - \
+                self.metrics.inference_start_time
+        if next_output.metrics.arrival_time is not None and self.metrics.arrival_time is not None:
+            self.metrics.model_execute_time = next_output.metrics.arrival_time - \
+                self.metrics.arrival_time
 
     def __repr__(self) -> str:
         return (f"RequestOutput(request_id={self.request_id}, "
@@ -213,7 +252,15 @@ class RequestOutput:
                 f"metrics={self.metrics}, "
                 f"num_cached_tokens={self.num_cached_tokens})")
 
-    def todict(self):
+    @classmethod
+    def from_dict(cls, d: dict):
+        """Create instance from dict arguments"""
+        completion_output = CompletionOutput.from_dict(d.pop("outputs"))
+        metrics = RequestMetrics.from_dict(d.pop("metrics"))
+        return RequestOutput(**d, outputs=completion_output, metrics=metrics)
+
+    def to_dict(self):
+        """convert RequestOutput into a serializable dict """
         if self.prompt_token_ids is None:
             self.prompt_token_ids = []
 
@@ -221,8 +268,8 @@ class RequestOutput:
             "request_id": self.request_id,
             "prompt": self.prompt,
             "prompt_token_ids": self.prompt_token_ids,
-            "outputs": self.outputs.__dict__,
+            "outputs": None if self.outputs is None else asdict(self.outputs),
             "finished": self.finished,
-            "metrics": self.metrics.__dict__,
+            "metrics": None if self.metrics is None else asdict(self.metrics),
             "num_cached_tokens": self.num_cached_tokens,
         }

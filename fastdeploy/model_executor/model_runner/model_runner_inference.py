@@ -133,7 +133,7 @@ class ModelRunner(ModelRunnerBase):
                 task.eos_token_ids.append(task.eos_token_ids[0])
             self.share_inputs["eos_token_id"][:] = np.array(task.eos_token_ids, dtype="int64").reshape(-1, 1)
             self.share_inputs["pre_ids"][idx : idx + 1] = -1
-            self.share_inputs["top_p"][idx : idx + 1] = task.get("topp", 0.7)
+            self.share_inputs["top_p"][idx : idx + 1] = task.get("top_p", 0.7)
             self.share_inputs["temperature"][idx : idx + 1] = task.get("temperature", 0.95)
             self.share_inputs["penalty_score"][idx : idx + 1] = task.get("repetition_penalty", 1.0)
             self.share_inputs["frequency_score"][idx : idx + 1] = task.get("frequency_penalty", 0.0)
@@ -170,9 +170,14 @@ class ModelRunner(ModelRunnerBase):
                     task.get("stop_token_ids"), dtype="int64"
                 )
 
-
-
-    def get_rotary_position_embedding(self,position_ids, head_dim, rope_theta=160000,model_type="ernie_bot",rope_scaling=None):
+    def get_rotary_position_embedding(
+        self,
+        position_ids,
+        head_dim,
+        rope_theta=160000,
+        model_type="ernie_bot",
+        rope_scaling=None
+    ):
         """
         Pre-calculate rotary position embedding for position_ids.
 
@@ -184,7 +189,7 @@ class ModelRunner(ModelRunnerBase):
             rot_emb: [2, 1, S, 1, D // 2] or [2, 1, S, 1, D], cos + sin
         """
         bsz, max_model_len = position_ids.shape[:2]
-        if model_type=="ernie_bot":
+        if model_type == "ernie_bot":
             inv_freq = rope_theta ** (-paddle.arange(0, head_dim, 2, dtype="float32") / head_dim)
 
             # shape: [B, S, D/2]
@@ -203,7 +208,7 @@ class ModelRunner(ModelRunnerBase):
             rot_emb[1] = paddle.sin(emb)
 
             return rot_emb
-        elif model_type=="llama":
+        elif model_type == "llama":
             rope_theta=10000.0
             rot_emb = paddle.zeros((2, bsz, max_model_len, 1, head_dim), dtype="float32")
             inv_freq = rope_theta ** (-paddle.arange(0, head_dim, 2, dtype="float32") / head_dim)

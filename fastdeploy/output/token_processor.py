@@ -19,7 +19,6 @@ import threading
 import time
 import traceback
 from collections import Counter
-from datetime import datetime
 
 
 from paddlenlp.utils.env import MAX_BSZ, MAX_DRAFT_TOKENS, SPECULATE_MAX_BSZ
@@ -112,7 +111,7 @@ class TokenProcessor(object):
         Args:
             batch_result (list): batch results
         """
-        self.cached_generated_tokens.put(batch_result)
+        self.cached_generated_tokens.put_results(batch_result)
 
 
     def _recycle_resources(self, task_id, index, task):
@@ -194,14 +193,15 @@ class TokenProcessor(object):
                     result.finished = True
                     result.prompt = task.prompt
                     result.prompt_token_ids = task.prompt_token_ids
-                    self._recycle_resources(task_id, i, task)
                     llm_logger.info(f"Request: {task_id} finished, number of "
 									f"generated tokens: {self.tokens_counter[task_id]}.")
+                    llm_logger.info(f"Request: {task_id} token ratio: {self.tokens_counter[task_id] / (time.time() - task.inference_start_time)}")
                     llm_logger.info(f"{self.resource_manager.info()}")
                     llm_logger.info(
                         f"Speculate accept ratio: {1 - self.total_step * 1.0 / self.number_of_output_tokens}"
                         f" total step: {self.total_step}. total_output_token_num: {self.number_of_output_tokens}"
                     )
+                    self._recycle_resources(task_id, i, task)
                     break
                 result.outputs.token_ids.append(token_id)
             batch_result.append(result)
