@@ -190,6 +190,7 @@ class TokenProcessor(object):
 
             for token_id in token_ids:
                 self.tokens_counter[task_id] += 1
+                result.outputs.token_ids.append(token_id)
                 if token_id in task.eos_token_ids:
                     result.finished = True
                     result.prompt = task.prompt
@@ -204,7 +205,6 @@ class TokenProcessor(object):
                     )
                     self._recycle_resources(task_id, i, task)
                     break
-                result.outputs.token_ids.append(token_id)
             batch_result.append(result)
 
         self.postprocess(batch_result)

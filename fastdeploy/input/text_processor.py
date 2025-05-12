@@ -295,14 +295,16 @@ class DataProcessor(BaseDataProcessor):
         req_id = response_dict["request_id"]
 
         token_ids = response_dict["outputs"]["token_ids"]
-        response_dict["outputs"]["text"] = self.ids2tokens(token_ids, req_id)
 
         if is_end:
             data_processor_logger.debug("Request id: {} has been completed.".format(token_ids))
-            response_dict["outputs"]["text"] = self.ids2tokens(token_ids, req_id)
             full_text = self.clear_request_status(req_id)
             if not stream:
                 response_dict["outputs"]["text"] = full_text
+            else:
+                response_dict["outputs"]["text"] = ""
+        else:
+            response_dict["outputs"]["text"] = self.ids2tokens(token_ids, req_id)
         return response_dict
 
 
