@@ -1,5 +1,5 @@
 """
-# Copyright (c) 2024 PaddlePaddle Authors. All Rights Reserved.
+# Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 # limitations under the License.
 """
 
-from typing import List
+from typing import List, Optional
 import time
 import redis
 from fastdeploy.engine.request import Request, RequestOutput
@@ -27,15 +27,25 @@ class GlobalScheduler(object):
     GlobalScheduler class
     """
 
-    def __init__(self):
-        self.client = redis.Redis(
-            host='10.178.5.194', port=6379, db=1, password="aurora_123")
-        self.topic = "fd_reqs"
-        self.ttl = 180
-        self.redundant_ttl = 30
-        self.unique_key_ttl = self.ttl + self.redundant_ttl
+    def __init__(self,
+                 host: str,
+                 port: int,
+                 db: int,
+                 password: Optional[str],
+                 topic: str,
+                 ttl: int,
+                 remote_write_time: int,
+                 wait_response_timeout: float
+                 ):
+
+        self.topic = topic
+        self.ttl = ttl
+        self.remote_write_time = remote_write_time
+        self.wait_response_timeout = wait_response_timeout
         self.wait_request_timeout = 10
-        self.wait_response_timeout = 5  # required: wait_response_timeout < redundant_ttl
+
+        self.client = redis.Redis(
+            host=host, port=port, db=db, password=password)
 
     def _request_queue_name(self):
         return f"{self.topic}.request"
@@ -63,7 +73,7 @@ class GlobalScheduler(object):
         duplicated_ids = list()
         for request in requests:
             unique_key = self._unique_key_name(request.id)
-            if self.client.set(unique_key, "", ex=self.unique_key_ttl, nx=True):
+            if self.client.set(unique_key, "", ex=self.ttl, nx=True):
                 valided_keys.append(unique_key)
             else:
                 duplicated_ids.append(request.id)
@@ -142,7 +152,7 @@ class GlobalScheduler(object):
 
         for response_id, responses in group.items():
             ttl = self.client.ttl(self._unique_key_name(
-                response_id)) - self.redundant_ttl
+                response_id)) - self.remote_write_time
             if ttl <= 0:
                 llm_logger.info(
                     f"output of request_id ({response_id}) has expired")
@@ -163,13 +173,13 @@ class GlobalScheduler(object):
 
         serialized_responses = self.client.lpop(key, size)
         if serialized_responses is None or len(serialized_responses) == 0:
-            ttl = self.client.ttl(self._unique_key_name(
-                request_id)) - self.redundant_ttl
+            ttl = self.client.ttl(self._unique_key_name(request_id))
             if ttl <= 0:
                 raise ValueError(
                     f"output of request_id ({request_id}) has expired")
 
-            blocked_data = self.client.blpop(key, self.wait_response_timeout)
+            wait_time = min(ttl, self.wait_response_timeout)
+            blocked_data = self.client.blpop(key, wait_time)
             if blocked_data is None:
                 return []
             serialized_responses = blocked_data[1:]
