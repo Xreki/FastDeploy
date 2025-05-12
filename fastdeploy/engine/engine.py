@@ -16,25 +16,19 @@
 
 from __future__ import annotations
 import sys
-import asyncio
-import json
 import zmq
-import multiprocessing
 import os
 import signal
-import queue
 import subprocess
 import time
 import uuid
 import traceback
 import weakref
 from tqdm import tqdm
-from datetime import datetime
-from multiprocessing import shared_memory
-from collections import deque
 import threading
 import numpy as np
 import re
+import json
 
 from fastdeploy.input.preprocess import InputPreprocessor
 from fastdeploy.engine.args_utils import EngineArgs
@@ -44,6 +38,8 @@ from fastdeploy.inter_communicator import EngineWorkerQueue
 from fastdeploy.output.token_processor import TokenProcessor, WarmUpTokenProcessor
 from fastdeploy.inter_communicator import IPCSignal, ZmqClient
 from fastdeploy.utils import llm_logger, console_logger, EngineError
+from fastdeploy.scheduler import LocalScheduler, GlobalScheduler
+from fastdeploy.engine.request import RequestOutput
 
 
 class LLMEngine(object):
@@ -53,9 +49,7 @@ class LLMEngine(object):
     Attributes:
         cfg (Config): Configuration object containing all the parameters.
         cached_generated_tokens (queue.Queue): Queue to store generated tokens.
-        cached_task_deque (collections.deque): Deque to store cached tasks.
-        req_output (dict): Dictionary to store request outputs.
-        req_output_completion (dict): Dictionary to track request completion status.
+        scheduler (LocalScheduler or GlobalScheduler): Scheduling tasks.
         input_processor (InputPreprocessor): Preprocessor for input data.
         resource_manager (ResourceManager): Manager for resource allocation.
         token_processor (TokenProcessor): Processor for token generation.
@@ -89,15 +83,15 @@ class LLMEngine(object):
         """
         self.cfg = cfg
 
-        self.cached_generated_tokens = queue.Queue()
-        self.cached_task_deque = deque()
-        self.req_output = dict()
-        self.req_output_completion = dict()
+        self.scheduler = LocalScheduler()
+        # self.scheduler = GlobalScheduler()
 
         self.input_processor = InputPreprocessor(cfg.tokenizer)
-        self.resource_manager = ResourceManager(cfg.max_num_seqs, cfg.cache_config)
+        self.resource_manager = ResourceManager(
+            cfg.max_num_seqs, cfg.cache_config)
 
-        self.token_processor = TokenProcessor(cfg=self.cfg, cached_generated_tokens=self.cached_generated_tokens)
+        self.token_processor = TokenProcessor(
+            cfg=self.cfg, cached_generated_tokens=self.scheduler)
         self.token_processor.set_resource_manager(self.resource_manager)
         time.sleep(1)  # TODO: Investigate the purpose of this sleep.
 
@@ -159,106 +153,85 @@ class LLMEngine(object):
 
         self.token_processor.tasks_queue = self.engine_worker_queue
 
-        self.insert_task_to_worker_thread = threading.Thread(target=self._insert_task_to_worker, args=())
+        self.insert_task_to_worker_thread = threading.Thread(
+            target=self._insert_task_to_worker, args=())
         self.insert_task_to_worker_thread.daemon = True
         self.insert_task_to_worker_thread.start()
+
+        if self.zmq_server:
+            self.insert_task_to_scheduler_thread = threading.Thread(target=self._insert_zmq_task_to_scheduler, args=())
+            self.insert_task_to_scheduler_thread.daemon = True
+            self.insert_task_to_scheduler_thread.start()
+
+            self.receive_output_thread = threading.Thread(target=self._zmp_receive_output, args=())
+            self.receive_output_thread.daemon = True
+            self.receive_output_thread.start()
 
         # Start TokenProcessor thread
         self.token_processor.run()
 
-        self._receive_output_thread = threading.Thread(target=self._receive_output, args=())
-        self._receive_output_thread.daemon = True
-        self._receive_output_thread.start()
-
+        # self.start_push_sender_thread()
         if self.do_profile:
             self._stop_profile()
-        console_logger.info("Worker processes are launched with {} seconds.".format(time.time() - start_time))
+        llm_logger.info("Worker processes are launched with {} seconds.".format(
+            time.time() - start_time))
         return True
 
-    def _receive_output(self):
+    def _zmp_receive_output(self):
         """
-        Recieve output from token processor and store them in cache
+        Recieve output for zmq
         """
+        if self.zmq_server is None:
+            return
+        
         while True:
             try:
-                batch_result = self.cached_generated_tokens.get()
-                for result in batch_result:
-                    if self.zmq_server is not None:
-                        # send result
-                        cur_req_dict = result.todict()
-                        del result
-                        self.zmq_server.send_multipart(cur_req_dict["request_id"], json.dumps(cur_req_dict).encode('utf-8'))
-                        if cur_req_dict["finished"]:
-                            del self.zmq_server.req_dict[cur_req_dict["request_id"]]
-
-                    else:
-                        if result.request_id not in self.req_output:
-                            self.req_output[result.request_id] = deque()
-                            self.req_output_completion[result.request_id] = result
-                        else:
-                            self.req_output_completion[result.request_id].add(result)
-                            result.metrics.model_forward_time = \
-                                self.req_output_completion[result.request_id].metrics.model_forward_time
-
-                        if result.finished:
-                            result = self.req_output_completion[result.request_id]
-                            del self.req_output_completion[result.request_id]
-                        self.req_output[result.request_id].appendleft(result)
-
+                def get_results_handler(request_id):
+                    try:
+                        results = self.scheduler.get_results(request_id)
+                        for i in range(len(results)):
+                            results[i] = results[i].to_dict()
+                    except Exception as e:
+                        llm_logger.error(f"failed to get results of request_id({request_id}): {e}")
+                        error_result = RequestOutput(request_id, finished=True)
+                        results = [error_result.to_dict()]
+                    return results
+                
+                self.zmq_server.send_multipart2(get_results_handler)
             except Exception as e:
                 llm_logger.error("Unexcepted error happend: {}, {}".format(e, str(traceback.format_exc())))
 
-    def get_result(self, req_id):
+    def get_result(self, request_id):
         """
         Get result from cache
         """
-        if req_id not in self.req_output:
-            return None
-        if self.req_output[req_id]:
-            return self.req_output[req_id].pop()
-        else:
-            return None
-
-
-    def _get_tasks(self, num=1):
-       """
-       Get tasks from cached_task_deque.
-       """
-       if self.zmq_server is not None:
+        try:
+            acc = None
             while True:
-                data = self.zmq_server.receive_once()
-                if data is None:
-                    break
-                else:
-                    try:
-                        request = Request.from_dict(data)
-                        llm_logger.info(f"Receive request: {request}")
-                        self.cached_task_deque.appendleft(request)
-                    except Exception as e:
-                        llm_logger.error(f"Error happend while receving new request from zmq, details={e}")
+                results = self.scheduler.get_results(request_id)
+                for result in results:
+                    if acc is None:
+                        acc = result
+                    else:
+                        acc.add(result)
 
-       if len(self.cached_task_deque) == 0:
-           return []
+                    if result.finished:
+                        yield acc
+                        return
 
-       task_num = min(len(self.cached_task_deque), num)
-       tasks = []
-       need_block_num = 0
-       for i in range(task_num):
-           num_input_token = self.cached_task_deque[-1].prompt_token_ids_len
-           need_block_num += self.resource_manager.get_required_block_number(num_input_token)
-           if need_block_num > self.resource_manager.availabel_block_num():
-               break
-           tasks.append(self.cached_task_deque.pop())
-       return tasks
+                    yield result
+
+        except Exception as e:
+            llm_logger.error("Unexcepted error happend: {}, {}".format(
+                e, str(traceback.format_exc())))
 
     def _insert_task_to_worker(self):
         """
-        Insert task to engine thread, monitor cached_task_deque.
+        Insert task to engine thread, monitor scheduler request queue.
         if the engine has resource, insert task to engine
         """
         try:
             while 1:
-
                 if self.resource_manager.available_batch() == 0:
                     time.sleep(0.001)
                     continue
@@ -266,8 +239,16 @@ class LLMEngine(object):
                     time.sleep(0.001)
                     continue
 
-                num_prefill_batch = min(self.resource_manager.available_batch(), self.cfg.max_prefill_batch)
-                tasks = self._get_tasks(num_prefill_batch)
+                num_prefill_batch = min(
+                    self.resource_manager.available_batch(), self.cfg.max_prefill_batch)
+
+                tasks = self.scheduler.get_requests(
+                    available_blocks=self.resource_manager.available_block_num(),
+                    block_size=self.cfg.cache_config.block_size,
+                    reserved_output_blocks=self.cfg.cache_config.enc_dec_block_num,
+                    batch=num_prefill_batch
+                )
+
                 if len(tasks) == 0:
                     time.sleep(0.001)
                     continue
@@ -284,6 +265,21 @@ class LLMEngine(object):
             llm_logger.error(
                 "insert_task_to_worker thread exit " f"unexpectedly, {e}. {str(traceback.format_exc())}"
             )
+    
+    def _insert_zmq_task_to_scheduler(self):
+        if self.zmq_server is None:
+            return
+        
+        while True:
+            try:
+                data = self.zmq_server.receive_once(block=True)
+                if data is None:
+                    break
+                request = Request.from_dict(data)
+                self.scheduler.put_requests([request])
+                llm_logger.info(f"Receive request: {request}")
+            except Exception as e:
+                llm_logger.error(f"Error happend while receving new request from zmq, details={e}")
 
     def add_requests(self, task, sampling_params=None):
         """
@@ -303,15 +299,18 @@ class LLMEngine(object):
             request.sampling_params = sampling_params
         request.preprocess_start_time = time.time()
         if int(task.get("enable_text_truncate", 1)):
-            real_seq_len = self.cfg.max_model_len - task.get("max_dec_len", 800)
-            self.data_processor.process_request(request, max_model_len=real_seq_len)
+            real_seq_len = self.cfg.max_model_len - \
+                task.get("max_dec_len", 800)
+            self.data_processor.process_request(
+                request, max_model_len=real_seq_len)
         else:
-            self.data_processor.process_request(request, self.cfg.max_model_len)
-
+            self.data_processor.process_request(
+                request, self.cfg.max_model_len)
 
         request.prompt_token_ids_len = len(request.prompt_token_ids)
         input_ids_len = request.prompt_token_ids_len
-        request.set("max_tokens", min(self.cfg.max_model_len - input_ids_len , request.get("max_tokens")))
+        request.set("max_tokens", min(self.cfg.max_model_len -
+                    input_ids_len, request.get("max_tokens")))
         min_tokens = request.get("min_tokens")
         if input_ids_len + min_tokens >= self.cfg.max_model_len:
             error_msg = (
@@ -329,12 +328,10 @@ class LLMEngine(object):
             raise EngineError(error_msg, error_code=400)
 
         request.preprocess_end_time = time.time()
-        self.cached_task_deque.appendleft(request)
+        self.scheduler.put_requests([request])
         llm_logger.info(
-            f"Cache request ({request.get('request_id')}), "
-            f"request queue size: {len(self.cached_task_deque)}."
-        )
-        llm_logger.info(f"Recieve request: {request}")
+            f"cache task with req_id ({request.get('request_id')})")
+        llm_logger.debug(f"cache task: {request}")
 
     def warmup(self):
         """
@@ -372,9 +369,9 @@ class LLMEngine(object):
         for i in range(len(tasks)):
             self.token_processor.number_of_input_tokens += tasks[i].prompt_token_ids_len
 
-        llm_logger.info(f"Requests are insert to worker, request ids: {req_ids}, "
-                        f"request queue size: {len(self.cached_task_deque)}")
-        self.engine_worker_queue.put_tasks((tasks, self.resource_manager.real_bsz))
+        llm_logger.info(f"Tasks are sent to engine, req_ids={req_ids}")
+        self.engine_worker_queue.put_tasks(
+            (tasks, self.resource_manager.real_bsz))
         return True
 
     def task_is_finished(self, index):
@@ -384,15 +381,11 @@ class LLMEngine(object):
         assert index < len(self.resource_manager.stop_flags)
         return self.resource_manager.stop_flags[index]
 
-
     def all_tasks_finished(self):
         """
         judge if all tasks are finished
         """
         return np.sum(self.resource_manager.stop_flags) == len(self.resource_manager.stop_flags)
-
-
-
 
     def _set_warmup_token_processor(self):
         """
@@ -457,8 +450,7 @@ class LLMEngine(object):
 			dtype=np.int32,
             suffix=self.engine_pid,
 			create=True)
-
-
+        
         # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
         worker_healthy_live_recorded_time_array = np.zeros(shape=[self.cfg.tensor_parallel_size], dtype=np.int32)
         self.worker_healthy_live_signal = IPCSignal(name="worker_healthy_live_signal",
@@ -468,7 +460,8 @@ class LLMEngine(object):
 					create=True)
 
         if self.do_profile:
-            get_profile_block_num = np.zeros([self.cfg.tensor_parallel_size], dtype=np.int32)
+            get_profile_block_num = np.zeros(
+                [self.cfg.tensor_parallel_size], dtype=np.int32)
             self.get_profile_block_num_signal = IPCSignal(
                 name="get_profile_block_num",
 				array=get_profile_block_num,
@@ -554,7 +547,6 @@ class LLMEngine(object):
         )
         return p
 
-
     def _format_and_add_data(self, prompts: dict):
 
         if "request_id" in prompts:
@@ -597,26 +589,20 @@ class LLMEngine(object):
             llm_logger.error(f"Error happend while adding request, details={e}")
             raise EngineError(str(e), error_code=400)
 
-        while True:
-            result = self.get_result(req_id)
-            if result is None:
-                time.sleep(0.01)  # Avoid busy waiting
-                continue
-
+        # 获取当前请求的结果
+        for result in self.get_result(req_id):
             is_end = result.finished
-            if stream:
+            if stream and not is_end:
                 processed = self.data_processor.process_response(result)
                 if processed is None:
                     continue
-                output = processed.todict()
-                if not is_end:
-                    yield output
+                output = processed.to_dict()
+                yield output
 
             # Exit loop if termination condition is met
             if is_end:
                 processed = self.data_processor.process_response(result)
-                del self.req_output[req_id]
-                output = processed.todict()
+                output = processed.to_dict()
                 llm_logger.debug(f"Generate result: {output}")
                 if not stream:
                     yield output
@@ -624,8 +610,6 @@ class LLMEngine(object):
                     output["outputs"]["text"] = ""
                     output["outputs"]["reasoning_content"] = ""
                     yield output
-                break
-
 
     def _stop_profile(self):
         """
@@ -639,7 +623,8 @@ class LLMEngine(object):
             if num_gpu_blocks < 0:
                 num_gpu_blocks = self.get_profile_block_num_signal.value[i]
             else:
-                num_gpu_blocks = min(num_gpu_blocks, self.get_profile_block_num_signal.value[i])
+                num_gpu_blocks = min(
+                    num_gpu_blocks, self.get_profile_block_num_signal.value[i])
 
         console_logger.info(f"Stop profile, num_gpu_blocks:  {num_gpu_blocks}")
         self.cfg.cache_config.reset(num_gpu_blocks)
@@ -651,7 +636,8 @@ class LLMEngine(object):
 
         """
         if self.worker_healthy_live_signal.value[0]:
-            elapsed_time = time.time() - self.worker_healthy_live_signal.value[0]
+            elapsed_time = time.time() - \
+                self.worker_healthy_live_signal.value[0]
             if elapsed_time > time_interval_threashold:
                 return False, "Worker Service Not Healthy"
 
