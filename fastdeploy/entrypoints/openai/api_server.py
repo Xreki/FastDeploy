@@ -54,7 +54,7 @@ def load_engine():
     engine_args = EngineArgs.from_cli_args(args)
     llm_engine = LLMEngine.from_engine_args(engine_args)
 
-    if not llm_engine.start("default", os.getpid()):
+    if not llm_engine.start(api_server_pid=os.getpid()):
         api_server_logger.error("Failed to initialize FastDeploy LLM engine, service exit now!")
         exit(-1)
     else:

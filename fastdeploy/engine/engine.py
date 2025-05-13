@@ -92,8 +92,6 @@ class LLMEngine(object):
         self.token_processor.set_resource_manager(self.resource_manager)
         time.sleep(1)  # TODO: Investigate the purpose of this sleep.
 
-        # TODO
-        # 1. 增加engine hostname
         address = ('0.0.0.0', self.cfg.engine_worker_queue_port)
         self.engine_worker_queue = EngineWorkerQueue(
             address=address, is_server=True, num_client=self.cfg.tensor_parallel_size)
@@ -107,30 +105,27 @@ class LLMEngine(object):
 
         self._finalizer = weakref.finalize(self, self._exit_sub_services)
 
-    def start(self, model=None, pid=None):
+    def start(self, api_server_pid=None):
         """
         Initializes the engine and starts its sub-services.
+        If `api_server_pid` is defined, will launch a thread
+        to keep getting request from zmq_server.
         """
         assert not self.is_started, "The engine is already started."
         start_time = time.time()
-        self.engine_pid = pid
+
+        self.api_server_pid = api_server_pid
+        self.engine_pid = os.getpid()
+        self.ipc_signal_suffix = self.engine_pid if self.api_server_pid is None else self.api_server_pid
         self._init_worker_signals()
 
         self.data_processor = self.input_processor.create_processor()
 
-        if model is not None:
-            # TODO checke model name
-            self.zmq_server = ZmqClient(name=pid, mode=zmq.PULL)
-            try:
-                self.zmq_server.start_server()
-                self.zmq_server.create_router()
-                time.sleep(3)
-            except Exception as e:
-                llm_logger.error(f"{str(e)}")
-                raise EngineError(f'Failed to start server: {str(e)}')
-
-        else:
-            self.zmq_server = None
+        if api_server_pid is not None:
+            self.zmq_server = ZmqClient(name=api_server_pid, mode=zmq.PULL)
+            self.zmq_server.start_server()
+            self.zmq_server.create_router()
+            time.sleep(3)
 
         self.worker_proc = self._start_worker_service()
         console_logger.info("Waitting worker processes ready...")
@@ -155,7 +150,7 @@ class LLMEngine(object):
         self.insert_task_to_worker_thread.daemon = True
         self.insert_task_to_worker_thread.start()
 
-        if self.zmq_server:
+        if self.api_server_pid is not None:
             self.insert_task_to_scheduler_thread = threading.Thread(target=self._insert_zmq_task_to_scheduler, args=())
             self.insert_task_to_scheduler_thread.daemon = True
             self.insert_task_to_scheduler_thread.start()
@@ -178,9 +173,9 @@ class LLMEngine(object):
         """
         Recieve output for zmq
         """
-        if self.zmq_server is None:
+        if self.api_server_pid is None:
             return
-        
+
         while True:
             try:
                 def get_results_handler(request_id):
@@ -193,7 +188,7 @@ class LLMEngine(object):
                         error_result = RequestOutput(request_id, finished=True)
                         results = [error_result.to_dict()]
                     return results
-                
+
                 self.zmq_server.send_multipart2(get_results_handler)
             except Exception as e:
                 llm_logger.error("Unexcepted error happend: {}, {}".format(e, str(traceback.format_exc())))
@@ -262,11 +257,11 @@ class LLMEngine(object):
             llm_logger.error(
                 "insert_task_to_worker thread exit " f"unexpectedly, {e}. {str(traceback.format_exc())}"
             )
-    
+
     def _insert_zmq_task_to_scheduler(self):
-        if self.zmq_server is None:
+        if self.api_server_pid is None:
             return
-        
+
         while True:
             try:
                 data = self.zmq_server.receive_once(block=True)
@@ -416,13 +411,11 @@ class LLMEngine(object):
         """
         # worker_ready_signal 用于engine感知各worker进程是否Ready
 
-        if self.engine_pid is None:
-            self.engine_pid = os.getpid()
         worker_ready_signal_data = np.zeros(shape=[self.cfg.tensor_parallel_size], dtype=np.int32)
         self.worker_ready_signal = IPCSignal(name="worker_ready_singnal",
                                              array=worker_ready_signal_data,
                       						 dtype=np.int32,
-  											 suffix=self.engine_pid,
+  											 suffix=self.ipc_signal_suffix,
 											 create=True)
 
         # exist_task_signal 用于各worker进程感知是否有新Task需要处理
@@ -430,7 +423,7 @@ class LLMEngine(object):
         self.exist_task_signal = IPCSignal(name="exist_task_signal",
                                            array=exist_task_signal_data,
 										   dtype=np.int32,
-                                           suffix=self.engine_pid,
+                                           suffix=self.ipc_signal_suffix,
 										   create=True)
 
         # exist_swapped_task_signal 用于engine感知worker中是否存在swapped task
@@ -439,15 +432,15 @@ class LLMEngine(object):
             name="exist_swapped_task_signal",
 			array=exist_swapped_task_signal_data,
 			dtype=np.int32,
-            suffix=self.engine_pid,
+            suffix=self.ipc_signal_suffix,
 			create=True)
-        
+
         # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
         worker_healthy_live_recorded_time_array = np.zeros(shape=[self.cfg.tensor_parallel_size], dtype=np.int32)
         self.worker_healthy_live_signal = IPCSignal(name="worker_healthy_live_signal",
                     array=worker_healthy_live_recorded_time_array,
 					dtype=np.int32,
-                    suffix=self.engine_pid,
+                    suffix=self.ipc_signal_suffix,
 					create=True)
 
         if self.do_profile:
@@ -457,7 +450,7 @@ class LLMEngine(object):
                 name="get_profile_block_num",
 				array=get_profile_block_num,
 				dtype=np.int32,
-                suffix=self.engine_pid,
+                suffix=self.ipc_signal_suffix,
 				create=True)
 
     def _exit_sub_services(self):
@@ -468,7 +461,8 @@ class LLMEngine(object):
         self.exist_task_signal.clear()
         self.exist_swapped_task_signal.clear()
         self.worker_healthy_live_signal.clear()
-        self.get_profile_block_num_signal.clear()
+        if hasattr(self, "get_profile_block_num_signal"):
+            self.get_profile_block_num_signal.clear()
         if hasattr(self, "worker_proc") and self.worker_proc is not None:
             try:
                 os.killpg(self.worker_proc.pid, signal.SIGTERM)
