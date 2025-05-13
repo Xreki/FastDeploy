@@ -124,7 +124,7 @@ class EngineArgs:
     """
     Timeout for waiting for response
     """
-    scheduler_wait_response_timeout: float = 0.01
+    scheduler_wait_response_timeout: float = 0.001
     """
     Host of redis
     """
