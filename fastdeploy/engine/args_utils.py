@@ -14,19 +14,20 @@
 # limitations under the License.
 """
 
-import argparse
-import json
-from dataclasses import dataclass, fields as dataclass_fields
+from dataclasses import dataclass, asdict, fields as dataclass_fields
 from typing import Any, Dict, List, Optional
 
 from fastdeploy.engine.config import Config, ModelConfig, CacheConfig, TaskOption
 from fastdeploy.utils import FlexibleArgumentParser
+from fastdeploy.scheduler.config import SchedulerConfig
+
 
 def nullable_str(x: str) -> Optional[str]:
     """
     Convert an empty string to None, preserving other string values.
     """
     return x if x else None
+
 
 @dataclass
 class EngineArgs:
@@ -108,6 +109,46 @@ class EngineArgs:
     Flag to enable prefix caching.
     """
     engine_worker_queue_port: int = 8002
+    """
+    Scheduler name to be used
+    """
+    scheduler_name: str = "local"
+    """
+    Size of scheduler
+    """
+    scheduler_max_size: int = -1
+    """
+    TTL of request
+    """
+    scheduler_ttl: int = 900
+    """
+    Timeout for waiting for response
+    """
+    scheduler_wait_response_timeout: float = 0.01
+    """
+    Host of redis
+    """
+    scheduler_host: str = "127.0.0.1"
+    """
+    Port of redis
+    """
+    scheduler_port: int = 6379,
+    """
+    DB of redis
+    """
+    scheduler_db: int = 0,
+    """
+    Password of redis
+    """
+    scheduler_password: Optional[str] = None,
+    """
+    Topic of scheduler
+    """
+    scheduler_topic: str = "default",
+    """
+    Max write time of redis
+    """
+    scheduler_remote_write_time: int = 3,
 
     def __post_init__(self):
         """
@@ -247,6 +288,65 @@ class EngineArgs:
             help="Flag to enable prefix caching."
         )
 
+        # Scheduler parameters group
+        scheduler_group = parser.add_argument_group("Scheduler")
+        scheduler_group.add_argument(
+            "--scheduler-name",
+            default=EngineArgs.scheduler_name,
+            help=f"Scheduler name to be used. Default is {EngineArgs.scheduler_name}. (local,global)"
+        )
+        scheduler_group.add_argument(
+            "--scheduler-max-size",
+            type=int,
+            default=EngineArgs.scheduler_max_size,
+            help=f"Size of scheduler. Default is {EngineArgs.scheduler_max_size}. (Local)"
+        )
+        scheduler_group.add_argument(
+            "--scheduler-ttl",
+            type=int,
+            default=EngineArgs.scheduler_ttl,
+            help=f"TTL of request. Default is {EngineArgs.scheduler_ttl} seconds. (local,global)"
+        )
+        scheduler_group.add_argument(
+            "--scheduler-wait-response-timeout",
+            type=float,
+            default=EngineArgs.scheduler_wait_response_timeout,
+            help=("Timeout for waiting for response. Default is "
+                  f"{EngineArgs.scheduler_wait_response_timeout} seconds. (local,global)")
+        )
+        scheduler_group.add_argument(
+            "--scheduler-host",
+            default=EngineArgs.scheduler_host,
+            help=f"Host address of redis. Default is {EngineArgs.scheduler_host}. (global)"
+        )
+        scheduler_group.add_argument(
+            "--scheduler-port",
+            type=int,
+            default=EngineArgs.scheduler_port,
+            help=f"Port of redis. Default is {EngineArgs.scheduler_port}. (global)"
+        )
+        scheduler_group.add_argument(
+            "--scheduler-db",
+            type=int,
+            default=EngineArgs.scheduler_db,
+            help=f"DB of redis. Default is {EngineArgs.scheduler_db}. (global)"
+        )
+        scheduler_group.add_argument(
+            "--scheduler-password",
+            default=EngineArgs.scheduler_password,
+            help=f"Password of redis. Default is {EngineArgs.scheduler_password}. (global)"
+        )
+        scheduler_group.add_argument(
+            "--scheduler-topic",
+            default=EngineArgs.scheduler_topic,
+            help=f"Topic of scheduler. Defaule is {EngineArgs.scheduler_topic}. (global)"
+        )
+        scheduler_group.add_argument(
+            "--scheduler-remote-write-time",
+            type=int,
+            default=EngineArgs.scheduler_remote_write_time,
+            help=f"Max write time of redis. Default is {EngineArgs.scheduler_remote_write_time} seconds (global)"
+        )
         return parser
 
     @classmethod
@@ -280,6 +380,20 @@ class EngineArgs:
             enable_prefix_caching=self.enable_prefix_caching
         )
 
+    def create_scheduler_config(self) -> SchedulerConfig:
+        """
+        Create and retuan a SchedulerConfig object based on the current settings.
+        """
+        prefix = "scheduler_"
+        prefix_len = len(prefix)
+
+        all = asdict(self)
+        params = dict()
+        for k, v in all.items():
+            if k[:prefix_len] == prefix:
+                params[k[prefix_len:]] = v
+        return SchedulerConfig(**params)
+
     def create_engine_config(self) -> Config:
         """
         Create and return a Config object based on the current settings.
@@ -287,9 +401,11 @@ class EngineArgs:
         model_cfg = self.create_model_config()
         if not model_cfg.is_unified_ckpt and hasattr(model_cfg, 'tensor_parallel_size'):
             self.tensor_parallel_size = model_cfg.tensor_parallel_size
+        scheduler_cfg = self.create_scheduler_config()
         return Config(
             model_name_or_path=self.model,
             model_config=model_cfg,
+            scheduler_config=scheduler_cfg,
             tokenizer=self.tokenizer,
             cache_config=self.create_cache_config(),
             max_model_len=self.max_model_len,
