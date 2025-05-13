@@ -69,7 +69,7 @@ class EngineClient:
                     prompts["prompt"] = query_list
 
         if "max_tokens" not in prompts:
-            prompts["max_tokens"] = self.max_model_len
+            prompts["max_tokens"] = self.max_model_len - 1
 
         self.add_requests(prompts)
 

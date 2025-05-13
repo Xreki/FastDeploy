@@ -167,7 +167,8 @@ class OpenAIServingChat:
                 delta_text = output["text"]
 
                 previous_num_tokens += len(output["token_ids"])
-                delta_message = DeltaMessage(content=delta_text, reasoning_content=output.get("reasoning_content"))
+                delta_message = DeltaMessage(content=delta_text, reasoning_content=output.get("reasoning_content"), \
+                    token_ids=output.get("token_ids"))
 
                 choice = ChatCompletionResponseStreamChoice(
                     index=output["index"],
@@ -253,7 +254,7 @@ class OpenAIServingChat:
 
                 data = json.loads(raw_data[-1].decode('utf-8'))
                 data = self.engine_client.data_processor.process_response_dict(data, stream=False)
-                api_server_logger.debug(f"Client {request_id} received: {data}")
+                # api_server_logger.debug(f"Client {request_id} received: {data}")
                 previous_num_tokens += len(data["outputs"]["token_ids"])
                 if data["finished"]:
                     final_res = data
@@ -266,7 +267,8 @@ class OpenAIServingChat:
         message = ChatMessage(
             role="assistant",
             content=output["text"],
-            reasoning_content=output.get("reasoning_content")
+            reasoning_content=output.get("reasoning_content"),
+            token_ids=output.get("token_ids")
         )
 
         choice = ChatCompletionResponseChoice(
