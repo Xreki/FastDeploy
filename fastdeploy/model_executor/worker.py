@@ -48,27 +48,21 @@ class Worker:
         Raises:
             None, 没有异常抛出。
         """
-        if int(os.getenv("OPEN_SOURCE", "0")) == 1:
-            from fastdeploy.model_executor.model_runner.model_runner_paddlenlp import ModelRunner
-
-        else:
-            from fastdeploy.model_executor.model_runner.model_runner_inference import ModelRunner
 
         self.args = args
         self.MAX_INFER_SEED = 9223372036854775806
         paddle.set_default_dtype(args.dtype)
-
         self.device_ids = self.args.device_ids.split(",")
-
-
         self.model_cfg = ModelConfig(args.model_name_or_path)
 
+        if self.model_cfg.architectures != "ErnieForCausalLM":
+            from fastdeploy.model_executor.model_runner.model_runner_paddlenlp import ModelRunner
+        else:
+            from fastdeploy.model_executor.model_runner.model_runner_inference import ModelRunner
+
         self.init_dist_env()
-
         self.format_print_configuration()
-
         self.helper_tensors = {}
-
 
         self.infer_engine = ModelRunner(
             config=self.model_cfg,
@@ -81,10 +75,7 @@ class Worker:
         address = ('0.0.0.0', self.args.engine_worker_queue_port)
         self.engine_worker_queue = EngineWorkerQueue(
             address=address, is_server=False, num_client=self.nranks, client_id=self.rank)
-
         self.init_health()
-
-
 
     def init_dist_env(self, seed=20):
         """
@@ -116,7 +107,6 @@ class Worker:
                                               suffix=self.args.engine_pid,
                                              create=False)
         self.worker_ready_signal.value[self.rank] = 1
-
 
         # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
         worker_healthy_live_recorded_time_array = np.zeros(shape=[self.nranks], dtype=np.int32)
@@ -167,12 +157,11 @@ class Worker:
             logger.info("{:<20}:{:<6}{}".format(k, "", v))
         logger.info("=====================================================\n")
 
-
     def step_cuda(self):
         """
         step cuda
         """
-        if int(os.getenv("OPEN_SOURCE", "0")) == 1:
+        if self.model_cfg.architectures != "ErnieForCausalLM":
             from paddlenlp_ops import step_paddle
             from fastdeploy.model_executor.model_runner.model_runner_paddlenlp import ModelRunner
 
@@ -298,9 +287,6 @@ class Worker:
 
                 time.sleep(0.001)
                 continue
-
-
-
             self.infer_engine.generate()
             self.infer_engine.share_inputs["infer_seed"].add_(infer_seed_increment)
             self.infer_engine.share_inputs["infer_seed"][:] %= self.MAX_INFER_SEED
@@ -438,7 +424,6 @@ def parse_args():
     args = parser.parse_args()
     return args
 
-
 def main():
     """
     start worker
@@ -448,7 +433,6 @@ def main():
     if args.do_profile:
         worker.determine_num_available_blocks()
     worker.run()
-
 
 if __name__ == "__main__":
     main()
