@@ -31,7 +31,11 @@ pip install https://paddle-qa.bj.bcebos.com/paddle-pipeline/fastdeploy/8677bde0d
 ```
 # git clone FastDeploy仓库
 cd FastDeploy
-python setup.py install
+# 一键编译+安装本机可用的sm架构，whl包产物在dist/
+bash tools/build_wheel.sh
+
+# 只编译不打包成whl包(推荐开发时配合PYTHONPATH使用)
+bash tools/build_wheel.sh 0
 ```
 
 ## 快速使用

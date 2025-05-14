@@ -39,8 +39,8 @@ class ModelRunner(ModelRunnerBase):
         pass
 
     def _load_model(self, model_name):
-        from efficientllm.models.export_model import build_stream_line_model
-        from efficientllm.models.tokenizer import ErnieBotTokenizer
+        from ..models.export_model import build_stream_line_model
+        from ..models.tokenizer import ErnieBotTokenizer
         vocab_file_names = ["tokenizer.model", "spm.model", "ernie_token_100k.model"]
         for i in range(len(vocab_file_names)):
             if os.path.exists(os.path.join(self.args.model_name_or_path, vocab_file_names[i])):

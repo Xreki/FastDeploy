@@ -87,7 +87,7 @@ class TokenProcessor(object):
             from paddlenlp_ops import get_output, speculate_get_output
         else:
             os.environ["ELLM_LOG_LEVEL"] = "3"
-            from efficientllm.gpu import get_output
+            from fastdeploy.model_executor.ops.gpu import get_output
         while True:
             try:
                 rank_id = 0

@@ -38,6 +38,19 @@ setuptools.setup(
     long_description_content_type="text/plain",
     url="https://github.com/PaddlePaddle/FastDeploy",
     packages=setuptools.find_packages(),
+    package_dir={"fastdeploy": "fastdeploy/"},
+    package_data={
+        "fastdeploy": [
+            "model_executor/ops/gpu/*",
+            "model_executor/ops/gpu/deep_gemm/include/**/*",
+            "model_executor/ops/cpu/*",
+            "model_executor/ops/xpu/*",
+            "model_executor/ops/npu/*",
+            "model_executor/ops/base/*",
+            "model_executor/models/*",
+            "model_executor/layers/*",
+        ]
+    },
     install_requires=load_requirements(),
     classifiers=[
         "Programming Language :: Python :: 3", 
