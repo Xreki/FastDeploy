@@ -401,6 +401,8 @@ class EngineArgs:
         model_cfg = self.create_model_config()
         if not model_cfg.is_unified_ckpt and hasattr(model_cfg, 'tensor_parallel_size'):
             self.tensor_parallel_size = model_cfg.tensor_parallel_size
+        if self.max_num_batched_tokens is None:
+            self.max_num_batched_tokens = self.max_model_len
         scheduler_cfg = self.create_scheduler_config()
         return Config(
             model_name_or_path=self.model,

@@ -88,7 +88,8 @@ class GlobalScheduler(object):
         self.client.rpush(self._request_queue_name(), *serialized_requests)
         llm_logger.debug(f"global cached requests: {requests}")
 
-    def get_requests(self, available_blocks, block_size, reserved_output_blocks, batch=1) -> List[Request]:
+    def get_requests(self, available_blocks, block_size, reserved_output_blocks, \
+        max_num_batched_tokens, batch=1) -> List[Request]:
         """
             get requests blocked from shared cache
         """
@@ -107,6 +108,7 @@ class GlobalScheduler(object):
             serialized_requests = blocked_data[1:]
 
         required_total_blocks = 0
+        current_prefill_tokens = 0
         remaining_request = []
         requests = []
         for serialized_request in serialized_requests:
@@ -122,8 +124,9 @@ class GlobalScheduler(object):
 
             required_input_blocks = self.calc_required_blocks(
                 request.size, block_size)
+            current_prefill_tokens += request.size
             required_total_blocks += required_input_blocks + reserved_output_blocks
-            if required_total_blocks > available_blocks:
+            if required_total_blocks > available_blocks or current_prefill_tokens > max_num_batched_tokens:
                 remaining_request.append(serialized_request)
                 continue
             requests.append(request.raw)

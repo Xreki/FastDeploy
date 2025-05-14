@@ -160,4 +160,5 @@ class SchedulerConfig:
 
         return LocalScheduler(max_size=self.config.max_size,
                               ttl=self.config.ttl,
-                              wait_response_timeout=self.config.wait_response_timeout)
+                              wait_response_timeout=self.config.wait_response_timeout
+                              )

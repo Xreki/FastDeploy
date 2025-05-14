@@ -238,6 +238,7 @@ class LLMEngine(object):
                     available_blocks=self.resource_manager.available_block_num(),
                     block_size=self.cfg.cache_config.block_size,
                     reserved_output_blocks=self.cfg.cache_config.enc_dec_block_num,
+                    max_num_batched_tokens=self.cfg.max_num_batched_tokens,
                     batch=num_prefill_batch
                 )
 
