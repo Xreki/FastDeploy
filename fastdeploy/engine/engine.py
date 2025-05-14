@@ -663,7 +663,10 @@ class LLMEngine(object):
                     break
                 if match := re.search(r'Loading checkpoint shards:\s*(\d+)', line):
                     self.worker_init_status["weight_loadding"] = eval(match.group(1)) * 1.0 / 100
-                elif (match := re.search(r'Start load layer (\d+)', line)) or (match := re.search(r'set state for layer (\d+)', line)):
+                elif (match := re.search(r'Start load layer (\d+)',
+                                         line)) or (match := re.search(
+                                             r'set state for layer (\d+)',
+                                             line)):
                     progress = eval(match.group(1)) * 1.0 / self.cfg.model_config.num_layers
                     self.worker_init_status["layer_loadding"] = progress
                     if self.worker_init_status["layer_loadding"] == self.cfg.model_config.num_layers - 1:

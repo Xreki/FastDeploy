@@ -1,4 +1,7 @@
 setuptools==50.3.2
+pre-commit
+yapf
+ruamel.yaml
 zmq
 aiozmq
 openai
