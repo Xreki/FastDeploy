@@ -100,19 +100,18 @@ class LocalScheduler(object):
             self._recycle()
             if self.max_size > 0 and len(self.requests) + len(scheduled_requests) > self.max_size:
                 raise OverflowError(
-                    f"exceeding the max length of the local scheduler (max_size={self.max_size})")
+                    f"Exceeding the max length of the local scheduler (max_size={self.max_size})")
 
             duplicated_ids = [
                 scheduled_id for scheduled_id in scheduled_ids if scheduled_id in self.requests]
             if len(duplicated_ids) > 0:
                 raise ValueError(
-                    f"request_id is duplicated (ids={duplicated_ids})")
+                    f"Request_id is duplicated (ids={duplicated_ids})")
 
             self.requests.update(scheduled_requests)
             self.ids += scheduled_ids
             self.requests_not_empty.notify_all()
-
-            llm_logger.debug(f"local cached requests: {scheduled_ids}")
+            llm_logger.debug(f"Local cached requests: {scheduled_ids}")
 
     def calc_required_blocks(self, token_num, block_size):
         """calculate required blocks for given token number"""
@@ -150,7 +149,7 @@ class LocalScheduler(object):
                 requests.append(request.raw)
 
             self.ids_read_cursor += len(requests)
-            llm_logger.debug(f"local get requests: {len(requests)}")
+            llm_logger.debug(f"Local get requests: {len(requests)}")
             return requests
 
     def put_results(self, results: List[RequestOutput]):
@@ -161,7 +160,7 @@ class LocalScheduler(object):
             for response in responses:
                 if response.id not in self.requests:
                     llm_logger.info(
-                        f"output of request_id({response.id} is expired)")
+                        f"Output of request_id({response.id} is expired)")
                     continue
 
                 if response.id not in self.responses:
@@ -175,7 +174,7 @@ class LocalScheduler(object):
         with self.responses_not_empty:
             if request_id not in self.requests:
                 raise ValueError(
-                    f"output of request_id {request_id} is expired")
+                    f"Output of request_id {request_id} is expired")
 
             responses = self.responses_not_empty.wait_for(
                 lambda: self.responses.get(request_id, []), self.wait_response_timeout)

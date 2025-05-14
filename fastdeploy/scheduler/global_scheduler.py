@@ -81,12 +81,12 @@ class GlobalScheduler(object):
         if len(duplicated_ids) > 0:
             self.client.delete(*valided_keys)
             raise ValueError(
-                f"request_id is duplicated (ids={duplicated_ids})")
+                f"Request_id is duplicated (ids={duplicated_ids})")
 
         # add to request queue
         serialized_requests = [request.serialize() for request in requests]
         self.client.rpush(self._request_queue_name(), *serialized_requests)
-        llm_logger.debug(f"global cached requests: {requests}")
+        llm_logger.debug(f"Global cached requests: {requests}")
 
     def get_requests(self, available_blocks, block_size, reserved_output_blocks, \
         max_num_batched_tokens, batch=1) -> List[Request]:
@@ -119,7 +119,7 @@ class GlobalScheduler(object):
             request: ScheduledRequest = ScheduledRequest.unserialize(
                 serialized_request)
             if (time.time() - request.scheduled_time) > self.ttl:
-                llm_logger.info(f"request_id ({request.id}) has expired")
+                llm_logger.info(f"Request_id ({request.id}) has expired")
                 continue
 
             required_input_blocks = self.calc_required_blocks(
@@ -130,7 +130,7 @@ class GlobalScheduler(object):
                 remaining_request.append(serialized_request)
                 continue
             requests.append(request.raw)
-        llm_logger.debug(f"global get requests:{len(requests)}")
+        llm_logger.debug(f"Global get requests:{len(requests)}")
 
         if len(remaining_request) > 0:
             self.client.lpush(self._request_queue_name(), *remaining_request)
@@ -158,7 +158,7 @@ class GlobalScheduler(object):
                 response_id)) - self.remote_write_time
             if ttl <= 0:
                 llm_logger.info(
-                    f"output of request_id ({response_id}) has expired")
+                    f"Output of request_id ({response_id}) has expired")
                 continue
 
             with self.client.pipeline() as pipe:
@@ -179,7 +179,7 @@ class GlobalScheduler(object):
             ttl = self.client.ttl(self._unique_key_name(request_id))
             if ttl <= 0:
                 raise ValueError(
-                    f"output of request_id ({request_id}) has expired")
+                    f"Output of request_id ({request_id}) has expired")
 
             wait_time = min(ttl, self.wait_response_timeout)
             blocked_data = self.client.blpop(key, wait_time)
