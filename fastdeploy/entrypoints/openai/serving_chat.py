@@ -130,6 +130,8 @@ class OpenAIServingChat:
                         continue
 
                 res = json.loads(raw_data[-1].decode('utf-8'))
+                if res.get("error_code", 200) != 200:
+                    raise ValueError("{}".format(res["error_msg"]))
                 self.engine_client.data_processor.process_response_dict(res, stream=True)
 
                 if res['metrics']['first_token_time'] is not None:
@@ -253,6 +255,8 @@ class OpenAIServingChat:
                         continue
 
                 data = json.loads(raw_data[-1].decode('utf-8'))
+                if data.get("error_code", 200) != 200:
+                    raise ValueError("{}".format(data["error_msg"]))
                 data = self.engine_client.data_processor.process_response_dict(data, stream=False)
                 # api_server_logger.debug(f"Client {request_id} received: {data}")
                 previous_num_tokens += len(data["outputs"]["token_ids"])

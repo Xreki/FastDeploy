@@ -155,7 +155,7 @@ class LLMEngine(object):
             self.insert_task_to_scheduler_thread.daemon = True
             self.insert_task_to_scheduler_thread.start()
 
-            self.receive_output_thread = threading.Thread(target=self._zmp_receive_output, args=())
+            self.receive_output_thread = threading.Thread(target=self._zmq_send_generated_tokens, args=())
             self.receive_output_thread.daemon = True
             self.receive_output_thread.start()
 
@@ -169,13 +169,11 @@ class LLMEngine(object):
             time.time() - start_time))
         return True
 
-    def _zmp_receive_output(self):
+    def _zmq_send_generated_tokens(self):
         """
         Recieve output for zmq
         """
-        if self.api_server_pid is None:
-            return
-
+        assert self.api_server_pid is not None
         while True:
             try:
                 def get_results_handler(request_id):
@@ -185,7 +183,12 @@ class LLMEngine(object):
                             results[i] = results[i].to_dict()
                     except Exception as e:
                         llm_logger.error(f"failed to get results of request_id({request_id}): {e}")
-                        error_result = RequestOutput(request_id, finished=True)
+                        error_result = RequestOutput(
+                            request_id=request_id, 
+                            finished=True,
+                            error_code=500,
+                            error_msg=f"{e}"
+                        )
                         results = [error_result.to_dict()]
                     return results
 
@@ -193,9 +196,10 @@ class LLMEngine(object):
             except Exception as e:
                 llm_logger.error("Unexcepted error happend: {}, {}".format(e, str(traceback.format_exc())))
 
-    def get_result(self, request_id):
+    def _get_generated_result(self, request_id):
         """
-        Get result from cache
+        Get result from scheduler, this function is called by generate()
+        which is only used in offline inference.
         """
         try:
             acc = None
@@ -273,6 +277,18 @@ class LLMEngine(object):
                 llm_logger.info(f"Receive request: {request}")
             except Exception as e:
                 llm_logger.error(f"Error happend while receving new request from zmq, details={e}")
+                error_result = RequestOutput(
+                    request_id=request.request_id,
+                    finished=True,
+                    error_code=500,
+                    error_msg=f"{e}"
+                )
+                # Since the request is not in scheduler
+                # Send result by zmq directly
+                data = json.dumps(error_result.to_dict()).encode('utf-8')
+                self.zmq_server.send_multipart(request.request_id, data)
+                #self.scheduler.put_results([error_result])
+
 
     def add_requests(self, task, sampling_params=None):
         """
@@ -576,7 +592,7 @@ class LLMEngine(object):
             raise EngineError(str(e), error_code=400)
 
         # 获取当前请求的结果
-        for result in self.get_result(req_id):
+        for result in self._get_generated_tokens(req_id):
             is_end = result.finished
             if stream and not is_end:
                 processed = self.data_processor.process_response(result)

@@ -142,7 +142,8 @@ class OpenAIServingCompletion:
                         continue
                 data = json.loads(raw_data[-1].decode("utf-8"))
                 rid = int(data["request_id"].split("-")[-1])
-
+                if data.get("error_code", 200) != 200:
+                    raise ValueError("{}".format(data["error_msg"]))
                 self.engine_client.data_processor.process_response_dict(
                     data, stream=False
                 )
@@ -202,6 +203,8 @@ class OpenAIServingCompletion:
                         continue
                 res = json.loads(raw_data[-1].decode('utf-8'))
                 idx = int(res["request_id"].split("-")[-1])
+                if res.get("error_code", 200) != 200:
+                    raise ValueError("{}".format(res["error_msg"]))
                 self.engine_client.data_processor.process_response_dict(res, stream=True)
                 if res['metrics'].get('first_token_time') is not None:
                     arrival_time = res['metrics']['first_token_time']
