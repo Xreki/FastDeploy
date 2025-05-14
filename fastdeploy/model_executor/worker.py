@@ -297,7 +297,6 @@ class Worker:
         used_gpu_memory = meminfo.used / GiB
         pynvml.nvmlShutdown()
         logger.info(f"used gpu memory: {used_gpu_memory} GiB.")
-
         self.run_profile()
         current_max_peak_gpu_memory = paddle.device.cuda.max_memory_reserved() / GiB
         logger.info(f"current max peak gpu memory: {current_max_peak_gpu_memory} GiB.")
@@ -343,6 +342,7 @@ class Worker:
             time.sleep(0.01)
         num_gpu_blocks = self.get_profile_block_num_signal.value.min().item()
         self.get_profile_block_num_signal.value[self.rank] = int(num_gpu_blocks)
+        paddle.device.cuda.empty_cache()
         logger.info(f"{self.get_profile_block_num_signal.value[self.rank]} GPU KV blocks can be allocated.")
         self.infer_engine._update_share_input_block_num(num_gpu_blocks)
         paddle.device.cuda.empty_cache()

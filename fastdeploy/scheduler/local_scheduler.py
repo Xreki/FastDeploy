@@ -35,7 +35,6 @@ class LocalScheduler(object):
                  wait_response_timeout: float):
         self.max_size = max_size
         self.ttl = ttl
-
         self.mutex = threading.Lock()
         self.ids_read_cursor = 0
         self.ids: List[str] = list()
@@ -119,12 +118,14 @@ class LocalScheduler(object):
         """calculate required blocks for given token number"""
         return (token_num + block_size - 1) // block_size
 
-    def get_requests(self, available_blocks, block_size, reserved_output_blocks, batch=1) -> List[Request]:
+    def get_requests(self, available_blocks, block_size, \
+        reserved_output_blocks, max_num_batched_tokens, batch=1) -> List[Request]:
         """get requests from local cache
-            Args: 
+            Args:
                 available_blocks: int
                 block_size: int
                 reserved_output_blocks: int
+                max_num_batched_tokens: int
                 batch: int
         """
         if available_blocks <= reserved_output_blocks or batch < 1:
@@ -136,13 +137,15 @@ class LocalScheduler(object):
                                  self.ids_read_cursor + batch], self.wait_request_timeout)
 
             required_total_blocks = 0
+            current_prefill_tokens = 0
             requests: List[Request] = []
             for request_id in batch_ids:
                 request = self.requests[request_id]
                 required_input_blocks = self.calc_required_blocks(
                     request.size, block_size)
+                current_prefill_tokens += request.size
                 required_total_blocks += required_input_blocks + reserved_output_blocks
-                if required_total_blocks > available_blocks:
+                if required_total_blocks > available_blocks or current_prefill_tokens > max_num_batched_tokens:
                     break
                 requests.append(request.raw)
 
