@@ -126,6 +126,7 @@ class CompletionResponseChoice(BaseModel):
     """
     index: int
     text: str
+    token_ids: Optional[List[int]] = None
     arrival_time: Optional[float] = None
     logprobs: Optional[int] = None
     reasoning_content: Optional[str] = None
@@ -150,7 +151,8 @@ class CompletionResponseStreamChoice(BaseModel):
     """
     index: int
     text: str
-    arrival_time: float
+    arrival_time: float = None
+    token_ids: Optional[List[int]] = None
     logprobs: Optional[float] = None
     reasoning_content: Optional[str] = None
     finish_reason: Optional[Literal["stop", "length"]] = None
@@ -196,7 +198,7 @@ class CompletionRequest(BaseModel):
     stop: Optional[Union[str, List[str]]] = Field(default_factory=list)
     stream: Optional[bool] = False
     stream_options: Optional[StreamOptions] = None
-    suffix: Optional[str] = None
+    suffix: Optional[dict] = None
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     user: Optional[str] = None
@@ -222,8 +224,16 @@ class CompletionRequest(BaseModel):
         for key, value in self.dict().items():
             if value is not None:
                 req_dict[key] = value
+        if self.suffix is not None:
+            for key, value in self.suffix.items():
+                req_dict[key] = value
         if prompt is not None:
             req_dict['prompt'] = prompt
+
+        if isinstance(prompt[0], int):
+            req_dict["prompt_token_ids"] = prompt
+            del req_dict["prompt"]
+
         return req_dict
 
 

@@ -192,6 +192,8 @@ class OpenAIServingCompletion:
                 dealer.write([b"", req_id.encode('utf-8')])  # 发送多路请求
             output_tokens = [0] * num_choices
             inference_start_time = [0] * num_choices
+            first_iteration = [True] * num_choices
+
             while num_choices > 0:
                 try:
                     raw_data = await asyncio.wait_for(dealer.read(), timeout=300)
@@ -201,10 +203,29 @@ class OpenAIServingCompletion:
                         raise ValueError(f"Engine is not healthy: {msg}")
                     else:
                         continue
+
+
                 res = json.loads(raw_data[-1].decode('utf-8'))
                 idx = int(res["request_id"].split("-")[-1])
                 if res.get("error_code", 200) != 200:
                     raise ValueError("{}".format(res["error_msg"]))
+
+                if first_iteration[idx]:
+                    if request.suffix is not None and request.suffix.get("training", False):
+                        chunk = CompletionStreamResponse(
+                            id=request_id,
+                            created=created_time,
+                            model=model_name,
+                            choices=[CompletionResponseStreamChoice(
+                                index=idx,
+                                text="",
+                                token_ids=list(res["prompt_token_ids"])
+                            )]
+                        )
+                        yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
+                    first_iteration[idx] = False
+
+
                 self.engine_client.data_processor.process_response_dict(res, stream=True)
                 if res['metrics'].get('first_token_time') is not None:
                     arrival_time = res['metrics']['first_token_time']
@@ -214,6 +235,7 @@ class OpenAIServingCompletion:
                 # api_server_logger.info(f"{arrival_time}")
 
                 output = res["outputs"]
+
                 chunk = CompletionStreamResponse(
                     id=request_id,
                     created=created_time,
@@ -221,10 +243,16 @@ class OpenAIServingCompletion:
                     choices=[CompletionResponseStreamChoice(
                         index=idx,
                         text=output["text"],
+                        token_ids=output.get("token_ids"),
                         reasoning_content=output.get("reasoning_content"),
                         arrival_time=arrival_time
                     )]
                 )
+                if res["finished"]:
+                    if request.max_tokens is None or output_tokens[idx] + 1 != request.max_tokens:
+                        chunk.choices[0].finish_reason = "stop"
+                    else:
+                        chunk.choices[0].finish_reason = "length"
 
                 output_tokens[idx] += 1
 
