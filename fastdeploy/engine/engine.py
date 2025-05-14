@@ -287,7 +287,6 @@ class LLMEngine(object):
                 # Send result by zmq directly
                 data = json.dumps(error_result.to_dict()).encode('utf-8')
                 self.zmq_server.send_multipart(request.request_id, data)
-                #self.scheduler.put_results([error_result])
 
 
     def add_requests(self, task, sampling_params=None):
