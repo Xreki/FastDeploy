@@ -72,6 +72,10 @@ class EngineArgs:
     """
     Configuration for speculative execution.
     """
+    dynamic_load_weight: int = 0
+    """
+    dynamic load weight
+    """
 
     # Inference configuration parameters
     gpu_memory_utilization: float = 0.9
@@ -215,6 +219,13 @@ class EngineArgs:
             "--speculative_config",
             default=None,
             help="Configuration for speculative execution."
+        )
+
+        model_group.add_argument(
+            "--dynamic_load_weight",
+            type=int,
+            default=EngineArgs.dynamic_load_weight,
+            help="Flag to indicate whether to load weight dynamically."
         )
 
         model_group.add_argument(
@@ -365,7 +376,8 @@ class EngineArgs:
         """
         return ModelConfig(
             model_name_or_path=self.model,
-            config_json_file=self.model_config_name
+            config_json_file=self.model_config_name,
+            dynamic_load_weight=self.dynamic_load_weight
         )
 
     def create_cache_config(self) -> CacheConfig:

@@ -41,6 +41,14 @@ class EngineClient:
                     suffix=pid,
                     create=False)
 
+        model_weights_status = np.zeros([1], dtype=np.int32)
+        self.model_weights_status_signal = IPCSignal(
+            name="model_weights_status",
+            array=model_weights_status,
+            dtype=np.int32,
+            suffix=pid,
+            create=False)
+
     def create_zmq_client(self, model, mode):
         """
         Create a ZMQ client.
@@ -182,4 +190,64 @@ class EngineClient:
             if elapsed_time > time_interval_threashold:
                 return False, "Worker Service Not Healthy"
 
+        return True, ""
+
+
+    def is_workers_alive(self):
+        """
+        Check the health of the model server by checking whether all workers are alive.
+
+        """
+        if self.model_weights_status_signal.value[0] == 0:
+            return True, ""
+        else:
+            return False, "No model weight enabled"
+
+
+
+    def update_model_weight(self, timeout = 300):
+        """
+        Update the model weight by sending a signal to the server.
+        1 : worker receive the signal and start to update model weight
+        2 : worker update finish and notify client
+        """
+        if self.model_weights_status_signal.value[0] == 0:
+            return True, ""
+        if self.model_weights_status_signal.value[0] == 1:
+            return False, "updating model weight already"
+
+        self.model_weights_status_signal.value[0] = 1
+        api_server_logger.info(f"start update model weight {self.model_weights_status_signal.value}")
+        while self.model_weights_status_signal.value[0] != 0  and timeout != 0:
+            time.sleep(1)
+            timeout -= 1
+            continue
+        if self.model_weights_status_signal.value[0] != 0:
+            return False, "Update model weight timeout"
+        time.sleep(1)
+        return True, ""
+
+
+
+    def clear_load_weight(self, timeout = 300):
+        """
+        Clear the load weight status.
+        -1 : worker receive the signal and start to clear model weight
+        -2 : worker clear finish and notify client
+        """
+        if self.model_weights_status_signal.value[0] == -2:
+            return True, ""
+        if self.model_weights_status_signal.value[0] == -1:
+            return False, "clearing model weight already"
+
+        self.model_weights_status_signal.value[0] = -1
+
+        api_server_logger.info(f"start clear model weight {self.model_weights_status_signal.value}")
+        while self.model_weights_status_signal.value[0] != -2  and timeout != 0:
+            time.sleep(1)
+            timeout -= 1
+            continue
+        if self.model_weights_status_signal.value[0] != -2:
+            return False, "clear model weight timeout"
+        time.sleep(1)
         return True, ""

@@ -165,8 +165,7 @@ class LLMEngine(object):
         # self.start_push_sender_thread()
         if self.do_profile:
             self._stop_profile()
-        llm_logger.info("Worker processes are launched with {} seconds.".format(
-            time.time() - start_time))
+        console_logger.info("Worker processes are launched with {} seconds.".format(time.time() - start_time))
         return True
 
     def _zmq_send_generated_tokens(self):
@@ -460,14 +459,21 @@ class LLMEngine(object):
 					create=True)
 
         if self.do_profile:
-            get_profile_block_num = np.zeros(
-                [self.cfg.tensor_parallel_size], dtype=np.int32)
+            get_profile_block_num = np.zeros([self.cfg.tensor_parallel_size], dtype=np.int32)
             self.get_profile_block_num_signal = IPCSignal(
                 name="get_profile_block_num",
 				array=get_profile_block_num,
 				dtype=np.int32,
                 suffix=self.ipc_signal_suffix,
 				create=True)
+
+        model_weights_status = np.zeros([1], dtype=np.int32)
+        self.model_weights_status_signal = IPCSignal(
+            name="model_weights_status",
+            array=model_weights_status,
+            dtype=np.int32,
+            suffix=self.ipc_signal_suffix,
+            create=True)
 
     def _exit_sub_services(self):
         """
@@ -479,6 +485,7 @@ class LLMEngine(object):
         self.worker_healthy_live_signal.clear()
         if hasattr(self, "get_profile_block_num_signal"):
             self.get_profile_block_num_signal.clear()
+        self.model_weights_status_signal.clear()
         if hasattr(self, "worker_proc") and self.worker_proc is not None:
             try:
                 os.killpg(self.worker_proc.pid, signal.SIGTERM)
@@ -534,6 +541,7 @@ class LLMEngine(object):
                     f" --pad_token_id {self.data_processor.pad_token_id}"
                     f" --engine_pid {self.engine_pid}"
                     f" --do_profile {self.do_profile}"
+                    f" --dynamic_load_weight {self.cfg.model_config.dynamic_load_weight}"
                     f" --kv_cache_ratio {self.cfg.cache_config.kv_cache_ratio} --dtype {self.cfg.cache_config.cache_dtype}")
         if self.cfg.nnode > 1:
             pd_cmd = pd_cmd + f" --ips {self.cfg.ips}"

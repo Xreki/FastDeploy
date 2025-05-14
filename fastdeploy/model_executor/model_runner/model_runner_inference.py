@@ -38,33 +38,54 @@ class ModelRunner(ModelRunnerBase):
         # gqa .etc paddle Flags set
         pass
 
-    def _load_model(self, model_name):
-        from efficientllm.models.export_model import build_stream_line_model
-        from efficientllm.models.tokenizer import ErnieBotTokenizer
-        vocab_file_names = ["tokenizer.model", "spm.model", "ernie_token_100k.model"]
-        for i in range(len(vocab_file_names)):
-            if os.path.exists(os.path.join(self.args.model_name_or_path, vocab_file_names[i])):
-                ErnieBotTokenizer.resource_files_names["vocab_file"] = vocab_file_names[i]
-                break
-        config, tokenizer, model = build_stream_line_model(
-            os.path.join(self.args.model_name_or_path, os.getenv("CONFIG_JSON_FILE", "config.json")),
-            self.args.model_name_or_path,
-            self.args.dtype,
-            block_size=self.args.block_size,
-            max_len=self.args.max_model_len,
-            stage_flag="msgid-1 predict",
-            export_model_type="weight_only_int8",
-            use_fake_parameter=False,
-            use_stop_seqs=self.model_cfg.ellm_dynamic_use_stop_seqs,
-            use_beam_search=False,
-            speculate_method=None,
-            speculate_max_draft_token_num=5,
-            return_all_hidden_states=False,
-            moe_quant_type="weight_only_int4",
-            use_safetensors=self.model_cfg.is_unified_ckpt,
-        )
-        model.eval()
-        self.model = model
+    def _load_model(self, model_name, dynamic_load_weight):
+
+        local_test = False
+        if dynamic_load_weight:
+            from efficientllm.models.efficientllm_model import EfficientModel
+            efficientllm_model = EfficientModel(
+                model_name_or_path=self.args.model_name_or_path,
+                dtype=self.args.dtype,
+                block_size=self.args.block_size,
+                max_len=self.args.max_model_len,
+                gemm_method="weight_only_int8",
+                moe_quant_type="weight_only_int8",
+                load_model_from_ipc=dynamic_load_weight,
+                nranks=self.nranks,
+                rank=self.rank,
+                embeddings_column_cut=False,
+                local_test=local_test,
+            )
+            efficientllm_model.eval()
+            self.model = efficientllm_model
+        else:
+            from efficientllm.models.export_model import build_stream_line_model
+            from efficientllm.models.tokenizer import ErnieBotTokenizer
+            vocab_file_names = ["tokenizer.model", "spm.model", "ernie_token_100k.model"]
+            for i in range(len(vocab_file_names)):
+                if os.path.exists(os.path.join(self.args.model_name_or_path, vocab_file_names[i])):
+                    ErnieBotTokenizer.resource_files_names["vocab_file"] = vocab_file_names[i]
+                    break
+
+            config, tokenizer, model = build_stream_line_model(
+                os.path.join(self.args.model_name_or_path, os.getenv("CONFIG_JSON_FILE", "config.json")),
+                self.args.model_name_or_path,
+                self.args.dtype,
+                block_size=self.args.block_size,
+                max_len=self.args.max_model_len,
+                stage_flag="msgid-1 predict",
+                export_model_type="weight_only_int8",
+                use_fake_parameter=False,
+                use_stop_seqs=self.model_cfg.ellm_dynamic_use_stop_seqs,
+                use_beam_search=False,
+                speculate_method=None,
+                speculate_max_draft_token_num=5,
+                return_all_hidden_states=False,
+                moe_quant_type="weight_only_int4",
+                use_safetensors=self.model_cfg.is_unified_ckpt,
+            )
+            model.eval()
+            self.model = model
 
     def init_rotary_position_embedding(self, max_model_len):
         tmp_position_ids = paddle.arange(max_model_len).reshape((1, -1))
@@ -74,12 +95,13 @@ class ModelRunner(ModelRunnerBase):
             self.rope_theta
         )
 
-    def _init_kvcache(self, max_block_num):
+    def _init_kvcache(self):
         """
         分享不拷贝数据
         """
 
-        self.cache_kvs = {}
+        cache_kvs = {}
+        max_block_num = self.num_gpu_blocks
 
         if (
             hasattr(self.model_cfg, "num_key_value_heads")
@@ -94,7 +116,7 @@ class ModelRunner(ModelRunnerBase):
 
         for i in range(self.model_cfg.num_layers):
             cache_type = self.args.dtype
-            self.cache_kvs["key_caches_{}".format(i)] = paddle.full(
+            cache_kvs["key_caches_{}".format(i)] = paddle.full(
                 shape=[
                     max_block_num,
                     kv_num_head,
@@ -104,7 +126,7 @@ class ModelRunner(ModelRunnerBase):
                 fill_value=0,
                 dtype=cache_type,
             )
-            self.cache_kvs["value_caches_{}".format(i)] = paddle.full(
+            cache_kvs["value_caches_{}".format(i)] = paddle.full(
                 shape=[
                     max_block_num,
                     kv_num_head,
@@ -115,9 +137,10 @@ class ModelRunner(ModelRunnerBase):
                 dtype=cache_type,
             )
 
-        self.share_inputs["caches"] = list(self.cache_kvs.values())
-        for value in self.cache_kvs.values():
+        self.share_inputs["caches"] = list(cache_kvs.values())
+        for value in cache_kvs.values():
             del value
+        paddle.device.cuda.empty_cache()
 
     def dy_input_preprocess(self, tasks):
         """
@@ -203,6 +226,19 @@ class ModelRunner(ModelRunnerBase):
     def generate(self):
         self.model(**self.share_inputs)
 
+    def clear_parameters(self, pid):
+        if "caches" in self.share_inputs:
+            self.model.clear_parameters(pid)
+            del self.share_inputs["caches"]
+            paddle.device.cuda.empty_cache()
+            self.model.log_memory_usage("clear all memory")
+
+    def update_parameters(self, pid):
+        if "caches" not in self.share_inputs:
+            self.model.update_parameters(pid)
+            self._init_kvcache()
+            self.model.log_memory_usage("update all memory")
+
     def _cal_theortical_kvcache(self):
         """
         计算理论的kvcache大小
@@ -218,19 +254,18 @@ class ModelRunner(ModelRunnerBase):
         theoretical_kv_cache_memory = (2 * byte_of_cache * self.args.block_size * num_layers * hidden_dim)
         return theoretical_kv_cache_memory
 
-
-    def _update_share_input_block_num(self, num_gpu_blocks):
+    def _update_share_input_block_num(self):
         del self.share_inputs["caches"]
-        self._init_kvcache(num_gpu_blocks)
+        self._init_kvcache()
 
         del self.share_inputs["block_tables"]
         self.share_inputs["block_tables"] = paddle.full(
-            [self.args.max_num_seqs, num_gpu_blocks], -1, dtype="int32"
+            [self.args.max_num_seqs, self.num_gpu_blocks], -1, dtype="int32"
         )
 
         # 初始化free list
         free_list = list(
-            range(num_gpu_blocks - 1, int(num_gpu_blocks * self.args.kv_cache_ratio) - 1, -1)
+            range(self.num_gpu_blocks - 1, int(self.num_gpu_blocks * self.args.kv_cache_ratio) - 1, -1)
         )
         self.free_list_len = len(free_list)
         self.share_inputs.update({
