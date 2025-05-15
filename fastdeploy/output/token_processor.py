@@ -97,9 +97,9 @@ class TokenProcessor(object):
             os.environ["ELLM_LOG_LEVEL"] = "3"
             use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
             if use_pip_eff_llm is None:
-                from fastdeploy.model_executor.ops.gpu import get_output
+                from fastdeploy.model_executor.ops.gpu import get_output,speculate_get_output
             else:
-                from efficientllm.gpu import get_output
+                from efficientllm.gpu import get_output,speculate_get_output
         while True:
             try:
                 rank_id = 0
