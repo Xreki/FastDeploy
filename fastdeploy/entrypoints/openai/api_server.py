@@ -229,14 +229,11 @@ def launch_api_server(args) -> None:
     """
     启动http服务
     """
-<<<<<<< HEAD
     # 检查端口是否可用
     if not is_port_available(args.host, args.port):
         raise Exception(f"The parameter `port`:{args.port} is already in use.")
 
     # 记录启动日志
-=======
->>>>>>> 78ce856 (Remove FD_MODEL_NAME and OPEN_SOURCE setting DLTP-81007)
     api_server_logger.info(f"launch Fastdeploy api server... port: {args.port}")
     api_server_logger.info(f"args: {args.__dict__}")
 
