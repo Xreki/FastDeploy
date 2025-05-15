@@ -1,6 +1,7 @@
 setuptools==50.3.2
 pre-commit
 yapf
+flake8
 ruamel.yaml
 zmq
 aiozmq
