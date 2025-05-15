@@ -19,8 +19,6 @@
 #pragma GCC diagnostic pop
 #endif          // __GNUC__
 
-using namespace cute;
-
 template <typename ElementType, typename OutElementType, typename AccumElementType, typename CtaShape,
     typename WarpShape, typename InstructionShape, int Stages>
 struct DeviceGemmFp8RowwiseSm89
@@ -67,18 +65,18 @@ struct DeviceGemmFp8RowwiseSm89
     using ComputeBScale = cutlass::epilogue::threadblock::VisitorCompute<cutlass::multiplies, ElementComputeEpilogueScale,
         ElementComputeEpilogueScale, cutlass::FloatRoundStyle::round_to_nearest>;
     using bScaleSrc = cutlass::epilogue::threadblock::VisitorRowBroadcast<OutputTileThreadMap, ElementComputeEpilogueScale,
-        Stride<_0, _1, _0>>;
+        cute::Stride<cute::_0, cute::_1, cute::_0>>;
     using EpilogueBScale = cutlass::epilogue::threadblock::Sm80EVT<ComputeBScale, accSrc, bScaleSrc>;
 
     using ComputeAScale = cutlass::epilogue::threadblock::VisitorCompute<cutlass::multiplies, ElementComputeEpilogueScale,
         ElementComputeEpilogueScale, cutlass::FloatRoundStyle::round_to_nearest>;
     using aScaleSrc = cutlass::epilogue::threadblock::VisitorColBroadcast<OutputTileThreadMap, ElementComputeEpilogueScale,
-        Stride<_0, _0, _0>>;
+        cute::Stride<cute::_0, cute::_0, cute::_0>>;
     using EpilogueAScale = cutlass::epilogue::threadblock::Sm80EVT<ComputeAScale, EpilogueBScale, aScaleSrc>;
 
     using Bias = cutlass::epilogue::threadblock::VisitorRowBroadcast<
         OutputTileThreadMap, ElementC,
-        cute::Stride<_0, _1, _0>  // StrideMNL
+        cute::Stride<cute::_0, cute::_1, cute::_0>  // StrideMNL
     >;
 
     using Compute0 = cutlass::epilogue::threadblock::VisitorCompute<
@@ -92,7 +90,7 @@ struct DeviceGemmFp8RowwiseSm89
         Bias>;
 
     using dTar = cutlass::epilogue::threadblock::VisitorAuxStore<OutputTileThreadMap, ElementOutput,
-        cutlass::FloatRoundStyle::round_to_nearest, Stride<int64_t, _1, _0>>;
+        cutlass::FloatRoundStyle::round_to_nearest, cute::Stride<int64_t, cute::_1,cute:: _0>>;
     using EpilogueStore = cutlass::epilogue::threadblock::Sm80EVT<dTar, EVTCompute0>;
 
     using EpilogueOp = EpilogueStore;
