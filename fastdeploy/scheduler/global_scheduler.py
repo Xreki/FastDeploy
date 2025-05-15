@@ -1,5 +1,5 @@
 """
-# Copyright (c) 2024 PaddlePaddle Authors. All Rights Reserved.
+# Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 # limitations under the License.
 """
 
-from typing import List
+from typing import List, Optional
 import time
 import redis
 from fastdeploy.engine.request import Request, RequestOutput
@@ -27,15 +27,25 @@ class GlobalScheduler(object):
     GlobalScheduler class
     """
 
-    def __init__(self):
-        self.client = redis.Redis(
-            host='10.178.5.194', port=6379, db=1, password="aurora_123")
-        self.topic = "fd_reqs"
-        self.ttl = 180
-        self.redundant_ttl = 30
-        self.unique_key_ttl = self.ttl + self.redundant_ttl
+    def __init__(self,
+                 host: str,
+                 port: int,
+                 db: int,
+                 password: Optional[str],
+                 topic: str,
+                 ttl: int,
+                 remote_write_time: int,
+                 wait_response_timeout: float
+                 ):
+
+        self.topic = topic
+        self.ttl = ttl
+        self.remote_write_time = remote_write_time
+        self.wait_response_timeout = wait_response_timeout
         self.wait_request_timeout = 10
-        self.wait_response_timeout = 5  # required: wait_response_timeout < redundant_ttl
+
+        self.client = redis.Redis(
+            host=host, port=port, db=db, password=password)
 
     def _request_queue_name(self):
         return f"{self.topic}.request"
@@ -63,7 +73,7 @@ class GlobalScheduler(object):
         duplicated_ids = list()
         for request in requests:
             unique_key = self._unique_key_name(request.id)
-            if self.client.set(unique_key, "", ex=self.unique_key_ttl, nx=True):
+            if self.client.set(unique_key, "", ex=self.ttl, nx=True):
                 valided_keys.append(unique_key)
             else:
                 duplicated_ids.append(request.id)
@@ -71,14 +81,15 @@ class GlobalScheduler(object):
         if len(duplicated_ids) > 0:
             self.client.delete(*valided_keys)
             raise ValueError(
-                f"request_id is duplicated (ids={duplicated_ids})")
+                f"Request_id is duplicated (ids={duplicated_ids})")
 
         # add to request queue
         serialized_requests = [request.serialize() for request in requests]
         self.client.rpush(self._request_queue_name(), *serialized_requests)
-        llm_logger.debug(f"global cached requests: {requests}")
+        llm_logger.debug(f"Global cached requests: {requests}")
 
-    def get_requests(self, available_blocks, block_size, reserved_output_blocks, batch=1) -> List[Request]:
+    def get_requests(self, available_blocks, block_size, reserved_output_blocks, \
+        max_num_batched_tokens, batch=1) -> List[Request]:
         """
             get requests blocked from shared cache
         """
@@ -97,6 +108,7 @@ class GlobalScheduler(object):
             serialized_requests = blocked_data[1:]
 
         required_total_blocks = 0
+        current_prefill_tokens = 0
         remaining_request = []
         requests = []
         for serialized_request in serialized_requests:
@@ -107,17 +119,18 @@ class GlobalScheduler(object):
             request: ScheduledRequest = ScheduledRequest.unserialize(
                 serialized_request)
             if (time.time() - request.scheduled_time) > self.ttl:
-                llm_logger.info(f"request_id ({request.id}) has expired")
+                llm_logger.info(f"Request_id ({request.id}) has expired")
                 continue
 
             required_input_blocks = self.calc_required_blocks(
                 request.size, block_size)
+            current_prefill_tokens += request.size
             required_total_blocks += required_input_blocks + reserved_output_blocks
-            if required_total_blocks > available_blocks:
+            if required_total_blocks > available_blocks or current_prefill_tokens > max_num_batched_tokens:
                 remaining_request.append(serialized_request)
                 continue
             requests.append(request.raw)
-        llm_logger.debug(f"global get requests:{len(requests)}")
+        llm_logger.debug(f"Global get requests:{len(requests)}")
 
         if len(remaining_request) > 0:
             self.client.lpush(self._request_queue_name(), *remaining_request)
@@ -142,10 +155,10 @@ class GlobalScheduler(object):
 
         for response_id, responses in group.items():
             ttl = self.client.ttl(self._unique_key_name(
-                response_id)) - self.redundant_ttl
+                response_id)) - self.remote_write_time
             if ttl <= 0:
                 llm_logger.info(
-                    f"output of request_id ({response_id}) has expired")
+                    f"Output of request_id ({response_id}) has expired")
                 continue
 
             with self.client.pipeline() as pipe:
@@ -163,13 +176,13 @@ class GlobalScheduler(object):
 
         serialized_responses = self.client.lpop(key, size)
         if serialized_responses is None or len(serialized_responses) == 0:
-            ttl = self.client.ttl(self._unique_key_name(
-                request_id)) - self.redundant_ttl
+            ttl = self.client.ttl(self._unique_key_name(request_id))
             if ttl <= 0:
                 raise ValueError(
-                    f"output of request_id ({request_id}) has expired")
+                    f"Output of request_id ({request_id}) has expired")
 
-            blocked_data = self.client.blpop(key, self.wait_response_timeout)
+            wait_time = min(ttl, self.wait_response_timeout)
+            blocked_data = self.client.blpop(key, wait_time)
             if blocked_data is None:
                 return []
             serialized_responses = blocked_data[1:]

@@ -145,6 +145,16 @@ class Worker:
             suffix=self.args.engine_pid,
             create=False)
 
+        # model_weights_status 用于engine感知各worker中模型权重状态
+        model_weights_status = np.zeros([1], dtype=np.int32)
+        self.model_weights_status_signal = IPCSignal(
+            name="model_weights_status",
+            array=model_weights_status,
+            dtype=np.int32,
+            suffix=self.args.engine_pid,
+            create=False)
+
+
     def format_print_configuration(self):
         """
         print model config
@@ -196,7 +206,31 @@ class Worker:
             self.args.block_size,
             self.args.enc_dec_block_num,
         )
+    def check_model_weights_status(self):
+        """
+        check model weights status
+        """
+        is_stop = 0
+        while self.model_weights_status_signal.value[0] != 0:
+            if self.model_weights_status_signal.value[0] == 1:
+                logger.info(f"infer engine stopped! start to load new checkpoint... {self.rank}")
+                self.infer_engine.update_parameters(self.args.engine_pid)
+            elif self.model_weights_status_signal.value[0] == -1:
+                logger.info(f"infer engine stopped! start to clear checkpoint... {self.rank}")
+                self.infer_engine.clear_parameters(self.args.engine_pid)
 
+            while True:
+                if self.model_weights_status_signal.value[0] == 0:
+                    logger.info(f"finished loading new checkpoint {self.rank}")
+                    break
+                elif  is_stop == 1 or (self.model_weights_status_signal.value[0] == -2 and is_stop == 0):
+                    if is_stop == 0:
+                        logger.info(f"finished clearing checkpoint {self.rank}")
+                        is_stop = 1
+                    time.sleep(0.001)
+                    break
+                else:
+                    time.sleep(0.001)
 
     def run(self):
         """
@@ -214,12 +248,19 @@ class Worker:
         """
         infer_seed_increment = paddle.full(shape=[self.args.max_num_seqs, 1], fill_value=4, dtype="int64")
         self.nnode = 1
+
         while True:
+            if self.nranks > 1:
+                paddle.distributed.barrier()
+
+            self.check_model_weights_status()
+
 
             self.insert_step = False
 
             self.worker_healthy_live_signal.value[self.rank] = int(time.time())
             mp_num_per_node = self.nranks
+
 
             if self.rank % mp_num_per_node == 0:
                 if self.engine_worker_queue.num_tasks() > 0:
@@ -230,6 +271,7 @@ class Worker:
 
             if self.nranks > 1:
                 paddle.distributed.barrier()
+
 
             if self.exist_task_signal.value[0] == 1 or self.engine_worker_queue.read_finish_flag.get() == 1:
                 logger.info(f"Rank: {self.rank} Detected new requests.")
@@ -264,6 +306,7 @@ class Worker:
             self.infer_engine.share_inputs["infer_seed"][:] %= self.MAX_INFER_SEED
 
             self.step_cuda()
+
 
     def determine_num_available_blocks(self):
         """Profiles the peak memory usage of the model to determine how many
@@ -344,7 +387,9 @@ class Worker:
         num_gpu_blocks = self.get_profile_block_num_signal.value.min().item()
         self.get_profile_block_num_signal.value[self.rank] = int(num_gpu_blocks)
         logger.info(f"{self.get_profile_block_num_signal.value[self.rank]} GPU KV blocks can be allocated.")
-        self.infer_engine._update_share_input_block_num(num_gpu_blocks)
+        self.infer_engine.num_gpu_blocks = num_gpu_blocks
+        self.infer_engine._update_share_input_block_num()
+
         paddle.device.cuda.empty_cache()
         gc.collect()
 
@@ -387,6 +432,7 @@ def parse_args():
     parser.add_argument("--gpu_memory_utilization", type=float, default=0.9, help="gpu memory utilization")
     parser.add_argument("--engine_pid", type=int, default=None, help="Process ID of engine")
     parser.add_argument("--do_profile", type=int, default=0, help="do profile or not")
+    parser.add_argument("--dynamic_load_weight", type=int, default=0, help="dynamic load weight or not")
     parser.add_argument("--pad_token_id", type=int, default=-1, help="pad token id")
     parser.add_argument("--eos_tokens_lens", type=int, default=2, help="eos token lens")
     args = parser.parse_args()

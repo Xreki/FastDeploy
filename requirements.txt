@@ -1,5 +1,6 @@
 zmq
 aiozmq
+openai
 tqdm
 pynvml
 uvicorn

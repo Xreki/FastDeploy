@@ -236,7 +236,7 @@ class DataProcessor(BaseDataProcessor):
         # 处理prompt_token_ids
         if not request.get('prompt_token_ids'):
             if 'prompt' in request:
-                raw_request = request.get('raw_request', False)
+                raw_request = request.get('raw_request', True)
                 request['prompt_token_ids'] = self.text2ids(
                     request['prompt'],
                     max_model_len,
@@ -294,14 +294,16 @@ class DataProcessor(BaseDataProcessor):
         req_id = response_dict["request_id"]
 
         token_ids = response_dict["outputs"]["token_ids"]
-        response_dict["outputs"]["text"] = self.ids2tokens(token_ids, req_id)
 
         if is_end:
             data_processor_logger.debug("Request id: {} has been completed.".format(token_ids))
-            response_dict["outputs"]["text"] = self.ids2tokens(token_ids, req_id)
             full_text = self.clear_request_status(req_id)
             if not stream:
                 response_dict["outputs"]["text"] = full_text
+            else:
+                response_dict["outputs"]["text"] = ""
+        else:
+            response_dict["outputs"]["text"] = self.ids2tokens(token_ids, req_id)
         return response_dict
 
 
@@ -323,14 +325,13 @@ class DataProcessor(BaseDataProcessor):
                 truncation=True,
             )
         else:
-            if not raw_request:
+            if not raw_request or self.tokenizer.chat_template is None:
                 text = [text] if isinstance(text, str) else text
                 chat_template = False
-
             elif self.tokenizer.chat_template is not None:
                 text = [text] if isinstance(text, str) else text
                 text = [self.tokenizer.apply_chat_template(sentence, tokenize=False) for sentence in text]
-                chat_template = self.tokenizer.chat_template
+                chat_template = True
             tokens = self.tokenizer(
                 text,
                 return_tensors="np",

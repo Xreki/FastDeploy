@@ -220,6 +220,8 @@ class RequestOutput:
         finished: bool = False,
         metrics: Optional[RequestMetrics] = None,
         num_cached_tokens: Optional[int] = 0,
+        error_code: Optional[int] = 200,
+        error_msg: Optional[str] = None,
     ) -> None:
         self.request_id = request_id
         self.prompt = prompt
@@ -228,6 +230,8 @@ class RequestOutput:
         self.finished = finished
         self.metrics = metrics
         self.num_cached_tokens = num_cached_tokens
+        self.error_code = error_code
+        self.error_msg = error_msg
 
     def add(self, next_output: "RequestOutput") -> None:
         """Merge RequestOutput into this one"""
@@ -272,4 +276,6 @@ class RequestOutput:
             "finished": self.finished,
             "metrics": None if self.metrics is None else asdict(self.metrics),
             "num_cached_tokens": self.num_cached_tokens,
+            "error_code": self.error_code,
+            "error_msg": self.error_msg,
         }
