@@ -83,7 +83,7 @@ class TokenProcessor(object):
         """
         read tokens from paddle inference engine and process
         """
-        if int(os.getenv("OPEN_SOURCE", "0")) == 1:
+        if self.cfg.model_config.architectures != "ErnieForCausalLM":
             from paddlenlp_ops import get_output, speculate_get_output
         else:
             os.environ["ELLM_LOG_LEVEL"] = "3"

@@ -17,7 +17,7 @@
 import openai
 
 ip = "0.0.0.0"
-service_http_port = "9904"    # 服务配置的
+service_http_port = "9906"    # 服务配置的
 
 client = openai.Client(base_url=f"http://{ip}:{service_http_port}/v1", api_key="EMPTY_API_KEY")
 
@@ -28,7 +28,6 @@ response = client.completions.create(
     max_tokens=100,
     seed=13,
     stream=False,
-    top_p=-1.0,
 )
 
 print(response)

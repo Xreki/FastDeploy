@@ -229,11 +229,6 @@ def launch_api_server(args) -> None:
     """
     启动http服务
     """
-    # 检查端口是否可用
-    if not is_port_available(args.host, args.port):
-        raise Exception(f"The parameter `port`:{args.port} is already in use.")
-
-    # 记录启动日志
     api_server_logger.info(f"launch Fastdeploy api server... port: {args.port}")
     api_server_logger.info(f"args: {args.__dict__}")
 
@@ -249,7 +244,8 @@ def launch_api_server(args) -> None:
 
 def main():
     """main函数"""
-
+    if not is_port_available(args.host, args.port):
+        raise Exception(f"The parameter `port`:{args.port} is already in use.")
     load_engine()
     launch_api_server(args)
 

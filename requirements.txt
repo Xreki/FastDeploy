@@ -1,3 +1,8 @@
+setuptools==75.1.0
+pre-commit
+yapf
+flake8
+ruamel.yaml
 zmq
 aiozmq
 openai
@@ -17,5 +22,4 @@ gradio
 xlwt
 visualdl
 protobuf==3.20.3
-setuptools==75.1.0
 setuptools-scm>=8
