@@ -23,6 +23,7 @@ from collections import Counter
 
 from paddlenlp.utils.env import MAX_BSZ, MAX_DRAFT_TOKENS, SPECULATE_MAX_BSZ
 
+from fastdeploy.metrics.metrics import main_process_metrics
 from fastdeploy.utils import datetime_diff, llm_logger
 from fastdeploy.engine.request import RequestOutput, CompletionOutput, RequestMetrics
 
@@ -161,7 +162,7 @@ class TokenProcessor(object):
             task_id = task.request_id
 
             self.total_step += 1
-
+            current_time = time.time()
             if self.tokens_counter[task_id] == 0:
                 metrics = RequestMetrics(
                     arrival_time=task.arrival_time,
@@ -170,8 +171,16 @@ class TokenProcessor(object):
                     time_in_queue = task.schedule_start_time - task.preprocess_end_time,
                     preprocess_cost_time = task.preprocess_end_time - task.preprocess_start_time
                 )
+                main_process_metrics.time_to_first_token.observe(time.time() - task.inference_start_time)
             else:
-                metrics = RequestMetrics(arrival_time=time.time())
+                if hasattr(task, 'last_token_time') and task.last_token_time is not None:
+                    token_gen_time = current_time - task.last_token_time
+                    main_process_metrics.time_per_output_token.observe(token_gen_time)
+
+                task.last_token_time = current_time
+                metrics = RequestMetrics(
+                    arrival_time=time.time(),
+                )
             self.number_of_output_tokens += len(token_ids)
             result = RequestOutput(
                 request_id=task_id,
@@ -201,6 +210,7 @@ class TokenProcessor(object):
                         f"Speculate accept ratio: {1 - self.total_step * 1.0 / self.number_of_output_tokens}"
                         f" total step: {self.total_step}. total_output_token_num: {self.number_of_output_tokens}"
                     )
+                    main_process_metrics.num_requests_running.dec(1)
                     break
                 result.outputs.token_ids.append(token_id)
             batch_result.append(result)

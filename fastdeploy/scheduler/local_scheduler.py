@@ -19,6 +19,7 @@ from typing import Dict, List, Set
 import threading
 import time
 
+from fastdeploy.metrics.metrics import main_process_metrics
 from fastdeploy.utils import llm_logger
 from fastdeploy.engine.request import Request, RequestOutput
 from fastdeploy.scheduler.data import ScheduledRequest, ScheduledResponse
@@ -93,7 +94,7 @@ class LocalScheduler(object):
             self.requests += requests
             self.ids.update([request.id for request in requests])
             self.requests_not_empty.notify_all()
-
+            main_process_metrics.num_requests_waiting.inc(len(requests))
             llm_logger.debug(f"local cached requests: {requests}")
             
 
@@ -128,6 +129,8 @@ class LocalScheduler(object):
                 requests.append(request.raw)
 
             self.request_read_cursor += len(requests)
+            main_process_metrics.num_requests_waiting.dec(len(requests))
+            main_process_metrics.num_requests_running.inc(len(requests))
             llm_logger.debug(f"local get requests: {len(requests)}")
             return requests
 

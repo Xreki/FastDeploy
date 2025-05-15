@@ -18,6 +18,7 @@ from typing import List
 import time
 import redis
 from fastdeploy.engine.request import Request, RequestOutput
+from fastdeploy.metrics.metrics import main_process_metrics
 from fastdeploy.scheduler.data import ScheduledRequest, ScheduledResponse
 from fastdeploy.utils import llm_logger
 
@@ -77,6 +78,7 @@ class GlobalScheduler(object):
         serialized_requests = [request.serialize() for request in requests]
         self.client.rpush(self._request_queue_name(), *serialized_requests)
         llm_logger.debug(f"global cached requests: {requests}")
+        main_process_metrics.num_requests_waiting.inc(len(requests))
 
     def get_requests(self, available_blocks, block_size, reserved_output_blocks, batch=1) -> List[Request]:
         """
@@ -121,6 +123,8 @@ class GlobalScheduler(object):
 
         if len(remaining_request) > 0:
             self.client.lpush(self._request_queue_name(), *remaining_request)
+        main_process_metrics.num_requests_running.inc(len(requests))
+        main_process_metrics.num_requests_waiting.dec(len(requests))
         return requests
 
     def put_results(self, results: List[RequestOutput]):

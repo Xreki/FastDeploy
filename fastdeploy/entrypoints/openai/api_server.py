@@ -13,15 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-
+import shutil
 import uvicorn
-import json
 import zmq
 import os
-from fastapi import FastAPI, APIRouter, Request
+import threading
+from fastapi import FastAPI, Request
 from multiprocessing import current_process
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from contextlib import asynccontextmanager
+from prometheus_client import  CONTENT_TYPE_LATEST
+from fastdeploy.metrics.metrics import cleanup_prometheus_files, main_process_metrics, EXCLUDE_LABELS, \
+    get_filtered_metrics
 from fastdeploy.utils import FlexibleArgumentParser, api_server_logger, is_port_available
 from fastdeploy.engine.args_utils import EngineArgs
 from fastdeploy.engine.engine import LLMEngine
@@ -87,6 +90,9 @@ async def lifespan(app: FastAPI):
     # close zmq
     try:
         engine_client.zmq_client.close()
+        from prometheus_client import multiprocess
+        multiprocess.mark_process_dead(os.getpid())
+        api_server_logger.info(f"Closing metrics client pid: {pid}")
     except Exception as e:
         api_server_logger.warning(e)
 
@@ -195,6 +201,10 @@ def launch_api_server(args) -> None:
     api_server_logger.info(f"args: {args.__dict__}")
 
     try:
+        prom_dir = cleanup_prometheus_files(True)
+        os.environ["PROMETHEUS_MULTIPROC_DIR"] = prom_dir
+        metrics_server_thread = threading.Thread(target=run_main_metrics_server, daemon=True)
+        metrics_server_thread.start()
         uvicorn.run(app="fastdeploy.entrypoints.openai.api_server:app",
                     host=args.host,
                     port=args.port,
@@ -203,13 +213,40 @@ def launch_api_server(args) -> None:
     except Exception as e:
         api_server_logger.error(f"launch sync http server error, {e}")
 
+def cleanup_prometheus_files(ismain):
+    PROM_DIR = "/tmp/prom_main" if ismain else "/tmp/prom_worker"
+    if os.path.exists(PROM_DIR):
+        shutil.rmtree(PROM_DIR)
+    os.makedirs(PROM_DIR, exist_ok=True)
+    return PROM_DIR
 
+# 创建主进程的 FastAPI 应用
+main_app = FastAPI()
+@main_app.get("/metrics")
+async def metrics():
+    metrics_text = get_filtered_metrics(
+        EXCLUDE_LABELS,
+        extra_register_func=lambda reg: main_process_metrics.register_all(reg)
+    )
+    return Response(metrics_text, media_type=CONTENT_TYPE_LATEST)
+
+
+
+def run_main_metrics_server():
+    """Metrics server running the main process"""
+    if not is_port_available("0.0.0.0", 8000):
+        raise Exception(f"The parameter `port`:{args.port} is already in use.")
+    uvicorn.run(
+        main_app,
+        host="0.0.0.0",
+        port=8000,
+        log_level="error"
+    )
 def main():
     """main函数"""
 
     load_engine()
     launch_api_server(args)
-
 
 if __name__ == "__main__":
     main()
