@@ -213,17 +213,13 @@ def launch_api_server(args) -> None:
     except Exception as e:
         api_server_logger.error(f"launch sync http server error, {e}")
 
-def cleanup_prometheus_files(ismain):
-    PROM_DIR = "/tmp/prom_main" if ismain else "/tmp/prom_worker"
-    if os.path.exists(PROM_DIR):
-        shutil.rmtree(PROM_DIR)
-    os.makedirs(PROM_DIR, exist_ok=True)
-    return PROM_DIR
 
-# 创建主进程的 FastAPI 应用
 main_app = FastAPI()
 @main_app.get("/metrics")
 async def metrics():
+    """
+    metrics
+    """
     metrics_text = get_filtered_metrics(
         EXCLUDE_LABELS,
         extra_register_func=lambda reg: main_process_metrics.register_all(reg)

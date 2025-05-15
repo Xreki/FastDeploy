@@ -10,6 +10,18 @@ from prometheus_client.registry import Collector
 
 
 def cleanup_prometheus_files(is_main):
+    """
+       Cleans and recreates the Prometheus multiprocess directory.
+
+       Depending on whether it's the main process or a worker, this function removes the corresponding
+       Prometheus multiprocess directory (/tmp/prom_main or /tmp/prom_worker) and recreates it as an empty directory.
+
+       Args:
+           is_main (bool): Indicates whether the current process is the main process.
+
+       Returns:
+           str: The path to the newly created Prometheus multiprocess directory.
+    """
     PROM_DIR = "/tmp/prom_main" if is_main else "/tmp/prom_worker"
     if os.path.exists(PROM_DIR):
         shutil.rmtree(PROM_DIR)
@@ -18,11 +30,30 @@ def cleanup_prometheus_files(is_main):
 
 
 class SimpleCollector(Collector):
+    """
+        A custom Prometheus collector that filters out specific metrics by name.
+
+        This collector wraps an existing registry and yields only those metrics
+        whose names are not in the specified exclusion set.
+    """
     def __init__(self, base_registry, exclude_names: Set[str]):
+        """
+            Initializes the SimpleCollector.
+
+            Args:
+                base_registry (CollectorRegistry): The source registry from which metrics are collected.
+                exclude_names (Set[str]): A set of metric names to exclude from collection.
+        """
         self.base_registry = base_registry
         self.exclude_names = exclude_names
 
     def collect(self):
+        """
+                Collects and yields metrics not in the exclusion list.
+
+                Yields:
+                    Metric: Prometheus Metric objects that are not excluded.
+                """
         for metric in self.base_registry.collect():
             if metric.name not in self.exclude_names:
                 yield metric
