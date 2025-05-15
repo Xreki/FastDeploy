@@ -231,7 +231,7 @@ async def metrics():
 def run_main_metrics_server():
     """Metrics server running the main process"""
     if not is_port_available("0.0.0.0", 8000):
-        raise Exception(f"The parameter `port`:{args.port} is already in use.")
+        raise Exception(f"The parameter `port`:8000 is already in use.")
     uvicorn.run(
         main_app,
         host="0.0.0.0",
