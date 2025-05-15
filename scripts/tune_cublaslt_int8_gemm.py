@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """tune_cublaslt_gemm"""
-
 import paddle
-from fastdeploy.logger import logger
+
+from fastdeploy.utils import llm_logger as logger
 
 
 def tune_cublaslt_int8_gemm(
@@ -36,9 +36,10 @@ def tune_cublaslt_int8_gemm(
     try:
         from fastdeploy.model_executor.ops.gpu import tune_cublaslt_gemm
     except ImportError:
-        logger.warning("From fastdeploy.model_executor.ops.gpu import tune_cublaslt_gemm Failed!")
+        logger.warning(
+            "From fastdeploy.model_executor.ops.gpu import tune_cublaslt_gemm Failed!"
+        )
         return
 
-    tune_cublaslt_gemm(
-        K_tensor, N_tensor, m_min, m_max, dtype, is_test, is_read_from_file, path
-    )
+    tune_cublaslt_gemm(K_tensor, N_tensor, m_min, m_max, dtype, is_test,
+                       is_read_from_file, path)

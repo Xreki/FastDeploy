@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """import ops"""
-
-import os
 import importlib
 import inspect
-from fastdeploy.logger import logger
+import os
+
+from fastdeploy.utils import llm_logger as logger
 
 
 def import_custom_ops(package, module_name, global_ns):
@@ -41,8 +41,9 @@ def import_custom_ops(package, module_name, global_ns):
                 logger.warning(f"Failed to import op {func_name}: {e}")
 
     except Exception:
-        logger.warning(f"Ops of {package} import failed, it may be not compiled.")
-    
+        logger.warning(
+            f"Ops of {package} import failed, it may be not compiled.")
+
     preprocess_static_op(global_ns)
 
 

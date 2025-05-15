@@ -21,5 +21,4 @@ tabulate
 gradio
 xlwt
 visualdl
-protobuf==3.20.3
 setuptools-scm>=8
