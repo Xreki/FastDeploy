@@ -239,8 +239,7 @@ class WarmUpTokenProcessor(TokenProcessor):
             try:
                 rank_id = 0
                 if self.is_speculate_decoding:
-                    speculate_get_output(self.output_tokens, rank_id,
-                                         self._is_blocking)
+                    speculate_get_output(self.output_tokens, rank_id, self._is_blocking)
                 else:
                     get_output(self.output_tokens, rank_id, self._is_blocking)
 
