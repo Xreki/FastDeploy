@@ -11,4 +11,4 @@ public:
     NullStream& operator<<(const T&) { return *this; }
 };
 
-    #define VLOG(level) NullStream()
+#define VLOG(level) NullStream()
