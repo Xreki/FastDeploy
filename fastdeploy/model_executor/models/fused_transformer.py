@@ -15,7 +15,6 @@
 """
 
 # cipher_token=WjI1fQOvhN  # do not edit this line
-import efficientllm
 from paddlenlp.utils.log import logger
 
 import os

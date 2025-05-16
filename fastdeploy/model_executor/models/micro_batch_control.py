@@ -15,7 +15,7 @@
 """
 
 from paddle.incubate.nn.functional import blha_get_max_len
-import efficientllm
+import fastdeploy
 from paddlenlp.utils.log import logger
 
 try:
