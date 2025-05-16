@@ -68,7 +68,7 @@ class Request:
         data_processor_logger.debug(f"{d}")
         sampling_params = SamplingParams.from_dict(d)
         return cls(
-            request_id=d["req_id"],
+            request_id=d["request_id"],
             prompt=d.get("prompt"),
             prompt_token_ids=d.get("prompt_token_ids"),
             prompt_token_ids_len=d.get("prompt_token_ids_len"),
@@ -87,7 +87,7 @@ class Request:
     def to_dict(self) -> dict:
         """convert Request into a serializable dict """
         data = {
-            "req_id": self.request_id,
+            "request_id": self.request_id,
             "prompt": self.prompt,
             "prompt_token_ids": self.prompt_token_ids,
             "prompt_token_ids_len": self.prompt_token_ids_len,

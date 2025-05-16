@@ -61,11 +61,11 @@ class EngineClient:
         Format the request data and send the request to the server.
         """
         if "request_id" in prompts:
-            prompts["req_id"] = prompts["request_id"]
+            prompts["request_id"] = prompts["request_id"]
 
-        if "req_id" not in prompts:
+        if "request_id" not in prompts:
             request_id = str(uuid.uuid4())
-            prompts["req_id"] = request_id
+            prompts["request_id"] = request_id
         query_list = []
 
         if "max_tokens" not in prompts:
@@ -117,7 +117,7 @@ class EngineClient:
         task["preprocess_end_time"] = time.time()
         preprocess_cost_time = task["preprocess_end_time"] - task["preprocess_start_time"]
         api_server_logger.info(
-            f"Cache request with req_id ({task.get('request_id')}), "
+            f"Cache request with request_id ({task.get('request_id')}), "
             f"cost {time.time() - preprocess_cost_time}"
         )
         api_server_logger.debug(f"Recieve task: {task}")

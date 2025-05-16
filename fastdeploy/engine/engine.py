@@ -346,7 +346,7 @@ class LLMEngine(object):
         request.preprocess_end_time = time.time()
         self.scheduler.put_requests([request])
         llm_logger.info(
-            f"cache task with req_id ({request.get('request_id')})")
+            f"Cache task with request_id ({request.get('request_id')})")
         llm_logger.debug(f"cache task: {request}")
 
     def warmup(self):
@@ -585,11 +585,11 @@ class LLMEngine(object):
     def _format_and_add_data(self, prompts: dict):
 
         if "request_id" in prompts:
-            prompts["req_id"] = prompts["request_id"]
+            prompts["request_id"] = prompts["request_id"]
 
-        if "req_id" not in prompts:
+        if "request_id" not in prompts:
             request_id = str(uuid.uuid4())
-            prompts["req_id"] = request_id
+            prompts["request_id"] = request_id
         query_list = []
 
         if "context" in prompts:
@@ -604,7 +604,7 @@ class LLMEngine(object):
             prompts["max_tokens"] = self.cfg.max_model_len
 
         self.add_requests(prompts)
-        return prompts["req_id"]
+        return prompts["request_id"]
 
     def generate(self, prompts, stream):
         """

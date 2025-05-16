@@ -163,16 +163,16 @@ class LLM:
             if isinstance(prompts[i], str):
                 tasks = {
                     "prompt": prompts[i],
-                    "req_id": request_id,
+                    "request_id": request_id,
                 }
             elif isinstance(prompts[i], list) and isinstance(prompts[i][0], int):
                 tasks = {
                     "prompt_token_ids": prompts[i],
-                    "req_id": request_id,
+                    "request_id": request_id,
                 }
             elif isinstance(prompts[i], dict):
                 tasks = prompts[i]
-                tasks["req_id"] = request_id
+                tasks["request_id"] = request_id
             else:
                 raise TypeError(
                     f"Invalid type for 'prompt': {type(prompts[i])}, expected one of ['str', 'list', 'dict']."
