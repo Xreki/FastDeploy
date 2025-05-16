@@ -68,14 +68,6 @@ class EngineClient:
             prompts["req_id"] = request_id
         query_list = []
 
-        if "context" in prompts:
-            for item in prompts["context"]:
-                if item["role"] == "system":
-                    prompts["system"] = item["utterance"]
-                elif item["role"] in ["user", "assistant"]:
-                    query_list.append(item["utterance"])
-                    prompts["prompt"] = query_list
-
         if "max_tokens" not in prompts:
             prompts["max_tokens"] = self.max_model_len - 1
 

@@ -207,7 +207,6 @@ class CompletionRequest(BaseModel):
     # doc: begin-completion-sampling-params
     repetition_penalty: Optional[float] = None
     stop_token_ids: Optional[List[int]] = Field(default_factory=list)
-    min_tokens: int = 0
     # doc: end-completion-sampling-params
 
 
@@ -274,11 +273,9 @@ class ChatCompletionRequest(BaseModel):
     top_p: Optional[float] = None
     metadata: Optional[dict] = None
 
-
     # doc: begin-chat-completion-sampling-params
     repetition_penalty: Optional[float] = None
     stop_token_ids: Optional[List[int]] = Field(default_factory=list)
-    min_tokens: int = 0
     # doc: end-chat-completion-sampling-params
 
     def to_dict_for_infer(self, request_id=None):
