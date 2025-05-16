@@ -83,10 +83,13 @@ def get_filtered_metrics(exclude_names: Set[str], extra_register_func=None) -> s
 
     return generate_latest(filtered_registry).decode("utf-8")
 
+
 REQUEST_LATENCY_BUCKETS = [
     0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0,
     40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0
 ]
+
+
 class MetricsManager:
     """Prometheus Metrics Manager handles all metric updates """
 

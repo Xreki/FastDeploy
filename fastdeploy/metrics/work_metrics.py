@@ -11,7 +11,7 @@ from prometheus_client import Histogram
 from fastdeploy.metrics.metrics import REQUEST_LATENCY_BUCKETS
 
 
-class WorkMetricsManager:
+class WorkMetricsManager(object):
     """Prometheus Metrics Manager handles all metric updates """
 
     _initialized = False

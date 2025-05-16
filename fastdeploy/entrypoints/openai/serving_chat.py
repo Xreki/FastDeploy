@@ -170,7 +170,7 @@ class OpenAIServingChat:
                 )
                 if res["finished"]:
                     num_choices -= 1
-                    work_process_metrics.e2e_request_latency.observe(time.time()-res["metrics"]["request_start_time"])
+                    work_process_metrics.e2e_request_latency.observe(time.time() - res["metrics"]["request_start_time"])
                     if request.max_tokens is None or output["index"] + 1 != request.max_tokens:
                         choice.finish_reason = "stop"
                     else:
@@ -273,7 +273,7 @@ class OpenAIServingChat:
             completion_tokens=num_generated_tokens,
             total_tokens=num_prompt_tokens + num_generated_tokens
         )
-        work_process_metrics.e2e_request_latency.observe(time.time()-final_res["metrics"]["request_start_time"])
+        work_process_metrics.e2e_request_latency.observe(time.time() - final_res["metrics"]["request_start_time"])
         return ChatCompletionResponse(
             id=request_id,
             created=created_time,

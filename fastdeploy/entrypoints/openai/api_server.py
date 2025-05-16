@@ -22,7 +22,7 @@ from fastapi import FastAPI, Request
 from multiprocessing import current_process
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from contextlib import asynccontextmanager
-from prometheus_client import  CONTENT_TYPE_LATEST
+from prometheus_client import CONTENT_TYPE_LATEST
 from fastdeploy.metrics.metrics import cleanup_prometheus_files, main_process_metrics, EXCLUDE_LABELS, \
     get_filtered_metrics
 from fastdeploy.utils import FlexibleArgumentParser, api_server_logger, is_port_available
@@ -48,7 +48,6 @@ parser = EngineArgs.add_cli_args(parser)
 args = parser.parse_args()
 
 
-
 def load_engine():
     """
     load engine
@@ -62,7 +61,6 @@ def load_engine():
         exit(-1)
     else:
         api_server_logger.info(f"FastDeploy LLM engine initialized!\n")
-
 
 
 @asynccontextmanager
@@ -95,7 +93,6 @@ async def lifespan(app: FastAPI):
         api_server_logger.info(f"Closing metrics client pid: {pid}")
     except Exception as e:
         api_server_logger.warning(e)
-
 
 
 app = FastAPI(lifespan=lifespan)
@@ -147,8 +144,6 @@ async def list_all_routes():
                 "tags": tags
             })
     return {"routes": routes_info}
-
-
 
 
 @app.api_route("/ping", methods=["GET", "POST"])
@@ -215,6 +210,8 @@ def launch_api_server(args) -> None:
 
 
 main_app = FastAPI()
+
+
 @main_app.get("/metrics")
 async def metrics():
     """
@@ -227,7 +224,6 @@ async def metrics():
     return Response(metrics_text, media_type=CONTENT_TYPE_LATEST)
 
 
-
 def run_main_metrics_server():
     """Metrics server running the main process"""
     if not is_port_available("0.0.0.0", 8000):
@@ -238,11 +234,14 @@ def run_main_metrics_server():
         port=8000,
         log_level="error"
     )
+
+
 def main():
     """main函数"""
 
     load_engine()
     launch_api_server(args)
+
 
 if __name__ == "__main__":
     main()
