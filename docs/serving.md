@@ -104,6 +104,7 @@ for chunk in response:
 - stream_options: Optional[StreamOptions] = None
 - temperature: Optional[float] = None
 - top_p: Optional[float] = None
+- metadata: Optional[dict] = None (仅在v1/chat/compeltions中支持，用于配置min_tokens，例如metadata={"min_tokens": 20})
 
 > 注:若为X1 模型 由于思考链默认打卡导致输出过长，max tokens 可以设置为模型最长输出，或无需设置
 
