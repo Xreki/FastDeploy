@@ -21,6 +21,7 @@ from paddlenlp.utils.log import logger
 import os
 import paddle
 import paddle.distributed as dist
+import fastdeploy
 from paddle import nn
 from paddle.distributed import fleet
 from paddle.framework import in_dynamic_mode
