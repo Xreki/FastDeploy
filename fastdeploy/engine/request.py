@@ -42,6 +42,7 @@ class Request:
         preprocess_start_time: Optional[float] = None,
         preprocess_end_time: Optional[float] = None,
         multi_modal_inputs: Optional[dict] = None,
+        request_start_time: Optional[float] = None,
         raw_request: bool = True
     ) -> None:
         self.request_id = request_id
@@ -58,6 +59,8 @@ class Request:
         self.preprocess_start_time = preprocess_start_time
         self.preprocess_end_time = preprocess_end_time
         self.raw_request = raw_request
+        self.request_start_time = request_start_time
+
 
         # Multi-modal related
         # TODO
@@ -81,7 +84,8 @@ class Request:
             preprocess_start_time=d.get("preprocess_start_time"),
             preprocess_end_time=d.get("preprocess_end_time"),
             multi_modal_inputs=d.get("multi_modal_inputs"),
-            raw_request=d.get("raw_request", True)
+            raw_request=d.get("raw_request", True),
+            request_start_time=d.get("request_start_time"),
         )
 
     def to_dict(self) -> dict:
@@ -99,7 +103,8 @@ class Request:
             "preprocess_start_time": self.preprocess_start_time,
             "preprocess_end_time": self.preprocess_end_time,
             "multi_modal_inputs": self.multi_modal_inputs,
-            "raw_request": self.raw_request
+            "raw_request": self.raw_request,
+            "request_start_time": self.request_start_time
         }
         data.update(asdict(self.sampling_params))
         return data
@@ -169,6 +174,7 @@ class RequestMetrics:
         model_execute_time: The time spent in the model execute function. This
                             will include model forward, block/sync across
                             workers, cpu-gpu sync time and sampling time.
+        request_start_time: Time to accept the request
 
     """
     arrival_time: float
@@ -178,6 +184,7 @@ class RequestMetrics:
     preprocess_cost_time: Optional[float] = None
     model_forward_time: Optional[float] = None
     model_execute_time: Optional[float] = None
+    request_start_time: Optional[float] = None
 
     @classmethod
     def from_dict(cls, req_dict: dict[str, Any]) -> 'RequestMetrics':

@@ -36,6 +36,7 @@ from fastdeploy.entrypoints.openai.protocol import (
     ChatCompletionResponse,
     ErrorResponse,
 )
+from fastdeploy.metrics.work_metrics import work_process_metrics
 
 from fastdeploy.utils import api_server_logger
 
@@ -65,6 +66,7 @@ class OpenAIServingChat:
         try:
             current_req_dict = request.to_dict_for_infer(request_id)
             current_req_dict["arrival_time"] = time.time()
+            current_req_dict["request_start_time"] = time.time()
             self.engine_client.format_and_add_data(current_req_dict)
 
         except ValueError as e:
@@ -168,6 +170,7 @@ class OpenAIServingChat:
                 )
                 if res["finished"]:
                     num_choices -= 1
+                    work_process_metrics.e2e_request_latency.observe(time.time()-res["metrics"]["request_start_time"])
                     if request.max_tokens is None or output["index"] + 1 != request.max_tokens:
                         choice.finish_reason = "stop"
                     else:
@@ -270,7 +273,7 @@ class OpenAIServingChat:
             completion_tokens=num_generated_tokens,
             total_tokens=num_prompt_tokens + num_generated_tokens
         )
-
+        work_process_metrics.e2e_request_latency.observe(time.time()-final_res["metrics"]["request_start_time"])
         return ChatCompletionResponse(
             id=request_id,
             created=created_time,

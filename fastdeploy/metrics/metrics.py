@@ -3,10 +3,15 @@ metrics
 """
 import os
 import shutil
-from typing import Set
+from typing import Set, TYPE_CHECKING
 
 from prometheus_client import Gauge, Histogram, multiprocess, CollectorRegistry, generate_latest
 from prometheus_client.registry import Collector
+
+from fastdeploy.utils import api_server_logger
+
+if TYPE_CHECKING:
+    from prometheus_client import Gauge, Histogram
 
 
 def cleanup_prometheus_files(is_main):
@@ -36,6 +41,7 @@ class SimpleCollector(Collector):
         This collector wraps an existing registry and yields only those metrics
         whose names are not in the specified exclusion set.
     """
+
     def __init__(self, base_registry, exclude_names: Set[str]):
         """
             Initializes the SimpleCollector.
@@ -77,54 +83,90 @@ def get_filtered_metrics(exclude_names: Set[str], extra_register_func=None) -> s
 
     return generate_latest(filtered_registry).decode("utf-8")
 
-
+REQUEST_LATENCY_BUCKETS = [
+    0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0,
+    40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0
+]
 class MetricsManager:
     """Prometheus Metrics Manager handles all metric updates """
 
     _instance = None
 
+    num_requests_running: 'Gauge'
+    num_requests_waiting: 'Gauge'
+    time_to_first_token: 'Histogram'
+    time_per_output_token: 'Histogram'
+    request_inference_time: 'Histogram'
+    request_queue_time: 'Histogram'
+
+    # 定义所有指标配置
+    METRICS = {
+        'num_requests_running': {
+            'type': Gauge,
+            'name': 'fastdeploy:num_requests_running',
+            'description': 'Number of requests currently running',
+        },
+        'num_requests_waiting': {
+            'type': Gauge,
+            'name': 'fastdeploy:num_requests_waiting',
+            'description': 'Number of requests currently waiting',
+        },
+        'time_to_first_token': {
+            'type': Histogram,
+            'name': 'fastdeploy:time_to_first_token_seconds',
+            'description': 'Time to first token in seconds',
+            'kwargs': {
+                'buckets': [0.001, 0.005, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.25, 0.5, 0.75, 1.0]
+            }
+        },
+        'time_per_output_token': {
+            'type': Histogram,
+            'name': 'fastdeploy:time_per_output_token_seconds',
+            'description': 'Time per output token in seconds',
+            'kwargs': {
+                'buckets': [0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0]
+            }
+        },
+
+        'request_inference_time': {
+            'type': Histogram,
+            'name': 'fastdeploy:request_inference_time_seconds',
+            'description': 'Time spent in inference phase (from inference start to last token)',
+            'kwargs': {
+                'buckets': REQUEST_LATENCY_BUCKETS
+            }
+        },
+        'request_queue_time': {
+            'type': Histogram,
+            'name': 'fastdeploy:request_queue_time_seconds',
+            'description': 'Time spent in waiting queue (from preprocess end to inference start)',
+            'kwargs': {
+                'buckets': REQUEST_LATENCY_BUCKETS
+            }
+        }
+    }
+
     def __init__(self):
         """Initializes the Prometheus metrics and starts the HTTP server if not already initialized."""
-
-        # Request count gauges
-        self.num_requests_running = Gauge(
-            'fastdeploy:num_requests_running',
-            'Number of requests currently running',
-            multiprocess_mode="sum"
-        )
-
-        self.num_requests_waiting = Gauge(
-            'fastdeploy:num_requests_waiting',
-            'Number of requests currently waiting',
-            multiprocess_mode="sum"
-        )
-
-        # Latency histograms
-        self.time_to_first_token = Histogram(
-            'fastdeploy:time_to_first_token_seconds',
-            'Time to first token in seconds',
-            buckets=[0.001, 0.005, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.25, 0.5, 0.75, 1.0]
-        )
-
-        self.time_per_output_token = Histogram(
-            'fastdeploy:time_per_output_token_seconds',
-            'Time per output token in seconds',
-            buckets=[0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0]
-        )
-
-
+        # 动态创建所有指标
+        for metric_name, config in self.METRICS.items():
+            setattr(self, metric_name, config['type'](
+                config['name'],
+                config['description'],
+                **config['kwargs']
+            ))
 
     def register_all(self, registry: CollectorRegistry):
         """Register all metrics to the specified registry"""
-        registry.register(self.num_requests_running)
-        registry.register(self.num_requests_waiting)
-        registry.register(self.time_to_first_token)
-        registry.register(self.time_per_output_token)
+        for metric_name in self.METRICS:
+            registry.register(getattr(self, metric_name))
 
+    @classmethod
+    def get_excluded_metrics(cls) -> Set[str]:
+        """Get the set of indicator names that need to be excluded"""
+        return {config['name'] for config in cls.METRICS.values()}
 
-EXCLUDE_LABELS = {"fastdeploy:num_requests_running",
-                  "fastdeploy:num_requests_waiting",
-                  "fastdeploy:time_to_first_token_seconds",
-                  "fastdeploy:time_per_output_token_seconds"}
 
 main_process_metrics = MetricsManager()
+
+EXCLUDE_LABELS = MetricsManager.get_excluded_metrics()

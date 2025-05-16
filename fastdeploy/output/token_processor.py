@@ -171,7 +171,8 @@ class TokenProcessor(object):
                     time_in_queue = task.schedule_start_time - task.preprocess_end_time,
                     preprocess_cost_time = task.preprocess_end_time - task.preprocess_start_time
                 )
-                main_process_metrics.time_to_first_token.observe(time.time() - task.inference_start_time)
+                main_process_metrics.time_to_first_token.observe(current_time - task.inference_start_time)
+                main_process_metrics.request_queue_time.observe(metrics.time_in_queue)
             else:
                 if hasattr(task, 'last_token_time') and task.last_token_time is not None:
                     token_gen_time = current_time - task.last_token_time
@@ -180,6 +181,7 @@ class TokenProcessor(object):
                 task.last_token_time = current_time
                 metrics = RequestMetrics(
                     arrival_time=time.time(),
+                    request_start_time=task.request_start_time
                 )
             self.number_of_output_tokens += len(token_ids)
             result = RequestOutput(
@@ -211,6 +213,7 @@ class TokenProcessor(object):
                         f" total step: {self.total_step}. total_output_token_num: {self.number_of_output_tokens}"
                     )
                     main_process_metrics.num_requests_running.dec(1)
+                    main_process_metrics.request_inference_time.observe(current_time - task.inference_start_time)
                     break
                 result.outputs.token_ids.append(token_id)
             batch_result.append(result)
