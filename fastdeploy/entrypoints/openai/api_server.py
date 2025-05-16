@@ -44,6 +44,7 @@ parser = FlexibleArgumentParser()
 parser.add_argument("--port", default=9904, type=int, help="port to the http server")
 parser.add_argument("--host", default="0.0.0.0", type=str, help="host to the http server")
 parser.add_argument("--workers", default=1, type=int, help="number of workers")
+parser.add_argument("--metrics-port", default=8000, type=int, help="port for metrics server")
 parser = EngineArgs.add_cli_args(parser)
 args = parser.parse_args()
 
@@ -226,12 +227,12 @@ async def metrics():
 
 def run_main_metrics_server():
     """Metrics server running the main process"""
-    if not is_port_available("0.0.0.0", 8000):
-        raise Exception(f"The parameter `port`:8000 is already in use.")
+    if not is_port_available("0.0.0.0", args.metrics_port):
+        raise Exception(f"The parameter `metrics_port`:{args.metrics_port} is already in use.")
     uvicorn.run(
         main_app,
         host="0.0.0.0",
-        port=8000,
+        port=args.metrics_port,
         log_level="error"
     )
 

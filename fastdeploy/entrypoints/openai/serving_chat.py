@@ -66,7 +66,6 @@ class OpenAIServingChat:
         try:
             current_req_dict = request.to_dict_for_infer(request_id)
             current_req_dict["arrival_time"] = time.time()
-            current_req_dict["request_start_time"] = time.time()
             self.engine_client.format_and_add_data(current_req_dict)
 
         except ValueError as e:

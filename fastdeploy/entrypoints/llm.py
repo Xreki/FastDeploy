@@ -21,7 +21,6 @@ import uuid
 import time
 from typing import Optional, Dict, List, Any, Union, overload
 
-from prometheus_client import start_http_server
 from tqdm import tqdm
 
 from fastdeploy.engine.args_utils import EngineArgs
@@ -84,8 +83,6 @@ class LLM:
             max_tokens=self.llm_engine.cfg.max_model_len)
 
         self.llm_engine.start()
-
-        start_http_server(8000)
 
     def generate(
         self,

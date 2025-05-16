@@ -181,7 +181,7 @@ class TokenProcessor(object):
                 task.last_token_time = current_time
                 metrics = RequestMetrics(
                     arrival_time=time.time(),
-                    request_start_time=task.request_start_time
+                    request_start_time=task.arrival_time,
                 )
             self.number_of_output_tokens += len(token_ids)
             result = RequestOutput(

@@ -108,11 +108,13 @@ class MetricsManager:
             'type': Gauge,
             'name': 'fastdeploy:num_requests_running',
             'description': 'Number of requests currently running',
+            'kwargs': {}
         },
         'num_requests_waiting': {
             'type': Gauge,
             'name': 'fastdeploy:num_requests_waiting',
             'description': 'Number of requests currently waiting',
+            'kwargs': {}
         },
         'time_to_first_token': {
             'type': Histogram,
