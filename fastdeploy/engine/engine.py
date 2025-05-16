@@ -240,8 +240,9 @@ class LLMEngine(object):
         Insert task to engine thread, monitor scheduler request queue.
         if the engine has resource, insert task to engine
         """
-        try:
-            while 1:
+        
+        while True:
+            try:
                 if self.resource_manager.available_batch() == 0:
                     time.sleep(0.001)
                     continue
@@ -250,7 +251,7 @@ class LLMEngine(object):
                     continue
 
                 num_prefill_batch = min(
-                    self.resource_manager.available_batch(),
+                    int(self.resource_manager.available_batch()),
                     self.cfg.max_prefill_batch)
 
                 tasks = self.scheduler.get_requests(
@@ -266,17 +267,11 @@ class LLMEngine(object):
                     time.sleep(0.001)
                     continue
 
-                try:
-                    self.insert_tasks(tasks)
-                except Exception as e:
-                    err_msg = "Error happend while insert task to engine: {}, {}.".format(
+                self.insert_tasks(tasks)
+            except Exception as e:
+                err_msg = "Error happend while insert task to engine: {}, {}.".format(
                         e, str(traceback.format_exc()))
-                    llm_logger.error(err_msg)
-            llm_logger.info("finish insert_task_to_worker thread")
-        except Exception as e:
-            llm_logger.error(
-                "insert_task_to_worker thread exit "
-                f"unexpectedly, {e}. {str(traceback.format_exc())}")
+                llm_logger.error(err_msg)
 
     def _insert_zmq_task_to_scheduler(self):
         if self.api_server_pid is None:
@@ -300,8 +295,7 @@ class LLMEngine(object):
                                              error_msg=f"{e}")
                 # Since the request is not in scheduler
                 # Send result by zmq directly
-                data = json.dumps(error_result.to_dict()).encode('utf-8')
-                self.zmq_server.send_multipart(request.request_id, data)
+                self.zmq_server.send_multipart(request.request_id, error_result)
 
     def add_requests(self, task, sampling_params=None):
         """
