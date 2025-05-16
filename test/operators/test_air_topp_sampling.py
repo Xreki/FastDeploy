@@ -17,7 +17,7 @@
 import paddle
 import unittest
 import numpy as np
-import efficientllm.ops.gpu
+import fastdeploy.model_executor.ops.gpu
 
 
 class Test(unittest.TestCase):
@@ -42,7 +42,7 @@ class Test(unittest.TestCase):
         x = paddle.nn.functional.softmax(x)
         x = paddle.cast(x, "float32")
         top_ps = paddle.to_tensor(np.random.uniform(0, 1, [1]).astype(np.float32))
-        out = efficientllm.ops.gpu.air_topp_sampling(
+        out = fastdeploy.model_executor.ops.gpu.air_topp_sampling(
             x.cuda(), top_ps.cuda(), None, None, seed=0, k=1, mode="truncated"
         )
 

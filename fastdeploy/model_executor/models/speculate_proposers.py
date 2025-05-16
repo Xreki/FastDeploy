@@ -24,17 +24,17 @@ import numpy as np
 import paddle
 import paddle.distributed as dist
 from paddle.distributed import fleet
-from efficientllm.models.utils import (
+from fastdeploy.model_executor.models.utils import (
     get_rotary_position_embedding,
 )
-from efficientllm.models.export_model import (
+from fastdeploy.model_executor.models.export_model import (
     build_stream_line_model,
 )
 
-from efficientllm.layers.hydra_head import HydraHead
+from fastdeploy.model_executor.layers.hydra_head import HydraHead
 
 try:
-    from efficientllm.ops.gpu import (
+    from fastdeploy.model_executor.ops.gpu import (
         draft_model_postprocess,
         draft_model_preprocess,
         eagle_get_hidden_states,

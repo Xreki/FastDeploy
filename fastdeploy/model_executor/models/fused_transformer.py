@@ -38,7 +38,7 @@ from ..layers.ffn1 import FFN1, FFN1Split
 from ..layers.linear import FFN2, Linear
 from ..layers.normalization import Normalization
 from ..layers.qkv_linear import QKVLinear
-from efficientllm.inference_args import GenerationPhase
+from fastdeploy.inference_args import GenerationPhase
 from .micro_batch_control import MicroBatchControl
 
 EP_MICRO_BATCH_NUM = 2  # DeepEP can only support
@@ -578,7 +578,7 @@ class FusedTransformer(nn.Layer):
         max_input_length = kwargs.get("max_input_length", -1)
         output_padding_offset = kwargs.get("output_padding_offset", None)
 
-        out = efficientllm.ops.gpu.rebuild_padding(
+        out = fastdeploy.model_executor.ops.gpu.rebuild_padding(
             multi_block_output,
             cum_offsets,
             seq_lens_this_time,
@@ -709,7 +709,7 @@ class FusedTransformer(nn.Layer):
             None
         """
         if self.inference_args.weight_block_size[0] != -1:
-            x, x_scale_tensor = efficientllm.ops.gpu.per_token_quant(
+            x, x_scale_tensor = fastdeploy.model_executor.ops.gpu.per_token_quant(
                 self.micro_batch_control.micro_batches[micro_batch_id].tmp_out,
                 self.inference_args.weight_block_size[0],
             )
@@ -891,7 +891,7 @@ class FusedTransformer(nn.Layer):
                 kwargs["decoder_num_blocks"],
                 kwargs["max_len_kv"],
                 set_max_lengths,
-            ) = efficientllm.ops.gpu.get_block_shape_and_split_kv_block(
+            ) = fastdeploy.model_executor.ops.gpu.get_block_shape_and_split_kv_block(
                 kwargs.get("seq_lens_encoder", None),
                 kwargs.get("seq_lens_decoder", None),
                 kwargs.get("seq_lens_this_time", None),
@@ -909,7 +909,7 @@ class FusedTransformer(nn.Layer):
                     pre_cache_tile_ids_per_batch,
                     pre_cache_num_blocks_cpu,
                     kv_token_num_cpu,
-                ) = efficientllm.ops.gpu.pre_cache_len_concat(
+                ) = fastdeploy.model_executor.ops.gpu.pre_cache_len_concat(
                     kwargs.get("seq_lens_decoder", None),
                     kwargs.get("seq_lens_this_time", None),
                     set_max_lengths[2],
@@ -942,7 +942,7 @@ class FusedTransformer(nn.Layer):
                 self.micro_batch_control.blha_get_max_len()
 
         if self.use_pd_disaggregation:
-            kv_signal_metadata = efficientllm.ops.gpu.open_shm_and_get_meta_signal(
+            kv_signal_metadata = fastdeploy.model_executor.ops.gpu.open_shm_and_get_meta_signal(
                 self.rank,
                 self.keep_pd_step_flag,
             )
@@ -982,7 +982,7 @@ class FusedTransformer(nn.Layer):
                 )
                 cache_k_zp = getattr(self.attn_layers[i], "cache_k_zp", None)
                 cache_v_zp = getattr(self.attn_layers[i], "cache_v_zp", None)
-                qkv_out_gqa_rope = efficientllm.ops.gpu.gqa_rope_write_cache(
+                qkv_out_gqa_rope = fastdeploy.model_executor.ops.gpu.gqa_rope_write_cache(
                     qkv_out,
                     caches[2 * i],  # key_cache
                     caches[2 * i + 1],  # value_cache
@@ -1069,7 +1069,7 @@ class FusedTransformer(nn.Layer):
 
         for i in range(self.num_layers):
             if self.use_pd_disaggregation:
-                kv_signal_data = efficientllm.ops.gpu.init_signal_layerwise(
+                kv_signal_data = fastdeploy.model_executor.ops.gpu.init_signal_layerwise(
                     kv_signal_metadata, i + self.inference_args.start_layer_index
                 )
                 self.kv_signal_datas.append(kv_signal_data)

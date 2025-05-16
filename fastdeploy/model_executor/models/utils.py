@@ -48,7 +48,7 @@ from paddle.distributed import fleet
 
 from .tokenizer import ErnieBotTokenizer
 
-from efficientllm.platform import current_platform
+from fastdeploy.platforms import current_platform
 
 MODEL_LIB_NAMES = [
     "ernie_bot.modeling",
@@ -758,20 +758,20 @@ def read_res(
         if (
             current_platform.is_cuda() and current_platform.available()
         ) or paddle.is_compiled_with_xpu():
-            from efficientllm.ops.gpu import get_output
+            from fastdeploy.model_executor.ops.gpu import get_output
         elif paddle.is_compiled_with_custom_device("npu"):
             from paddle_custom_device.npu import get_output
         else:  # CPU
-            from efficientllm.ops.cpu import get_output
+            from fastdeploy.model_executor.ops.cpu import get_output
     else:
         if (
             current_platform.is_cuda() and current_platform.available()
         ) or paddle.is_compiled_with_xpu():
-            from efficientllm.ops.gpu import get_output_dynamic
+            from fastdeploy.model_executor.ops.gpu import get_output_dynamic
         elif paddle.is_compiled_with_custom_device("npu"):
             from paddle_custom_device.npu import get_output_dynamic
         else:  # CPU
-            from efficientllm.ops.cpu import get_output_dynamic
+            from fastdeploy.model_executor.ops.cpu import get_output_dynamic
 
     tokenizer = ErnieBotTokenizer.from_pretrained(model_name_or_path)
     paddle.device.set_device("cpu")
@@ -814,9 +814,9 @@ def speculate_read_res(
 ):
     """Read result from queue."""
     if msg_queue_id is None:
-        from efficientllm.ops.gpu import speculate_get_output
+        from fastdeploy.model_executor.ops.gpu import speculate_get_output
     else:
-        from efficientllm.ops.gpu import speculate_get_output_dynamic
+        from fastdeploy.model_executor.ops.gpu import speculate_get_output_dynamic
 
     tokenizer = ErnieBotTokenizer.from_pretrained(model_name_or_path)
     paddle.device.set_device("cpu")

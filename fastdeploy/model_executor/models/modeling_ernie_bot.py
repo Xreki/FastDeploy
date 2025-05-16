@@ -26,7 +26,7 @@ import paddle.nn.functional as F
 from paddle import nn
 from paddle.distributed import fleet
 
-from efficientllm.inference_args import FMTKeys, InferenceArgs, GenerationPhase
+from fastdeploy.inference_args import FMTKeys, InferenceArgs, GenerationPhase
 from ..layers.embeddings import Embeddings
 from ..layers.normalization import Normalization
 from ..layers.lm_head import (
@@ -38,7 +38,7 @@ from .configuration import ErnieBotConfig
 from paddlenlp.transformers import PretrainedModel, register_base_model
 from paddlenlp.utils.log import logger
 from functools import partial
-from efficientllm.platform import current_platform
+from fastdeploy.platforms import current_platform
 
 try:
     from paddlenlp.transformers.generation_utils import (
@@ -59,7 +59,7 @@ except ImportError:
 
 if current_platform.is_cuda() and current_platform.available():
     try:
-        from efficientllm.ops.gpu import (
+        from fastdeploy.model_executor.ops.gpu import (
             beam_search_softmax,
             draft_model_update,
             get_padding_offset,
@@ -93,7 +93,7 @@ if current_platform.is_cuda() and current_platform.available():
             "Please install `efficientllm` firstly via 'python3 setup.py install'"
         )
 elif paddle.is_compiled_with_xpu():
-    from efficientllm.ops.gpu import (
+    from fastdeploy.model_executor.ops.gpu import (
         get_padding_offset,
         get_token_penalty_multi_scores,
         save_output,
@@ -104,7 +104,7 @@ elif paddle.is_compiled_with_xpu():
 elif paddle.is_compiled_with_custom_device("npu"):
     # custom ops for inference
     try:
-        from efficientllm.ops.npu import (
+        from fastdeploy.model_executor.ops.npu import (
             atb_broadcast,
             atb_top_p_sampling,
             get_token_penalty_multi_scores,
@@ -119,7 +119,7 @@ elif paddle.is_compiled_with_custom_device("npu"):
     except Exception:
         pass
 else:  # CPU
-    from efficientllm.ops.cpu import (
+    from fastdeploy.model_executor.ops.cpu import (
         get_padding_offset,
         get_token_penalty_multi_scores,
         save_output,

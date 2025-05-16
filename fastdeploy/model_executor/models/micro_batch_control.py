@@ -80,7 +80,7 @@ class MicroBatch:
             self.args["decoder_num_blocks"],
             self.args["max_len_kv"],
             self.args["set_max_lengths"],
-        ) = efficientllm.ops.gpu.get_block_shape_and_split_kv_block(
+        ) = fastdeploy.model_executor.ops.gpu.get_block_shape_and_split_kv_block(
             self.args["seq_lens_encoder"],
             self.args["seq_lens_decoder"],
             self.args["seq_lens_this_time"],

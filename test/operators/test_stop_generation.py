@@ -14,7 +14,7 @@
 
 """ UT for set_stop_value """
 import paddle
-from efficientllm.ops.gpu import set_stop_value
+from fastdeploy.model_executor.ops.gpu import set_stop_value
 
 topk_ids = paddle.randint(0, 10000, (8, 1))
 res = set_stop_value(topk_ids, 29980)
