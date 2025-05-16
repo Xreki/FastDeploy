@@ -1,0 +1,5 @@
+model: "/shared_ipc_meta/"
+max_model_len: 32768
+max_num_seqs: 32
+block_ratio: 0.5
+dynamic_load_weight: 1

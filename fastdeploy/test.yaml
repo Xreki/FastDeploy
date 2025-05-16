@@ -1,2 +1,8 @@
-model: "/opt/output/workspace/baidu/paddle_internal/FastDeploy/llama-7b"
-tensor_parallel_size: 4
+# model: "/shared_ipc_meta/"
+# model: "/root/paddlejob/workspace/env_run/gaoziyuan/model/10.174.144.210:8899/DeepSeek-R1-Distill-Qwen-7B"
+model: "/root/paddlejob/workspace/env_run/gaoziyuan/model_eb45t/10.52.99.143:8777"
+max_model_len: 32768
+max_num_seqs: 32
+block_ratio: 0.5
+num_gpu_blocks_override: 15000
+dynamic_load_weight: 1
