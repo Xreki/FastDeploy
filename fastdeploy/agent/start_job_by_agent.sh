@@ -13,15 +13,13 @@ export FLAGS_mla_use_tensorcore=0
 export FLAGS_cascade_attention_max_partition_size=2048
 
 
-source "/root/paddlejob/workspace/env_run/gaoziyuan/miniconda3/bin/activate" \
-    "/root/paddlejob/workspace/env_run/gaoziyuan/miniconda3/envs/gaoziyuanpy310" || exit 1
-
 cd $ROLLOUT_WORKER_ROOT
+source ${ROLLOUT_WORKER_ROOT}/fastdeploy/agent/build_env.sh
+source "${ROLLOUT_WORKER_ROOT}/${FASTDEPLOY_ENV_NAME}/bin/activate"
 
 unset PADDLE_TRAINER_ENDPOINTS
 unset DISTRIBUTED_TRAINER_ENDPOINTS
 export OPEN_SOURCE=1
-export PYTHONPATH=/root/paddlejob/workspace/env_run/gaoziyuan/develop_nlp/PaddleNLP:$PYTHONPATH
 export CUDA_VISIBLE_DEVICES=$4
 export INFERENCE_MSG_QUEUE_ID=$4
 export FD_MODEL_NAME="1"

@@ -5,12 +5,17 @@
 if [ -n "$CE_root_path" ]; then
     export ROLLOUT_WORKER_ROOT="$CE_root_path/third_party/FastDeploy"
 else
-    export ROLLOUT_WORKER_ROOT="/root/paddlejob/workspace/env_run/gaoziyuan/develop_nlp/FastDeploy"
+    export ROLLOUT_WORKER_ROOT=`PWD`
 fi
 export ROLLOUT_CONTROLLER_HOST=${rollout_controller_host:-"http://10.11.155.41:8771"}
 
-source "/root/paddlejob/workspace/env_run/gaoziyuan/miniconda3/bin/activate" \
-    "/root/paddlejob/workspace/env_run/gaoziyuan/miniconda3/envs/gaoziyuanpy310"
+if [ "$MODEL" = "eb45t" ]; then
+    source ${ROLLOUT_WORKER_ROOT}/fastdeploy/agent/build_env_eff.sh
+    source "${ROLLOUT_WORKER_ROOT}/${FASTDEPLOY_ENV_NAME}/bin/activate"
+else
+    source ${ROLLOUT_WORKER_ROOT}/fastdeploy/agent/build_env.sh
+    source "${ROLLOUT_WORKER_ROOT}/${FASTDEPLOY_ENV_NAME}/bin/activate"
+fi
 
 # 参数检查
 if [ $# -ne 3 ]; then
@@ -41,8 +46,6 @@ TOTAL_PORTS=$((NUM_INSTANCES * 3))
 # 获取空闲端口
 ports=`sh get_free_ports.sh $TOTAL_PORTS`
 
-source "/root/paddlejob/workspace/env_run/gaoziyuan/miniconda3/bin/activate" \
-    "/root/paddlejob/workspace/env_run/gaoziyuan/miniconda3/envs/gaoziyuanpy310"
 # 启动实例
 for ((i=0; i<$NUM_INSTANCES; i++)); do
     # 生成device_id字符串,每个实例递增
@@ -60,15 +63,19 @@ for ((i=0; i<$NUM_INSTANCES; i++)); do
     AP_IDX=$((i * 3 + 1))
     IP_IDX=$((i * 3 + 2))
     QP_IDX=$((i * 3 + 3))
-    
+
     # 获取对应端口
     AP=`echo $ports | awk -v idx=$AP_IDX '{print $idx}'`
     IP=`echo $ports | awk -v idx=$IP_IDX '{print $idx}'`
     QP=`echo $ports | awk -v idx=$QP_IDX '{print $idx}'`
-    
-    # 启动agent
-    python rollout-worker-agent_dynamic.py --device_id $DEVICE_ID -j $JOB_ID -p $CARDS_PER_INSTANCE -ap $AP -ip $IP -qp $QP &
-    
+
+    # 启动agent，根据MODEL环境变量选择启动脚本
+    if [ "$MODEL" = "eb45t" ]; then
+        python rollout-worker-agent_dynamic.py --device_id $DEVICE_ID -j $JOB_ID -p $CARDS_PER_INSTANCE -ap $AP -ip $IP -qp $QP -s start_job_by_agent_eff.sh &
+    else
+        python rollout-worker-agent_dynamic.py --device_id $DEVICE_ID -j $JOB_ID -p $CARDS_PER_INSTANCE -ap $AP -ip $IP -qp $QP &
+    fi
+
     # 等待5秒确保启动
     sleep 5
 done

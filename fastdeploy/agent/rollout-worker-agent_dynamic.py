@@ -85,7 +85,8 @@ def background_start(job_id: str, model_path: str, model_version: str) -> None:
         if not args.skip_health_check:
             cnt = 1
             status = 0
-            while cnt <= 20:
+            # 线下测试本地加载需要43次
+            while cnt <= 60:
                 logging.info(f"Health check [{cnt}/20] ...")
                 try:
                     response = requests.get(f"{rollout_worker_host}:{rollout_worker_http_port}/health", timeout=5)
@@ -110,11 +111,12 @@ def background_start(job_id: str, model_path: str, model_version: str) -> None:
             logging.info("Skipping health check as requested")
     
     try:
-        # Call update_model_weight API with 300s timeout (不重试)
+        # Call update_model_weight API with 500s timeout (不重试)
+        # eb45 加载较长
         print(f"Starting worker with job_id: {job_id}, model_path: {model_path}, model_version: {model_version}")   
         update_response = requests.get(
             f"{rollout_worker_host}:{rollout_worker_http_port}/update_model_weight",
-            timeout=300
+            timeout=500
         )
         
         if update_response.status_code != 200:

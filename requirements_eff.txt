@@ -9,4 +9,4 @@ openai
 redis
 paddlepaddle-gpu @ http://10.95.247.14:8282/paddlepaddle_gpu-0.0.0-cp310-cp310-linux_x86_64.whl
 efficientllm @ http://10.95.247.14:8889/efficientllm-0.0.0-py3-none-any.whl
-paddlenlp @ https://paddle-qa.bj.bcebos.com/paddlenlp/wheel/72dc85d2d7ccb1ec245de2a296319f429615dc69/paddlenlp-3.0.0b4.post20250508-py3-none-any.whl
+paddlenlp @ http://10.95.247.14:8282/paddlenlp-3.0.0b4.post20250514-py3-none-any.whl
