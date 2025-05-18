@@ -193,6 +193,11 @@ class OpenAIServingCompletion:
             output_tokens = [0] * num_choices
             inference_start_time = [0] * num_choices
             first_iteration = [True] * num_choices
+            max_response_tokens = 1
+            if request.suffix is not None and request.suffix.get("max_response_tokens", 1) > 1:
+                max_response_tokens = request.suffix["max_response_tokens"]
+            choices = []
+
 
             while num_choices > 0:
                 try:
@@ -236,18 +241,13 @@ class OpenAIServingCompletion:
 
                 output = res["outputs"]
 
-                chunk = CompletionStreamResponse(
-                    id=request_id,
-                    created=created_time,
-                    model=model_name,
-                    choices=[CompletionResponseStreamChoice(
-                        index=idx,
-                        text=output["text"],
-                        token_ids=output.get("token_ids"),
-                        reasoning_content=output.get("reasoning_content"),
-                        arrival_time=arrival_time
-                    )]
-                )
+                choices.append(CompletionResponseStreamChoice(
+                    index=idx,
+                    text=output["text"],
+                    token_ids=output.get("token_ids"),
+                    reasoning_content=output.get("reasoning_content"),
+                    arrival_time=arrival_time
+                ))
                 if res["finished"]:
                     if request.max_tokens is None or output_tokens[idx] + 1 != request.max_tokens:
                         chunk.choices[0].finish_reason = "stop"
@@ -255,6 +255,13 @@ class OpenAIServingCompletion:
                         chunk.choices[0].finish_reason = "length"
 
                 output_tokens[idx] += 1
+                if len(choices) == max_response_tokens or res["finished"]:
+                    chunk = CompletionStreamResponse(
+                        id=request_id,
+                        created=created_time,
+                        model=model_name,
+                        choices=choices
+                    )
 
                 yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
 
