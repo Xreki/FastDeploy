@@ -52,7 +52,7 @@ class ModelRunnerBase(ABC):
 
         self._init_kvcache()
 
-        self._load_model(config.model_name_or_path)
+        self._load_model(config.model_name_or_path, args.dynamic_load_weight)
 
     def _log_memory_usage(self, context: str = "") -> None:
         """Log current GPU memory usage."""
@@ -202,7 +202,7 @@ class ModelRunnerBase(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def _load_model(self, model_dir):
+    def _load_model(self, model_dir, dynamic_load_weight):
         """
             加载模型，包括模型参数和优化器等。
         需要子类实现该方法。
