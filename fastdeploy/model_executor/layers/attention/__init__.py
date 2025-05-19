@@ -11,3 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from .attention import Attention
+from .base_attention_backend import AttentionBackend
+from .native_paddle_backend import PaddleNativeAttnBackend
+
+__all__ = [
+    "Attention",
+    "AttentionBackend",
+    "PaddleNativeAttnBackend",
+]
