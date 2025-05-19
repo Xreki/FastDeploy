@@ -64,7 +64,7 @@ FastDeploy提供与OpenAI完全兼容的服务API(字段`model`与`api_key`目�
 - [服务部署](docs/serving.md)
 
 # 代码说明
-- 当前仅包含服务层代码，模型组网代码依赖requirements.txt中的EfficentLLM模块，此模块将在5月底前完成代码合入。
+- [代码目录说明](docs/code_guide.md)
 - FastDeploy的使用中存在任何建议和问题，可随时如流反馈。
 
 # 开源说明
