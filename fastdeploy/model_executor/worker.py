@@ -166,7 +166,7 @@ class Worker:
             from fastdeploy.model_executor.model_runner.model_runner_paddlenlp import ModelRunner
 
         else:
-            from efficientllm.gpu import step_paddle
+            from fastdeploy.model_executor.ops.gpu import step_paddle
             from fastdeploy.model_executor.model_runner.model_runner_inference import ModelRunner
 
         step_paddle(

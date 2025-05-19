@@ -1,4 +1,4 @@
-setuptools==50.3.2
+setuptools==75.1.0
 pre-commit
 yapf
 flake8
@@ -10,6 +10,15 @@ tqdm
 pynvml
 uvicorn
 fastapi
-efficientllm @ https://paddle-qa.bj.bcebos.com/paddle-pipeline/ChangePipeline/build_cu123_py/221fbd936f2538ac41a85f09857bc4c41063bd21/794/efficientllm-0.0.0-py3-none-any.whl
 paddlenlp @ https://paddle-qa.bj.bcebos.com/paddlenlp/wheel/72dc85d2d7ccb1ec245de2a296319f429615dc69/paddlenlp-3.0.0b4.post20250508-py3-none-any.whl
 redis
+etcd3
+httpx
+tool_helpers
+cupy-cuda12x
+pybind11
+tabulate
+gradio
+xlwt
+visualdl
+setuptools-scm>=8
