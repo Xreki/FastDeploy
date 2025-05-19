@@ -37,7 +37,8 @@ void append_decode_cache_rope(const QKV_TYPE* qkv,
                               const int block_size,
                               const int bsz,
                               const cudaStream_t& stream,
-                              const bool use_neox_style) {
+                              const bool use_neox_style,
+                              const bool rope_3d) {
   const uint32_t elem_nums =
       use_neox_style ? bsz * (num_heads + 2 * kv_num_heads) * dim_head / 2
                      : bsz * (num_heads + 2 * kv_num_heads) * dim_head;
@@ -115,7 +116,8 @@ void append_decode_cache_rope(const QKV_TYPE* qkv,
               dim_head,
               block_size,
               elem_nums,
-              kv_num_heads);
+              kv_num_heads,
+              rope_3d);
     } else {
       append_decode_cache_T_rope_kernel<T, PackSize>
           <<<grid_size, blocksize, 0, stream>>>(reinterpret_cast<const T*>(qkv),
@@ -135,7 +137,8 @@ void append_decode_cache_rope(const QKV_TYPE* qkv,
                                                 dim_head,
                                                 block_size,
                                                 elem_nums,
-                                                kv_num_heads);
+                                                kv_num_heads,
+                                                rope_3d);
     }
   }
 }
@@ -164,7 +167,8 @@ void append_decode_cache_int8_rope(const QKV_TYPE* qkv,
                                    const int block_size,
                                    const int bsz,
                                    const cudaStream_t& stream,
-                                   const bool use_neox_style) {
+                                   const bool use_neox_style,
+                                   const bool rope_3d) {
   constexpr int num_warps = 4;
   const int all_warps =
       ((num_heads + 2 * kv_num_heads) + num_warps - 1) / num_warps * num_warps;
@@ -298,7 +302,8 @@ void append_decode_cache_int4_rope(const QKV_TYPE* qkv,
                                    const int block_size,
                                    const int bsz,
                                    const cudaStream_t& stream,
-                                   const bool use_neox_style) {
+                                   const bool use_neox_style,
+                                   const bool rope_3d) {
   constexpr int num_warps = 4;
   const int all_warps =
       ((num_heads + 2 * kv_num_heads) + num_warps - 1) / num_warps * num_warps;
@@ -431,6 +436,7 @@ void DecoderWriteCacheWithRoPEKernel(
     const paddle::optional<paddle::Tensor>& cache_v_zp,
     const std::string& cache_quant_type_str,
     const bool use_neox_rotary_style,
+    const bool rope_3d,
     const int max_seq_len,
     cudaStream_t& stream,
     paddle::Tensor* qkv_out,
@@ -483,7 +489,8 @@ void DecoderWriteCacheWithRoPEKernel(
         block_size,
         bsz,
         stream,
-        use_neox_rotary_style);
+        use_neox_rotary_style,
+        rope_3d);
   } else if (cache_quant_type_str == "cache_int8") {
     bool is_scale_channel_wise = false;
     if (cache_k_scale && cache_k_scale.get().dims()[0] == dim_head * kv_num_heads) {
@@ -520,7 +527,8 @@ void DecoderWriteCacheWithRoPEKernel(
         block_size,
         bsz,
         stream,
-        use_neox_rotary_style);
+        use_neox_rotary_style,
+        rope_3d);
     } else {
       append_decode_cache_int8_rope<DataType_, QKV_TYPE, false>(
           reinterpret_cast<const QKV_TYPE*>(qkv_ptr),
@@ -552,7 +560,8 @@ void DecoderWriteCacheWithRoPEKernel(
           block_size,
           bsz,
           stream,
-          use_neox_rotary_style);
+          use_neox_rotary_style,
+          rope_3d);
     }
   } else if (cache_quant_type_str == "cache_fp8")  {
       append_decode_cache_int8_rope<DataType_, QKV_TYPE, false, true>(
@@ -585,7 +594,8 @@ void DecoderWriteCacheWithRoPEKernel(
           block_size,
           bsz,
           stream,
-          use_neox_rotary_style);
+          use_neox_rotary_style,
+          rope_3d);
   } else if (cache_quant_type_str == "cache_int4_zp") {
     append_decode_cache_int4_rope(
         reinterpret_cast<const QKV_TYPE*>(qkv_ptr),
@@ -623,7 +633,8 @@ void DecoderWriteCacheWithRoPEKernel(
         block_size,
         bsz,
         stream,
-        use_neox_rotary_style);
+        use_neox_rotary_style,
+        rope_3d);
   } else {
     PD_THROW(
         "cache_quant_type_str should be one of [none, cache_int8, cache_fp8 "
@@ -651,6 +662,7 @@ template void DecoderWriteCacheWithRoPEKernel<paddle::bfloat16, int>(
     const paddle::optional<paddle::Tensor>& cache_v_zp,
     const std::string& cache_quant_type_str,
     const bool use_neox_rotary_style,
+    const bool rope_3d,
     const int max_seq_len,
     cudaStream_t& stream,
     paddle::Tensor* qkv_out,
@@ -677,6 +689,7 @@ DecoderWriteCacheWithRoPEKernel<paddle::bfloat16, paddle::bfloat16>(
     const paddle::optional<paddle::Tensor>& cache_v_zp,
     const std::string& cache_quant_type_str,
     const bool use_neox_rotary_style,
+    const bool rope_3d,
     const int max_seq_len,
     cudaStream_t& stream,
     paddle::Tensor* qkv_out,
@@ -702,6 +715,7 @@ template void DecoderWriteCacheWithRoPEKernel<paddle::float16, int>(
     const paddle::optional<paddle::Tensor>& cache_v_zp,
     const std::string& cache_quant_type_str,
     const bool use_neox_rotary_style,
+    const bool rope_3d,
     const int max_seq_len,
     cudaStream_t& stream,
     paddle::Tensor* qkv_out,
@@ -727,6 +741,7 @@ template void DecoderWriteCacheWithRoPEKernel<paddle::float16, paddle::float16>(
     const paddle::optional<paddle::Tensor>& cache_v_zp,
     const std::string& cache_quant_type_str,
     const bool use_neox_rotary_style,
+    const bool rope_3d,
     const int max_seq_len,
     cudaStream_t& stream,
     paddle::Tensor* qkv_out,
