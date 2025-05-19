@@ -19,6 +19,7 @@ from typing import Dict, List, Optional
 import threading
 import time
 
+from fastdeploy.metrics.metrics import main_process_metrics
 from fastdeploy.utils import llm_logger
 from fastdeploy.engine.request import Request, RequestOutput
 from fastdeploy.scheduler.data import ScheduledRequest, ScheduledResponse
@@ -112,6 +113,7 @@ class LocalScheduler(object):
             self.ids += scheduled_ids
             self.requests_not_empty.notify_all()
             llm_logger.debug(f"Local cached requests: {scheduled_ids}")
+            main_process_metrics.num_requests_waiting.inc(len(requests))
 
     def calc_required_blocks(self, token_num, block_size):
         """calculate required blocks for given token number"""
@@ -150,6 +152,8 @@ class LocalScheduler(object):
 
             self.ids_read_cursor += len(requests)
             llm_logger.debug(f"Local get requests: {len(requests)}")
+            main_process_metrics.num_requests_waiting.dec(len(requests))
+            main_process_metrics.num_requests_running.inc(len(requests))
             return requests
 
     def put_results(self, results: List[RequestOutput]):

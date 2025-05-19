@@ -13,18 +13,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-
+import shutil
 import uvicorn
-import json
 import zmq
 import os
 import sys
 import ctypes
 import signal
 from fastapi import FastAPI, APIRouter, Request
+import threading
+from fastapi import FastAPI, Request
 from multiprocessing import current_process
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from contextlib import asynccontextmanager
+from prometheus_client import CONTENT_TYPE_LATEST
+from fastdeploy.metrics.metrics import cleanup_prometheus_files, main_process_metrics, EXCLUDE_LABELS, \
+    get_filtered_metrics
 from fastdeploy.utils import FlexibleArgumentParser, api_server_logger, is_port_available
 from fastdeploy.engine.args_utils import EngineArgs
 from fastdeploy.engine.engine import LLMEngine
@@ -44,9 +48,9 @@ parser = FlexibleArgumentParser()
 parser.add_argument("--port", default=9904, type=int, help="port to the http server")
 parser.add_argument("--host", default="0.0.0.0", type=str, help="host to the http server")
 parser.add_argument("--workers", default=1, type=int, help="number of workers")
+parser.add_argument("--metrics-port", default=8000, type=int, help="port for metrics server")
 parser = EngineArgs.add_cli_args(parser)
 args = parser.parse_args()
-
 
 
 def load_engine():
@@ -62,7 +66,6 @@ def load_engine():
         exit(-1)
     else:
         api_server_logger.info(f"FastDeploy LLM engine initialized!\n")
-
 
 
 @asynccontextmanager
@@ -91,9 +94,11 @@ async def lifespan(app: FastAPI):
     # close zmq
     try:
         engine_client.zmq_client.close()
+        from prometheus_client import multiprocess
+        multiprocess.mark_process_dead(os.getpid())
+        api_server_logger.info(f"Closing metrics client pid: {pid}")
     except Exception as e:
         api_server_logger.warning(e)
-
 
 
 app = FastAPI(lifespan=lifespan)
@@ -148,8 +153,6 @@ async def list_all_routes():
                 "tags": tags
             })
     return {"routes": routes_info}
-
-
 
 
 @app.api_route("/ping", methods=["GET", "POST"])
@@ -233,6 +236,10 @@ def launch_api_server(args) -> None:
     api_server_logger.info(f"args: {args.__dict__}")
 
     try:
+        prom_dir = cleanup_prometheus_files(True)
+        os.environ["PROMETHEUS_MULTIPROC_DIR"] = prom_dir
+        metrics_server_thread = threading.Thread(target=run_main_metrics_server, daemon=True)
+        metrics_server_thread.start()
         uvicorn.run(app="fastdeploy.entrypoints.openai.api_server:app",
                     host=args.host,
                     port=args.port,
@@ -240,6 +247,33 @@ def launch_api_server(args) -> None:
                     log_level="info")  # set log level to error to avoid log
     except Exception as e:
         api_server_logger.error(f"launch sync http server error, {e}")
+
+
+main_app = FastAPI()
+
+
+@main_app.get("/metrics")
+async def metrics():
+    """
+    metrics
+    """
+    metrics_text = get_filtered_metrics(
+        EXCLUDE_LABELS,
+        extra_register_func=lambda reg: main_process_metrics.register_all(reg)
+    )
+    return Response(metrics_text, media_type=CONTENT_TYPE_LATEST)
+
+
+def run_main_metrics_server():
+    """Metrics server running the main process"""
+    if not is_port_available("0.0.0.0", args.metrics_port):
+        raise Exception(f"The parameter `metrics_port`:{args.metrics_port} is already in use.")
+    uvicorn.run(
+        main_app,
+        host="0.0.0.0",
+        port=args.metrics_port,
+        log_level="error"
+    )
 
 
 def main():

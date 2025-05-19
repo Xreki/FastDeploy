@@ -12,6 +12,8 @@ python -m fastdeploy.entrypoints.openai.api_server --model ernie-45-turbo --port
 
 * --port: 服务配置的HTTP端口
 
+* --metrics-port: 服务配置的metrics端口
+
 * --workers: api-server基于uvicorn启动时的进程数
 
 其余参数为引擎配置，可直接参考[离线推理](./offline_inference.md)中fastdeploy.LLM的参数说明，
