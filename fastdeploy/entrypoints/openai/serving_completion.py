@@ -193,9 +193,9 @@ class OpenAIServingCompletion:
             output_tokens = [0] * num_choices
             inference_start_time = [0] * num_choices
             first_iteration = [True] * num_choices
-            max_response_tokens = 1
-            if request.suffix is not None and request.suffix.get("max_response_tokens", 1) > 1:
-                max_response_tokens = request.suffix["max_response_tokens"]
+            max_streaming_response_tokens = 1
+            if request.suffix is not None and request.suffix.get("max_streaming_response_tokens", 1) > 1:
+                max_streaming_response_tokens = request.suffix["max_streaming_response_tokens"]
             choices = []
 
 
@@ -255,7 +255,7 @@ class OpenAIServingCompletion:
                         chunk.choices[0].finish_reason = "length"
 
                 output_tokens[idx] += 1
-                if len(choices) == max_response_tokens or res["finished"]:
+                if len(choices) == max_streaming_response_tokens or res["finished"]:
                     chunk = CompletionStreamResponse(
                         id=request_id,
                         created=created_time,
