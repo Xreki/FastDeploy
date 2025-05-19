@@ -38,44 +38,63 @@ class ModelRunner(ModelRunnerBase):
         # gqa .etc paddle Flags set
         pass
 
-    def _load_model(self, model_name):
+    def _load_model(self, model_name, dynamic_load_weight):
         use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
-        if use_pip_eff_llm is None:
-            from ..models.export_model import build_stream_line_model
-            from ..models.tokenizer import ErnieBotTokenizer
+        local_test = False
+        if dynamic_load_weight and use_pip_eff_llm is not None:
+            from efficientllm.models.efficientllm_model import EfficientModel
+            efficientllm_model = EfficientModel(
+                model_name_or_path=self.args.model_name_or_path,
+                dtype=self.args.dtype,
+                block_size=self.args.block_size,
+                max_len=self.args.max_model_len,
+                gemm_method="weight_only_int8",
+                moe_quant_type="weight_only_int8",
+                load_model_from_ipc=dynamic_load_weight,
+                nranks=self.nranks,
+                rank=self.rank,
+                embeddings_column_cut=False,
+                local_test=local_test,
+            )
+            efficientllm_model.eval()
+            self.model = efficientllm_model
         else:
-            from efficientllm.models.export_model import build_stream_line_model
-            from efficientllm.models.tokenizer import ErnieBotTokenizer
-        vocab_file_names = [
-            "tokenizer.model", "spm.model", "ernie_token_100k.model"
-        ]
-        for i in range(len(vocab_file_names)):
-            if os.path.exists(
-                    os.path.join(self.args.model_name_or_path,
-                                 vocab_file_names[i])):
-                ErnieBotTokenizer.resource_files_names[
-                    "vocab_file"] = vocab_file_names[i]
-                break
-        config, tokenizer, model = build_stream_line_model(
-            os.path.join(self.args.model_name_or_path,
-                         os.getenv("CONFIG_JSON_FILE", "config.json")),
-            self.args.model_name_or_path,
-            self.args.dtype,
-            block_size=self.args.block_size,
-            max_len=self.args.max_model_len,
-            stage_flag="msgid-1 predict",
-            export_model_type="weight_only_int8",
-            use_fake_parameter=False,
-            use_stop_seqs=self.model_cfg.ellm_dynamic_use_stop_seqs,
-            use_beam_search=False,
-            speculate_method=None,
-            speculate_max_draft_token_num=5,
-            return_all_hidden_states=False,
-            moe_quant_type="weight_only_int4",
-            use_safetensors=self.model_cfg.is_unified_ckpt,
-        )
-        model.eval()
-        self.model = model
+            if use_pip_eff_llm is None:
+                from ..models.export_model import build_stream_line_model
+                from ..models.tokenizer import ErnieBotTokenizer
+            else:
+                from efficientllm.models.export_model import build_stream_line_model
+                from efficientllm.models.tokenizer import ErnieBotTokenizer
+            vocab_file_names = [
+                "tokenizer.model", "spm.model", "ernie_token_100k.model"
+            ]
+            for i in range(len(vocab_file_names)):
+                if os.path.exists(
+                        os.path.join(self.args.model_name_or_path,
+                                    vocab_file_names[i])):
+                    ErnieBotTokenizer.resource_files_names[
+                        "vocab_file"] = vocab_file_names[i]
+                    break
+            config, tokenizer, model = build_stream_line_model(
+                os.path.join(self.args.model_name_or_path,
+                            os.getenv("CONFIG_JSON_FILE", "config.json")),
+                self.args.model_name_or_path,
+                self.args.dtype,
+                block_size=self.args.block_size,
+                max_len=self.args.max_model_len,
+                stage_flag="msgid-1 predict",
+                export_model_type="weight_only_int8",
+                use_fake_parameter=False,
+                use_stop_seqs=self.model_cfg.ellm_dynamic_use_stop_seqs,
+                use_beam_search=False,
+                speculate_method=None,
+                speculate_max_draft_token_num=5,
+                return_all_hidden_states=False,
+                moe_quant_type="weight_only_int4",
+                use_safetensors=self.model_cfg.is_unified_ckpt,
+            )
+            model.eval()
+            self.model = model
 
     def init_rotary_position_embedding(self, max_model_len):
         tmp_position_ids = paddle.arange(max_model_len).reshape((1, -1))

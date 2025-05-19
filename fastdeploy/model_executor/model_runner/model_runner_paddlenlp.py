@@ -54,7 +54,7 @@ class ModelRunner(ModelRunnerBase):
         self.original_import = builtins.__import__
         builtins.__import__ = custom_import
 
-    def _load_model(self, model_name):
+    def _load_model(self, model_name, dynamic_load_weight):
         """
             加载模型，并设置缓存。
 
@@ -80,21 +80,27 @@ class ModelRunner(ModelRunnerBase):
         predictor_args.append_attn = True
 
         local_test = False
-        from paddlenlp.transformers import AutoConfig, AutoInferenceModelForCausalLM
+        if dynamic_load_weight:
+            from paddlenlp.experimental.transformers.inference_model import InferenceModel
+            self.model = InferenceModel(predictor_args, model_args,
+                                        self.nranks, self.rank,
+                                        dynamic_load_weight, local_test=local_test)
+        else:
+            from paddlenlp.transformers import AutoConfig, AutoInferenceModelForCausalLM
 
-        paddle.set_device(predictor_args.device)
-        paddle.set_default_dtype(predictor_args.dtype)
+            paddle.set_device(predictor_args.device)
+            paddle.set_default_dtype(predictor_args.dtype)
 
-        config = AutoConfig.from_pretrained(predictor_args.model_name_or_path)
-        self.model = AutoInferenceModelForCausalLM.from_pretrained(
-            predictor_args.model_name_or_path,
-            config=config,
-            predictor_args=predictor_args,
-            model_args=model_args,
-            dtype=predictor_args.dtype,
-            tensor_parallel_degree=self.nranks,
-            tensor_parallel_rank=self.rank,
-        )
+            config = AutoConfig.from_pretrained(predictor_args.model_name_or_path)
+            self.model = AutoInferenceModelForCausalLM.from_pretrained(
+                predictor_args.model_name_or_path,
+                config=config,
+                predictor_args=predictor_args,
+                model_args=model_args,
+                dtype=predictor_args.dtype,
+                tensor_parallel_degree=self.nranks,
+                tensor_parallel_rank=self.rank,
+            )
 
     def init_rotary_position_embedding(self, max_model_len):
         """
