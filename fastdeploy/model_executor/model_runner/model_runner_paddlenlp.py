@@ -14,6 +14,7 @@
 # limitations under the License.
 """
 
+import builtins
 import paddle
 import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
@@ -24,6 +25,11 @@ from paddlenlp.trl.llm_utils import get_rotary_position_embedding
 import numpy as np
 from fastdeploy.model_executor.model_runner.model_runner_base import ModelRunnerBase
 from fastdeploy.model_executor.utils import PredictorArgument, ModelArgument
+from fastdeploy.utils import get_logger
+from paddlenlp.utils.import_utils import custom_import
+
+
+logger = get_logger("worker", "worker.log")
 
 class ModelRunner(ModelRunnerBase):
     def __init__(self, config, args, nranks, rank):
@@ -45,8 +51,10 @@ class ModelRunner(ModelRunnerBase):
         self.nranks = nranks
         self.rank = rank
         super().__init__(config, args)
+        self.original_import = builtins.__import__
+        builtins.__import__ = custom_import
 
-    def _load_model(self, model_name):
+    def _load_model(self, model_name, dynamic_load_weight):
         """
             加载模型，并设置缓存。
 
@@ -56,6 +64,7 @@ class ModelRunner(ModelRunnerBase):
         Returns:
             None.
         """
+
         llm_utils.set_triton_cache(self.args.model_name_or_path, "dynamic")
 
         predictor_args = PredictorArgument()
@@ -68,23 +77,30 @@ class ModelRunner(ModelRunnerBase):
         predictor_args.inference_model = True
         predictor_args.mode = "dynamic"
         predictor_args.block_attn = True
-        # predictor_args.append_attn = True
+        predictor_args.append_attn = True
 
-        paddle.set_device(predictor_args.device)
-        paddle.set_default_dtype(predictor_args.dtype)
+        local_test = False
+        if dynamic_load_weight:
+            from paddlenlp.experimental.transformers.inference_model import InferenceModel
+            self.model = InferenceModel(predictor_args, model_args,
+                                        self.nranks, self.rank,
+                                        dynamic_load_weight, local_test=local_test)
+        else:
+            from paddlenlp.transformers import AutoConfig, AutoInferenceModelForCausalLM
 
-        from paddlenlp.transformers import AutoConfig, AutoInferenceModelForCausalLM
+            paddle.set_device(predictor_args.device)
+            paddle.set_default_dtype(predictor_args.dtype)
 
-        config = AutoConfig.from_pretrained(predictor_args.model_name_or_path)
-        self.model = AutoInferenceModelForCausalLM.from_pretrained(
-            predictor_args.model_name_or_path,
-            config=config,
-            predictor_args=predictor_args,
-            model_args=model_args,
-            dtype=predictor_args.dtype,
-            tensor_parallel_degree=self.nranks,
-            tensor_parallel_rank=self.rank,
-        )
+            config = AutoConfig.from_pretrained(predictor_args.model_name_or_path)
+            self.model = AutoInferenceModelForCausalLM.from_pretrained(
+                predictor_args.model_name_or_path,
+                config=config,
+                predictor_args=predictor_args,
+                model_args=model_args,
+                dtype=predictor_args.dtype,
+                tensor_parallel_degree=self.nranks,
+                tensor_parallel_rank=self.rank,
+            )
 
     def init_rotary_position_embedding(self, max_model_len):
         """
@@ -98,11 +114,12 @@ class ModelRunner(ModelRunnerBase):
             self.rope_scaling,
         )
 
-    def _init_kvcache(self, max_block_num):
+    def _init_kvcache(self):
         """
         分享不拷贝数据
         """
-        self.cache_kvs = {}
+        cache_kvs = {}
+        max_block_num = self.num_gpu_blocks
 
         if (
             hasattr(self.model_cfg, "num_key_value_heads")
@@ -117,7 +134,7 @@ class ModelRunner(ModelRunnerBase):
 
         for i in range(self.model_cfg.num_layers):
             cache_type = self.args.dtype
-            self.cache_kvs["key_caches_{}".format(i)] = paddle.full(
+            cache_kvs["key_caches_{}".format(i)] = paddle.full(
                 shape=[
                     max_block_num,
                     kv_num_head,
@@ -127,7 +144,7 @@ class ModelRunner(ModelRunnerBase):
                 fill_value=0,
                 dtype=cache_type,
             )
-            self.cache_kvs["value_caches_{}".format(i)] = paddle.full(
+            cache_kvs["value_caches_{}".format(i)] = paddle.full(
                 shape=[
                     max_block_num,
                     kv_num_head,
@@ -138,12 +155,29 @@ class ModelRunner(ModelRunnerBase):
                 dtype=cache_type,
             )
 
-        self.share_inputs["cache_kvs"] = list(self.cache_kvs.values())
-        for value in self.cache_kvs.values():
+        self.share_inputs["cache_kvs"] = list(cache_kvs.values())
+        for value in cache_kvs.values():
             del value
+        paddle.device.cuda.empty_cache()
 
     def generate(self):
         self.model.generate(**self.share_inputs)
+
+    def clear_parameters(self, pid):
+        if "cache_kvs" in self.share_inputs:
+            self.model.clear_parameters(pid)
+            del self.share_inputs["cache_kvs"]
+            paddle.device.cuda.empty_cache()
+            self.model.log_memory_usage("clear all memory")
+
+
+    def update_parameters(self, pid):
+        if "cache_kvs" not in self.share_inputs:
+            self.model.update_parameters(pid)
+            self._init_kvcache()
+            self.model.log_memory_usage("update all memory")
+
+
 
     def dy_input_preprocess(self, tasks):
         """
@@ -159,7 +193,7 @@ class ModelRunner(ModelRunnerBase):
                 task.eos_token_ids.append(task.eos_token_ids[0])
             self.share_inputs["eos_token_id"][:] = np.array(task.eos_token_ids, dtype="int64").reshape(-1, 1)
             self.share_inputs["pre_ids"][idx : idx + 1] = -1
-            self.share_inputs["top_p"][idx : idx + 1] = task.get("topp", 0.7)
+            self.share_inputs["top_p"][idx : idx + 1] = task.get("top_p", 0.7)
             self.share_inputs["temperature"][idx : idx + 1] = task.get("temperature", 0.95)
             self.share_inputs["penalty_score"][idx : idx + 1] = task.get("repetition_penalty", 1.0)
             self.share_inputs["frequency_score"][idx : idx + 1] = task.get("frequency_penalty", 0.0)
@@ -215,18 +249,18 @@ class ModelRunner(ModelRunnerBase):
 
 
 
-    def _update_share_input_block_num(self, num_gpu_blocks):
+    def _update_share_input_block_num(self):
         del self.share_inputs["cache_kvs"]
-        self._init_kvcache(num_gpu_blocks)
+        self._init_kvcache()
 
         del self.share_inputs["block_tables"]
         self.share_inputs["block_tables"] = paddle.full(
-            [self.args.max_num_seqs, num_gpu_blocks], -1, dtype="int32"
+            [self.args.max_num_seqs, self.num_gpu_blocks], -1, dtype="int32"
         )
 
         # 初始化free list
         free_list = list(
-            range(num_gpu_blocks - 1, int(num_gpu_blocks * self.args.kv_cache_ratio) - 1, -1)
+            range(self.num_gpu_blocks - 1, int(self.num_gpu_blocks * self.args.kv_cache_ratio) - 1, -1)
         )
         self.free_list_len = len(free_list)
         self.share_inputs.update({

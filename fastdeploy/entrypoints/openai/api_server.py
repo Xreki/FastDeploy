@@ -17,6 +17,10 @@ import shutil
 import uvicorn
 import zmq
 import os
+import sys
+import ctypes
+import signal
+from fastapi import FastAPI, APIRouter, Request
 import threading
 from fastapi import FastAPI, Request
 from multiprocessing import current_process
@@ -57,7 +61,7 @@ def load_engine():
     engine_args = EngineArgs.from_cli_args(args)
     llm_engine = LLMEngine.from_engine_args(engine_args)
 
-    if not llm_engine.start("default", os.getpid()):
+    if not llm_engine.start(api_server_pid=os.getpid()):
         api_server_logger.error("Failed to initialize FastDeploy LLM engine, service exit now!")
         exit(-1)
     else:
@@ -78,6 +82,7 @@ async def lifespan(app: FastAPI):
         pid = os.getpid()
     api_server_logger.info(f"{pid}")
     engine_client = EngineClient(args.tokenizer, args.max_model_len, args.tensor_parallel_size, pid)
+    app.state.dynamic_load_weight = args.dynamic_load_weight
     chat_handler = OpenAIServingChat(engine_client, pid)
     completion_handler = OpenAIServingCompletion(engine_client, pid)
     engine_client.create_zmq_client(model=pid, mode=zmq.PUSH)
@@ -107,6 +112,9 @@ def health(request: Request) -> Response:
     status, msg = app.state.engine_client.check_health()
     if not status:
         return Response(content=msg, status_code=404)
+    status, msg = app.state.engine_client.is_workers_alive()
+    if not status:
+        return Response(content=msg, status_code=304)
     return Response(status_code=200)
 
 
@@ -158,6 +166,10 @@ async def create_chat_completion(request: ChatCompletionRequest):
     """
     Create a chat completion for the provided prompt and parameters.
     """
+    if app.state.dynamic_load_weight:
+        status, msg = app.state.engine_client.is_workers_alive()
+        if not status:
+            return JSONResponse(content={"error": "Worker Service Not Healthy"}, status_code=304)
     generator = await app.state.chat_handler.create_chat_completion(request)
 
     if isinstance(generator, ErrorResponse):
@@ -175,6 +187,10 @@ async def create_completion(request: CompletionRequest):
     """
     Create a completion for the provided prompt and parameters.
     """
+    if app.state.dynamic_load_weight:
+        status, msg = app.state.engine_client.is_workers_alive()
+        if not status:
+            return JSONResponse(content={"error": "Worker Service Not Healthy"}, status_code=304)
 
     generator = await app.state.completion_handler.create_completion(request)
     if isinstance(generator, ErrorResponse):
@@ -186,13 +202,36 @@ async def create_completion(request: CompletionRequest):
     return StreamingResponse(content=generator, media_type="text/event-stream")
 
 
+@app.get("/update_model_weight")
+def update_model_weight(request: Request) -> Response:
+    """
+    update model weight
+    """
+    if app.state.dynamic_load_weight:
+        status, msg = app.state.engine_client.update_model_weight()
+        if not status:
+            return Response(content=msg, status_code=404)
+        return Response(status_code=200)
+    else:
+        return Response(content="Dynamic Load Weight Disabled.", status_code=404)
+
+@app.get("/clear_load_weight")
+def clear_load_weight(request: Request) -> Response:
+    """
+    clear model weight
+    """
+    if app.state.dynamic_load_weight:
+        status, msg =  app.state.engine_client.clear_load_weight()
+        if not status:
+            return Response(content=msg, status_code=404)
+        return Response(status_code=200)
+    else:
+        return Response(content="Dynamic Load Weight Disabled.", status_code=404)
+
 def launch_api_server(args) -> None:
     """
     启动http服务
     """
-    if not is_port_available(args.host, args.port):
-        raise Exception(f"The parameter `port`:{args.port} is already in use.")
-
     api_server_logger.info(f"launch Fastdeploy api server... port: {args.port}")
     api_server_logger.info(f"args: {args.__dict__}")
 
@@ -239,7 +278,8 @@ def run_main_metrics_server():
 
 def main():
     """main函数"""
-
+    if not is_port_available(args.host, args.port):
+        raise Exception(f"The parameter `port`:{args.port} is already in use.")
     load_engine()
     launch_api_server(args)
 

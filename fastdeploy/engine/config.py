@@ -17,12 +17,11 @@
 import json
 import os
 from datetime import datetime
-import re
-import uuid
 from typing import Literal, Optional, Dict, List, Any
 
 from fastdeploy.utils import llm_logger, check_unified_ckpt, get_host_ip, is_port_available
 from fastdeploy.download_model import download_from_txt
+from fastdeploy.scheduler import SchedulerConfig
 
 TaskOption = Literal["generate"]
 
@@ -38,6 +37,7 @@ class ModelConfig:
     def __init__(self,
                  model_name_or_path: str,
                  config_json_file: str = "config.json",
+                 dynamic_load_weight: int = 0,
                  download_dir: Optional[str] = None):
         """
         Initialize the ModelConfig class.
@@ -49,6 +49,7 @@ class ModelConfig:
         """
         self.model_dir = model_name_or_path
         self.is_unified_ckpt = check_unified_ckpt(self.model_dir)
+        self.dynamic_load_weight = dynamic_load_weight
 
         config_file = os.path.join(model_name_or_path, config_json_file)
         if os.path.isfile(model_name_or_path):
@@ -110,7 +111,7 @@ class ModelConfig:
                     llm_logger.info(f"Parameter `{key}` will use default value {value}.")
                 setattr(self, key.lower(), value)
 
-        if not hasattr(self, "model_name"):
+        if self.architectures == "ErnieForCausalLM" and not hasattr(self, "model_name"):
             self.model_name = os.getenv("FD_MODEL_NAME")
             assert self.model_name is not None, (
                 "There is no parameter model_name in config.json or "
@@ -248,6 +249,7 @@ class Config:
         self,
         model_config: ModelConfig,
         cache_config: CacheConfig,
+        scheduler_config: SchedulerConfig,
         model_name_or_path: str = None,
         tokenizer: str = None,
         tensor_parallel_size: int = 8,
@@ -267,6 +269,7 @@ class Config:
         Args:
             model_config (ModelConfig): Model configuration object.
             cache_config (CacheConfig): Cache configuration object.
+            scheduler_config (SchedulerConfig): Scheduler configuration object.
             model_name_or_path (str): Model directory path or model name.
             tokenizer (str): Default is the model.
             tensor_parallel_size (int): Tensor parallel size. Default is 8.
@@ -281,6 +284,7 @@ class Config:
         """
         self.model_config = model_config
         self.cache_config = cache_config
+        self.scheduler_config = scheduler_config
         self.model_name_or_path = model_name_or_path
         self.tokenizer = tokenizer
         self.max_num_batched_tokens = max_num_batched_tokens
@@ -344,6 +348,8 @@ class Config:
         assert (self.max_model_len >= 16), f"max_model_len: {self.max_model_len} should be larger than 16"
         assert (self.max_num_seqs >= 1), f"max_num_seqs: {self.max_num_seqs} should be larger than 1"
 
+        self.scheduler_config.check()
+
 
     def print(self, file=None):
         """
@@ -357,7 +363,7 @@ class Config:
             if k == "generation_config" and v is not None:
                 for gck, gcv in v.to_dict().items():
                     llm_logger.info("{:<20}:{:<6}{}".format(gck, "", gcv))
-            elif k == "cache_config" or k == "model_config":
+            elif k == "cache_config" or k == "model_config" or k == "scheduler_config":
                 v.print()
             else:
                 llm_logger.info("{:<20}:{:<6}{}".format(k, "", v))

@@ -21,7 +21,7 @@ from shutil import copyfile
 from typing import Dict, Optional, Tuple, Union
 
 import numpy as np
-from paddlenlp.transformers import PretrainedTokenizer
+from paddlenlp.transformers import PretrainedTokenizer, AddedToken
 from paddlenlp.transformers.tokenizer_utils_base import PaddingStrategy
 from paddlenlp.utils.log import logger
 from sentencepiece import SentencePieceProcessor
@@ -70,6 +70,19 @@ class ErnieBotTokenizer(PretrainedTokenizer):
         """Constructs a ErnieBotTokenizer."""
         if additional_special_tokens is None:
             additional_special_tokens = ["<mask:1>", "<mask:7>"]
+        self.verbose = False
+        self.vocab_file = vocab_file
+
+        self.model = spm.ModelProto()
+        with open(vocab_file, "rb") as fp:
+            self.model.ParseFromString(fp.read())
+
+        self.sp_model = SentencePieceProcessor()
+        self.sp_model.Load(model_proto=self.model.SerializeToString())
+        self.alpha = alpha
+        self.pad_id = self._convert_token_to_id(pad_token)
+        self.tokenizer_alpha = tokenizer_alpha
+
         super().__init__(
             bos_token=bos_token,
             cls_token=cls_token,
@@ -82,17 +95,7 @@ class ErnieBotTokenizer(PretrainedTokenizer):
             split_special_tokens=split_special_tokens,
             **kwargs,
         )
-        self.verbose = False
-        self.vocab_file = vocab_file
-
-        self.model = spm.ModelProto()
-        with open(vocab_file, "rb") as fp:
-            self.model.ParseFromString(fp.read())
-        self.sp_model = SentencePieceProcessor()
-        self.sp_model.Load(model_proto=self.model.SerializeToString())
-        self.alpha = alpha
-        self.pad_id = self._convert_token_to_id(pad_token)
-        self.tokenizer_alpha = tokenizer_alpha
+        
 
     @property
     def vocab_size(self):
@@ -125,6 +128,8 @@ class ErnieBotTokenizer(PretrainedTokenizer):
         """
         Convert a token into its id representation.
         """
+        if isinstance(token, AddedToken):
+            token = token.content
         return self.sp_model.piece_to_id(token)
 
     def _convert_id_to_token(self, id):

@@ -1,7 +1,6 @@
 FROM iregistry.baidu-int.com/fastdeploy/fastdeploy-cuda-12.8-base
 
 RUN pip install https://paddle-whl.bj.bcebos.com/nightly/cu126/paddlepaddle-gpu/paddlepaddle_gpu-3.0.0.dev20250420-cp310-cp310-linux_x86_64.whl
-RUN pip install pip install https://paddle-qa.bj.bcebos.com/paddle-pipeline/ChangePipeline/build_cu123_py/b391d26d5b47f379b980f6106a4507dd336f0c73/764/efficientllm-0.0.0-py3-none-any.whl
 RUN pip install pip install https://paddlenlp.bj.bcebos.com/wheels/paddlenlp-3.0.0b4.post20250326-py3-none-any.whl
 RUN cd output && python3 setup.py install && pip install -r requirements.txt
 RUN pip install openai 

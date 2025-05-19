@@ -63,6 +63,7 @@ class ZmqClient:
         self.file_name = f"/dev/shm/{name}.socket"
         self.router_path = f"/dev/shm/router_{name}.ipc"
 
+        self.mutex = threading.Lock()
         self.req_dict = dict()
         self.router = None
         self.poller = None
@@ -108,16 +109,26 @@ class ZmqClient:
             raise RuntimeError("Router socket not created. Call create_router() first.")
 
         while True:
-            if req_id not in self.req_dict:
-                try:
-                    client, _, request_id = self.router.recv_multipart(flags=zmq.NOBLOCK)
-                    req_id_str = request_id.decode('utf-8')
-                    self.req_dict[req_id_str] = client
-                except zmq.Again:
-                    continue
-            else:
-                break
-        self.router.send_multipart([self.req_dict[req_id], b'', data], zmq.DONTWAIT)
+            with self.mutex:
+                if req_id not in self.req_dict:
+                    try:
+                        client, _, request_id = self.router.recv_multipart(flags=zmq.NOBLOCK)
+                        req_id_str = request_id.decode('utf-8')
+                        self.req_dict[req_id_str] = client
+                    except zmq.Again:
+                        continue
+                else:
+                    break
+        
+        try:
+            result = json.dumps(data.to_dict()).encode('utf-8')
+            self.router.send_multipart([self.req_dict[req_id], b'', result], zmq.DONTWAIT)
+        except Exception as e:
+            llm_logger.error(f"Send result to zmq client failed: {e}")
+        
+        if data["finished"]:
+            with self.mutex:
+                self.req_dict.pop(data["request_id"], None)
     
     def send_multipart2(self, get_results_handler):
         """
@@ -127,24 +138,39 @@ class ZmqClient:
             raise RuntimeError("Router socket not created. Call create_router() first.")
         
         while True:
-            try:
-                flags = 0 if len(self.req_dict) == 0 else zmq.NOBLOCK
-                client, _, request_id = self.router.recv_multipart(flags=flags)
-                req_id_str = request_id.decode('utf-8')
-                self.req_dict[req_id_str] = client
-            except zmq.Again:
-                time.sleep(0.01)
-                break
+            with self.mutex:
+                try:
+                    flags = 0 if len(self.req_dict) == 0 else zmq.NOBLOCK
+                    client, _, request_id = self.router.recv_multipart(flags=flags)
+                    req_id_str = request_id.decode('utf-8')
+                    self.req_dict[req_id_str] = client
+                except zmq.Again:
+                    time.sleep(0.01)
+                    break
         
-        req_ids = list(self.req_dict.keys())
+        req_dict_copy = dict()
+        with self.mutex:
+            req_dict_copy = self.req_dict.copy()
+
+        finished_req = []
+        req_ids = list(req_dict_copy.keys())
         for req_id in req_ids:
-            client = self.req_dict[req_id]
+            client = req_dict_copy[req_id]
             results = get_results_handler(req_id)
             for data in results:
-                result = json.dumps(data).encode('utf-8')
-                self.router.send_multipart([client, b'', result], zmq.DONTWAIT)
                 if data["finished"]:
-                    del self.req_dict[data["request_id"]]
+                    finished_req.append(data["request_id"])
+
+                result = json.dumps(data).encode('utf-8')
+                try:
+                    self.router.send_multipart([client, b'', result], zmq.DONTWAIT)
+                except Exception as e:
+                    llm_logger.error(f"Send result to zmq client2 failed: {e}")
+        
+        if len(finished_req) > 0:
+            with self.mutex:
+                for req_id in finished_req:
+                    self.req_dict.pop(req_id, None)
 
     def receive_once(self, block=False):
         """

@@ -13,19 +13,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-
 import os
 import threading
 import time
 import traceback
 from collections import Counter
 
+from paddlenlp.utils.env import MAX_BSZ
+from paddlenlp.utils.env import MAX_DRAFT_TOKENS
+from paddlenlp.utils.env import SPECULATE_MAX_BSZ
 
-from paddlenlp.utils.env import MAX_BSZ, MAX_DRAFT_TOKENS, SPECULATE_MAX_BSZ
+from fastdeploy.engine.request import CompletionOutput
+from fastdeploy.engine.request import RequestMetrics
+from fastdeploy.engine.request import RequestOutput
+from fastdeploy.utils import datetime_diff
+from fastdeploy.utils import llm_logger
 
 from fastdeploy.metrics.metrics import main_process_metrics
-from fastdeploy.utils import datetime_diff, llm_logger
-from fastdeploy.engine.request import RequestOutput, CompletionOutput, RequestMetrics
 
 
 class TokenProcessor(object):
@@ -45,11 +49,15 @@ class TokenProcessor(object):
 
         self.is_speculate_decoding = False
         if self.is_speculate_decoding:
-            self.output_tokens = paddle.full(
-                shape=[SPECULATE_MAX_BSZ * MAX_DRAFT_TOKENS + SPECULATE_MAX_BSZ + 2, 1], fill_value=2, dtype="int64"
-            )
+            self.output_tokens = paddle.full(shape=[
+                SPECULATE_MAX_BSZ * MAX_DRAFT_TOKENS + SPECULATE_MAX_BSZ + 2, 1
+            ],
+                                             fill_value=2,
+                                             dtype="int64")
         else:
-            self.output_tokens = paddle.full(shape=[MAX_BSZ + 2, 1], fill_value=2, dtype="int64")
+            self.output_tokens = paddle.full(shape=[MAX_BSZ + 2, 1],
+                                             fill_value=2,
+                                             dtype="int64")
         self.worker = None
 
         self.statics_start_time = time.time()
@@ -76,7 +84,8 @@ class TokenProcessor(object):
         if self.worker is not None:
             raise Exception("Worker is already running!")
 
-        self.worker = threading.Thread(target=self.process_sampling_results, args=())
+        self.worker = threading.Thread(target=self.process_sampling_results,
+                                       args=())
         self.worker.daemon = True
         self.worker.start()
 
@@ -84,17 +93,22 @@ class TokenProcessor(object):
         """
         read tokens from paddle inference engine and process
         """
-        if int(os.getenv("OPEN_SOURCE", "0")) == 1:
+        if self.cfg.model_config.architectures != "ErnieForCausalLM":
             from paddlenlp_ops import get_output, speculate_get_output
         else:
             os.environ["ELLM_LOG_LEVEL"] = "3"
-            from efficientllm.gpu import get_output
+            use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
+            if use_pip_eff_llm is None:
+                from fastdeploy.model_executor.ops.gpu import get_output,speculate_get_output
+            else:
+                from efficientllm.gpu import get_output,speculate_get_output
         while True:
             try:
                 rank_id = 0
                 is_blocking = True
                 if self.is_speculate_decoding:
-                    speculate_get_output(self.output_tokens, rank_id, is_blocking)
+                    speculate_get_output(self.output_tokens, rank_id,
+                                         is_blocking)
                 else:
                     get_output(self.output_tokens, rank_id, is_blocking)
 
@@ -103,7 +117,8 @@ class TokenProcessor(object):
 
                 self._process_batch_output()
             except Exception as e:
-                llm_logger.info("while get input_data error: {0} {1}".format(e, str(traceback.format_exc())))
+                llm_logger.info("while get input_data error: {0} {1}".format(
+                    e, str(traceback.format_exc())))
 
     def postprocess(self, batch_result):
         """
@@ -113,7 +128,6 @@ class TokenProcessor(object):
             batch_result (list): batch results
         """
         self.cached_generated_tokens.put_results(batch_result)
-
 
     def _recycle_resources(self, task_id, index, task):
         """
@@ -125,7 +139,6 @@ class TokenProcessor(object):
         if task_id in self.tokens_counter:
             del self.tokens_counter[task_id]
 
-
     def _process_batch_output(self):
         """
         batch post-processing function
@@ -133,9 +146,9 @@ class TokenProcessor(object):
         tokens = self.output_tokens.numpy()
         batch = self.output_tokens[1, 0]
         if not self.is_speculate_decoding:
-            tokens = tokens[2 : batch + 2]
+            tokens = tokens[2:batch + 2]
         else:
-            accept_num = tokens[2 : batch + 2]
+            accept_num = tokens[2:batch + 2]
 
         batch_result = list()
         for i in range(batch):
@@ -146,12 +159,9 @@ class TokenProcessor(object):
                 token_ids = [int(tokens[i, 0])]
             else:
                 token_ids = tokens[
-                    2
-                    + SPECULATE_MAX_BSZ
-                    + i * MAX_DRAFT_TOKENS : 2
-                    + SPECULATE_MAX_BSZ
-                    + i * MAX_DRAFT_TOKENS
-                    + accept_num[i, 0],
+                    2 + SPECULATE_MAX_BSZ + i * MAX_DRAFT_TOKENS:2 +
+                    SPECULATE_MAX_BSZ + i * MAX_DRAFT_TOKENS +
+                    accept_num[i, 0],
                     0,
                 ].tolist()
             if any(token_id < 0 for token_id in token_ids):
@@ -168,11 +178,14 @@ class TokenProcessor(object):
                     arrival_time=task.arrival_time,
                     inference_start_time=task.inference_start_time,
                     first_token_time=time.time() - task.inference_start_time,
-                    time_in_queue = task.schedule_start_time - task.preprocess_end_time,
-                    preprocess_cost_time = task.preprocess_end_time - task.preprocess_start_time
-                )
+                    time_in_queue=task.schedule_start_time -
+                                  task.preprocess_end_time,
+                    preprocess_cost_time=task.preprocess_end_time -
+                                         task.preprocess_start_time)
+
                 main_process_metrics.time_to_first_token.observe(current_time - task.inference_start_time)
                 main_process_metrics.request_queue_time.observe(metrics.time_in_queue)
+
             else:
                 if hasattr(task, 'last_token_time') and task.last_token_time is not None:
                     token_gen_time = current_time - task.last_token_time
@@ -184,15 +197,11 @@ class TokenProcessor(object):
                     request_start_time=task.arrival_time,
                 )
             self.number_of_output_tokens += len(token_ids)
-            result = RequestOutput(
-                request_id=task_id,
-                outputs = CompletionOutput(
-                    index=i,
-                    token_ids=[]
-                ),
-                finished=False,
-                metrics=metrics
-            )
+            result = RequestOutput(request_id=task_id,
+                                   outputs=CompletionOutput(index=i,
+                                                            token_ids=[]),
+                                   finished=False,
+                                   metrics=metrics)
             if self.tokens_counter[task_id] == 0:
                 if task.messages is not None:
                     result.prompt = task.messages
@@ -200,22 +209,26 @@ class TokenProcessor(object):
 
             for token_id in token_ids:
                 self.tokens_counter[task_id] += 1
+                result.outputs.token_ids.append(token_id)
                 if token_id in task.eos_token_ids:
                     result.finished = True
                     result.prompt = task.prompt
                     result.prompt_token_ids = task.prompt_token_ids
-                    self._recycle_resources(task_id, i, task)
-                    llm_logger.info(f"Request: {task_id} finished, number of "
-									f"generated tokens: {self.tokens_counter[task_id]}.")
+                    llm_logger.info(
+                        f"Request: {task_id} finished, number of "
+                        f"generated tokens: {self.tokens_counter[task_id]}.")
+                    llm_logger.info(
+                        f"Request: {task_id} token ratio: {self.tokens_counter[task_id] / (time.time() - task.inference_start_time)}"
+                    )
                     llm_logger.info(f"{self.resource_manager.info()}")
                     llm_logger.info(
                         f"Speculate accept ratio: {1 - self.total_step * 1.0 / self.number_of_output_tokens}"
                         f" total step: {self.total_step}. total_output_token_num: {self.number_of_output_tokens}"
                     )
+                    self._recycle_resources(task_id, i, task)
                     main_process_metrics.num_requests_running.dec(1)
                     main_process_metrics.request_inference_time.observe(current_time - task.inference_start_time)
                     break
-                result.outputs.token_ids.append(token_id)
             batch_result.append(result)
 
         self.postprocess(batch_result)
@@ -250,7 +263,8 @@ class WarmUpTokenProcessor(TokenProcessor):
                     continue
                 self._process_batch_output()
             except Exception as e:
-                llm_logger.info("while get input_data error: {0} {1}".format(e, str(traceback.format_exc())))
+                llm_logger.info("while get input_data error: {0} {1}".format(
+                    e, str(traceback.format_exc())))
 
     def stop(self):
         """

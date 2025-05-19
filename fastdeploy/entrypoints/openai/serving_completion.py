@@ -130,15 +130,26 @@ class OpenAIServingCompletion:
                 dealer.write([b"", rid.encode("utf-8")])
 
             valid_results = [dict()] * num_choices
+            output_tokens = [0] * num_choices
             while num_choices > 0:
-                raw_data = await dealer.read()
+                try:
+                    raw_data = await asyncio.wait_for(dealer.read(), timeout=300)
+                except asyncio.TimeoutError:
+                    status, msg = self.engine_client.check_health()
+                    if not status:
+                        raise ValueError(f"Engine is not healthy: {msg}")
+                    else:
+                        continue
                 data = json.loads(raw_data[-1].decode("utf-8"))
                 rid = int(data["request_id"].split("-")[-1])
-
+                if data.get("error_code", 200) != 200:
+                    raise ValueError("{}".format(data["error_msg"]))
                 self.engine_client.data_processor.process_response_dict(
                     data, stream=False
                 )
+                output_tokens[rid] += len(data["outputs"]["token_ids"])
                 if data.get("finished", False):
+                    data["output_token_ids"] = output_tokens[rid]
                     valid_results[rid] = data
                     num_choices -= 1
 
@@ -181,10 +192,45 @@ class OpenAIServingCompletion:
                 dealer.write([b"", req_id.encode('utf-8')])  # 发送多路请求
             output_tokens = [0] * num_choices
             inference_start_time = [0] * num_choices
+            first_iteration = [True] * num_choices
+            max_response_tokens = 1
+            if request.suffix is not None and request.suffix.get("max_response_tokens", 1) > 1:
+                max_response_tokens = request.suffix["max_response_tokens"]
+            choices = []
+
+
             while num_choices > 0:
-                raw_data = await dealer.read()
+                try:
+                    raw_data = await asyncio.wait_for(dealer.read(), timeout=300)
+                except asyncio.TimeoutError:
+                    status, msg = self.engine_client.check_health()
+                    if not status:
+                        raise ValueError(f"Engine is not healthy: {msg}")
+                    else:
+                        continue
+
+
                 res = json.loads(raw_data[-1].decode('utf-8'))
                 idx = int(res["request_id"].split("-")[-1])
+                if res.get("error_code", 200) != 200:
+                    raise ValueError("{}".format(res["error_msg"]))
+
+                if first_iteration[idx]:
+                    if request.suffix is not None and request.suffix.get("training", False):
+                        chunk = CompletionStreamResponse(
+                            id=request_id,
+                            created=created_time,
+                            model=model_name,
+                            choices=[CompletionResponseStreamChoice(
+                                index=idx,
+                                text="",
+                                token_ids=list(res["prompt_token_ids"])
+                            )]
+                        )
+                        yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
+                    first_iteration[idx] = False
+
+
                 self.engine_client.data_processor.process_response_dict(res, stream=True)
                 if res['metrics'].get('first_token_time') is not None:
                     arrival_time = res['metrics']['first_token_time']
@@ -194,19 +240,28 @@ class OpenAIServingCompletion:
                 # api_server_logger.info(f"{arrival_time}")
 
                 output = res["outputs"]
-                chunk = CompletionStreamResponse(
-                    id=request_id,
-                    created=created_time,
-                    model=model_name,
-                    choices=[CompletionResponseStreamChoice(
-                        index=idx,
-                        text=output["text"],
-                        reasoning_content=output.get("reasoning_content"),
-                        arrival_time=arrival_time
-                    )]
-                )
+
+                choices.append(CompletionResponseStreamChoice(
+                    index=idx,
+                    text=output["text"],
+                    token_ids=output.get("token_ids"),
+                    reasoning_content=output.get("reasoning_content"),
+                    arrival_time=arrival_time
+                ))
+                if res["finished"]:
+                    if request.max_tokens is None or output_tokens[idx] + 1 != request.max_tokens:
+                        chunk.choices[0].finish_reason = "stop"
+                    else:
+                        chunk.choices[0].finish_reason = "length"
 
                 output_tokens[idx] += 1
+                if len(choices) == max_response_tokens or res["finished"]:
+                    chunk = CompletionStreamResponse(
+                        id=request_id,
+                        created=created_time,
+                        model=model_name,
+                        choices=choices
+                    )
 
                 yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
 
@@ -274,7 +329,7 @@ class OpenAIServingCompletion:
             )
             choices.append(choice_data)
 
-            num_generated_tokens += len(output["token_ids"])
+            num_generated_tokens += final_res["output_token_ids"]
 
             num_prompt_tokens += len(prompt_token_ids)
 

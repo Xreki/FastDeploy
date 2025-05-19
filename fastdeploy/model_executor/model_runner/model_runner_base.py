@@ -18,6 +18,9 @@ from abc import ABC, abstractmethod
 import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
 import paddle
+from fastdeploy.utils import get_logger
+
+logger = get_logger("worker", "worker.log")
 
 
 class ModelRunnerBase(ABC):
@@ -41,13 +44,30 @@ class ModelRunnerBase(ABC):
         self.args = args
 
         self.init_dist_env()
-        self._load_model(config.model_name_or_path)
-
 
         self._init_share_inputs(args.max_num_seqs)
 
-        self._init_kvcache(args.max_block_num)
         self.init_rotary_position_embedding(args.max_model_len)
+        self.num_gpu_blocks = args.max_block_num
+
+        self._init_kvcache()
+
+        self._load_model(config.model_name_or_path, args.dynamic_load_weight)
+
+    def _log_memory_usage(self, context: str = "") -> None:
+        """Log current GPU memory usage."""
+        max_alloc = paddle.device.cuda.max_memory_allocated() / (1024 ** 3)
+        max_reserved = paddle.device.cuda.max_memory_reserved() / (1024 ** 3)
+        curr_alloc = paddle.device.cuda.memory_allocated() / (1024 ** 3)
+        curr_reserved = paddle.device.cuda.memory_reserved() / (1024 ** 3)
+
+        logger.info(f"GPU memory usage {context}:")
+        logger.warning(
+            f"max_allocated: {max_alloc:.2f}GB\n"
+            f"max_reserved: {max_reserved:.2f}GB\n"
+            f"current_allocated: {curr_alloc:.2f}GB\n"
+            f"current_reserved: {curr_reserved:.2f}GB"
+        )
 
     def init_dist_env(self, seed=20):
         """
@@ -182,7 +202,7 @@ class ModelRunnerBase(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def _load_model(self, model_dir):
+    def _load_model(self, model_dir, dynamic_load_weight):
         """
             加载模型，包括模型参数和优化器等。
         需要子类实现该方法。
@@ -199,7 +219,7 @@ class ModelRunnerBase(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def _init_kvcache(self, max_block_num):
+    def _init_kvcache(self):
         """
             初始化kv缓存，用于快速查找数据块。
         该方法需要被子类实现。

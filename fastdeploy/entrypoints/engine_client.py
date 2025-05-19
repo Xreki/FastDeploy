@@ -34,13 +34,20 @@ class EngineClient:
         input_processor =  InputPreprocessor(tokenizer)
         self.data_processor = input_processor.create_processor()
         self.max_model_len = max_model_len
-        self.worker_healthy_live_recorded_time_array = np.zeros(shape=[tensor_parallel_size], dtype=np.float32)
+        self.worker_healthy_live_recorded_time_array = np.zeros(shape=[tensor_parallel_size], dtype=np.int32)
         self.worker_healthy_live_signal = IPCSignal(name="worker_healthy_live_signal",
                     array=self.worker_healthy_live_recorded_time_array,
-                    dtype=np.float32,
+                    dtype=np.int32,
                     suffix=pid,
                     create=False)
 
+        model_weights_status = np.zeros([1], dtype=np.int32)
+        self.model_weights_status_signal = IPCSignal(
+            name="model_weights_status",
+            array=model_weights_status,
+            dtype=np.int32,
+            suffix=pid,
+            create=False)
 
     def create_zmq_client(self, model, mode):
         """
@@ -54,23 +61,15 @@ class EngineClient:
         Format the request data and send the request to the server.
         """
         if "request_id" in prompts:
-            prompts["req_id"] = prompts["request_id"]
+            prompts["request_id"] = prompts["request_id"]
 
-        if "req_id" not in prompts:
+        if "request_id" not in prompts:
             request_id = str(uuid.uuid4())
-            prompts["req_id"] = request_id
+            prompts["request_id"] = request_id
         query_list = []
 
-        if "context" in prompts:
-            for item in prompts["context"]:
-                if item["role"] == "system":
-                    prompts["system"] = item["utterance"]
-                elif item["role"] in ["user", "assistant"]:
-                    query_list.append(item["utterance"])
-                    prompts["prompt"] = query_list
-
         if "max_tokens" not in prompts:
-            prompts["max_tokens"] = self.max_model_len
+            prompts["max_tokens"] = self.max_model_len - 1
 
         self.add_requests(prompts)
 
@@ -85,43 +84,92 @@ class EngineClient:
         Returns:
             None
         """
+        self.vaild_parameters(task)
+        try:
 
-        task["preprocess_start_time"] = time.time()
+            task["preprocess_start_time"] = time.time()
 
-        if int(task.get("enable_text_truncate", 1)):
-            real_seq_len = self.max_model_len - task.get("max_tokens", 800)
-            self.data_processor.process_request_dict(task, max_model_len=real_seq_len)
-        else:
             self.data_processor.process_request_dict(task, self.max_model_len)
 
-        task["prompt_token_ids_len"] = len(task["prompt_token_ids"])
-        input_ids_len = task["prompt_token_ids_len"]
-        task["max_tokens"] = min(self.max_model_len - input_ids_len , task.get("max_tokens"))
-        min_tokens = task.get("min_tokens")
+            task["prompt_token_ids_len"] = len(task["prompt_token_ids"])
+            input_ids_len = task["prompt_token_ids_len"]
+            task["max_tokens"] = min(self.max_model_len - input_ids_len , task.get("max_tokens"))
+            min_tokens = task.get("min_tokens", 1)
+        except Exception as e:
+            api_server_logger.error(e)
+            raise EngineError(str(e), error_code=400)
+
         if input_ids_len + min_tokens >= self.max_model_len:
             error_msg = (
                 f"Input text is too long, input_ids_len ({input_ids_len}) "
                 f"+ min_dec_len ({min_tokens}) >= max_model_len "
             )
             api_server_logger.error(error_msg)
-            raise EngineError(error_msg, error_code=5001)
+            raise EngineError(error_msg, error_code=400)
 
         if input_ids_len > self.max_model_len:
             error_msg = (
                 f"Length of input token({input_ids_len}) exceeds the limit max_model_len({self.max_model_len})."
             )
             api_server_logger.error(error_msg)
-            raise EngineError(error_msg, error_code=5001)
+            raise EngineError(error_msg, error_code=400)
 
         task["preprocess_end_time"] = time.time()
         preprocess_cost_time = task["preprocess_end_time"] - task["preprocess_start_time"]
         api_server_logger.info(
-            f"Cache request with req_id ({task.get('request_id')}), "
+            f"Cache request with request_id ({task.get('request_id')}), "
             f"cost {time.time() - preprocess_cost_time}"
         )
         api_server_logger.debug(f"Recieve task: {task}")
+        try:
+            self.zmq_client.send_json(task)
+        except Exception as e:
+            api_server_logger.error(e)
+            raise EngineError(str(e), error_code=400)
 
-        self.zmq_client.send_json(task)
+    def vaild_parameters(self, data):
+        """
+        Validate stream options
+        """
+
+
+        if data.get("n"):
+            if data["n"] != 1:
+                raise ValueError("n only support 1.")
+
+        if data.get("max_tokens"):
+            if data["max_tokens"] < 1 or data["max_tokens"] >= self.max_model_len:
+                raise ValueError(f"max_tokens can be defined [1, {self.max_model_len}).")
+
+        if data.get("top_p"):
+            if data["top_p"] > 1 or data["top_p"] < 0:
+                raise ValueError(
+                    "top_p value can only be defined [0, 1].")
+
+
+        if data.get("frequency_penalty"):
+            if  not -2.0 <= data["frequency_penalty"] <= 2.0:
+                raise ValueError("frequency_penalty must be in [-2, 2]")
+
+        if data.get("temperature"):
+            if data["temperature"] < 0:
+                raise ValueError(f"temperature must be non-negative")
+
+
+        if data.get("presence_penalty"):
+            if  not -2.0 <= data["presence_penalty"] <= 2.0:
+                raise ValueError("presence_penalty must be in [-2, 2]")
+
+
+
+        if data.get("seed"):
+            if not 0 <= data["seed"] <= 922337203685477580:
+                raise ValueError("seed must be in [0, 922337203685477580]")
+
+        if data.get("stream_options") and not data.get("stream"):
+            raise ValueError(
+                "Stream options can only be defined when `stream=True`.")
+
 
 
     def check_health(self, time_interval_threashold=30):
@@ -134,4 +182,64 @@ class EngineClient:
             if elapsed_time > time_interval_threashold:
                 return False, "Worker Service Not Healthy"
 
+        return True, ""
+
+
+    def is_workers_alive(self):
+        """
+        Check the health of the model server by checking whether all workers are alive.
+
+        """
+        if self.model_weights_status_signal.value[0] == 0:
+            return True, ""
+        else:
+            return False, "No model weight enabled"
+
+
+
+    def update_model_weight(self, timeout = 300):
+        """
+        Update the model weight by sending a signal to the server.
+        1 : worker receive the signal and start to update model weight
+        2 : worker update finish and notify client
+        """
+        if self.model_weights_status_signal.value[0] == 0:
+            return True, ""
+        if self.model_weights_status_signal.value[0] == 1:
+            return False, "updating model weight already"
+
+        self.model_weights_status_signal.value[0] = 1
+        api_server_logger.info(f"start update model weight {self.model_weights_status_signal.value}")
+        while self.model_weights_status_signal.value[0] != 0  and timeout != 0:
+            time.sleep(1)
+            timeout -= 1
+            continue
+        if self.model_weights_status_signal.value[0] != 0:
+            return False, "Update model weight timeout"
+        time.sleep(1)
+        return True, ""
+
+
+
+    def clear_load_weight(self, timeout = 300):
+        """
+        Clear the load weight status.
+        -1 : worker receive the signal and start to clear model weight
+        -2 : worker clear finish and notify client
+        """
+        if self.model_weights_status_signal.value[0] == -2:
+            return True, ""
+        if self.model_weights_status_signal.value[0] == -1:
+            return False, "clearing model weight already"
+
+        self.model_weights_status_signal.value[0] = -1
+
+        api_server_logger.info(f"start clear model weight {self.model_weights_status_signal.value}")
+        while self.model_weights_status_signal.value[0] != -2  and timeout != 0:
+            time.sleep(1)
+            timeout -= 1
+            continue
+        if self.model_weights_status_signal.value[0] != -2:
+            return False, "clear model weight timeout"
+        time.sleep(1)
         return True, ""

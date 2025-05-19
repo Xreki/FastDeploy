@@ -14,8 +14,7 @@
 # limitations under the License.
 """
 
-import os
-
+from fastdeploy.engine.config import ModelConfig
 
 class InputPreprocessor:
     """
@@ -56,8 +55,9 @@ class InputPreprocessor:
         Returns:
             DataProcessor or MultiModalRegistry.Processor (Union[DataProcessor, MultiModalRegistry.Processor]): 数据处理器。
         """
+        architectures = ModelConfig(self.model_name_or_path).architectures
         if not self.enable_mm_registry:
-            if int(os.getenv("OPEN_SOURCE", "0")) == 1:
+            if architectures != "ErnieForCausalLM":
                 from fastdeploy.input.text_processor import DataProcessor
                 self.processor = DataProcessor(model_name_or_path=self.model_name_or_path)
             else:
