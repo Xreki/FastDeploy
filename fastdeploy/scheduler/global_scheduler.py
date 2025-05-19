@@ -181,11 +181,7 @@ class GlobalScheduler(object):
         serialized_responses = self.client.lpop(key, size)
         if serialized_responses is None or len(serialized_responses) == 0:
             ttl = self.client.ttl(self._unique_key_name(request_id))
-            if ttl <= 0:
-                raise ValueError(
-                    f"Output of request_id ({request_id}) has expired")
-
-            wait_time = min(ttl, self.wait_response_timeout)
+            wait_time = self.wait_response_timeout if ttl <= 0 else min(ttl, self.wait_response_timeout)
             blocked_data = self.client.blpop(key, wait_time)
             if blocked_data is None:
                 return []
