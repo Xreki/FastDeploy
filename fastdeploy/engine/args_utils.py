@@ -68,6 +68,10 @@ class EngineArgs:
     """
     Additional keyword arguments for the multi-modal processor.
     """
+    enable_mm: bool = False
+    """
+    Flags to enable multi-modal model
+    """
     speculative_config: Optional[Dict[str, Any]] = None
     """
     Configuration for speculative execution.
@@ -214,6 +218,12 @@ class EngineArgs:
             "--mm_processor_kwargs",
             default=None,
             help="Additional keyword arguments for the multi-modal processor."
+        )
+        model_group.add_argument(
+            "--enable-mm",
+            action='store_true',
+            default=EngineArgs.enable_mm,
+            help="Flag to enable multi-modal model."
         )
         model_group.add_argument(
             "--speculative_config",
@@ -431,5 +441,6 @@ class EngineArgs:
             nnode=self.nnode,
             pod_ips=self.pod_ips,
             use_warmup=self.use_warmup,
-            engine_worker_queue_port=self.engine_worker_queue_port
+            engine_worker_queue_port=self.engine_worker_queue_port,
+            enable_mm=self.enable_mm
         )

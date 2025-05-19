@@ -55,10 +55,12 @@ class Worker:
         self.device_ids = self.args.device_ids.split(",")
         self.model_cfg = ModelConfig(args.model_name_or_path)
 
-        if self.model_cfg.architectures != "ErnieForCausalLM":
-            from fastdeploy.model_executor.model_runner.model_runner_paddlenlp import ModelRunner
-        else:
+        if "ErnieForCausalLM" in self.model_cfg.architectures:
             from fastdeploy.model_executor.model_runner.model_runner_inference import ModelRunner
+        elif "ErnieMoEVLForCausalLM" in self.model_cfg.architectures:
+            from fastdeploy.model_executor.model_runner.model_runner_vl_inference import ModelRunner
+        else:
+            from fastdeploy.model_executor.model_runner.model_runner_paddlenlp import ModelRunner
 
         self.init_dist_env()
         self.format_print_configuration()
@@ -99,6 +101,7 @@ class Worker:
 
 
     def init_health(self):
+        print("init_health")
         # worker_ready_signal 用于engine感知各worker进程是否Ready
         worker_ready_signal_data = np.zeros(shape=[self.nranks], dtype=np.int32)
         self.worker_ready_signal = IPCSignal(name="worker_ready_singnal",
@@ -161,13 +164,15 @@ class Worker:
         """
         step cuda
         """
-        if self.model_cfg.architectures != "ErnieForCausalLM":
-            from paddlenlp_ops import step_paddle
-            from fastdeploy.model_executor.model_runner.model_runner_paddlenlp import ModelRunner
-
-        else:
+        if "ErnieForCausalLM" in self.model_cfg.architectures:
             from fastdeploy.model_executor.ops.gpu import step_paddle
             from fastdeploy.model_executor.model_runner.model_runner_inference import ModelRunner
+        elif "ErnieMoEVLForCausalLM" in self.model_cfg.architectures:
+            from fastdeploy.model_executor.ops.gpu import step_paddle
+            from fastdeploy.model_executor.model_runner.model_runner_vl_inference import ModelRunner
+        else:
+            from paddlenlp_ops import step_paddle
+            from fastdeploy.model_executor.model_runner.model_runner_paddlenlp import ModelRunner
 
         step_paddle(
             self.infer_engine.share_inputs["stop_flags"],
@@ -287,6 +292,7 @@ class Worker:
 
                 time.sleep(0.001)
                 continue
+
             self.infer_engine.generate()
             self.infer_engine.share_inputs["infer_seed"].add_(infer_seed_increment)
             self.infer_engine.share_inputs["infer_seed"][:] %= self.MAX_INFER_SEED

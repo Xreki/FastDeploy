@@ -19,7 +19,6 @@ from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 import requests
-import torch
 from PIL import Image
 
 from .base import MediaIO

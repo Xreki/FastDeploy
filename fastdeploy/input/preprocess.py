@@ -57,13 +57,17 @@ class InputPreprocessor:
         """
         architectures = ModelConfig(self.model_name_or_path).architectures
         if not self.enable_mm_registry:
-            if architectures != "ErnieForCausalLM":
+            if "ErnieForCausalLM" not in architectures:
                 from fastdeploy.input.text_processor import DataProcessor
                 self.processor = DataProcessor(model_name_or_path=self.model_name_or_path)
             else:
                 from fastdeploy.input.ernie_processor import ErnieProcessor
                 self.processor = ErnieProcessor(model_name_or_path=self.model_name_or_path)
         else:
-            from fastdeploy.input.mm_register import MultiModalRegistry
-            self.processor = MultiModalRegistry.create_processor(self.model_name_or_path)
+            if "ErnieMoEVLForCausalLM" not in architectures:
+                from fastdeploy.input.mm_register import MultiModalRegistry
+                self.processor = MultiModalRegistry.create_processor(self.model_name_or_path)
+            else:
+                from fastdeploy.input.ernie_vl_processor import ErnieMoEVLProcessor
+                self.processor = ErnieMoEVLProcessor(model_name_or_path=self.model_name_or_path)
         return self.processor

@@ -14,27 +14,19 @@
 # limitations under the License.
 """
 
+from __future__ import annotations
 import base64
 from functools import partial
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Optional
 
 import numpy as np
 import numpy.typing as npt
 from PIL import Image
 
-from vllm.inputs.registry import InputContext
-from vllm.logger import init_logger
-from vllm.transformers_utils.processor import cached_get_video_processor
-from vllm.utils import PlaceholderModule, is_list_of
-
-from .base import MediaIO, ModalityData
+from .base import MediaIO
 from .image import ImageMediaIO
-
-
-logger = init_logger(__name__)
-
 
 
 def resize_video(frames: npt.NDArray, size: tuple[int, int]) -> npt.NDArray:

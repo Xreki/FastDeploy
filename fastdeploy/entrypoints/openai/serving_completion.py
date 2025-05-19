@@ -255,6 +255,7 @@ class OpenAIServingCompletion:
                         chunk.choices[0].finish_reason = "length"
 
                 output_tokens[idx] += 1
+
                 if len(choices) == max_streaming_response_tokens or res["finished"]:
                     chunk = CompletionStreamResponse(
                         id=request_id,

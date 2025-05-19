@@ -50,9 +50,9 @@ class ModelRunnerBase(ABC):
         self.init_rotary_position_embedding(args.max_model_len)
         self.num_gpu_blocks = args.max_block_num
 
-        self._init_kvcache()
 
         self._load_model(config.model_name_or_path, args.dynamic_load_weight)
+        self._init_kvcache()
 
     def _log_memory_usage(self, context: str = "") -> None:
         """Log current GPU memory usage."""
