@@ -1,9 +1,9 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from efficientllm.models.inference_args import InferenceArgs
-    from efficientllm.models.configuration import ModelConfig
-    from efficientllm.utils import ReqToTokenPool, KVCache, MHATokenToKVPool
+    from fastdeploy import InferenceArgs
+    from fastdeploy.model_executor.models.configuration import ModelConfig
+    from fastdeploy.model_executor.model_runner import ReqToTokenPool, KVCache, MHATokenToKVPool
 
 class MinimalModelRunner:
     """ModelRunner implementing minimal functionality for inference testing. """
@@ -17,7 +17,6 @@ class MinimalModelRunner:
         server_args: 'InferenceArgs'
     ):
         import paddle
-        from efficientllm.utils import ReqToTokenPool, KVCache, MHATokenToKVPool
         # Parse args
         self.model_config = model_config
         self.device = "cuda" if paddle.device.cuda.device_count() > 0 else "cpu"
