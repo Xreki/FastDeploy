@@ -104,9 +104,9 @@ class OpenAIServingChat:
         previous_num_tokens = 0
         num_prompt_tokens = 0
         num_choices = 1
-        max_response_tokens = 1
-        if request.metadata is not None and request.metadata.get("max_response_tokens", 1) > 1:
-            max_response_tokens = request.metadata["max_response_tokens"]
+        max_streaming_response_tokens = 1
+        if request.metadata is not None and request.metadata.get("max_streaming_response_tokens", 1) > 1:
+            max_streaming_response_tokens = request.metadata["max_streaming_response_tokens"]
 
         stream_options = request.stream_options
         if stream_options is None:
@@ -206,7 +206,7 @@ class OpenAIServingChat:
                         total_tokens=num_prompt_tokens + previous_num_tokens
                     )
                 choices.append(choice)
-                if len(choices) == max_response_tokens or res["finished"]:
+                if len(choices) == max_streaming_response_tokens or res["finished"]:
                     chunk.choices = choices
                     yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
                     choices = []
