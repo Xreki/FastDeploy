@@ -338,6 +338,7 @@ def build_stream_line_model(
             sequence_parallel=False,
             use_rope=True,
             rope_theta=config.get("rope_theta", 10000.0),
+            rope_3d=config.get("rope_3d", False),
             weight_sharing=False,
             inv_compression_ratio=1.0 / config.get("compression_ratio", 1.0),
             export_model_type=export_model_type,  # export model type.

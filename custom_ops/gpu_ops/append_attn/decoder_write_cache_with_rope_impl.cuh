@@ -40,7 +40,8 @@ __global__ void append_decode_cache_T_rope_kernel(
     const int head_size,
     const int block_size,
     const uint32_t elem_cnt,
-    const int kv_num_heads) {
+    const int kv_num_heads,
+    const bool rope_3d) {
   using LoadT = AlignedVector<T, VecSize>;
   using LoadBiasT = AlignedVector<T, VecSize>;
   using LoadKVT = AlignedVector<T, VecSize>;
@@ -82,8 +83,9 @@ __global__ void append_decode_cache_T_rope_kernel(
     if (hi < num_heads + kv_num_heads) {
       // q k rope
       const uint32_t emb_idx = write_seq_id * half_head_size + h_bias / 2;
-      Load<float, HalfVecSize>(&cos_emb[emb_idx], &cos_emb_vec);
-      Load<float, HalfVecSize>(&sin_emb[emb_idx], &sin_emb_vec);
+      uint32_t new_emb_idx = rope_3d ? emb_idx + ori_bi * max_seq_len * head_size : emb_idx;
+      Load<float, HalfVecSize>(&cos_emb[new_emb_idx], &cos_emb_vec);
+      Load<float, HalfVecSize>(&sin_emb[new_emb_idx], &sin_emb_vec);
     }
 #pragma unroll
     for (int i = 0; i < HalfVecSize; i++) {
@@ -148,7 +150,8 @@ __global__ void append_decode_cache_T_rope_kernel(
     const int head_size,
     const int block_size,
     const uint32_t elem_cnt,
-    const int kv_num_heads) {
+    const int kv_num_heads,
+    const bool rope_3d) {
   using LoadT = AlignedVector<int, VecSize>;
   using LoadBiasT = AlignedVector<T, VecSize>;
   using LoadOutScaleT = AlignedVector<float, VecSize>;

@@ -59,6 +59,7 @@ class FusedTransformer(nn.Layer):
         ffn1_concat=True,
         use_smooth_quant=True,
         rope_theta=10000.0,
+        rope_3d=False,
         use_neox_rotary_style=False,
         fuse_ffn_act=False,
         have_norm_bias=False,
@@ -162,6 +163,7 @@ class FusedTransformer(nn.Layer):
                         else f"{base_model_prefix}.decoder.layers.{i}.self_attn"
                     ),
                     rope_theta=rope_theta,
+                    rope_3d=rope_3d,
                     use_neox_rotary_style=use_neox_rotary_style,
                     out_scale=self.act_scales.get(
                         f"{base_model_prefix}.decoder.layers.{i}.self_attn.out_proj.activation_quanter",

@@ -34,6 +34,7 @@ class Attention(nn.Layer):
         out_scale=-1,
         use_neox_rotary_style=False,
         rope_theta=10000.0,
+        rope_3d=False,
         qkv_scale=None,
         qkv_bias=None,
         linear_shift=None,
@@ -75,6 +76,7 @@ class Attention(nn.Layer):
 
         self.use_neox_rotary_style = use_neox_rotary_style
         self.rope_theta = rope_theta
+        self.rope_3d = rope_3d
 
         self._dtype = self._helper.get_default_dtype()
         if self._dtype == "bfloat16":
@@ -368,6 +370,7 @@ class Attention(nn.Layer):
                 self._fuse_kernel_compute_dtype,
                 cache_quant_type_str,  # cache_quant_type
                 self.use_neox_rotary_style,
+                self.rope_3d,
                 kwargs.get("max_input_length", -1),
                 self.inference_args.quant_max_bound,
                 self.inference_args.quant_min_bound,

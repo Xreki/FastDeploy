@@ -86,6 +86,7 @@ std::vector<paddle::Tensor> AppendAttention(
     const std::string& compute_dtype,
     const std::string& cache_quant_type_str,
     const bool use_neox_rotary_style,
+    const bool rope_3d,
     const int max_input_length,
     const float quant_max_bound,
     const float quant_min_bound,
