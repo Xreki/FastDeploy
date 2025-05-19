@@ -172,10 +172,6 @@ class LocalScheduler(object):
     def get_results(self, request_id: str) -> List[RequestOutput]:
         """get results from local cache"""
         with self.responses_not_empty:
-            if request_id not in self.requests:
-                raise ValueError(
-                    f"Output of request_id {request_id} is expired")
-
             responses = self.responses_not_empty.wait_for(
                 lambda: self.responses.get(request_id, []), self.wait_response_timeout)
             self.responses.pop(request_id, None)
