@@ -262,6 +262,7 @@ class Config:
         speculative_config: Optional[Dict[str, Any]] = None,
         use_warmup: bool = False,
         engine_worker_queue_port: int = 8002,
+        enable_mm: bool = False,
     ):
         """
         Initialize the Config class.
@@ -294,11 +295,14 @@ class Config:
         self.max_model_len = max_model_len
         self.max_num_seqs = max_num_seqs
         self.mm_processor_kwargs = mm_processor_kwargs
+        self.enable_mm = enable_mm
         self.speculative_config = speculative_config
         self.use_warmup = use_warmup
 
         # TODO
         self.max_prefill_batch = 3
+        if enable_mm:
+            self.max_prefill_batch = 1 # TODO:当前多模prefill阶段只支持并行度为1,待优化
 
         self.engine_worker_queue_port = engine_worker_queue_port
         self.device_ids = ",".join([str(i) for i in range(self.tensor_parallel_size)])

@@ -206,6 +206,7 @@ class OpenAIServingChat:
                         total_tokens=num_prompt_tokens + previous_num_tokens
                     )
                 choices.append(choice)
+
                 if len(choices) == max_streaming_response_tokens or res["finished"]:
                     chunk.choices = choices
                     yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"

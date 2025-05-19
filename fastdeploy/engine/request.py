@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 import time
+import numpy
 from dataclasses import dataclass, asdict, fields
 from typing import TYPE_CHECKING, Optional, Union, Any
 from fastdeploy.engine.sampling_params import SamplingParams
@@ -267,6 +268,9 @@ class RequestOutput:
         """convert RequestOutput into a serializable dict """
         if self.prompt_token_ids is None:
             self.prompt_token_ids = []
+
+        if type(self.prompt_token_ids) is numpy.ndarray:
+            self.prompt_token_ids = self.prompt_token_ids.tolist()
 
         return {
             "request_id": self.request_id,

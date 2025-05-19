@@ -81,7 +81,7 @@ class SamplingParams:
     temperature: float = 1.0
     top_p: float = 0.7
     seed: Optional[int] = None
-    stop: Optional[Union[str, List[str]]] = None
+    stop: Optional[Union[str, List[str]]] = None 
     stop_token_ids: Optional[Union[List[List[int]], List[int]]] = None
     max_tokens: Optional[int] = 16
     min_tokens: int = 1

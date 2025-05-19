@@ -23,12 +23,8 @@ from pydantic import (BaseModel, ConfigDict, Field, TypeAdapter,
                       ValidationInfo, field_validator, model_validator)
 from typing_extensions import TypeAlias
 
-from openai.types.chat import ChatCompletionAssistantMessageParam
-from openai.types.chat import ChatCompletionContentPartParam
-from openai.types.chat import (ChatCompletionContentPartRefusalParam,
-                               ChatCompletionContentPartTextParam)
-from openai.types.chat import ChatCompletionMessageParam
-
+#from openai.types.chat import ChatCompletionMessageParam
+from fastdeploy.entrypoints.chat_utils import ChatCompletionMessageParam, parse_chat_messages
 from fastdeploy.engine.sampling_params import SamplingParams
 
 
@@ -288,9 +284,11 @@ class ChatCompletionRequest(BaseModel):
         req_dict = {}
         if request_id is not None:
             req_dict['request_id'] = request_id
+
         if self.metadata is not None:
             for key, value in self.metadata.items():
                 req_dict[key] = value
+
         for key, value in self.dict().items():
             if value is not None:
                 req_dict[key] = value
