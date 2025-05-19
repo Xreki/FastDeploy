@@ -3,6 +3,6 @@
 model: "/root/paddlejob/workspace/env_run/gaoziyuan/model_eb45t/10.52.99.143:8777"
 max_model_len: 32768
 max_num_seqs: 32
-block_ratio: 0.5
+kv_cache_ratio: 0.5
 num_gpu_blocks_override: 15000
 dynamic_load_weight: 1
