@@ -272,6 +272,7 @@ class Config:
         use_warmup: bool = False,
         engine_worker_queue_port: int = 8002,
         enable_mm: bool = False,
+        enable_chunked_prefill: bool = False,
     ):
         """
         Initialize the Config class.
@@ -291,6 +292,7 @@ class Config:
             mm_processor_kwargs (Optional[Dict[str, Any]]): Additional arguments for multi-modal processor. Default is None.
             speculative_config (Optional[Dict[str, Any]]): Speculative execution configuration. Default is None.
             use_warmup (bool): Flag to use warmup. Default is False.
+            enable_chunked_prefill (bool): Flag to enable chunked prefill. Default is False.
         """
         self.model_config = model_config
         self.cache_config = cache_config
@@ -307,6 +309,7 @@ class Config:
         self.enable_mm = enable_mm
         self.speculative_config = speculative_config
         self.use_warmup = use_warmup
+        self.enable_chunked_prefill = enable_chunked_prefill
 
         # TODO
         self.max_prefill_batch = 3
@@ -340,9 +343,11 @@ class Config:
         self.paddle_commit_id = paddle.version.commit
 
         if self.max_num_batched_tokens is None:
-            self.max_num_batched_tokens = self.max_model_len
-
-        self.cache_config.postprocess(self.max_num_batched_tokens, self.max_num_seqs)
+            if self.enable_chunked_prefill:
+                self.max_num_batched_tokens = 2048
+            else:
+                self.max_num_batched_tokens = self.max_model_len
+        self.cache_config.postprocess(self.max_model_len, self.max_num_seqs)
 
 
     def check(self):
