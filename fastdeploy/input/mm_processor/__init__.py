@@ -1,4 +1,5 @@
-# Copyright (c) 2024 PaddlePaddle Authors. All Rights Reserved.
+"""
+# Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,19 +12,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
 
-export NVIDIA_TF32_OVERRIDE=0
-export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
-export PYTHONPATH=$(dirname $(pwd)):$PYTHONPATH
-export FLAGS_enable_pir_api=0
-export FLAGS_use_gemm_dequant=0
-export FLAGS_weight_only_linear_arch=70
-export ELLM_DYNAMIC_MODE=0
+from .process import DataProcessor, fancy_print
 
-model_path=${1:-"/path/to/model"}
-
-python export_generation_model.py \
-        --model_name_or_path ${model_path} \
-        --output_path ${model_path}/export \
-        --use_efficientllm True \
-        --dtype float16
+__all__ = [
+    'DataProcessor',
+    'fancy_print',
+]

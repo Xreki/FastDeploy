@@ -337,7 +337,8 @@ __global__ void GQAVariableLengthRotaryKernel(
     const int q_num_head,
     const int kv_num_head,
     const int seq_len,
-    const int last_dim) {
+    const int last_dim,
+    const bool rope_3d) {
   using LoadT = AlignedVector<int, VecSize>;
   using LoadBiasT = AlignedVector<T, VecSize>;
   using LoadScaleT = AlignedVector<float, VecSize>;
@@ -417,7 +418,8 @@ __global__ void GQAVariableLengthRotaryKernel(
     const int q_num_head,
     const int kv_num_head,
     const int seq_len,
-    const int last_dim) {
+    const int last_dim,
+    const bool rope_3d) {
   using LoadT = AlignedVector<T, VecSize>;
   constexpr int HalfVecSize = VecSize / 2;
   using LoadEmbT = AlignedVector<float, HalfVecSize>;
@@ -446,8 +448,10 @@ __global__ void GQAVariableLengthRotaryKernel(
         token_idx * (q_num_head + 2 * kv_num_head) * last_dim + hi * last_dim +
         h_bias;
     Load<T, VecSize>(&qkv[base_idx], &src_vec);
-    Load<float, HalfVecSize>(&cos_emb[emb_idx], &cos_emb_vec);
-    Load<float, HalfVecSize>(&sin_emb[emb_idx], &sin_emb_vec);
+
+    int64_t new_emb_idx = rope_3d ? emb_idx + ori_bi * last_dim * seq_len : emb_idx;
+    Load<float, HalfVecSize>(&cos_emb[new_emb_idx], &cos_emb_vec);
+    Load<float, HalfVecSize>(&sin_emb[new_emb_idx], &sin_emb_vec);
 #pragma unroll
     for (int i = 0; i < HalfVecSize; i++) {
       const float input_left = static_cast<float>(src_vec[2 * i]);
@@ -479,7 +483,8 @@ __global__ void GQAVariableLengthRotaryQuantKVKernel(const int *qkv,
                                            const int q_num_head,
                                            const int kv_num_head,
                                            const int seq_len,
-                                           const int last_dim) {
+                                           const int last_dim,
+                                           const bool rope_3d) {
   using LoadIn = AlignedVector<int, VecSize>;
   using LoadBiasT = AlignedVector<T, VecSize>;
   constexpr int HalfVecSize = VecSize / 2;
@@ -567,7 +572,8 @@ __global__ void GQAVariableLengthRotaryQuantKVKernel(const T *qkv,
                                            const int q_num_head,
                                            const int kv_num_head,
                                            const int seq_len,
-                                           const int last_dim) {
+                                           const int last_dim,
+                                           const bool rope_3d) {
   using LoadT = AlignedVector<T, VecSize>;
   constexpr int HalfVecSize = VecSize / 2;
   using LoadEmbT = AlignedVector<float, HalfVecSize>;
@@ -1410,7 +1416,8 @@ void rotary_qk_variable(
     const int input_output_len,
     const int dim_head,
     const cudaStream_t &stream,
-    bool use_neox_style = false) {
+    bool use_neox_style = false,
+    bool rope_3d = false) {
   int64_t elem_nums =
       qkv_out_scales ? token_num * 3 * head_num * dim_head
                      : token_num * 2 * head_num * dim_head;
@@ -1511,7 +1518,8 @@ void gqa_rotary_qk_variable(
     const int input_output_len,
     const int dim_head,
     const cudaStream_t &stream,
-    bool use_neox_style = false) {
+    bool use_neox_style = false,
+    bool rope_3d = false) {
   int64_t elem_nums =
       qkv_out_scales
           ? token_num * (num_heads + 2 * kv_num_heads) * dim_head
@@ -1545,7 +1553,8 @@ void gqa_rotary_qk_variable(
               num_heads,
               kv_num_heads,
               seq_len,
-              dim_head);
+              dim_head,
+              rope_3d);
     } else {
       GQAVariableLengthRotaryKernel<T, PackSize>
           <<<grid_size, blocksize, 0, stream>>>(
@@ -1560,7 +1569,8 @@ void gqa_rotary_qk_variable(
               num_heads,
               kv_num_heads,
               seq_len,
-              dim_head);
+              dim_head,
+              rope_3d);
     }
   } else {
     const float *cos_emb = rotary_emb;
@@ -1622,7 +1632,8 @@ void gqa_rotary_qk_quant_variable(
     const int input_output_len,
     const int dim_head,
     const cudaStream_t &stream,
-    bool use_neox_style = false) {
+    bool use_neox_style = false,
+    bool rope_3d = false) {
   int64_t elem_nums = token_num * (num_heads + 2 * kv_num_heads) * dim_head;
   if (use_neox_style) {
     elem_nums /= 2;
@@ -1654,7 +1665,8 @@ void gqa_rotary_qk_quant_variable(
               num_heads,
               kv_num_heads,
               seq_len,
-              dim_head);
+              dim_head,
+              rope_3d);
     } else {
       GQAVariableLengthRotaryQuantKVKernel<T, PackSize>
           <<<grid_size, blocksize, 0, stream>>>(
@@ -1672,7 +1684,8 @@ void gqa_rotary_qk_quant_variable(
               num_heads,
               kv_num_heads,
               seq_len,
-              dim_head);
+              dim_head,
+              rope_3d);
     }
   } else {
     PADDLE_THROW("Use_neox_style mode isn't implemented yet");

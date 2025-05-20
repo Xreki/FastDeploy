@@ -20,6 +20,7 @@ import traceback
 import uuid
 import time
 from typing import Optional, Dict, List, Any, Union, overload
+
 from tqdm import tqdm
 
 from fastdeploy.engine.args_utils import EngineArgs
@@ -217,7 +218,7 @@ class LLM:
             finished = []
             for i, req_id in enumerate(req_ids):
                 try:
-                    for result in self.llm_engine.get_result(req_id):
+                    for result in self.llm_engine._get_generated_result(req_id):
                         result = self.llm_engine.data_processor.process_response(
                             result)
                         llm_logger.debug(

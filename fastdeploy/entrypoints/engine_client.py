@@ -30,8 +30,9 @@ class EngineClient:
     """
     EngineClient is a class that handles the communication between the client and the server.
     """
-    def __init__(self, tokenizer, max_model_len, tensor_parallel_size, pid):
-        input_processor =  InputPreprocessor(tokenizer)
+    def __init__(self, tokenizer, max_model_len, tensor_parallel_size, pid, enable_mm=False):
+        input_processor =  InputPreprocessor(tokenizer, enable_mm)
+        self.enable_mm = enable_mm
         self.data_processor = input_processor.create_processor()
         self.max_model_len = max_model_len
         self.worker_healthy_live_recorded_time_array = np.zeros(shape=[tensor_parallel_size], dtype=np.int32)
@@ -85,34 +86,34 @@ class EngineClient:
             None
         """
         self.vaild_parameters(task)
-        try:
 
-            task["preprocess_start_time"] = time.time()
+        task["preprocess_start_time"] = time.time()
+        if not self.enable_mm:
+            try:
+                self.data_processor.process_request_dict(task, self.max_model_len)
 
-            self.data_processor.process_request_dict(task, self.max_model_len)
+                task["prompt_token_ids_len"] = len(task["prompt_token_ids"])
+                input_ids_len = task["prompt_token_ids_len"]
+                task["max_tokens"] = min(self.max_model_len - input_ids_len , task.get("max_tokens"))
+                min_tokens = task.get("min_tokens", 1)
+            except Exception as e:
+                api_server_logger.error(e)
+                raise EngineError(str(e), error_code=400)
 
-            task["prompt_token_ids_len"] = len(task["prompt_token_ids"])
-            input_ids_len = task["prompt_token_ids_len"]
-            task["max_tokens"] = min(self.max_model_len - input_ids_len , task.get("max_tokens"))
-            min_tokens = task.get("min_tokens", 1)
-        except Exception as e:
-            api_server_logger.error(e)
-            raise EngineError(str(e), error_code=400)
+            if input_ids_len + min_tokens >= self.max_model_len:
+                error_msg = (
+                    f"Input text is too long, input_ids_len ({input_ids_len}) "
+                    f"+ min_dec_len ({min_tokens}) >= max_model_len "
+                )
+                api_server_logger.error(error_msg)
+                raise EngineError(error_msg, error_code=400)
 
-        if input_ids_len + min_tokens >= self.max_model_len:
-            error_msg = (
-                f"Input text is too long, input_ids_len ({input_ids_len}) "
-                f"+ min_dec_len ({min_tokens}) >= max_model_len "
-            )
-            api_server_logger.error(error_msg)
-            raise EngineError(error_msg, error_code=400)
-
-        if input_ids_len > self.max_model_len:
-            error_msg = (
-                f"Length of input token({input_ids_len}) exceeds the limit max_model_len({self.max_model_len})."
-            )
-            api_server_logger.error(error_msg)
-            raise EngineError(error_msg, error_code=400)
+            if input_ids_len > self.max_model_len:
+                error_msg = (
+                    f"Length of input token({input_ids_len}) exceeds the limit max_model_len({self.max_model_len})."
+                )
+                api_server_logger.error(error_msg)
+                raise EngineError(error_msg, error_code=400)
 
         task["preprocess_end_time"] = time.time()
         preprocess_cost_time = task["preprocess_end_time"] - task["preprocess_start_time"]

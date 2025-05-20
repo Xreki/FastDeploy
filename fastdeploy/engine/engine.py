@@ -88,9 +88,8 @@ class LLMEngine(object):
         self.cfg = cfg
         self.scheduler = cfg.scheduler_config.scheduler()
 
-        self.input_processor = InputPreprocessor(cfg.tokenizer)
-        self.resource_manager = ResourceManager(cfg.max_num_seqs,
-                                                cfg.cache_config)
+        self.input_processor = InputPreprocessor(cfg.tokenizer, cfg.enable_mm)
+        self.resource_manager = ResourceManager(cfg.max_num_seqs, cfg.cache_config)
 
         self.token_processor = TokenProcessor(
             cfg=self.cfg, cached_generated_tokens=self.scheduler)
@@ -240,7 +239,6 @@ class LLMEngine(object):
         Insert task to engine thread, monitor scheduler request queue.
         if the engine has resource, insert task to engine
         """
-        
         while True:
             try:
                 if self.resource_manager.available_batch() == 0:
@@ -282,9 +280,13 @@ class LLMEngine(object):
                 data = self.zmq_server.receive_once(block=True)
                 if data is None:
                     break
-                request = Request.from_dict(data)
-                self.scheduler.put_requests([request])
-                llm_logger.info(f"Receive request: {request}")
+                #TODO need optimize
+                if self.cfg.enable_mm:
+                    self.add_requests(data)
+                else:
+                    request = Request.from_dict(data)
+                    self.scheduler.put_requests([request])
+                    llm_logger.info(f"Receive request: {request}")
             except Exception as e:
                 llm_logger.error(
                     f"Error happend while receving new request from zmq, details={e}"

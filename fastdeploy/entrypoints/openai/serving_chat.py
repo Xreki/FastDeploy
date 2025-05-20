@@ -36,6 +36,7 @@ from fastdeploy.entrypoints.openai.protocol import (
     ChatCompletionResponse,
     ErrorResponse,
 )
+from fastdeploy.metrics.work_metrics import work_process_metrics
 
 from fastdeploy.utils import api_server_logger
 
@@ -104,6 +105,9 @@ class OpenAIServingChat:
         previous_num_tokens = 0
         num_prompt_tokens = 0
         num_choices = 1
+        max_streaming_response_tokens = 1
+        if request.metadata is not None and request.metadata.get("max_streaming_response_tokens", 1) > 1:
+            max_streaming_response_tokens = request.metadata["max_streaming_response_tokens"]
 
         stream_options = request.stream_options
         if stream_options is None:
@@ -112,19 +116,29 @@ class OpenAIServingChat:
         else:
             include_usage = stream_options.include_usage
             include_continuous_usage = stream_options.continuous_usage_stats
-
+        chunk = ChatCompletionStreamResponse(
+            id=request_id,
+            object=chunk_object_type,
+            created=created_time,
+            choices=[],
+            model=model_name
+        )
         try:
             dealer = await aiozmq.create_zmq_stream(
                 zmq.DEALER,
                 connect=f"ipc:///dev/shm/router_{self.pid}.ipc"
             )
             dealer.write([b"", request_id.encode('utf-8')])
+            choices = []
             while num_choices > 0:
                 try:
                     raw_data = await asyncio.wait_for(dealer.read(), timeout=300)
                 except asyncio.TimeoutError:
                     status, msg = self.engine_client.check_health()
                     if not status:
+                        if choices:
+                            chunk.choices = choices
+                            yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
                         raise ValueError(f"Engine is not healthy: {msg}")
                     else:
                         continue
@@ -179,6 +193,7 @@ class OpenAIServingChat:
                 )
                 if res["finished"]:
                     num_choices -= 1
+                    work_process_metrics.e2e_request_latency.observe(time.time() - res["metrics"]["request_start_time"])
                     if request.max_tokens is None or output["index"] + 1 != request.max_tokens:
                         choice.finish_reason = "stop"
                     else:
@@ -186,20 +201,19 @@ class OpenAIServingChat:
 
                 if request.metadata is not None and request.metadata.get("training", False) and delta_text != "":
                     choice.delta.token_ids = output["token_ids"]
-                chunk = ChatCompletionStreamResponse(
-                    id=request_id,
-                    object=chunk_object_type,
-                    created=created_time,
-                    choices=[choice],
-                    model=model_name
-                )
                 if include_continuous_usage:
                     chunk.usage = UsageInfo(
                         prompt_tokens=num_prompt_tokens,
                         completion_tokens=previous_num_tokens,
                         total_tokens=num_prompt_tokens + previous_num_tokens
                     )
-                yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
+                choices.append(choice)
+
+                if len(choices) == max_streaming_response_tokens or res["finished"]:
+                    chunk.choices = choices
+                    yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
+                    choices = []
+
 
             if include_usage:
                 completion_tokens = previous_num_tokens
@@ -294,7 +308,7 @@ class OpenAIServingChat:
             completion_tokens=num_generated_tokens,
             total_tokens=num_prompt_tokens + num_generated_tokens
         )
-
+        work_process_metrics.e2e_request_latency.observe(time.time() - final_res["metrics"]["request_start_time"])
         return ChatCompletionResponse(
             id=request_id,
             created=created_time,

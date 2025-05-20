@@ -34,7 +34,7 @@ from ..layers.lm_head import (
     LMHeadAVX,
     LMHeadNPU,
 )
-from .configuration import ErnieBotConfig
+from .configuration import ModelConfig
 from paddlenlp.transformers import PretrainedModel, register_base_model
 from paddlenlp.utils.log import logger
 from functools import partial
@@ -150,7 +150,7 @@ class ErnieBotPretrainedModel(PretrainedModel):
     ErnieBotPretrainedModel
     """
 
-    config_class = ErnieBotConfig
+    config_class = ModelConfig
 
     def _init_weight(self, layer):
         """
@@ -159,7 +159,7 @@ class ErnieBotPretrainedModel(PretrainedModel):
         return None
 
     @classmethod
-    def _get_tensor_parallel_mappings(cls, config: ErnieBotConfig, is_split=True):
+    def _get_tensor_parallel_mappings(cls, config: ModelConfig, is_split=True):
         """
         get_tensor_parallel_mappings
         """
@@ -431,6 +431,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         max_len=-1,
         use_rope=False,
         rope_theta=10000.0,
+        rope_3d=False,
         weight_sharing=True,
         weight_sharing_add_bias=False,
         export_model_type="default",
@@ -758,6 +759,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
                 fmt_keys=fmt_keys,
                 act_method=activation,
                 rope_theta=rope_theta,
+                rope_3d=rope_3d,
                 norm_type=self.norm_type,
                 ffn1_concat=self.ffn1_concat,
                 use_smooth_quant=self.use_smooth_quant,

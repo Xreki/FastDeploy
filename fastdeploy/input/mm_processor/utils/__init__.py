@@ -1,4 +1,5 @@
-# Copyright (c) 2024 PaddlePaddle Authors. All Rights Reserved.
+"""
+# Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,15 +12,4 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
-export PYTHONPATH=$(dirname $(pwd)):$PYTHONPATH
-export FLAGS_enable_pir_api=1
-export CUDA_VISIBLE_DEVICES=-1
-
-infer_model_path=${1:-"/path/to/model"}
-
-python ../infer_generation.py \
-    --model_name_or_path ${infer_model_path}\
-    --dtype float32\
-    --device "CPU"\
+"""

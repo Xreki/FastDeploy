@@ -18,6 +18,7 @@ from typing import List, Optional
 import time
 import redis
 from fastdeploy.engine.request import Request, RequestOutput
+from fastdeploy.metrics.metrics import main_process_metrics
 from fastdeploy.scheduler.data import ScheduledRequest, ScheduledResponse
 from fastdeploy.utils import llm_logger
 
@@ -87,6 +88,7 @@ class GlobalScheduler(object):
         serialized_requests = [request.serialize() for request in requests]
         self.client.rpush(self._request_queue_name(), *serialized_requests)
         llm_logger.debug(f"Global cached requests: {requests}")
+        main_process_metrics.num_requests_waiting.inc(len(requests))
 
     def get_requests(self, available_blocks, block_size, reserved_output_blocks, \
         max_num_batched_tokens, batch=1) -> List[Request]:
@@ -134,6 +136,8 @@ class GlobalScheduler(object):
 
         if len(remaining_request) > 0:
             self.client.lpush(self._request_queue_name(), *remaining_request)
+        main_process_metrics.num_requests_running.inc(len(requests))
+        main_process_metrics.num_requests_waiting.dec(len(requests))
         return requests
 
     def put_results(self, results: List[RequestOutput]):
@@ -177,11 +181,7 @@ class GlobalScheduler(object):
         serialized_responses = self.client.lpop(key, size)
         if serialized_responses is None or len(serialized_responses) == 0:
             ttl = self.client.ttl(self._unique_key_name(request_id))
-            if ttl <= 0:
-                raise ValueError(
-                    f"Output of request_id ({request_id}) has expired")
-
-            wait_time = min(ttl, self.wait_response_timeout)
+            wait_time = self.wait_response_timeout if ttl <= 0 else min(ttl, self.wait_response_timeout)
             blocked_data = self.client.blpop(key, wait_time)
             if blocked_data is None:
                 return []

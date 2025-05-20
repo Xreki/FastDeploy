@@ -29,7 +29,7 @@ import paddle
 
 __all__ = [
     "ERNIEBOT_PRETRAINED_INIT_CONFIGURATION",
-    "ErnieBotConfig",
+    "ModelConfig",
     "ErnieBotMoEConfig",
     "ERNIEBOT_PRETRAINED_RESOURCE_FILES_MAP",
 ]
@@ -66,7 +66,7 @@ ERNIEBOT_PRETRAINED_INIT_CONFIGURATION = {
 ERNIEBOT_PRETRAINED_RESOURCE_FILES_MAP = {"model_state": {"ernie-bot": ""}}
 
 
-class ErnieBotConfig(PretrainedConfig):
+class ModelConfig(PretrainedConfig):
     """
     The configuration class to store the configuration of a `ErnieBot`.
     """
@@ -224,7 +224,7 @@ class ErnieBotConfig(PretrainedConfig):
         )
 
 
-class ErnieBotMoEConfig(ErnieBotConfig):
+class ErnieBotMoEConfig(ModelConfig):
     """ErnieBotMoEConfig Class"""
 
     model_type = "ernie_bot"
