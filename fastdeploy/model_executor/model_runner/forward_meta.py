@@ -142,7 +142,7 @@ class KVCache(abc.ABC):
         self.layer_transfer_counter = layer_transfer_counter
 
 class MHATokenToKVPool(KVCache):
-
+    """Token To Key Value Pool for MultiHeadAttention"""
     def __init__(
         self,
         size: int,
@@ -198,6 +198,7 @@ class MHATokenToKVPool(KVCache):
         del self.v_buffer
 
     def get_kv_size_bytes(self):
+        """for debugging purpose"""
         assert hasattr(self, "k_buffer")
         assert hasattr(self, "v_buffer")
         k_size_bytes = 0
@@ -225,18 +226,19 @@ class MHATokenToKVPool(KVCache):
         self.v_buffer[layer_id][indices] = v_data
 
     def get_key_buffer(self, layer_id: int):
-
+        """Return cached keys given layer id."""
         if self.store_dtype != self.dtype:
             return self.k_buffer[layer_id].view(self.dtype)
         return self.k_buffer[layer_id]
 
     def get_value_buffer(self, layer_id: int):
-
+        """Return cached values given layer id."""
         if self.store_dtype != self.dtype:
             return self.v_buffer[layer_id].view(self.dtype)
         return self.v_buffer[layer_id]
 
     def get_kv_buffer(self, layer_id: int):
+        """Return cached keys and values given layer id."""
         return self.get_key_buffer(layer_id), self.get_value_buffer(layer_id)
 
     def set_kv_buffer(
@@ -248,6 +250,7 @@ class MHATokenToKVPool(KVCache):
         k_scale: Optional[float] = None,
         v_scale: Optional[float] = None,
     ):
+        """Set cached keys and values given layer id."""
         layer_id = layer.layer_id
         if cache_k.dtype != self.dtype:
             if k_scale is not None:
