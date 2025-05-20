@@ -58,6 +58,8 @@ coverage.xml
 .env
 log
 .vscode
+test
+.idea
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

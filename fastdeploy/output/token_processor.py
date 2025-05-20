@@ -29,6 +29,8 @@ from fastdeploy.engine.request import RequestOutput
 from fastdeploy.utils import datetime_diff
 from fastdeploy.utils import llm_logger
 
+from fastdeploy.metrics.metrics import main_process_metrics
+
 
 class TokenProcessor(object):
     """
@@ -172,18 +174,30 @@ class TokenProcessor(object):
             task_id = task.request_id
 
             self.total_step += 1
-
+            current_time = time.time()
             if self.tokens_counter[task_id] == 0:
                 metrics = RequestMetrics(
                     arrival_time=task.arrival_time,
                     inference_start_time=task.inference_start_time,
                     first_token_time=time.time() - task.inference_start_time,
                     time_in_queue=task.schedule_start_time -
-                    task.preprocess_end_time,
+                                  task.preprocess_end_time,
                     preprocess_cost_time=task.preprocess_end_time -
-                    task.preprocess_start_time)
+                                         task.preprocess_start_time)
+
+                main_process_metrics.time_to_first_token.observe(current_time - task.inference_start_time)
+                main_process_metrics.request_queue_time.observe(metrics.time_in_queue)
+
             else:
-                metrics = RequestMetrics(arrival_time=time.time())
+                if hasattr(task, 'last_token_time') and task.last_token_time is not None:
+                    token_gen_time = current_time - task.last_token_time
+                    main_process_metrics.time_per_output_token.observe(token_gen_time)
+
+                task.last_token_time = current_time
+                metrics = RequestMetrics(
+                    arrival_time=time.time(),
+                    request_start_time=task.arrival_time,
+                )
             self.number_of_output_tokens += len(token_ids)
             result = RequestOutput(request_id=task_id,
                                    outputs=CompletionOutput(index=i,
@@ -214,6 +228,8 @@ class TokenProcessor(object):
                         f" total step: {self.total_step}. total_output_token_num: {self.number_of_output_tokens}"
                     )
                     self._recycle_resources(task_id, i, task)
+                    main_process_metrics.num_requests_running.dec(1)
+                    main_process_metrics.request_inference_time.observe(current_time - task.inference_start_time)
                     break
             batch_result.append(result)
 
