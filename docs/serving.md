@@ -12,7 +12,7 @@ python -m fastdeploy.entrypoints.openai.api_server --model ernie-45-turbo --port
 
 * --port: 服务配置的HTTP端口
 
-* --metrics-port: 服务配置的metrics端口
+* --metrics-port: 服务配置的metrics端口 详细参考[metrics说明](./metrics.md)
 
 * --workers: api-server基于uvicorn启动时的进程数
 
