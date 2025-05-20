@@ -3,6 +3,7 @@
 ## 1. 使用方式
 通过FastDeploy离线推理，可支持本地加载ERNIE-4.5-Turbo模型，并处理用户数据，使用方式如下，
 
+
 ```python
 from fastdeploy import LLM, SamplingParams
 

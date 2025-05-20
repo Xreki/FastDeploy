@@ -17,7 +17,7 @@
 import paddle
 from paddle import nn
 from .moe import MoELayer
-from .utils import get_tensor
+from ..utils import get_tensor
 
 
 class TextMoELayer(MoELayer):

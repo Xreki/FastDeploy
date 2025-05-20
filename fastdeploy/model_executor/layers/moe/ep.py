@@ -25,7 +25,7 @@ from paddlenlp.utils.log import logger
 
 from .moe import MoELayer
 from fastdeploy.inference_args import GenerationPhase
-from .utils import get_tensor
+from ..utils import get_tensor
 import fastdeploy.model_executor.ops.gpu.deep_gemm as deep_gemm
 
 import numpy as np

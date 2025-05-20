@@ -34,7 +34,7 @@ from ..layers.lm_head import (
     LMHeadAVX,
     LMHeadNPU,
 )
-from .configuration import ErnieBotConfig
+from .configuration import ModelConfig
 from paddlenlp.transformers import PretrainedModel, register_base_model
 from paddlenlp.utils.log import logger
 from functools import partial
@@ -150,7 +150,7 @@ class ErnieBotPretrainedModel(PretrainedModel):
     ErnieBotPretrainedModel
     """
 
-    config_class = ErnieBotConfig
+    config_class = ModelConfig
 
     def _init_weight(self, layer):
         """
@@ -159,7 +159,7 @@ class ErnieBotPretrainedModel(PretrainedModel):
         return None
 
     @classmethod
-    def _get_tensor_parallel_mappings(cls, config: ErnieBotConfig, is_split=True):
+    def _get_tensor_parallel_mappings(cls, config: ModelConfig, is_split=True):
         """
         get_tensor_parallel_mappings
         """

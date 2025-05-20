@@ -49,7 +49,7 @@ from paddlenlp.transformers.model_utils import load_tp_checkpoint
 from .token_utils import process_index
 
 from paddlenlp.transformers.configuration_utils import PretrainedConfig
-from .configuration import ErnieBotConfig
+from .configuration import ModelConfig
 from paddlenlp.trl import llm_utils
 from fastdeploy.platforms import current_platform
 
@@ -184,7 +184,7 @@ def build_stream_line_model(
         tokenizer = ErnieBotTokenizer.from_pretrained(model_path)
 
     config, _ = PretrainedConfig.get_config_dict(model_path)
-    erine_config = ErnieBotConfig.from_dict(config)
+    erine_config = ModelConfig.from_dict(config)
     tensor_parallel_rank, tensor_parallel_degree = llm_utils.init_dist_env()
     erine_config.tensor_parallel_rank = tensor_parallel_rank
     erine_config.tensor_parallel_degree = tensor_parallel_degree

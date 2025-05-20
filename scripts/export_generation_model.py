@@ -29,7 +29,7 @@ from paddlenlp.trainer import strtobool
 from paddlenlp.utils.log import logger
 
 import paddle
-from fastdeploy.model_executor.models.configuration import ErnieBotConfig
+from fastdeploy.model_executor.models.configuration import ModelConfig
 from fastdeploy.model_executor.models.tokenizer import ErnieBotTokenizer
 from paddle.distributed import fleet
 from fastdeploy.model_executor.models.utils import (
@@ -270,7 +270,7 @@ if __name__ == "__main__":
     except Exception:
         pass
 
-    model_config = ErnieBotConfig.from_pretrained(args.model_name_or_path)
+    model_config = ModelConfig.from_pretrained(args.model_name_or_path)
 
     if enable_auth:
         model_config.product_name = product_name
