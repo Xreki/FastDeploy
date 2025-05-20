@@ -1,3 +1,5 @@
+
+"""
 # Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +26,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
 
 from __future__ import annotations
 
@@ -37,6 +40,10 @@ from fastdeploy.model_executor.model_runner import ForwardMeta, ForwardMode
 
 
 class PaddleNativeAttnBackend(AttentionBackend):
+    """
+    The backend class that uses paddle native attention implementation.
+    Which is used only for testing purpose.
+    """
     def __init__(self, device):
         super().__init__()
         self.forward_metadata = None
@@ -228,6 +235,9 @@ class PaddleNativeAttnBackend(AttentionBackend):
         forward_batch: ForwardMeta,
         save_kv_cache=True,
     ):
+        """
+            Run the prefill and extend(prompt cache) attention forward by using paddle native sdpa op.
+        """
         if layer.qk_head_dim != layer.v_head_dim:
             o = q.new_empty((q.shape[0], layer.tp_q_head_num * layer.v_head_dim))
         else:
@@ -267,6 +277,9 @@ class PaddleNativeAttnBackend(AttentionBackend):
         layer: paddle.nn.Layer,
         forward_batch: ForwardMeta,
     ):
+        """
+            Run the decoding attention forward by using paddle native sdpa op.
+        """
         q = q.reshape([-1, layer.tp_q_head_num * layer.qk_head_dim])
 
         if layer.qk_head_dim != layer.v_head_dim:

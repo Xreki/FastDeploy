@@ -1,3 +1,5 @@
+
+"""
 # Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
 
 
 from dataclasses import dataclass
@@ -25,21 +28,26 @@ import numpy as np
 import logging
 
 if TYPE_CHECKING:
-    from efficientllm.layers.attention import AttentionBackend
-    from efficientllm.layers.attention import Attention
+    from fastdeploy.model_executor.layers.attention import AttentionBackend, Attention
 
 logger = logging.getLogger(__name__)
 
 class ForwardMode(IntEnum):
-    # for prefill and extend(system prompt, speculate decoding)
+    """
+    Forward mode used during attention.
+    """
+
+    # for prefill and extend
     EXTEND = auto()
     # for generation
     DECODE = auto()
 
     def is_prefill(self):
+        """Whether it's a prefill forward"""
         return self == ForwardMode.EXTEND
 
     def is_decode(self):
+        """Whether it's a decode forward"""
         return self == ForwardMode.DECODE
 
 class ReqToTokenPool:
@@ -59,12 +67,15 @@ class ReqToTokenPool:
         self.free_slots = list(range(size))
 
     def write(self, indices, values):
+        """Write data into request buffer"""
         self.req_to_token[indices] = values
 
     def available_size(self):
+        """Get number of slots left"""
         return len(self.free_slots)
 
     def alloc(self, need_size: int) -> List[int]:
+        """Allocate `need_size` slots"""
         if need_size > len(self.free_slots):
             return None
 
@@ -74,19 +85,27 @@ class ReqToTokenPool:
         return select_index
 
     def free(self, free_index: Union[int, List[int]]):
+        """Free slot"""
         if isinstance(free_index, (int,)):
             self.free_slots.append(free_index)
         else:
             self.free_slots.extend(free_index)
 
     def clear(self):
+        """Clear all slots"""
         self.free_slots = list(range(self.size))
 
-
 class KVCache(abc.ABC):
-
+    """Abstract base class representing a key value cache"""
     @abc.abstractmethod
     def get_kv_buffer(self, layer_id: int) -> Tuple[paddle.Tensor, paddle.Tensor]:
+        """
+        Return cached keys and values given layer id.
+        Args:
+        layer_id: int
+        Returns:
+            tuple: (keys, values)
+        """
         raise NotImplementedError()
 
     @abc.abstractmethod
@@ -97,18 +116,29 @@ class KVCache(abc.ABC):
         cache_k: paddle.Tensor,
         cache_v: paddle.Tensor,
     ) -> None:
+        """
+        Set cached keys and values given layer id.
+        Args:
+        layer: Attention
+        loc: paddle.Tensor
+        cache_k: paddle.Tensor
+        cache_v: paddle.Tensor
+        """
         raise NotImplementedError()
 
 
     @abc.abstractmethod
     def transfer(self, indices, flat_data):
+        """Transfer kv_data between devices"""
         raise NotImplementedError()
 
     @abc.abstractmethod
     def transfer_per_layer(self, indices, flat_data, layer_id):
+        """Not used yet"""
         raise NotImplementedError()
 
     def register_layer_transfer_counter(self, layer_transfer_counter):
+        """Not used yet"""
         self.layer_transfer_counter = layer_transfer_counter
 
 class MHATokenToKVPool(KVCache):
@@ -236,6 +266,9 @@ class MHATokenToKVPool(KVCache):
 
 @dataclass
 class ForwardMeta():
+    """
+    ForwardMeta is used to store the global meta information of the forward.
+    """
     # The forward mode
     forward_mode: ForwardMode
     # The batch size

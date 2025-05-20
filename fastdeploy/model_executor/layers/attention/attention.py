@@ -1,3 +1,4 @@
+"""
 # Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,6 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
 
 # cipher_token=WjI1fQOvhN  # do not edit this line
 
@@ -59,6 +61,15 @@ class Attention(nn.Layer):
         save_kv_cache: bool = True,
         **kwargs,
     ):
+        """
+        The forward function of attention layer.
+        args:
+            q: the query tensor
+            k: the key tensor
+            v: the value tensor
+            forward_batch: the forward meta data
+            save_kv_cache: whether to save the key-value cache
+        """
         return forward_batch.attn_backend.forward(
             q,
             k,

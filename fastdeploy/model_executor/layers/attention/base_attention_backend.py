@@ -1,3 +1,4 @@
+"""
 # Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,7 +25,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+"""
 
 from __future__ import annotations
 
@@ -38,6 +39,7 @@ class AttentionBackend(ABC):
 
     @abstractmethod
     def init_forward_metadata(self, forward_meta: ForwardMeta):
+        """Initialize the forward metadata."""
         raise NotImplementedError()
 
     def forward(
@@ -49,6 +51,15 @@ class AttentionBackend(ABC):
         forward_batch: ForwardMeta,
         **kwargs,
     ):
+        """
+        Run a forward.
+        args:
+            q: The query tensor.
+            k: The key tensor.
+            v: The value tensor.
+            layer: The layer that will be used for the forward.
+            forward_batch: The forward metadata.
+        """
         if forward_batch.forward_mode.is_decode():
             return self.forward_decode(
                 q,
