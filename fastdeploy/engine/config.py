@@ -71,6 +71,8 @@ class ModelConfig:
                     except Exception as e:
                         continue
 
+        if isinstance(self.architectures, list):
+            self.architectures = self.architectures[0]
         self.model_name_or_path = model_name_or_path
         self.override_name_from_config()
         self.read_from_env()
