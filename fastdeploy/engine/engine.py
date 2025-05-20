@@ -277,16 +277,16 @@ class LLMEngine(object):
 
         while True:
             try:
-                data = self.zmq_server.receive_once(block=True)
+                if not self.cfg.enable_mm:
+                    data = self.zmq_server.receive_json_once(block=True)
+                else:
+                    data = self.zmq_server.receive_pyobj_once(block=True)
                 if data is None:
                     break
-                #TODO need optimize
-                if self.cfg.enable_mm:
-                    self.add_requests(data)
-                else:
-                    request = Request.from_dict(data)
-                    self.scheduler.put_requests([request])
-                    llm_logger.info(f"Receive request: {request}")
+                
+                request = Request.from_dict(data)
+                self.scheduler.put_requests([request])
+                llm_logger.info(f"Receive request: {request}")
             except Exception as e:
                 llm_logger.error(
                     f"Error happend while receving new request from zmq, details={e}"

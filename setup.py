@@ -49,6 +49,7 @@ setuptools.setup(
             "model_executor/ops/base/*",
             "model_executor/models/*",
             "model_executor/layers/*",
+            "input/mm_processor/utils/*"
         ]
     },
     install_requires=load_requirements(),

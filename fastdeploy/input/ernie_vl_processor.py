@@ -54,11 +54,11 @@ class ErnieMoEVLProcessor(ErnieProcessor):
         """
         self.tokenizer = self.ernie_processor.tokenizer
 
-    def process_request(self, request, max_model_len=None):
+    def process_request_dict(self, request, max_model_len=None):
         """process the input data"""
 
         if request.get("eos_token_ids") is None or len(request.get("eos_token_ids")) == 0:
-            request.eos_token_ids = self.eos_token_ids
+            request["eos_token_ids"] = self.eos_token_ids
 
         stop_sequences = request.get("stop", [])
         if stop_sequences is not None and len(stop_sequences) != 0:
@@ -69,8 +69,8 @@ class ErnieMoEVLProcessor(ErnieProcessor):
         messages = request.get("messages")
         messages = parse_chat_messages(messages)
         output = self.ernie_processor.process(messages)
-        request.prompt_token_ids = output["input_ids"]
-        request.prompt_token_ids_len = len(request.prompt_token_ids)
-        request.multi_modal_inputs = output
+        request["prompt_token_ids"] = output["input_ids"]
+        request["prompt_token_ids_len"] = len(request["prompt_token_ids"])
+        request["multimodal_inputs"] = output
 
         return request

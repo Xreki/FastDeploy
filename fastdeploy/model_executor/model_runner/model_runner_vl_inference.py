@@ -139,7 +139,7 @@ class ModelRunner(ModelRunnerBase):
         )
         self.image_preprocess = image_preprocess
 
-        from efficientllm.models.export_model import build_stream_line_model
+        from ..models.export_model import build_stream_line_model
         _, _, self.model = build_stream_line_model(
             self.model_cfg,
             self.args.model_name_or_path,
@@ -309,7 +309,7 @@ class ModelRunner(ModelRunnerBase):
         dec_pos_ids = dec_pos_ids + prefix_max_position_ids
         position_ids_3d_real = paddle.concat([position_ids, dec_pos_ids], axis=1)
 
-        from efficientllm.models.utils import get_rotary_position_embedding_3d
+        from ..models.utils import get_rotary_position_embedding_3d
 
         rope_emb = get_rotary_position_embedding_3d(
             position_ids_3d_real,
@@ -342,7 +342,11 @@ class ModelRunner(ModelRunnerBase):
             }
 
             inputs = self._preprocess(task)
-            self.share_inputs["image_features"] = self.extract_vision_features(inputs)
+            if inputs.get("images") is not None:
+                self.share_inputs["image_features"] = self.extract_vision_features(inputs)
+            else:
+                # 兼容没有图片和视频的情况
+                self.share_inputs["image_features"] = None
             print("extract vision features done")
             self.share_inputs["rope_emb"][idx : idx + 1, :] = self.prepare_rope3d(inputs, **kwargs)
             print("prepare rope3d done")
@@ -369,7 +373,7 @@ class ModelRunner(ModelRunnerBase):
                 task.block_tables, dtype="int32"
             )
 
-            from efficientllm.ops.gpu import reset_stop_value
+            from ..ops.gpu import reset_stop_value
             reset_stop_value(self.share_inputs["not_need_stop"])
 
     def generate(self):
@@ -444,7 +448,7 @@ class ModelRunner(ModelRunnerBase):
 
     def _preprocess(self, task):
         """process batch"""
-        one = task.multi_modal_inputs
+        one = task.multimodal_inputs
         print(one)
 
         input_ids = one["input_ids"][np.newaxis, :]
