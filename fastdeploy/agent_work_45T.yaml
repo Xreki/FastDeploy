@@ -1,0 +1,16 @@
+model: "/shared_ipc_meta/"
+max_model_len: 33792
+max_num_seqs: 32
+block_ratio: 0.12
+dynamic_load_weight: 1
+gpu_memory_utilization: 0.8
+scheduler:
+  name: global
+  ttl: 900
+  wait_response_timeout: 0.001
+  host: 10.178.5.194
+  port: 6379
+  db: 4
+  password: aurora_123
+  topic: rl.518
+  remote_write_time: 3
