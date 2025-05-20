@@ -140,9 +140,10 @@ class ErnieProcessor(BaseDataProcessor):
         # 处理prompt_token_ids
         if not request.get('prompt_token_ids'):
             if 'prompt' in request:
-                raw_request = request.get('raw_request', False)
+                raw_request = request.get('raw_request', True)
                 request['prompt_token_ids'] = self.text2ids(
                     request['prompt'],
+                    raw_request,
                     max_model_len,
                     system
                 )
@@ -261,7 +262,7 @@ class ErnieProcessor(BaseDataProcessor):
         return response_dict
 
 
-    def text2ids(self, text, max_model_len=None, system=None):
+    def text2ids(self, text, raw_request, max_model_len=None, system=None):
         """
         将文本转换为对应的 ID。
 
@@ -282,12 +283,12 @@ class ErnieProcessor(BaseDataProcessor):
 都需要先写下自己的思考过程，为后续的决策或对用户的回复内容做铺垫。\n</sys_internal>\n\n"
             tokens = self._convert_to_ids_thinking(messages, max_model_len, system)
         else:
-            tokens = self._convert_to_ids(messages, max_model_len, system)
+            tokens = self._convert_to_ids(messages, raw_request, max_model_len, system)
         data_processor_logger.debug(f"processed data : {''.join(tokens)}")
         input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
         return input_ids
 
-    def _convert_to_ids(self, messages, max_model_len=None, system=None):
+    def _convert_to_ids(self, messages, raw_request, max_model_len=None, system=None):
         """
         将多轮对话转换为对话ID序列。
 
@@ -301,10 +302,11 @@ class ErnieProcessor(BaseDataProcessor):
         if len(messages) % 2 == 0:
             raise ValueError(f"The number of the messages context ({len(messages)}) must be odd.")
 
-        if self.model_name == "base":
+        if self.model_name == "base" or not raw_request:
             # for base model, the length of messages should be 1
             # and it only need to convert the input prompt to token ids
             tokens = self.tokenizer.tokenize(messages[0])
+            return tokens
 
         prefix_tokens = [self.tokenizer.cls_token]
         suffix_tokens = self.tokenizer.tokenize("Assistant: ")
