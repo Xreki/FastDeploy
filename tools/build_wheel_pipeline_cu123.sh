@@ -27,7 +27,7 @@ unset PADDLE_CUDA_ARCH_LIST
 # directory config
 DIST_DIR="dist"
 BUILD_DIR="build"
-EGG_DIR="efficientllm.egg-info"
+EGG_DIR="fastdeploy.egg-info"
 
 # custom_ops directory config
 OPS_SRC_DIR="custom_ops"
@@ -60,14 +60,14 @@ function python_version_check() {
 function init() {
     echo -e "${BLUE}[init]${NONE} removing building directory..."
     rm -rf $DIST_DIR $BUILD_DIR $EGG_DIR
-    if [ `${python} -m pip list | grep efficientllm | wc -l` -gt 0  ]; then
-      echo -e "${BLUE}[init]${NONE} uninstalling efficientllm..."
-      ${python} -m pip uninstall -y efficientllm
+    if [ `${python} -m pip list | grep fastdeploy | wc -l` -gt 0  ]; then
+      echo -e "${BLUE}[init]${NONE} uninstalling fastdeploy..."
+      ${python} -m pip uninstall -y fastdeploy
     fi
     ${python} -m pip install setuptools_scm
     echo -e "${BLUE}[init]${NONE} installing requirements..."
     ${python} -m pip install --force-reinstall --pre paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/packages/nightly/cu123/
-    ${python} -m pip install --upgrade --force-reinstall -r requirements/gpu/cu123/requirements.txt --ignore-installed PyYAML
+    ${python} -m pip install --upgrade --force-reinstall -r requirements.txt --ignore-installed PyYAML
     echo -e "${BLUE}[init]${NONE} ${GREEN}init success\n"
 }
 
@@ -82,9 +82,9 @@ function copy_ops(){
     WHEEL_BASE_NAME="efficientllm_base_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
     WHEEL_NAME="efficientllm_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
     echo -e "OPS are for BASE"
-    mkdir -p ../efficientllm/ops/base && cp -r ./${OPS_TMP_DIR_BASE}/${WHEEL_BASE_NAME}/* ../efficientllm/ops/base
+    mkdir -p ../fastdeploy/model_executor/ops/base && cp -r ./${OPS_TMP_DIR_BASE}/${WHEEL_BASE_NAME}/* ../fastdeploy/model_executor/ops/base
     echo -e "OPS are for CUDA"
-    cp -r ./${OPS_TMP_DIR}/${WHEEL_NAME}/* ../efficientllm/ops/gpu
+    cp -r ./${OPS_TMP_DIR}/${WHEEL_NAME}/* ../fastdeploy/model_executor/ops/gpu
     if [ "$WITH_CPU" == "true" ]; then
       WHEEL_CPU_NAME="efficientllm_cpu_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
       echo -e "OPS are for CPU"
@@ -97,7 +97,7 @@ function copy_ops(){
         mv "$file" "${file/_pd_/}"
       done
       cd ../../../../
-      cp -r ${OPS_TMP_DIR_CPU}/${WHEEL_CPU_NAME}/* ../efficientllm/ops/cpu
+      cp -r ${OPS_TMP_DIR_CPU}/${WHEEL_CPU_NAME}/* ../fastdeploy/model_executor/ops/cpu
     fi
     return
 
