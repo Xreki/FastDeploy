@@ -136,29 +136,29 @@ function build_and_install_ops() {
 }
 
 function build_and_install() {
-  echo -e "${BLUE}[build]${NONE} building efficientllm wheel..."
+  echo -e "${BLUE}[build]${NONE} building fastdeploy wheel..."
   ${python} setup.py bdist_wheel --python-tag py3
   if [ $? -ne 0 ]; then
-    echo -e "${RED}[FAIL]${NONE} build efficientllm wheel failed !"
+    echo -e "${RED}[FAIL]${NONE} build fastdeploy wheel failed !"
     exit 1
   fi
-  echo -e "${BLUE}[build]${NONE} ${GREEN}build efficientllm wheel success\n"
+  echo -e "${BLUE}[build]${NONE} ${GREEN}build fastdeploy wheel success\n"
 
-  echo -e "${BLUE}[install]${NONE} installing efficientllm..."
+  echo -e "${BLUE}[install]${NONE} installing fastdeploy..."
   cd $DIST_DIR
-  find . -name "efficientllm*.whl" | xargs ${python} -m pip install
+  find . -name "fastdeploy*.whl" | xargs ${python} -m pip install
   if [ $? -ne 0 ]; then
     cd ..
-    echo -e "${RED}[FAIL]${NONE} install efficientllm wheel failed !"
+    echo -e "${RED}[FAIL]${NONE} install fastdeploy wheel failed !"
     exit 1
   fi
-  echo -e "${BLUE}[install]${NONE} ${GREEN}efficientllm install success\n"
+  echo -e "${BLUE}[install]${NONE} ${GREEN}fastdeploy install success\n"
   cd ..
 }
 
 function cleanup() {
   rm -rf $BUILD_DIR $EGG_DIR
-  ${python} -m pip uninstall -y efficientllm
+  ${python} -m pip uninstall -y fastdeploy
 
   rm -rf $OPS_SRC_DIR/$BUILD_DIR $OPS_SRC_DIR/$EGG_DIR
 }
@@ -170,7 +170,7 @@ function abort() {
   cur_dir=`basename "$pwd"`
 
   rm -rf $BUILD_DIR $EGG_DIR $DIST_DIR
-  ${python} -m pip uninstall -y efficientllm
+  ${python} -m pip uninstall -y fastdeploy
 
   rm -rf $OPS_SRC_DIR/$BUILD_DIR $OPS_SRC_DIR/$EGG_DIR
 }
@@ -189,17 +189,17 @@ cleanup
 PADDLE_VERSION=`${python} -c "import paddle; print(paddle.version.full_version)"`
 PADDLE_COMMIT=`${python} -c "import paddle; print(paddle.version.commit)"`
 
-# get EfficientLLM version
+# get fastdeploy version
 EFFLLM_BRANCH=`git rev-parse --abbrev-ref HEAD`
 EFFLLM_COMMIT=`git rev-parse --short HEAD`
 
 # get Python version
 PYTHON_VERSION=`${python} -c "import platform; print(platform.python_version())"`
 
-echo -e "\n${GREEN}efficientllm wheel compiled and checked success !${NONE}
+echo -e "\n${GREEN}fastdeploy wheel compiled and checked success !${NONE}
         ${BLUE}Python version:${NONE} $PYTHON_VERSION
         ${BLUE}Paddle version:${NONE} $PADDLE_VERSION ($PADDLE_COMMIT)
-        ${BLUE}EfficientLLM branch:${NONE} $EFFLLM_BRANCH ($EFFLLM_COMMIT)\n"
+        ${BLUE}fastdeploy branch:${NONE} $EFFLLM_BRANCH ($EFFLLM_COMMIT)\n"
 
 echo -e "${GREEN}wheel saved under${NONE} ${RED}${BOLD}./dist${NONE}"
 
