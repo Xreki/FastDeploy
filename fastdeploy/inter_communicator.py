@@ -101,6 +101,18 @@ class ZmqClient:
         """
         return self.socket.recv_json()
 
+    def send_pyobj(self, data):
+        """
+        Send a Pickle-serializable object over the socket.
+        """
+        self.socket.send_pyobj(data)
+
+    def recv_pyobj(self):
+        """
+        Receive a Pickle-serializable object from the socket.
+        """
+        return self.socket.recv_pyobj()
+
     def send_multipart(self, req_id, data):
         """
         Send a multipart message to the router socket.
@@ -172,7 +184,7 @@ class ZmqClient:
                 for req_id in finished_req:
                     self.req_dict.pop(req_id, None)
 
-    def receive_once(self, block=False):
+    def receive_json_once(self, block=False):
         """
         Receive a single message from the socket.
         """
@@ -188,6 +200,22 @@ class ZmqClient:
             llm_logger.warning(f"{e}")
             return None
 
+    def receive_pyobj_once(self, block=False):
+        """
+        Receive a single message from the socket.
+        """
+        if self.socket is None or self.socket.closed:
+            return None
+        try:
+            flags = zmq.NOBLOCK if not block else 0
+            return self.socket.recv_pyobj(flags=flags)
+        except zmq.Again:
+            return None
+        except Exception as e:
+            self.close()
+            llm_logger.warning(f"{e}")
+            return None
+        
     def _clear_ipc(self, name):
         """
         Remove the IPC file with the given name.
