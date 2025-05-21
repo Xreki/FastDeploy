@@ -190,8 +190,8 @@ PADDLE_VERSION=`${python} -c "import paddle; print(paddle.version.full_version)"
 PADDLE_COMMIT=`${python} -c "import paddle; print(paddle.version.commit)"`
 
 # get fastdeploy version
-EFFLLM_BRANCH=`git rev-parse --abbrev-ref HEAD`
-EFFLLM_COMMIT=`git rev-parse --short HEAD`
+FASTDEPLOY_BRANCH=`git rev-parse --abbrev-ref HEAD`
+FASTDEPLOY_COMMIT=`git rev-parse --short HEAD`
 
 # get Python version
 PYTHON_VERSION=`${python} -c "import platform; print(platform.python_version())"`
@@ -199,7 +199,7 @@ PYTHON_VERSION=`${python} -c "import platform; print(platform.python_version())"
 echo -e "\n${GREEN}fastdeploy wheel compiled and checked success !${NONE}
         ${BLUE}Python version:${NONE} $PYTHON_VERSION
         ${BLUE}Paddle version:${NONE} $PADDLE_VERSION ($PADDLE_COMMIT)
-        ${BLUE}fastdeploy branch:${NONE} $EFFLLM_BRANCH ($EFFLLM_COMMIT)\n"
+        ${BLUE}fastdeploy branch:${NONE} $FASTDEPLOY_BRANCH ($FASTDEPLOY_COMMIT)\n"
 
 echo -e "${GREEN}wheel saved under${NONE} ${RED}${BOLD}./dist${NONE}"
 
