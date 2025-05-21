@@ -54,6 +54,7 @@ for output in outputs:
 * kv_cache_ratio(float): KV Cache分配给输入的比例，推荐值=平均输入长度/(平均输入长度+平均输出长度），默认值0.75
 * use_warmup(int): 是否在启动时进行warmup，会自动生成极限长度数据进行warmup，默认自动计算KV Cache时会使用
 * engine_worker_queue_port(int): 引擎内部进程间通信使用端口号，默认值8002
+* enable_mm(bool): 启用多模推理，默认值False
 
 > 参数配置说明：
 > 1. 模型服务启动后，会在日志文件log/fastdeploy.log中打印如 `Doing profile, the total_block_num:640` 的日志，其中640即表示自动计算得到的KV Cache block数量，将它乘以block_size(默认值64)，即可得到部署后总共可以在KV Cache中缓存的Token数。
