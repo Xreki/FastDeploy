@@ -67,7 +67,7 @@ function init() {
     ${python} -m pip install setuptools_scm
     echo -e "${BLUE}[init]${NONE} installing requirements..."
     ${python} -m pip install --force-reinstall --pre paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/packages/nightly/cu123/
-    ${python} -m pip install --upgrade --force-reinstall -r requirements/gpu/cu123/requirements.txt --ignore-installed PyYAML
+    ${python} -m pip install --upgrade --force-reinstall -r requirements.txt --ignore-installed PyYAML
     echo -e "${BLUE}[init]${NONE} ${GREEN}init success\n"
 }
 
