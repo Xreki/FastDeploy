@@ -18,7 +18,7 @@
 
 import os
 
-from fastdeploy.model_executor.model_runner import ForwardMeta
+from fastdeploy.worker.model_runner import ForwardMeta
 
 import paddle
 from paddle import nn

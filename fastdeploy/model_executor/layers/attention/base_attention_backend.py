@@ -32,7 +32,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 import paddle
 
-from fastdeploy.model_executor.model_runner import ForwardMeta, ForwardMode
+from fastdeploy.worker.model_runner import ForwardMeta, ForwardMode
 
 class AttentionBackend(ABC):
     """The base class of attention backends"""

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from fastdeploy import InferenceArgs
     from fastdeploy.model_executor.models.configuration import ModelConfig
-    from fastdeploy.model_executor.model_runner import ReqToTokenPool, KVCache, MHATokenToKVPool
+    from fastdeploy.worker.model_runner import ReqToTokenPool, KVCache, MHATokenToKVPool
 
 class MinimalModelRunner:
     """Fake ModelRunner implementing minimal functionality for inference testing."""

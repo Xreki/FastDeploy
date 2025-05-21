@@ -20,7 +20,7 @@ import random
 import paddle
 import paddle.distributed.fleet as fleet
 
-from fastdeploy.model_executor.model_runner.model_runner_base import ModelRunnerBase
+from fastdeploy.worker.model_runner.model_runner_base import ModelRunnerBase
 from fastdeploy.input.mm_processor import DataProcessor
 from fastdeploy.input.mm_processor.tokenizer import ErnieVLTokenizer
 from fastdeploy.model_executor.models.ernie_vl.configuration import ErnieBotMoEVLConfig

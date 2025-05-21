@@ -36,7 +36,7 @@ import paddle
 from paddle.nn.functional import scaled_dot_product_attention
 
 from fastdeploy.model_executor.layers.attention.base_attention_backend import AttentionBackend
-from fastdeploy.model_executor.model_runner import ForwardMeta, ForwardMode
+from fastdeploy.worker.model_runner import ForwardMeta, ForwardMode
 
 
 class PaddleNativeAttnBackend(AttentionBackend):

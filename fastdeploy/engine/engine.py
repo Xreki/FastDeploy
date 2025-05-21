@@ -546,7 +546,7 @@ class LLMEngine(object):
                                                 "0") == 1 else "-u"
         pd_cmd = f"{command_prefix} {sys.executable} {uncache_worker_stdout} -m paddle.distributed.launch "
         py_script = os.path.join(current_dir_path,
-                                 "../model_executor/worker.py")
+                                 "../worker/worker.py")
         arguments = (
             f" --nnodes {str(self.cfg.nnode)}"
             f" --devices {self.cfg.device_ids} {py_script}"
