@@ -231,7 +231,7 @@ def build_stream_line_model(
     elif use_safetensors:
         context = paddle.LazyGuard()
         state_dict = load_tp_checkpoint(
-            model_path, ErnieBotFusedModel, erine_config, return_numpy=False
+            model_path, ErnieBotFusedModel, erine_config, return_numpy=True
         )
     elif use_moe:
         tensor_parallel_degree = dist.get_world_size()
