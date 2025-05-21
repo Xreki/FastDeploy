@@ -244,10 +244,17 @@ class Worker:
         self.nnode = 1
 
         while True:
+            if self.rank == 0:
+                if self.model_weights_status_signal.value[0] != 0:
+                    self.exist_task_signal.value[0] = 2
+                else:
+                    self.exist_task_signal.value[0] = 0
+
             if self.nranks > 1:
                 paddle.distributed.barrier()
 
-            self.check_model_weights_status()
+            if self.exist_task_signal.value[0] == 2:
+                self.check_model_weights_status()
 
 
             self.insert_step = False
@@ -287,9 +294,6 @@ class Worker:
                 self.infer_engine.share_inputs["not_need_stop"][0] = True
 
             if not self.infer_engine.share_inputs["not_need_stop"]:
-                if self.nranks > 1:
-                    paddle.distributed.barrier()
-
                 time.sleep(0.001)
                 continue
 
