@@ -8,6 +8,7 @@ from typing import Set, TYPE_CHECKING
 from prometheus_client import Gauge, Histogram, multiprocess, CollectorRegistry, generate_latest
 from prometheus_client.registry import Collector
 
+from fastdeploy.metrics.work_metrics import work_process_metrics
 from fastdeploy.utils import api_server_logger
 
 if TYPE_CHECKING:
@@ -161,10 +162,12 @@ class MetricsManager:
                 **config['kwargs']
             ))
 
-    def register_all(self, registry: CollectorRegistry):
+    def register_all(self, registry: CollectorRegistry, workers: int = 1):
         """Register all metrics to the specified registry"""
         for metric_name in self.METRICS:
             registry.register(getattr(self, metric_name))
+        if workers == 1:
+            registry.register(work_process_metrics.e2e_request_latency)
 
     @classmethod
     def get_excluded_metrics(cls) -> Set[str]:
