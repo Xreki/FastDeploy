@@ -113,6 +113,7 @@ class ErnieProcessor(BaseDataProcessor):
         if max_model_len is not None and len(request.prompt_token_ids) > max_model_len:
             request.prompt_token_ids = request.prompt_token_ids[:max_model_len - 1]
         data_processor_logger.info(f"processed request: {request}")
+        
         return request
 
     def process_request_dict(self, request, max_model_len=None):

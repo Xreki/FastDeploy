@@ -19,6 +19,7 @@ import os
 import numpy as np
 from fastdeploy.input.mm_processor import DataProcessor
 from fastdeploy.input.ernie_processor import ErnieProcessor
+from fastdeploy.engine.request import Request
 from fastdeploy.entrypoints.chat_utils import parse_chat_messages
 
 class ErnieMoEVLProcessor(ErnieProcessor):
@@ -54,6 +55,14 @@ class ErnieMoEVLProcessor(ErnieProcessor):
         """
         self.tokenizer = self.ernie_processor.tokenizer
 
+    def process_request(self, request, max_model_len=None):
+        """process the input data"""
+        task = request.to_dict()
+        self.process_request_dict(task, max_model_len)
+        request = Request.from_dict(task)
+        
+        return request
+    
     def process_request_dict(self, request, max_model_len=None):
         """process the input data"""
 
@@ -72,5 +81,9 @@ class ErnieMoEVLProcessor(ErnieProcessor):
         request["prompt_token_ids"] = output["input_ids"]
         request["prompt_token_ids_len"] = len(request["prompt_token_ids"])
         request["multimodal_inputs"] = output
+
+        # 截断超过长度限制的prompt
+        if max_model_len is not None and len(request['prompt_token_ids']) > max_model_len:
+            request['prompt_token_ids'] = request['prompt_token_ids'][:max_model_len - 1]
 
         return request

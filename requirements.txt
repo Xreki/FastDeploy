@@ -23,3 +23,5 @@ xlwt
 visualdl
 setuptools-scm>=8
 prometheus-client
+decord
+moviepy

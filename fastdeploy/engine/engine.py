@@ -335,7 +335,7 @@ class LLMEngine(object):
         if sampling_params is not None:
             request.sampling_params = sampling_params
         request.preprocess_start_time = time.time()
-        self.data_processor.process_request(request, self.cfg.max_model_len)
+        request = self.data_processor.process_request(request, self.cfg.max_model_len)
 
         request.prompt_token_ids_len = len(request.prompt_token_ids)
         input_ids_len = request.prompt_token_ids_len
