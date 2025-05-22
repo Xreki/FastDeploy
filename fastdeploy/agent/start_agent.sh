@@ -9,13 +9,10 @@ else
 fi
 export ROLLOUT_CONTROLLER_HOST=${rollout_controller_host:-"http://10.11.155.41:8771"}
 
-if [ "$MODEL" = "eb45t" ]; then
-    source ${ROLLOUT_WORKER_ROOT}/fastdeploy/agent/build_env_eff.sh
-    source "${ROLLOUT_WORKER_ROOT}/${FASTDEPLOY_ENV_NAME}/bin/activate"
-else
-    source ${ROLLOUT_WORKER_ROOT}/fastdeploy/agent/build_env.sh
-    source "${ROLLOUT_WORKER_ROOT}/${FASTDEPLOY_ENV_NAME}/bin/activate"
-fi
+
+source ${ROLLOUT_WORKER_ROOT}/fastdeploy/agent/build_env.sh
+source "${ROLLOUT_WORKER_ROOT}/${FASTDEPLOY_ENV_NAME}/bin/activate"
+
 
 # 参数检查
 if [ $# -ne 3 ]; then
