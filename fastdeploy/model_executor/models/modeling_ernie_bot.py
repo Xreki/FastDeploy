@@ -90,7 +90,8 @@ if current_platform.is_cuda() and current_platform.available():
         )
     except Exception:
         raise ImportError(
-            "Please install `efficientllm` firstly via 'python3 setup.py install'"
+            f"Verify environment consistency between compilation and FastDeploy installation. "
+            f"And ensure the Paddle version supports FastDeploy's custom operators"
         )
 elif paddle.is_compiled_with_xpu():
     from fastdeploy.model_executor.ops.gpu import (
