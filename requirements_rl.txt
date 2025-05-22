@@ -6,10 +6,10 @@ pynvml
 uvicorn
 fastapi
 openai
-paddlepaddle-gpu @ http://10.95.247.14:8888/paddlepaddle_gpu-0.0.0-cp310-cp310-linux_x86_64.whl
-efficientllm @ http://10.95.247.14:8888/efficientllm-0.0.0-py3-none-any.whl
-paddlenlp @ http://10.95.247.14:8888/paddlenlp-3.0.0b4.post20250516-py3-none-any.whl
-paddlenlp-ops @ http://10.95.247.14:8888//paddlenlp_ops-3.0.0b4.post20250510-py3-none-any.whl
+paddlepaddle-gpu @ https://paddlenlp.bj.bcebos.com/eff_ops/cuda128-fleety-0522/paddlepaddle_gpu-0.0.0-cp310-cp310-linux_x86_64.whl
+efficientllm @ https://paddlenlp.bj.bcebos.com/eff_ops/cuda128-fleety-0522/efficientllm-0.0.0-py3-none-any.whl
+paddlenlp @ https://paddlenlp.bj.bcebos.com/eff_ops/cuda128-fleety-0522/paddlenlp-3.0.0b4.post20250516-py3-none-any.whl
+paddlenlp-ops @ https://paddlenlp.bj.bcebos.com/eff_ops/cuda128-fleety-0522/paddlenlp_ops-3.0.0b4.post20250510-py3-none-any.whl
 redis
 etcd3
 httpx
