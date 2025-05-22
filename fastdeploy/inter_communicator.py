@@ -166,10 +166,11 @@ class ZmqClient:
 
         finished_req = []
         req_ids = list(req_dict_copy.keys())
-        for req_id in req_ids:
+        results = get_results_handler(req_ids)
+
+        for req_id, contents in results.items():
             client = req_dict_copy[req_id]
-            results = get_results_handler(req_id)
-            for data in results:
+            for data in contents:
                 if data["finished"]:
                     finished_req.append(data["request_id"])
 
@@ -189,32 +190,32 @@ class ZmqClient:
         Receive a single message from the socket.
         """
         if self.socket is None or self.socket.closed:
-            return None
+            return "zmp socket has closed", None
         try:
             flags = zmq.NOBLOCK if not block else 0
-            return self.socket.recv_json(flags=flags)
+            return None, self.socket.recv_json(flags=flags)
         except zmq.Again:
-            return None
+            return None, None
         except Exception as e:
             self.close()
             llm_logger.warning(f"{e}")
-            return None
+            return str(e), None
 
     def receive_pyobj_once(self, block=False):
         """
         Receive a single message from the socket.
         """
         if self.socket is None or self.socket.closed:
-            return None
+            return "zmp socket has closed", None
         try:
             flags = zmq.NOBLOCK if not block else 0
-            return self.socket.recv_pyobj(flags=flags)
+            return None, self.socket.recv_pyobj(flags=flags)
         except zmq.Again:
-            return None
+            return None, None
         except Exception as e:
             self.close()
             llm_logger.warning(f"{e}")
-            return None
+            return str(e), None
         
     def _clear_ipc(self, name):
         """

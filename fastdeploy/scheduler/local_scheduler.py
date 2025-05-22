@@ -15,7 +15,7 @@
 """
 
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import threading
 import time
 
@@ -85,42 +85,49 @@ class LocalScheduler(object):
             else:
                 self.ids_read_cursor -= len(expired_ids)
 
-    def put_requests(self, requests: List[Request]):
+    def put_requests(self, requests: List[Request]) -> List[Tuple[str, Optional[str]]]:
         """  submit requests to scheduler
              Args:
                  requests: List[Request]
         """
-        scheduled_requests: Dict[str, ScheduledRequest] = dict()
-        scheduled_ids: List[str] = list()
-        for request in requests:
-            scheduled_request = ScheduledRequest(request)
-            scheduled_requests[scheduled_request.id] = scheduled_request
-            scheduled_ids.append(scheduled_request.id)
-
         with self.mutex:
             self._recycle()
-            if self.max_size > 0 and len(self.requests) + len(scheduled_requests) > self.max_size:
-                raise OverflowError(
-                    f"Exceeding the max length of the local scheduler (max_size={self.max_size})")
+            if self.max_size > 0 and len(self.requests) + len(requests) > self.max_size:
+                msg = f"Exceeding the max length of the local scheduler (max_size={self.max_size})"
+                return [(request.request_id, msg) for request in requests]
 
-            duplicated_ids = [
-                scheduled_id for scheduled_id in scheduled_ids if scheduled_id in self.requests]
-            if len(duplicated_ids) > 0:
-                raise ValueError(
-                    f"Request_id is duplicated (ids={duplicated_ids})")
+            valid_ids = []
+            duplicated_ids = []
+            for request in requests:
+                if request.request_id in self.requests:
+                    duplicated_ids.append(request.request_id)
+                else:
+                    scheduled_request = ScheduledRequest(request)
+                    self.requests[scheduled_request.id] = scheduled_request
+                    valid_ids.append(scheduled_request.id)
 
-            self.requests.update(scheduled_requests)
-            self.ids += scheduled_ids
+            self.ids += valid_ids
             self.requests_not_empty.notify_all()
-            llm_logger.debug(f"Local cached requests: {scheduled_ids}")
-            main_process_metrics.num_requests_waiting.inc(len(requests))
+
+        llm_logger.info(
+                f"Scheduler has put some requests: {valid_ids}")
+        main_process_metrics.num_requests_waiting.inc(len(valid_ids))
+
+        if len(duplicated_ids) > 0:
+            llm_logger.warning(
+                    f"Scheduler has received some duplicated requests: {duplicated_ids}")
+
+        results = [(request_id, None) for request_id in valid_ids]
+        results += [(request_id, "duplicated request_id")
+                        for request_id in duplicated_ids]
+        return results
 
     def calc_required_blocks(self, token_num, block_size):
         """calculate required blocks for given token number"""
         return (token_num + block_size - 1) // block_size
 
-    def get_requests(self, available_blocks, block_size, \
-        reserved_output_blocks, max_num_batched_tokens, batch=1) -> List[Request]:
+    def get_requests(self, available_blocks, block_size,
+                     reserved_output_blocks, max_num_batched_tokens, batch=1) -> List[Request]:
         """get requests from local cache
             Args:
                 available_blocks: int
@@ -130,6 +137,10 @@ class LocalScheduler(object):
                 batch: int
         """
         if available_blocks <= reserved_output_blocks or batch < 1:
+            llm_logger.warning(
+                f"Scheduler's resource are insufficient: available_blocks={available_blocks} "
+                f"reserved_output_blocks={reserved_output_blocks} batch={batch} "
+                f"max_num_batched_tokens={max_num_batched_tokens}")
             return []
 
         with self.requests_not_empty:
@@ -149,22 +160,31 @@ class LocalScheduler(object):
                 if required_total_blocks > available_blocks or current_prefill_tokens > max_num_batched_tokens:
                     break
                 requests.append(request.raw)
-
             self.ids_read_cursor += len(requests)
-            llm_logger.debug(f"Local get requests: {len(requests)}")
-            main_process_metrics.num_requests_waiting.dec(len(requests))
-            main_process_metrics.num_requests_running.inc(len(requests))
-            return requests
+
+        if len(requests) > 0:
+            llm_logger.info(
+                    f"Scheduler has pulled some request: {[request.request_id for request in requests]}")
+        main_process_metrics.num_requests_waiting.dec(len(requests))
+        main_process_metrics.num_requests_running.inc(len(requests))
+        return requests
 
     def put_results(self, results: List[RequestOutput]):
         """put results into local cache"""
         responses: List[ScheduledResponse] = [
             ScheduledResponse(result) for result in results]
+
+        finished_responses = [
+            response.id for response in responses if response.finished]
+        if len(finished_responses) > 0:
+            llm_logger.info(
+                f"Scheduler has received a finished response: {finished_responses}")
+
         with self.mutex:
             for response in responses:
                 if response.id not in self.requests:
-                    llm_logger.info(
-                        f"Output of request_id({response.id} is expired)")
+                    llm_logger.warning(
+                        f"Scheduler has received a expired response: {[response.id]}")
                     continue
 
                 if response.id not in self.responses:
@@ -173,19 +193,30 @@ class LocalScheduler(object):
                 self.responses[response.id].append(response)
             self.responses_not_empty.notify_all()
 
-    def get_results(self, request_id: str) -> List[RequestOutput]:
+    def get_results(self, request_ids: List[str]) -> Dict[str, List[RequestOutput]]:
         """get results from local cache"""
+        def _get_results():
+            responses = dict()
+            for request_id in request_ids:
+                if request_id not in responses:
+                    responses[request_id] = []
+                responses[request_id] += self.responses.pop(request_id, [])
+            return responses
+
         with self.responses_not_empty:
             responses = self.responses_not_empty.wait_for(
-                lambda: self.responses.get(request_id, []), self.wait_response_timeout)
-            self.responses.pop(request_id, None)
+                _get_results, self.wait_response_timeout)
 
-            finished = False
-            results = []
-            for response in responses:
-                results.append(response.raw)
-                finished |= response.finished
+            results = dict()
+            for request_id, resps in responses.items():
+                finished = False
+                results[request_id] = []
+                for resp in resps:
+                    results[request_id].append(resp.raw)
+                    finished |= resp.finished
 
-            if finished:
-                self._recycle(request_id)
+                if finished:
+                    self._recycle(request_id)
+                    llm_logger.info(
+                        f"Scheduler has pulled a finished response: {[request_id]}")
             return results

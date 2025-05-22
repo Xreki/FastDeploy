@@ -15,7 +15,7 @@
 """
 from __future__ import annotations
 
-import json
+from typing import List, Tuple, Dict, Optional
 import os
 import re
 import signal
@@ -89,7 +89,8 @@ class LLMEngine(object):
         self.scheduler = cfg.scheduler_config.scheduler()
 
         self.input_processor = InputPreprocessor(cfg.tokenizer, cfg.enable_mm)
-        self.resource_manager = ResourceManager(cfg.max_num_seqs, cfg.cache_config)
+        self.resource_manager = ResourceManager(
+            cfg.max_num_seqs, cfg.cache_config)
 
         self.token_processor = TokenProcessor(
             cfg=self.cfg, cached_generated_tokens=self.scheduler)
@@ -187,21 +188,15 @@ class LLMEngine(object):
         assert self.api_server_pid is not None
         while True:
             try:
-
-                def get_results_handler(request_id):
+                def get_results_handler(request_ids):
+                    results = dict()
                     try:
-                        results = self.scheduler.get_results(request_id)
-                        for i in range(len(results)):
-                            results[i] = results[i].to_dict()
+                        results = self.scheduler.get_results(request_ids)
+                        for req_id, contents in results.items():
+                            results[req_id] = [data.to_dict()
+                                               for data in contents]
                     except Exception as e:
-                        llm_logger.error(
-                            f"failed to get results of request_id({request_id}): {e}"
-                        )
-                        error_result = RequestOutput(request_id=request_id,
-                                                     finished=True,
-                                                     error_code=500,
-                                                     error_msg=f"{e}")
-                        results = [error_result.to_dict()]
+                        llm_logger.error(f"Get results handler error: {e}")
                     return results
 
                 self.zmq_server.send_multipart2(get_results_handler)
@@ -217,18 +212,19 @@ class LLMEngine(object):
         try:
             acc = None
             while True:
-                results = self.scheduler.get_results(request_id)
-                for result in results:
-                    if acc is None:
-                        acc = result
-                    else:
-                        acc.add(result)
+                results = self.scheduler.get_results([request_id])
+                for _, contents in results.items():
+                    for result in contents:
+                        if acc is None:
+                            acc = result
+                        else:
+                            acc.add(result)
 
-                    if result.finished:
-                        yield acc
-                        return
+                        if result.finished:
+                            yield acc
+                            return
 
-                    yield result
+                        yield result
 
         except Exception as e:
             llm_logger.error("Unexcepted error happend: {}, {}".format(
@@ -268,36 +264,59 @@ class LLMEngine(object):
                 self.insert_tasks(tasks)
             except Exception as e:
                 err_msg = "Error happend while insert task to engine: {}, {}.".format(
-                        e, str(traceback.format_exc()))
+                    e, str(traceback.format_exc()))
                 llm_logger.error(err_msg)
 
     def _insert_zmq_task_to_scheduler(self):
         if self.api_server_pid is None:
             return
 
+        added_requests: Dict[str, int] = dict()
         while True:
             try:
+                block = True if len(added_requests) == 0 else False
                 if not self.cfg.enable_mm:
-                    data = self.zmq_server.receive_json_once(block=True)
+                    err, data = self.zmq_server.receive_json_once(block)
                 else:
-                    data = self.zmq_server.receive_pyobj_once(block=True)
-                if data is None:
+                    err, data = self.zmq_server.receive_pyobj_once(block)
+                if err is not None:
+                    llm_logger.error(
+                        "Engine stops inserting zmq task into scheduler")
                     break
-                
-                request = Request.from_dict(data)
-                self.scheduler.put_requests([request])
-                llm_logger.info(f"Receive request: {request}")
+
+                request = None
+                if data:
+                    request = Request.from_dict(data)
+                    llm_logger.info(f"Receive request: {request}")
+
+                results: List[Tuple[str, Optional[str]]] = self.scheduler.put_requests(
+                    [] if request is None else [request])
+
+                if request:
+                    if request.request_id not in added_requests:
+                        added_requests[request.request_id] = 0
+                    added_requests[request.request_id] += 1
+
+                for request_id, failed in results:
+                    added_requests[request_id] -= 1
+                    if added_requests[request_id] == 0:
+                        added_requests.pop(request_id)
+
+                if failed is None:
+                    continue
+
+                error_result = RequestOutput(request_id=request_id,
+                                             finished=True,
+                                             error_code=500,
+                                             error_msg=failed)
+                # Since the request is not in scheduler
+                # Send result by zmq directly
+                self.zmq_server.send_multipart(
+                    request.request_id, error_result)
             except Exception as e:
                 llm_logger.error(
                     f"Error happend while receving new request from zmq, details={e}"
                 )
-                error_result = RequestOutput(request_id=request.request_id,
-                                             finished=True,
-                                             error_code=500,
-                                             error_msg=f"{e}")
-                # Since the request is not in scheduler
-                # Send result by zmq directly
-                self.zmq_server.send_multipart(request.request_id, error_result)
 
     def add_requests(self, task, sampling_params=None):
         """
