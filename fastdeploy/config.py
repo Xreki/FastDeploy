@@ -13,25 +13,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-
 # cipher_token=WjI1fQOvhN  # do not edit this line
-
-
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from typing import Optional
 
+import paddle
 from paddlenlp.transformers.configuration_utils import PretrainedConfig
 from paddlenlp.utils.log import logger
 
-import paddle
+from fastdeploy.model_executor.layers.quantization.quant_base import \
+    QuantConfigBase
 
 __all__ = [
     "ERNIEBOT_PRETRAINED_INIT_CONFIGURATION",
     "ModelConfig",
     "ErnieBotMoEConfig",
-    "ERNIEBOT_PRETRAINED_RESOURCE_FILES_MAP",
 ]
 
 ERNIEBOT_PRETRAINED_INIT_CONFIGURATION = {
@@ -63,12 +62,9 @@ ERNIEBOT_PRETRAINED_INIT_CONFIGURATION = {
 }
 
 
-ERNIEBOT_PRETRAINED_RESOURCE_FILES_MAP = {"model_state": {"ernie-bot": ""}}
-
-
 class ModelConfig(PretrainedConfig):
     """
-    The configuration class to store the configuration of a `ErnieBot`.
+    The configuration class to store the configuration of a `LLM`.
     """
 
     model_type = "ernie_bot"
@@ -100,12 +96,10 @@ class ModelConfig(PretrainedConfig):
         tensor_parallel_output: bool = True,
         recompute=False,
         recompute_granularity="core_attn",
-        pp_recompute_interval=1,
         no_recompute_layers=None,
         recompute_use_reentrant=False,
         refined_recompute=dict(),
         virtual_pp_degree=1,
-        pp_seg_method="layer:TransformerDecoderLayer|EmptyLayer",
         fuse_attn_qkv=True,
         fused_linear=False,
         use_sparse_flash_attn=True,
@@ -122,8 +116,6 @@ class ModelConfig(PretrainedConfig):
         cachekv_quant: bool = False,
         smooth: bool = False,
         group_size: int = -1,
-        dpo_config=None,
-        kto_config=None,
         tools_version="4.10.0.dev",
         only_hidden_states=False,
         add_tail_layer=False,
@@ -155,14 +147,12 @@ class ModelConfig(PretrainedConfig):
         self.use_rmsnorm = use_rmsnorm
         self.weight_sharing = weight_sharing
         self.weight_sharing_add_bias = weight_sharing_add_bias
-        self.sequence_parallel = sequence_parallel
         self.use_flash_attention = use_flash_attention
         self.use_fast_ln = use_fast_ln
         self.use_fast_ffn = use_fast_ffn
         self.tensor_parallel_output = tensor_parallel_output
         self.recompute = recompute
         self.recompute_granularity = recompute_granularity
-        self.pp_recompute_interval = pp_recompute_interval
         self.no_recompute_layers = no_recompute_layers
         self.recompute_use_reentrant = recompute_use_reentrant
         self.refined_recompute = refined_recompute
@@ -179,7 +169,6 @@ class ModelConfig(PretrainedConfig):
         """
         self.skip_recompute_ops = dict()
         self.virtual_pp_degree = virtual_pp_degree
-        self.pp_seg_method = pp_seg_method
         self.fuse_attn_qkv = fuse_attn_qkv
         self.fused_linear = fused_linear
         self.use_sparse_flash_attn = use_sparse_flash_attn
@@ -197,8 +186,6 @@ class ModelConfig(PretrainedConfig):
         self.smooth = smooth
         self.group_size = group_size
         self.max_sequence_length = max_sequence_length
-        self.dpo_config = dpo_config
-        self.kto_config = kto_config
         self.tools_version = tools_version
         self.only_hidden_states = only_hidden_states
         self.add_tail_layer = add_tail_layer
@@ -208,20 +195,18 @@ class ModelConfig(PretrainedConfig):
             self.moe_layer_start_index = moe_layer_start_index
         if moe_intermediate_sizes is not None:
             self.moe_intermediate_sizes = moe_intermediate_sizes
-        if moe_gate_corrrect_bias is not None: 
+        if moe_gate_corrrect_bias is not None:
             self.moe_use_gate_correction_bias = moe_gate_corrrect_bias
         elif moe_use_gate_correction_bias is not None:
             self.moe_use_gate_correction_bias = moe_use_gate_correction_bias
-            
-        self.register_unsavable_keys(
-            [
-                "refined_recompute",
-                "skip_recompute_ops",
-                "dpo_config",
-                "kto_config",
-                "use_var_len_flash_attn",
-            ]
-        )
+
+        self.register_unsavable_keys([
+            "refined_recompute",
+            "skip_recompute_ops",
+            "dpo_config",
+            "kto_config",
+            "use_var_len_flash_attn",
+        ])
 
 
 class ErnieBotMoEConfig(ModelConfig):
@@ -289,13 +274,113 @@ class ErnieBotMoEConfig(ModelConfig):
                 return repr(obj)
             raise TypeError(f"Type {type(obj)} is not serializable")
 
-        return (
-            json.dumps(
-                config_dict,
-                indent=2,
-                sort_keys=True,
-                ensure_ascii=False,
-                default=_serializer,
-            )
-            + "\n"
-        )
+        return (json.dumps(
+            config_dict,
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=False,
+            default=_serializer,
+        ) + "\n")
+
+
+@dataclass
+class ParallelConfig:
+    """Configuration for the distributed execution."""
+    block_size = 16,  # The block size for processing.
+    sequence_parallel = False,  # Whether to enable sequence parallelism.
+    use_ep = False,  # Whether to enable Expert Parallelism
+    moe_group = False,  # Whether to enable moe group
+    msg_queue_id = None,  # mesage queue id
+    use_micro_batch = False,  # Whether to enable micro batch
+    tensor_parallel_rank = None,  # TP rank ID
+    tensor_parallel_degree = None,  # TP degree
+    mp_size = 1,  # mp size
+
+
+@dataclass
+class SpeculativeConfig:
+    """
+    Configuration for speculative decoding.
+    """
+    speculate_method = None,  # speculate method
+    speculate_max_draft_token_num = 1,  # the max length of draft tokens for speculate method
+    draft_type = "None",  # draft type
+    is_mtp = False,  # is mtp
+
+
+@dataclass
+class DeviceConfig:
+    """
+    Configuration for device settings.
+    """
+    use_avx512 = False,  # Whether to enable AVX512 instruction optimization
+
+
+@dataclass
+class AdditionalConfig:
+    """
+    Configuration for testing, debugging or others
+    """
+
+    use_fake_parameter = False,  # use fake parameter for test
+    ep_just_for_test = True,  # whether to use ep just for test
+
+
+class FMTKeys:
+    """
+    The parameter keys stored in your model_state.padarams.
+    """
+
+    def __init__(self, num_layers):
+        """
+        Initialization keys retrive weight from model_state.padarams.
+
+        Args:
+        num_layers (int): Number of layers in the Transformer model.
+        Returns:
+        None
+        """
+        self.norm_before_qkv_weight_keys = [None for i in range(num_layers)]
+        self.norm_before_qkv_bias_keys = [None for i in range(num_layers)]
+        self.qkv_linear_weight_keys = [None for i in range(num_layers)]
+        self.qkv_linear_bias_keys = [None for i in range(num_layers)]
+        self.out_linear_weight_keys = [None for i in range(num_layers)]
+        self.out_linear_bias_keys = [None for i in range(num_layers)]
+
+        self.ffn_layernorm_weight_keys = [None for i in range(num_layers)]
+        self.ffn_layernorm_bias_keys = [None for i in range(num_layers)]
+        self.ffn1_weight_keys = [None for i in range(num_layers)]
+        self.ffn1_bias_keys = [None for i in range(num_layers)]
+        self.ffn2_weight_keys = [None for i in range(num_layers)]
+        self.ffn2_bias_keys = [None for i in range(num_layers)]
+
+
+@dataclass
+class LoadConfig:
+    """
+    Configuration for loading parameter
+    """
+
+    fmt_keys: Optional[
+        FMTKeys] = None,  # Keys stored in your model, which is used to retrieve weights from the state dict.
+
+
+@dataclass
+class LLMConfig:
+    """
+    The configuration class which contains all fastdeploy-related configuration. This
+    simplifies passing around the distinct configurations in the codebase.
+    """
+
+    model_config: ModelConfig = field(default=None, init=True)  # type: ignore
+
+    parallel_config: ParallelConfig = field(default_factory=ParallelConfig,
+                                            init=True)
+    speculative_config: SpeculativeConfig = field(default=None,
+                                                  init=True)  # type: ignore
+    device_config: DeviceConfig = field(default=None,
+                                        init=True)  # type: ignore
+    additional_config: AdditionalConfig = field(default=None,
+                                                init=True)  # type: ignore
+    load_config: LoadConfig = field(default=None, init=True)  # type: ignore
+    quant_config: Optional[QuantConfigBase] = None

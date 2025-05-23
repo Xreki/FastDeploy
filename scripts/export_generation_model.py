@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 # Copyright (c) 2023 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,30 +12,26 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """
 Copyright (c) 2023 Baidu.com, Inc. All Rights Reserved.
 
 Export Inference model.
 """
-
+import argparse
 import os
 import sys
 
-import argparse
-
+import paddle
+from paddle.distributed import fleet
 from paddlenlp.trainer import strtobool
 from paddlenlp.utils.log import logger
 
-import paddle
-from fastdeploy.model_executor.models.configuration import ModelConfig
+from fastdeploy.config import ModelConfig
+from fastdeploy.model_executor.models.token_utils import (TokenTimer,
+                                                          check_output,
+                                                          process_index)
 from fastdeploy.model_executor.models.tokenizer import ErnieBotTokenizer
-from paddle.distributed import fleet
-from fastdeploy.model_executor.models.utils import (
-    UniqueIDGenerator,
-)
-from fastdeploy.model_executor.models.token_utils import TokenTimer, check_output, process_index
-
+from fastdeploy.model_executor.models.utils import UniqueIDGenerator
 
 should_check_python_safety = False
 if should_check_python_safety:
@@ -77,7 +72,9 @@ def setup_args():
     parser.add_argument("--lora_num", type=int, default=0)
     parser.add_argument("--lora_r", type=int, default=0)
     parser.add_argument("--export_model_type", type=str, default="default")
-    parser.add_argument("--version_file", type=str, default="export_version.txt")
+    parser.add_argument("--version_file",
+                        type=str,
+                        default="export_version.txt")
     parser.add_argument("--pre_caches_length", type=int, default=0)
     parser.add_argument("--gqa_use_tensorcore", type=strtobool, default=None)
     parser.add_argument(
@@ -134,11 +131,15 @@ def setup_args():
         help="Use enforce generation decoding strategy",
     )
     parser.add_argument("--speculate_enable", default="False", type=strtobool)
-    parser.add_argument("--speculate_get_output_hidden", default="True", type=strtobool)
+    parser.add_argument("--speculate_get_output_hidden",
+                        default="True",
+                        type=strtobool)
     parser.add_argument("--speculate_max_draft_tokens", default=1, type=int)
     parser.add_argument("--speculate_max_candidate_len", default=5, type=int)
     parser.add_argument("--speculate_verify_window", default=2, type=int)
-    parser.add_argument("--return_all_hidden_states", default="False", type=strtobool)
+    parser.add_argument("--return_all_hidden_states",
+                        default="False",
+                        type=strtobool)
     parser.add_argument(
         "--use_efficientllm",
         default="False",
@@ -206,10 +207,10 @@ if __name__ == "__main__":
     args = setup_args()
 
     if args.export_model_type not in [
-        "default",
-        "WINT8",
-        "W8A8C16",
-        "W8A8C8",
+            "default",
+            "WINT8",
+            "W8A8C16",
+            "W8A8C8",
     ]:
         raise ValueError(
             "export_model_type must be in ['default', 'WINT8', 'W8A8C16', 'W8A8C8'] when use_efficientllm is False."
@@ -244,9 +245,8 @@ if __name__ == "__main__":
     }
     fleet.init(is_collective=True, strategy=strategy)
 
-    from fastdeploy.model_executor.models.export_model import (
-        export_efficientllm_model,
-    )
+    from fastdeploy.model_executor.models.export_model import \
+        export_efficientllm_model
 
     model = export_efficientllm_model(args)
 
@@ -256,11 +256,8 @@ if __name__ == "__main__":
         export_model_type = "BF16"
     else:
         export_model_type = args.export_model_type
-    unique_id = (
-        export_model_type
-        + "-"
-        + unique_id_generator.generate_unique_id(model.state_dict())
-    )
+    unique_id = (export_model_type + "-" +
+                 unique_id_generator.generate_unique_id(model.state_dict()))
     args.unique_id = unique_id
 
     try:
@@ -278,6 +275,5 @@ if __name__ == "__main__":
     add_inference_args_to_config(model_config, args)
     if process_index() == 0:
         model_config.save_pretrained(args.output_path)
-        ErnieBotTokenizer.from_pretrained(args.model_name_or_path).save_pretrained(
-            args.output_path
-        )
+        ErnieBotTokenizer.from_pretrained(
+            args.model_name_or_path).save_pretrained(args.output_path)

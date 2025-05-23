@@ -13,18 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-
 # cipher_token=WjI1fQOvhN  # do not edit this line
-from paddlenlp.utils.log import logger
-
 import os
+
 import paddle
 import paddle.distributed as dist
-import fastdeploy
 from paddle import nn
 from paddle.distributed import fleet
 from paddle.framework import in_dynamic_mode
 from paddle.incubate.nn.functional import blha_get_max_len
+from paddlenlp.utils.log import logger
+
+import fastdeploy
 
 try:
     from paddle.base.core import EventHandle
@@ -32,13 +32,14 @@ try:
 except ImportError:
     logger.warning("import EventHandle and deep_ep Failed!")
 
+from fastdeploy.inference_args import GenerationPhase
+
 from ..layers.activation import Activation
 from ..layers.attention.base import Attention
 from ..layers.ffn1 import FFN1, FFN1Split
 from ..layers.linear import FFN2, Linear
 from ..layers.normalization import Normalization
 from ..layers.qkv_linear import QKVLinear
-from fastdeploy.inference_args import GenerationPhase
 from .micro_batch_control import MicroBatchControl
 
 EP_MICRO_BATCH_NUM = 2  # DeepEP can only support
@@ -67,6 +68,7 @@ class FusedTransformer(nn.Layer):
         return_all_hidden_states=False,
         base_model_prefix="gpt",
         draft_type="",
+        llm_config=None,
     ):
         """
         Initialize the fused transformer model.
@@ -101,15 +103,16 @@ class FusedTransformer(nn.Layer):
         self.num_heads = inference_args.num_attention_heads // self.nranks
         self.kv_num_heads = inference_args.num_key_value_heads // self.nranks
         self.return_all_hidden_states = return_all_hidden_states
-        self.use_pd_disaggregation = int(os.getenv("FLAGS_use_pd_disaggregation", 0))
+        self.use_pd_disaggregation = int(
+            os.getenv("FLAGS_use_pd_disaggregation", 0))
         self.use_fa3 = int(os.getenv("FLAGS_use_fa3", 0))
         self.keep_pd_step_flag = draft_type in ["mtp", "eagle"]
 
         self.splitwise_role = os.getenv("SPLITWISE_ROLE", "mixed")
-        assert self.splitwise_role in ["prefill", "decode", "mixed"], (
-            f"Invalid role: {self.splitwise_role}. "
-            + "Expected one of ['prefill', 'decode', 'mixed']."
-        )
+        assert self.splitwise_role in [
+            "prefill", "decode", "mixed"
+        ], (f"Invalid role: {self.splitwise_role}. " +
+            "Expected one of ['prefill', 'decode', 'mixed'].")
 
         if self.nranks > 1:
             assert ring_id != -1
@@ -118,7 +121,8 @@ class FusedTransformer(nn.Layer):
             inference_args=inference_args,
             layer_name=f"{base_model_prefix}.decoder.layers.0.norm1",
             weight_key=fmt_keys.norm_before_qkv_weight_keys[0],
-            bias_key=fmt_keys.norm_before_qkv_bias_keys[0] if have_norm_bias else None,
+            bias_key=fmt_keys.norm_before_qkv_bias_keys[0]
+            if have_norm_bias else None,
             norm_type=norm_type,
             epsilon=epsilon,
             quant_scale=self.act_scales.get(
@@ -127,190 +131,154 @@ class FusedTransformer(nn.Layer):
             ),
         )
 
-        self.qkv_linear_layers = nn.LayerList(
-            [
-                QKVLinear(
-                    inference_args=inference_args,
-                    layer_name=f"{base_model_prefix}.decoder.layers.{i}.self_attn.qkv_proj",
-                    weight_key=fmt_keys.qkv_linear_weight_keys[i],
-                    bias_key=fmt_keys.qkv_linear_bias_keys[i],
-                )
-                for i in range(self.num_layers)
-            ]
-        )
-        self.out_linear_layers = nn.LayerList(
-            [
-                Linear(
-                    inference_args=inference_args,
-                    layer_name=f"{base_model_prefix}.decoder.layers.{i}.self_attn.out_proj",
-                    weight_key=fmt_keys.out_linear_weight_keys[i],
-                    bias_key=fmt_keys.out_linear_bias_keys[i],
-                    use_smooth_quant=use_smooth_quant,
-                    shift_key=f"{base_model_prefix}.decoder.layers.{i}.self_attn.out_proj.shift_bias",
-                    smooth_key=f"{base_model_prefix}.decoder.layers.{i}.self_attn.out_proj.smooth_weight",
-                )
-                for i in range(self.num_layers)
-            ]
-        )
-        self.attn_layers = nn.LayerList(
-            [
-                Attention(
-                    inference_args=inference_args,
-                    layer_name=(
-                        f"ernie.layers.{i}.self_attn"
-                        if self.inference_args.moe_config.use_moe
-                        and self.inference_args.moe_config.moe_layer_start_index > 0
-                        else f"{base_model_prefix}.decoder.layers.{i}.self_attn"
-                    ),
-                    rope_theta=rope_theta,
-                    rope_3d=rope_3d,
-                    use_neox_rotary_style=use_neox_rotary_style,
-                    out_scale=self.act_scales.get(
-                        f"{base_model_prefix}.decoder.layers.{i}.self_attn.out_proj.activation_quanter",
-                        -1,
-                    ),
-                    qkv_scale=getattr(self.qkv_linear_layers[i], "qkv_out_scale", None),
-                    qkv_bias=getattr(self.qkv_linear_layers[i], "qkv_bias", None),
-                    linear_shift=getattr(
-                        self.out_linear_layers[i], "linear_shift", None
-                    ),
-                    linear_smooth=getattr(
-                        self.out_linear_layers[i], "linear_smooth", None
-                    ),
-                )
-                for i in range(self.num_layers)
-            ]
-        )
-        self.ffn_layernorm_layers = nn.LayerList(
-            [
-                Normalization(
-                    inference_args=inference_args,
-                    layer_name=f"{base_model_prefix}.decoder.layers.{i}.norm2",
-                    weight_key=fmt_keys.ffn_layernorm_weight_keys[i],
-                    bias_key=(
-                        fmt_keys.ffn_layernorm_bias_keys[i] if have_norm_bias else None
-                    ),
-                    norm_type=norm_type,
-                    epsilon=epsilon,
-                    linear_bias=getattr(self.out_linear_layers[i], "linear_bias", None),
-                    quant_scale=self.act_scales.get(
-                        f"{base_model_prefix}.decoder.layers.{i}.linear1.activation_quanter",
-                        -1,
-                    ),
-                )
-                for i in range(self.num_layers)
-            ]
-        )
+        self.qkv_linear_layers = nn.LayerList([
+            QKVLinear(
+                inference_args=inference_args,
+                layer_name=
+                f"{base_model_prefix}.decoder.layers.{i}.self_attn.qkv_proj",
+                weight_key=fmt_keys.qkv_linear_weight_keys[i],
+                bias_key=fmt_keys.qkv_linear_bias_keys[i],
+            ) for i in range(self.num_layers)
+        ])
+        self.out_linear_layers = nn.LayerList([
+            Linear(
+                llm_config=llm_config,
+                layer_name=
+                f"{base_model_prefix}.decoder.layers.{i}.self_attn.out_proj",
+                layer_index=i,
+            ) for i in range(self.num_layers)
+        ])
+        self.attn_layers = nn.LayerList([
+            Attention(
+                inference_args=inference_args,
+                layer_name=(
+                    f"ernie.layers.{i}.self_attn"
+                    if self.inference_args.moe_config.use_moe and
+                    self.inference_args.moe_config.moe_layer_start_index > 0
+                    else f"{base_model_prefix}.decoder.layers.{i}.self_attn"),
+                rope_theta=rope_theta,
+                rope_3d=rope_3d,
+                use_neox_rotary_style=use_neox_rotary_style,
+                out_scale=self.act_scales.get(
+                    f"{base_model_prefix}.decoder.layers.{i}.self_attn.out_proj.activation_quanter",
+                    -1,
+                ),
+                qkv_scale=getattr(self.qkv_linear_layers[i], "qkv_out_scale",
+                                  None),
+                qkv_bias=getattr(self.qkv_linear_layers[i], "qkv_bias", None),
+                linear_shift=getattr(self.out_linear_layers[i], "linear_shift",
+                                     None),
+                linear_smooth=getattr(self.out_linear_layers[i],
+                                      "linear_smooth", None),
+            ) for i in range(self.num_layers)
+        ])
+        self.ffn_layernorm_layers = nn.LayerList([
+            Normalization(
+                inference_args=inference_args,
+                layer_name=f"{base_model_prefix}.decoder.layers.{i}.norm2",
+                weight_key=fmt_keys.ffn_layernorm_weight_keys[i],
+                bias_key=(fmt_keys.ffn_layernorm_bias_keys[i]
+                          if have_norm_bias else None),
+                norm_type=norm_type,
+                epsilon=epsilon,
+                linear_bias=getattr(self.out_linear_layers[i], "linear_bias",
+                                    None),
+                quant_scale=self.act_scales.get(
+                    f"{base_model_prefix}.decoder.layers.{i}.linear1.activation_quanter",
+                    -1,
+                ),
+            ) for i in range(self.num_layers)
+        ])
         if ffn1_concat:
-            self.ffn1_layers = nn.LayerList(
-                [
-                    FFN1(
-                        inference_args=inference_args,
-                        layer_name=f"{base_model_prefix}.decoder.layers.{i}.linear1",
-                        weight_key=fmt_keys.ffn1_weight_keys[i],
-                        bias_key=fmt_keys.ffn1_bias_keys[i],
-                        activation=act_method,
-                        use_fast_ffn=(
-                            False
-                            if not (
-                                self.inference_args.moe_config.use_moe
-                                and not self.inference_args.moe_config.moe_use_ffn_shared_weight_and_bias
-                            )
-                            else True
-                        ),
-                    )
-                    for i in range(
-                        self.num_layers
-                        if not (
-                            self.inference_args.moe_config.use_moe
-                            and not self.inference_args.moe_config.moe_use_ffn_shared_weight_and_bias
-                        )
-                        else self.inference_args.moe_config.moe_layer_start_index
-                    )
-                ]
-            )
-        else:
-            self.ffn1_layers = nn.LayerList(
-                [
-                    FFN1Split(
-                        inference_args=inference_args,
-                        gate_layer_name=f"{base_model_prefix}.decoder.layers.{i}.gate",
-                        up_layer_name=f"{base_model_prefix}.decoder.layers.{i}.up",
-                    )
-                    for i in range(self.num_layers)
-                ]
-            )
-
-        self.ffn2_layers = nn.LayerList(
-            [
-                FFN2(
+            self.ffn1_layers = nn.LayerList([
+                FFN1(
                     inference_args=inference_args,
-                    layer_name=f"{base_model_prefix}.decoder.layers.{i}.linear2",
-                    weight_key=fmt_keys.ffn2_weight_keys[i],
-                    bias_key=fmt_keys.ffn2_bias_keys[i],
-                    use_smooth_quant=False,
-                    shift_key=None,
-                    smooth_key=None,
-                )
-                for i in range(
-                    self.num_layers
-                    if not (
-                        self.inference_args.moe_config.use_moe
-                        and not self.inference_args.moe_config.moe_use_ffn_shared_weight_and_bias
-                    )
-                    else self.inference_args.moe_config.moe_layer_start_index
-                )
-            ]
-        )
+                    layer_name=
+                    f"{base_model_prefix}.decoder.layers.{i}.linear1",
+                    weight_key=fmt_keys.ffn1_weight_keys[i],
+                    bias_key=fmt_keys.ffn1_bias_keys[i],
+                    activation=act_method,
+                    use_fast_ffn=(False if
+                                  not (self.inference_args.moe_config.use_moe
+                                       and not self.inference_args.moe_config.
+                                       moe_use_ffn_shared_weight_and_bias) else
+                                  True),
+                ) for i in range(self.num_layers if not (
+                    self.inference_args.moe_config.use_moe
+                    and not self.inference_args.moe_config.
+                    moe_use_ffn_shared_weight_and_bias
+                ) else self.inference_args.moe_config.moe_layer_start_index)
+            ])
+        else:
+            self.ffn1_layers = nn.LayerList([
+                FFN1Split(
+                    inference_args=inference_args,
+                    gate_layer_name=
+                    f"{base_model_prefix}.decoder.layers.{i}.gate",
+                    up_layer_name=f"{base_model_prefix}.decoder.layers.{i}.up",
+                ) for i in range(self.num_layers)
+            ])
+
+        self.ffn2_layers = nn.LayerList([
+            FFN2(
+                inference_args=inference_args,
+                layer_name=f"{base_model_prefix}.decoder.layers.{i}.linear2",
+                weight_key=fmt_keys.ffn2_weight_keys[i],
+                bias_key=fmt_keys.ffn2_bias_keys[i],
+                use_smooth_quant=False,
+                shift_key=None,
+                smooth_key=None,
+                llm_config=llm_config,
+                layer_index=i,
+            ) for i in range(self.num_layers if not (
+                self.inference_args.moe_config.use_moe and not self.
+                inference_args.moe_config.moe_use_ffn_shared_weight_and_bias
+            ) else self.inference_args.moe_config.moe_layer_start_index)
+        ])
         if not self.fuse_ffn_act:
-            self.bias_act_layers = nn.LayerList(
-                [
-                    Activation(
-                        inference_args=inference_args,
-                        bias=getattr(self.ffn1_layers[i], "ffn1_bias", None),
-                        act_method=act_method,
-                        dequant_scales=getattr(
-                            self.ffn1_layers[i], "ffn1_out_scale", None
-                        ),
-                        shift=getattr(self.ffn2_layers[i], "linear_shift", None),
-                        smooth=getattr(self.ffn2_layers[i], "linear_smooth", None),
-                        quant_scale=self.act_scales.get(
-                            f"{base_model_prefix}.decoder.layers.{i}.linear2.activation_quanter",
-                            -1,
-                        ),
-                    )
-                    for i in range(
-                        self.num_layers
-                        if not (
-                            self.inference_args.moe_config.use_moe
-                            and not self.inference_args.moe_config.moe_use_ffn_shared_weight_and_bias
-                        )
-                        else self.inference_args.moe_config.moe_layer_start_index
-                    )
-                ]
-            )
+            self.bias_act_layers = nn.LayerList([
+                Activation(
+                    inference_args=inference_args,
+                    bias=getattr(self.ffn1_layers[i], "ffn1_bias", None),
+                    act_method=act_method,
+                    dequant_scales=getattr(self.ffn1_layers[i],
+                                           "ffn1_out_scale", None),
+                    shift=getattr(self.ffn2_layers[i], "linear_shift", None),
+                    smooth=getattr(self.ffn2_layers[i], "linear_smooth", None),
+                    quant_scale=self.act_scales.get(
+                        f"{base_model_prefix}.decoder.layers.{i}.linear2.activation_quanter",
+                        -1,
+                    ),
+                ) for i in range(self.num_layers if not (
+                    self.inference_args.moe_config.use_moe
+                    and not self.inference_args.moe_config.
+                    moe_use_ffn_shared_weight_and_bias
+                ) else self.inference_args.moe_config.moe_layer_start_index)
+            ])
         self.moe_layers = None
         self.decoder_ep_runner = []
         if inference_args.moe_config.use_moe:
             if self.inference_args.moe_config.moe_use_ffn_shared_weight_and_bias:
                 from ..layers.moe.moe import MoELayer
 
-                self.moe_layers = nn.LayerList(
-                    [
-                        MoELayer(
-                            inference_args=inference_args,
-                            moe_config=inference_args.moe_config,
-                            layer_name=f"moe_layers.{i}",
-                            gate_weight_key=f"ernie.decoder.moe_layers.{i}.gate_weight",
-                            ffn1_expert_weight_key=f"ernie.decoder.moe_layers.{i}.moe_ffn1_weight",
-                            ffn2_expert_weight_key=f"ernie.decoder.moe_layers.{i}.moe_ffn2_weight",
-                            ffn1_bias_key=f"ernie.decoder.moe_layers.{i}.moe_ffn1_bias",
-                            ffn2_bias_key=f"ernie.decoder.moe_layers.{i}.moe_ffn2_bias",
-                            layer_idx=i,
-                        )
-                        for i in range(self.num_layers)
-                    ]
-                )
+                self.moe_layers = nn.LayerList([
+                    MoELayer(
+                        inference_args=inference_args,
+                        moe_config=inference_args.moe_config,
+                        layer_name=f"moe_layers.{i}",
+                        gate_weight_key=
+                        f"ernie.decoder.moe_layers.{i}.gate_weight",
+                        ffn1_expert_weight_key=
+                        f"ernie.decoder.moe_layers.{i}.moe_ffn1_weight",
+                        ffn2_expert_weight_key=
+                        f"ernie.decoder.moe_layers.{i}.moe_ffn2_weight",
+                        ffn1_bias_key=
+                        f"ernie.decoder.moe_layers.{i}.moe_ffn1_bias",
+                        ffn2_bias_key=
+                        f"ernie.decoder.moe_layers.{i}.moe_ffn2_bias",
+                        layer_idx=i,
+                    ) for i in range(self.num_layers)
+                ])
             elif self.inference_args.use_ep:
                 if self.inference_args.generation_phase == GenerationPhase.PREFILL:
                     logger.debug("Initializing Prefill EP Layer")
@@ -329,8 +297,7 @@ class FusedTransformer(nn.Layer):
                 ep_rank = ep_group.rank
                 num_experts = inference_args.moe_config.num_experts
                 num_max_dispatch_tokens_per_rank = (
-                    inference_args.moe_config.num_max_dispatch_tokens_per_rank
-                )
+                    inference_args.moe_config.num_max_dispatch_tokens_per_rank)
                 num_local_experts = num_experts // ep_size
                 ep_engine = DeepEPEngine(
                     ep_group,
@@ -342,141 +309,118 @@ class FusedTransformer(nn.Layer):
                     self.inference_args.generation_phase,
                     async_finish=self.inference_args.use_micro_batch,
                 )
-                self.moe_layers = nn.LayerList(
-                    [
-                        None
-                        for i in range(
-                            self.inference_args.moe_config.moe_layer_start_index
-                        )
-                    ]
-                    + [
-                        MoELayer(
-                            ep_engine=ep_engine,
-                            num_local_experts=num_local_experts,
-                            inference_args=inference_args,
-                            moe_config=inference_args.moe_config,
-                            layer_name=f"moe_layers.{i}",
-                            gate_weight_key=f"ernie.layers.{i}.mlp.gate.weight",
-                            ffn1_expert_weight_key=f"ernie.layers.{i}.mlp.experts"
-                            + ".{}.up_gate_proj.weight",
-                            ffn2_expert_weight_key=f"ernie.layers.{i}.mlp.experts"
-                            + ".{}.down_proj.weight",
-                            ffn1_expert_weight_scale_key=f"ernie.layers.{i}.mlp.experts"
-                            + ".{}.up_gate_proj.weight_quanter",
-                            ffn2_expert_weight_scale_key=f"ernie.layers.{i}.mlp.experts"
-                            + ".{}.down_proj.weight_quanter",
-                            ffn1_expert_in_scale_key=f"ernie.layers.{i}.mlp.experts"
-                            + ".{}.up_gate_proj.activation_quanter",
-                            ffn2_expert_in_scale_key=f"ernie.layers.{i}.mlp.experts"
-                            + ".{}.down_proj.activation_quanter",
-                            gate_correction_bias_key=f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
-                            ffn1_bias_key=None,
-                            ffn2_bias_key=None,
-                            ffn1_shared_weight_key=None,
-                            ffn1_shared_bias_key=None,
-                            ffn2_shared_weight_key=None,
-                            ffn2_shared_bias_key=None,
-                            layer_idx=i,
-                        )
-                        for i in range(
-                            self.inference_args.moe_config.moe_layer_start_index,
-                            self.num_layers,
-                        )
-                    ]
-                )
+                self.moe_layers = nn.LayerList([
+                    None for i in range(
+                        self.inference_args.moe_config.moe_layer_start_index)
+                ] + [
+                    MoELayer(
+                        ep_engine=ep_engine,
+                        num_local_experts=num_local_experts,
+                        inference_args=inference_args,
+                        moe_config=inference_args.moe_config,
+                        layer_name=f"moe_layers.{i}",
+                        gate_weight_key=f"ernie.layers.{i}.mlp.gate.weight",
+                        ffn1_expert_weight_key=f"ernie.layers.{i}.mlp.experts"
+                        + ".{}.up_gate_proj.weight",
+                        ffn2_expert_weight_key=f"ernie.layers.{i}.mlp.experts"
+                        + ".{}.down_proj.weight",
+                        ffn1_expert_weight_scale_key=
+                        f"ernie.layers.{i}.mlp.experts" +
+                        ".{}.up_gate_proj.weight_quanter",
+                        ffn2_expert_weight_scale_key=
+                        f"ernie.layers.{i}.mlp.experts" +
+                        ".{}.down_proj.weight_quanter",
+                        ffn1_expert_in_scale_key=f"ernie.layers.{i}.mlp.experts"
+                        + ".{}.up_gate_proj.activation_quanter",
+                        ffn2_expert_in_scale_key=f"ernie.layers.{i}.mlp.experts"
+                        + ".{}.down_proj.activation_quanter",
+                        gate_correction_bias_key=
+                        f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
+                        ffn1_bias_key=None,
+                        ffn2_bias_key=None,
+                        ffn1_shared_weight_key=None,
+                        ffn1_shared_bias_key=None,
+                        ffn2_shared_weight_key=None,
+                        ffn2_shared_bias_key=None,
+                        layer_idx=i,
+                    ) for i in range(
+                        self.inference_args.moe_config.moe_layer_start_index,
+                        self.num_layers,
+                    )
+                ])
 
-                if (
-                    self.use_micro_batch
-                    and self.inference_args.generation_phase == GenerationPhase.DECODER
-                ):
+                if (self.use_micro_batch
+                        and self.inference_args.generation_phase
+                        == GenerationPhase.DECODER):
                     for _ in range(EP_MICRO_BATCH_NUM):
                         self.decoder_ep_runner.append(
-                            DecoderEPMicroBatchRunner(self.moe_layers, ep_engine)
-                        )
+                            DecoderEPMicroBatchRunner(self.moe_layers,
+                                                      ep_engine))
             elif self.inference_args.moe_config.has_multimodality:
                 from ..layers.moe.mm import MultimodalityMoeLayer as MoELayer
 
-                self.moe_layers = nn.LayerList(
-                    [
-                        None
-                        for i in range(
-                            self.inference_args.moe_config.moe_layer_start_index
-                        )
-                    ]
-                    + [
-                        MoELayer(
-                            inference_args=inference_args,
-                            layer_name=f"moe_layers.{i}",
-                            layer_idx=i,
-                        )
-                        for i in range(
-                            self.inference_args.moe_config.moe_layer_start_index,
-                            self.num_layers,
-                        )
-                    ]
-                )
+                self.moe_layers = nn.LayerList([
+                    None for i in range(
+                        self.inference_args.moe_config.moe_layer_start_index)
+                ] + [
+                    MoELayer(
+                        inference_args=inference_args,
+                        layer_name=f"moe_layers.{i}",
+                        layer_idx=i,
+                    ) for i in range(
+                        self.inference_args.moe_config.moe_layer_start_index,
+                        self.num_layers,
+                    )
+                ])
             else:
                 from ..layers.moe.moe import MoELayer
 
-                self.moe_layers = nn.LayerList(
-                    [
-                        None
-                        for i in range(
-                            self.inference_args.moe_config.moe_layer_start_index
-                        )
-                    ]
-                    + [
-                        MoELayer(
-                            inference_args=inference_args,
-                            moe_config=inference_args.moe_config,
-                            layer_name=f"moe_layers.{i}",
-                            gate_weight_key=f"ernie.layers.{i}.mlp.gate.weight",
-                            ffn1_expert_weight_key=f"ernie.layers.{i}.mlp.experts"
-                            + ".{}.up_gate_proj.weight",
-                            ffn2_expert_weight_key=f"ernie.layers.{i}.mlp.experts"
-                            + ".{}.down_proj.weight",
-                            gate_correction_bias_key=f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
-                            ffn1_bias_key=None,
-                            ffn2_bias_key=None,
-                            ffn1_shared_weight_key=None,
-                            ffn1_shared_bias_key=None,
-                            ffn2_shared_weight_key=None,
-                            ffn2_shared_bias_key=None,
-                            layer_idx=i,
-                        )
-                        for i in range(
-                            self.inference_args.moe_config.moe_layer_start_index,
-                            self.num_layers,
-                        )
-                    ]
-                )
+                self.moe_layers = nn.LayerList([
+                    None for i in range(
+                        self.inference_args.moe_config.moe_layer_start_index)
+                ] + [
+                    MoELayer(
+                        inference_args=inference_args,
+                        moe_config=inference_args.moe_config,
+                        layer_name=f"moe_layers.{i}",
+                        gate_weight_key=f"ernie.layers.{i}.mlp.gate.weight",
+                        ffn1_expert_weight_key=f"ernie.layers.{i}.mlp.experts"
+                        + ".{}.up_gate_proj.weight",
+                        ffn2_expert_weight_key=f"ernie.layers.{i}.mlp.experts"
+                        + ".{}.down_proj.weight",
+                        gate_correction_bias_key=
+                        f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
+                        ffn1_bias_key=None,
+                        ffn2_bias_key=None,
+                        ffn1_shared_weight_key=None,
+                        ffn1_shared_bias_key=None,
+                        ffn2_shared_weight_key=None,
+                        ffn2_shared_bias_key=None,
+                        layer_idx=i,
+                    ) for i in range(
+                        self.inference_args.moe_config.moe_layer_start_index,
+                        self.num_layers,
+                    )
+                ])
 
-        self.bias_residual_layernorm_layers = nn.LayerList(
-            [
-                Normalization(
-                    inference_args=inference_args,
-                    layer_name=f"{base_model_prefix}.decoder.layers.{i + 1}.norm1",
-                    weight_key=fmt_keys.norm_before_qkv_weight_keys[i + 1],
-                    bias_key=(
-                        fmt_keys.norm_before_qkv_bias_keys[i + 1]
-                        if have_norm_bias
-                        else None
-                    ),
-                    norm_type=norm_type,
-                    epsilon=epsilon,
-                    linear_bias=(
-                        getattr(self.ffn2_layers[i], "linear_bias", None)
-                        if not inference_args.moe_config.use_moe
-                        else None
-                    ),
-                    quant_scale=self.act_scales.get(
-                        f"{base_model_prefix}.decoder.layers.{i + 1}.self_attn.qkv_proj.activation_quanter",
-                        -1,
-                    ),
-                )
-                for i in range(self.num_layers - 1)
-            ]
-        )
+        self.bias_residual_layernorm_layers = nn.LayerList([
+            Normalization(
+                inference_args=inference_args,
+                layer_name=f"{base_model_prefix}.decoder.layers.{i + 1}.norm1",
+                weight_key=fmt_keys.norm_before_qkv_weight_keys[i + 1],
+                bias_key=(fmt_keys.norm_before_qkv_bias_keys[i + 1]
+                          if have_norm_bias else None),
+                norm_type=norm_type,
+                epsilon=epsilon,
+                linear_bias=(getattr(self.ffn2_layers[i], "linear_bias", None)
+                             if not inference_args.moe_config.use_moe else
+                             None),
+                quant_scale=self.act_scales.get(
+                    f"{base_model_prefix}.decoder.layers.{i + 1}.self_attn.qkv_proj.activation_quanter",
+                    -1,
+                ),
+            ) for i in range(self.num_layers - 1)
+        ])
 
         self.last_layernorm = Normalization(
             inference_args=inference_args,
@@ -485,14 +429,13 @@ class FusedTransformer(nn.Layer):
             bias_key=None,
             norm_type="layernorm",
             epsilon=epsilon,
-            linear_bias=(
-                getattr(self.ffn2_layers[self.num_layers - 1], "linear_bias", None)
-                if not inference_args.moe_config.use_moe
-                else None
-            ),
+            linear_bias=(getattr(self.ffn2_layers[self.num_layers -
+                                                  1], "linear_bias", None)
+                         if not inference_args.moe_config.use_moe else None),
         )
 
-        logger.info(f"FusedTransformer inference_args {self.inference_args.__dict__}")
+        logger.info(
+            f"FusedTransformer inference_args {self.inference_args.__dict__}")
 
     def load_state_dict(self, state_dict):
         """
@@ -504,8 +447,7 @@ class FusedTransformer(nn.Layer):
         import threading
 
         enable_efficientllm_load_model_concurrency = int(
-            os.getenv("ENABLE_EFFICIENTLLM_LOAD_MODEL_CONCURRENCY", "1")
-        )
+            os.getenv("ENABLE_EFFICIENTLLM_LOAD_MODEL_CONCURRENCY", "1"))
 
         self.norm_before_qkv.load_state_dict(state_dict)
 
@@ -526,7 +468,8 @@ class FusedTransformer(nn.Layer):
                         self.ffn1_layers[i].load_state_dict(state_dict)
                         self.ffn2_layers[i].load_state_dict(state_dict)
             if i < self.num_layers - 1:
-                self.bias_residual_layernorm_layers[i].load_state_dict(state_dict)
+                self.bias_residual_layernorm_layers[i].load_state_dict(
+                    state_dict)
 
             paddle.device.cuda.empty_cache()
 
@@ -539,7 +482,8 @@ class FusedTransformer(nn.Layer):
             for i in range(current_start_layer, current_end_layer):
                 logger.info(f"Start load layer {i}")
                 if enable_efficientllm_load_model_concurrency:
-                    thread = threading.Thread(target=load_layer_state_dict, args=(i,))
+                    thread = threading.Thread(target=load_layer_state_dict,
+                                              args=(i, ))
                     threads.append(thread)
                     thread.start()
                 else:
@@ -646,14 +590,16 @@ class FusedTransformer(nn.Layer):
         ffn2_out = None
         if layer_id > moe_layer_start_index:
             ffn2_out = self.micro_batch_control.micro_batches[
-                micro_batch_id
-            ].before_norm_fused_moe_out
+                micro_batch_id].before_norm_fused_moe_out
         else:
-            ffn2_out = self.micro_batch_control.micro_batches[micro_batch_id].ffn2_out
-        (ln_out, residual_input) = self.bias_residual_layernorm_layers[layer_id - 1](
-            ffn2_out,
-            self.micro_batch_control.micro_batches[micro_batch_id].residual_input,
-        )
+            ffn2_out = self.micro_batch_control.micro_batches[
+                micro_batch_id].ffn2_out
+        (ln_out,
+         residual_input) = self.bias_residual_layernorm_layers[layer_id - 1](
+             ffn2_out,
+             self.micro_batch_control.micro_batches[micro_batch_id].
+             residual_input,
+         )
         # qkv matmul
         qkv_out = self.qkv_linear_layers[layer_id](ln_out)
 
@@ -668,12 +614,10 @@ class FusedTransformer(nn.Layer):
             rotary_emb_dims,
             caches[2 * layer_id],  # key_cache
             caches[2 * layer_id + 1],  # value_cache
-            (
-                pre_caches[2 * layer_id] if pre_caches is not None else None
-            ),  # pre_key_cache
-            (
-                pre_caches[2 * layer_id + 1] if pre_caches is not None else None
-            ),  # pre_value_cache
+            (pre_caches[2 * layer_id]
+             if pre_caches is not None else None),  # pre_key_cache
+            (pre_caches[2 * layer_id + 1]
+             if pre_caches is not None else None),  # pre_value_cache
             pre_caches_length,
             attn_mask,
             kv_signal_data,
@@ -684,19 +628,20 @@ class FusedTransformer(nn.Layer):
         # ffn layernorm
         (
             self.micro_batch_control.micro_batches[micro_batch_id].tmp_out,
-            self.micro_batch_control.micro_batches[micro_batch_id].residual_input,
+            self.micro_batch_control.micro_batches[micro_batch_id].
+            residual_input,
         ) = self.ffn_layernorm_layers[layer_id](out_linear_out, residual_input)
 
         (
             self.micro_batch_control.micro_batches[micro_batch_id].topk_idx,
-            self.micro_batch_control.micro_batches[micro_batch_id].topk_weights,
+            self.micro_batch_control.micro_batches[micro_batch_id].
+            topk_weights,
         ) = self.moe_layers[layer_id].micro_batch_gate(
-            self.micro_batch_control.micro_batches[micro_batch_id].tmp_out
-        )
+            self.micro_batch_control.micro_batches[micro_batch_id].tmp_out)
         # record event
-        self.micro_batch_control.micro_batches[micro_batch_id].compute_event = (
-            deep_ep.utils.EventOverlap(EventHandle())
-        )
+        self.micro_batch_control.micro_batches[
+            micro_batch_id].compute_event = (deep_ep.utils.EventOverlap(
+                EventHandle()))
 
     def micro_batch_dispatch(self, micro_batch_id, layer_id):
         r"""
@@ -717,42 +662,44 @@ class FusedTransformer(nn.Layer):
             )
             (
                 self.micro_batch_control.micro_batches[micro_batch_id].recv_x,
-                self.micro_batch_control.micro_batches[micro_batch_id].recv_topk_idx,
-                self.micro_batch_control.micro_batches[
-                    micro_batch_id
-                ].recv_topk_weights,
-                self.micro_batch_control.micro_batches[
-                    micro_batch_id
-                ].recv_num_tokens_per_expert_list,
+                self.micro_batch_control.micro_batches[micro_batch_id].
+                recv_topk_idx,
+                self.micro_batch_control.micro_batches[micro_batch_id].
+                recv_topk_weights,
+                self.micro_batch_control.micro_batches[micro_batch_id].
+                recv_num_tokens_per_expert_list,
                 self.micro_batch_control.micro_batches[micro_batch_id].handle,
-                self.micro_batch_control.micro_batches[
-                    micro_batch_id
-                ].comunication_event,
+                self.micro_batch_control.micro_batches[micro_batch_id].
+                comunication_event,
             ) = self.moe_layers[layer_id].micro_batch_dispatch(
                 (x, x_scale_tensor),
-                self.micro_batch_control.micro_batches[micro_batch_id].topk_idx,
-                self.micro_batch_control.micro_batches[micro_batch_id].topk_weights,
-                self.micro_batch_control.micro_batches[micro_batch_id].compute_event,
+                self.micro_batch_control.micro_batches[micro_batch_id].
+                topk_idx,
+                self.micro_batch_control.micro_batches[micro_batch_id].
+                topk_weights,
+                self.micro_batch_control.micro_batches[micro_batch_id].
+                compute_event,
             )
         else:
             (
                 self.micro_batch_control.micro_batches[micro_batch_id].recv_x,
-                self.micro_batch_control.micro_batches[micro_batch_id].recv_topk_idx,
-                self.micro_batch_control.micro_batches[
-                    micro_batch_id
-                ].recv_topk_weights,
-                self.micro_batch_control.micro_batches[
-                    micro_batch_id
-                ].recv_num_tokens_per_expert_list,
+                self.micro_batch_control.micro_batches[micro_batch_id].
+                recv_topk_idx,
+                self.micro_batch_control.micro_batches[micro_batch_id].
+                recv_topk_weights,
+                self.micro_batch_control.micro_batches[micro_batch_id].
+                recv_num_tokens_per_expert_list,
                 self.micro_batch_control.micro_batches[micro_batch_id].handle,
-                self.micro_batch_control.micro_batches[
-                    micro_batch_id
-                ].comunication_event,
+                self.micro_batch_control.micro_batches[micro_batch_id].
+                comunication_event,
             ) = self.moe_layers[layer_id].micro_batch_dispatch(
                 self.micro_batch_control.micro_batches[micro_batch_id].tmp_out,
-                self.micro_batch_control.micro_batches[micro_batch_id].topk_idx,
-                self.micro_batch_control.micro_batches[micro_batch_id].topk_weights,
-                self.micro_batch_control.micro_batches[micro_batch_id].compute_event,
+                self.micro_batch_control.micro_batches[micro_batch_id].
+                topk_idx,
+                self.micro_batch_control.micro_batches[micro_batch_id].
+                topk_weights,
+                self.micro_batch_control.micro_batches[micro_batch_id].
+                compute_event,
             )
 
     def micro_batch_moe_ffn(self, micro_batch_id, layer_id):
@@ -768,20 +715,23 @@ class FusedTransformer(nn.Layer):
             None
         """
         self.micro_batch_control.micro_batches[
-            micro_batch_id
-        ].tmp_ffn_out = self.moe_layers[layer_id].micro_batch_ffn(
-            self.micro_batch_control.micro_batches[micro_batch_id].recv_x,
-            self.micro_batch_control.micro_batches[micro_batch_id].recv_topk_idx,
-            self.micro_batch_control.micro_batches[micro_batch_id].recv_topk_weights,
-            self.micro_batch_control.micro_batches[
-                micro_batch_id
-            ].recv_num_tokens_per_expert_list,
-            self.micro_batch_control.micro_batches[micro_batch_id].handle,
-        )
+            micro_batch_id].tmp_ffn_out = self.moe_layers[
+                layer_id].micro_batch_ffn(
+                    self.micro_batch_control.micro_batches[micro_batch_id].
+                    recv_x,
+                    self.micro_batch_control.micro_batches[micro_batch_id].
+                    recv_topk_idx,
+                    self.micro_batch_control.micro_batches[micro_batch_id].
+                    recv_topk_weights,
+                    self.micro_batch_control.micro_batches[micro_batch_id].
+                    recv_num_tokens_per_expert_list,
+                    self.micro_batch_control.micro_batches[micro_batch_id].
+                    handle,
+                )
         # record event
-        self.micro_batch_control.micro_batches[micro_batch_id].compute_event = (
-            deep_ep.utils.EventOverlap(EventHandle())
-        )
+        self.micro_batch_control.micro_batches[
+            micro_batch_id].compute_event = (deep_ep.utils.EventOverlap(
+                EventHandle()))
 
     def micro_batch_combine(self, micro_batch_id, layer_id):
         r"""
@@ -796,18 +746,19 @@ class FusedTransformer(nn.Layer):
             None
         """
         (
-            self.micro_batch_control.micro_batches[
-                micro_batch_id
-            ].before_norm_fused_moe_out,
-            self.micro_batch_control.micro_batches[
-                micro_batch_id
-            ].combined_topk_weights,
-            self.micro_batch_control.micro_batches[micro_batch_id].comunication_event,
+            self.micro_batch_control.micro_batches[micro_batch_id].
+            before_norm_fused_moe_out,
+            self.micro_batch_control.micro_batches[micro_batch_id].
+            combined_topk_weights,
+            self.micro_batch_control.micro_batches[micro_batch_id].
+            comunication_event,
         ) = self.moe_layers[layer_id].micro_batch_combine(
             self.micro_batch_control.micro_batches[micro_batch_id].tmp_ffn_out,
-            self.micro_batch_control.micro_batches[micro_batch_id].recv_topk_weights,
+            self.micro_batch_control.micro_batches[micro_batch_id].
+            recv_topk_weights,
             self.micro_batch_control.micro_batches[micro_batch_id].handle,
-            self.micro_batch_control.micro_batches[micro_batch_id].compute_event,
+            self.micro_batch_control.micro_batches[micro_batch_id].
+            compute_event,
         )
 
     def forward(
@@ -868,10 +819,12 @@ class FusedTransformer(nn.Layer):
 
         if self.use_micro_batch and bsz >= EP_MICRO_BATCH_NUM:
             self.micro_batch_control.micro_batch_num = EP_MICRO_BATCH_NUM
-            self.micro_batch_control.split_micro_batch(EP_MICRO_BATCH_NUM, **kwargs)
+            self.micro_batch_control.split_micro_batch(EP_MICRO_BATCH_NUM,
+                                                       **kwargs)
 
         if caches is not None:
-            assert len(caches) == self.num_layers or len(caches) == 2 * self.num_layers
+            assert len(caches) == self.num_layers or len(
+                caches) == 2 * self.num_layers
 
         residual_input = src
 
@@ -949,12 +902,10 @@ class FusedTransformer(nn.Layer):
                 self.keep_pd_step_flag,
             )
             self.kv_signal_datas = (
-                []
-            )  # 用于保持住tensor的引用，防止回收写别的内容，导致c++层的异步访问出现报错
+                [])  # 用于保持住tensor的引用，防止回收写别的内容，导致c++层的异步访问出现报错
 
-        def _compute_attn(
-            x: paddle.Tensor, residual_input: paddle.Tensor, i: int, **attn_args
-        ):
+        def _compute_attn(x: paddle.Tensor, residual_input: paddle.Tensor,
+                          i: int, **attn_args):
             # qkv_layernorm
             if i == 0:
                 ln_out = self.norm_before_qkv(x)
@@ -971,17 +922,18 @@ class FusedTransformer(nn.Layer):
                 cum_offsets = attn_args.get("cum_offsets", None)
                 block_tables = attn_args.get("block_tables", None)
                 kv_batch_ids = attn_args.get("kv_batch_ids", None)
-                kv_tile_ids_per_batch = attn_args.get("kv_tile_ids_per_batch", None)
+                kv_tile_ids_per_batch = attn_args.get("kv_tile_ids_per_batch",
+                                                      None)
                 kv_num_blocks = attn_args.get("kv_num_blocks", None)
                 max_input_length = attn_args.get("max_input_length", -1)
-                k_quant_scale = getattr(self.attn_layers[i], "cache_k_scale", None)
-                v_quant_scale = getattr(self.attn_layers[i], "cache_v_scale", None)
-                k_dequant_scale = getattr(
-                    self.attn_layers[i], "cache_k_out_scale", None
-                )
-                v_dequant_scale = getattr(
-                    self.attn_layers[i], "cache_v_out_scale", None
-                )
+                k_quant_scale = getattr(self.attn_layers[i], "cache_k_scale",
+                                        None)
+                v_quant_scale = getattr(self.attn_layers[i], "cache_v_scale",
+                                        None)
+                k_dequant_scale = getattr(self.attn_layers[i],
+                                          "cache_k_out_scale", None)
+                v_dequant_scale = getattr(self.attn_layers[i],
+                                          "cache_v_out_scale", None)
                 cache_k_zp = getattr(self.attn_layers[i], "cache_k_zp", None)
                 cache_v_zp = getattr(self.attn_layers[i], "cache_v_zp", None)
                 qkv_out_gqa_rope = fastdeploy.model_executor.ops.gpu.gqa_rope_write_cache(
@@ -1014,20 +966,20 @@ class FusedTransformer(nn.Layer):
                     max_input_length,
                     self.inference_args.cache_quant_type,
                 )
-                q, k, v = qkv_out_gqa_rope[0], qkv_out_gqa_rope[1], qkv_out_gqa_rope[2]
-                qkv_out_rope = qkv_out_gqa_rope[3]
-                atten_out = (
-                    paddle.nn.functional.flash_attention.flash_attention_v3_varlen(
-                        q,
-                        k,
-                        v,
-                        cu_seqlens_q,
-                        cu_seqlens_k,
-                        max_seqlen_q=set_max_lengths[0],
-                        max_seqlen_k=set_max_lengths[3],
-                        causal=True,
-                    )[0].reshape([token_num, -1])
-                )
+                q, k, v = qkv_out_gqa_rope[0], qkv_out_gqa_rope[
+                    1], qkv_out_gqa_rope[2]
+
+                atten_out = (paddle.nn.functional.flash_attention.
+                             flash_attention_v3_varlen(
+                                 q,
+                                 k,
+                                 v,
+                                 cu_seqlens_q,
+                                 cu_seqlens_k,
+                                 max_seqlen_q=set_max_lengths[0],
+                                 max_seqlen_k=set_max_lengths[3],
+                                 causal=True,
+                             )[0].reshape([token_num, -1]))
             else:
                 atten_out = self.attn_layers[i](
                     qkv_out,
@@ -1037,12 +989,10 @@ class FusedTransformer(nn.Layer):
                     rotary_emb_dims,
                     caches[2 * i],  # key_cache
                     caches[2 * i + 1],  # value_cache
-                    (
-                        pre_caches[2 * i] if pre_caches is not None else None
-                    ),  # pre_key_cache
-                    (
-                        pre_caches[2 * i + 1] if pre_caches is not None else None
-                    ),  # pre_value_cache
+                    (pre_caches[2 * i]
+                     if pre_caches is not None else None),  # pre_key_cache
+                    (pre_caches[2 * i + 1]
+                     if pre_caches is not None else None),  # pre_value_cache
                     pre_caches_length,
                     attn_mask,
                     kv_signal_data,
@@ -1064,33 +1014,28 @@ class FusedTransformer(nn.Layer):
 
             # ffn layernorm
             tmp_out, residual_input = self.ffn_layernorm_layers[i](
-                out_linear_out, residual_input
-            )
+                out_linear_out, residual_input)
 
             return tmp_out, residual_input
 
         for i in range(self.num_layers):
             if self.use_pd_disaggregation:
                 kv_signal_data = fastdeploy.model_executor.ops.gpu.init_signal_layerwise(
-                    kv_signal_metadata, i + self.inference_args.start_layer_index
-                )
+                    kv_signal_metadata,
+                    i + self.inference_args.start_layer_index)
                 self.kv_signal_datas.append(kv_signal_data)
             else:
                 kv_signal_data = None
 
-            if (
-                not self.use_micro_batch
-                or i < self.inference_args.moe_config.moe_layer_start_index
-                or bsz < self.micro_batch_control.micro_batch_num
-            ):
+            if (not self.use_micro_batch
+                    or i < self.inference_args.moe_config.moe_layer_start_index
+                    or bsz < self.micro_batch_control.micro_batch_num):
                 tmp_out, residual_input = _compute_attn(
-                    src, residual_input, i, **kwargs
-                )
+                    src, residual_input, i, **kwargs)
 
-                if (
-                    self.inference_args.moe_config.use_moe
-                    and not self.inference_args.moe_config.moe_use_ffn_shared_weight_and_bias
-                ):
+                if (self.inference_args.moe_config.use_moe
+                        and not self.inference_args.moe_config.
+                        moe_use_ffn_shared_weight_and_bias):
                     if i >= self.inference_args.moe_config.moe_layer_start_index:
                         ffn2_out = self.moe_layers[i](tmp_out, **kwargs)
                     else:
@@ -1115,53 +1060,42 @@ class FusedTransformer(nn.Layer):
                     else:
                         dist.all_reduce(ffn2_out)
 
-                if (
-                    self.inference_args.moe_config.use_moe
-                    and self.inference_args.moe_config.moe_use_ffn_shared_weight_and_bias
-                ):
+                if (self.inference_args.moe_config.use_moe
+                        and self.inference_args.moe_config.
+                        moe_use_ffn_shared_weight_and_bias):
                     moe_out = self.moe_layers[i](tmp_out, **kwargs)
                     ffn2_out = moe_out + ffn2_out
-                if (
-                    not self.use_micro_batch
-                    or bsz < self.micro_batch_control.micro_batch_num
-                    or (
-                        self.inference_args.generation_phase == GenerationPhase.PREFILL
-                        and i < self.inference_args.moe_config.moe_layer_start_index - 1
-                    )
-                    or (
-                        self.inference_args.generation_phase == GenerationPhase.DECODER
-                        and i < self.inference_args.moe_config.moe_layer_start_index
-                    )
-                ):
+                if (not self.use_micro_batch
+                        or bsz < self.micro_batch_control.micro_batch_num or
+                    (self.inference_args.generation_phase
+                     == GenerationPhase.PREFILL and i
+                     < self.inference_args.moe_config.moe_layer_start_index -
+                     1) or
+                    (self.inference_args.generation_phase
+                     == GenerationPhase.DECODER and i
+                     < self.inference_args.moe_config.moe_layer_start_index)):
                     # norm + residual_add_bias
                     if i != self.num_layers - 1:
                         tmp_out, residual_input = self.bias_residual_layernorm_layers[
-                            i
-                        ](ffn2_out, residual_input)
+                            i](ffn2_out, residual_input)
                     else:
-                        tmp_out, _ = self.last_layernorm(ffn2_out, residual_input)
+                        tmp_out, _ = self.last_layernorm(
+                            ffn2_out, residual_input)
             elif self.inference_args.generation_phase == GenerationPhase.PREFILL:
                 # slice
                 if i == self.inference_args.moe_config.moe_layer_start_index:
-                    for mbid in range(self.micro_batch_control.micro_batch_num):
-                        self.micro_batch_control.micro_batches[mbid].ffn2_out = (
-                            ffn2_out[
-                                self.micro_batch_control.micro_batches[mbid]
-                                .start_token_id : self.micro_batch_control.micro_batches[
-                                    mbid
-                                ]
-                                .end_token_id
-                            ]
-                        )
-                        self.micro_batch_control.micro_batches[mbid].residual_input = (
-                            residual_input[
-                                self.micro_batch_control.micro_batches[mbid]
-                                .start_token_id : self.micro_batch_control.micro_batches[
-                                    mbid
-                                ]
-                                .end_token_id
-                            ]
-                        )
+                    for mbid in range(
+                            self.micro_batch_control.micro_batch_num):
+                        self.micro_batch_control.micro_batches[
+                            mbid].ffn2_out = (ffn2_out[
+                                self.micro_batch_control.micro_batches[mbid].
+                                start_token_id:self.micro_batch_control.
+                                micro_batches[mbid].end_token_id])
+                        self.micro_batch_control.micro_batches[
+                            mbid].residual_input = (residual_input[
+                                self.micro_batch_control.micro_batches[mbid].
+                                start_token_id:self.micro_batch_control.
+                                micro_batches[mbid].end_token_id])
                 for mbid in range(self.micro_batch_control.micro_batch_num):
                     if i > self.inference_args.moe_config.moe_layer_start_index:
                         # 第一层不wait
@@ -1193,62 +1127,50 @@ class FusedTransformer(nn.Layer):
                     self.micro_batch_combine(mbid, i)
 
                 if i == self.num_layers - 1:
-                    for mbid in range(self.micro_batch_control.micro_batch_num):
+                    for mbid in range(
+                            self.micro_batch_control.micro_batch_num):
                         self.micro_batch_control.wait_combine(mbid)
                         fused_out = self.micro_batch_control.micro_batches[
-                            mbid
-                        ].before_norm_fused_moe_out
-                        (self.micro_batch_control.micro_batches[mbid].tmp_out, _) = (
-                            self.last_layernorm(
-                                fused_out,
-                                self.micro_batch_control.micro_batches[
-                                    mbid
-                                ].residual_input,
-                            )
-                        )
-                    tmp_out = paddle.concat(
-                        [
-                            self.micro_batch_control.micro_batches[mbid].tmp_out
-                            for mbid in range(self.micro_batch_control.micro_batch_num)
-                        ]
-                    )
+                            mbid].before_norm_fused_moe_out
+                        (self.micro_batch_control.micro_batches[mbid].tmp_out,
+                         _) = (self.last_layernorm(
+                             fused_out,
+                             self.micro_batch_control.micro_batches[mbid].
+                             residual_input,
+                         ))
+                    tmp_out = paddle.concat([
+                        self.micro_batch_control.micro_batches[mbid].tmp_out
+                        for mbid in range(
+                            self.micro_batch_control.micro_batch_num)
+                    ])
             else:
 
-                def _tail_layernorm(
-                    output, residual_inputs, srcs, mb_id, layer_id, outputs
-                ):
+                def _tail_layernorm(output, residual_inputs, srcs, mb_id,
+                                    layer_id, outputs):
                     if layer_id != self.num_layers - 1:
                         output, residual_inputs[mb_id] = (
                             self.bias_residual_layernorm_layers[layer_id](
-                                output, residual_inputs[mb_id]
-                            )
-                        )
+                                output, residual_inputs[mb_id]))
                         srcs[mb_id] = output
                     else:
-                        output, _ = self.last_layernorm(output, residual_inputs[mb_id])
+                        output, _ = self.last_layernorm(
+                            output, residual_inputs[mb_id])
                         outputs.append(output)
 
                 if i == self.inference_args.moe_config.moe_layer_start_index:
                     # Split
                     srcs = [
-                        src[
-                            self.micro_batch_control.micro_batches[mbid]
-                            .start_token_id : self.micro_batch_control.micro_batches[
-                                mbid
-                            ]
-                            .end_token_id
-                        ]
-                        for mbid in range(self.micro_batch_control.micro_batch_num)
+                        src[self.micro_batch_control.micro_batches[mbid].
+                            start_token_id:self.micro_batch_control.
+                            micro_batches[mbid].end_token_id] for mbid in
+                        range(self.micro_batch_control.micro_batch_num)
                     ]
                     residual_inputs = [
-                        residual_input[
-                            self.micro_batch_control.micro_batches[mbid]
-                            .start_token_id : self.micro_batch_control.micro_batches[
-                                mbid
-                            ]
-                            .end_token_id
-                        ]
-                        for mbid in range(self.micro_batch_control.micro_batch_num)
+                        residual_input[self.micro_batch_control.
+                                       micro_batches[mbid].start_token_id:self.
+                                       micro_batch_control.micro_batches[mbid].
+                                       end_token_id] for mbid in
+                        range(self.micro_batch_control.micro_batch_num)
                     ]
                 outputs = []
                 # Stage 1
@@ -1256,20 +1178,19 @@ class FusedTransformer(nn.Layer):
                     micro_batch_src = srcs[mb_id]
                     micro_batch_residual_input = residual_inputs[mb_id]
 
-                    attn_args = self.micro_batch_control.micro_batches[mb_id].args
+                    attn_args = self.micro_batch_control.micro_batches[
+                        mb_id].args
                     tmp_out, residual_inputs[mb_id] = _compute_attn(
-                        micro_batch_src, micro_batch_residual_input, i, **attn_args
-                    )
+                        micro_batch_src, micro_batch_residual_input, i,
+                        **attn_args)
 
                     topk_idx, topk_weights = self.moe_layers[i].gate(tmp_out)
 
-                    if (
-                        mb_id == 0
-                        and i > self.inference_args.moe_config.moe_layer_start_index
-                    ):
+                    if (mb_id == 0 and i > self.inference_args.moe_config.
+                            moe_layer_start_index):
                         output = self.decoder_ep_runner[
-                            self.micro_batch_control.micro_batch_num - 1
-                        ].combine_hook_wrap()
+                            self.micro_batch_control.micro_batch_num -
+                            1].combine_hook_wrap()
 
                         _tail_layernorm(
                             output,
@@ -1282,29 +1203,29 @@ class FusedTransformer(nn.Layer):
                     elif mb_id > 0:
                         self.decoder_ep_runner[mb_id - 1].dispatch_hook_wrap()
                     self.decoder_ep_runner[mb_id].dispatch_issue(
-                        tmp_out, topk_idx, topk_weights, i
-                    )
+                        tmp_out, topk_idx, topk_weights, i)
 
                 # Stage 2
                 for mb_id in range(self.micro_batch_control.micro_batch_num):
                     self.decoder_ep_runner[mb_id].ffn(i)
                     if mb_id == 0:
                         self.decoder_ep_runner[
-                            self.micro_batch_control.micro_batch_num - 1
-                        ].dispatch_hook_wrap()
+                            self.micro_batch_control.micro_batch_num -
+                            1].dispatch_hook_wrap()
                     else:
-                        output = self.decoder_ep_runner[mb_id - 1].combine_hook_wrap()
-                        _tail_layernorm(
-                            output, residual_inputs, srcs, mb_id - 1, i, outputs
-                        )
+                        output = self.decoder_ep_runner[mb_id -
+                                                        1].combine_hook_wrap()
+                        _tail_layernorm(output, residual_inputs, srcs,
+                                        mb_id - 1, i, outputs)
 
                     self.decoder_ep_runner[mb_id].combine_issue()
 
                 if i == self.num_layers - 1:
                     output = self.decoder_ep_runner[
-                        self.micro_batch_control.micro_batch_num - 1
-                    ].combine_hook_wrap()
-                    output, _ = self.last_layernorm(output, residual_inputs[mb_id])
+                        self.micro_batch_control.micro_batch_num -
+                        1].combine_hook_wrap()
+                    output, _ = self.last_layernorm(output,
+                                                    residual_inputs[mb_id])
                     outputs.append(output)
                     tmp_out = paddle.concat(outputs, axis=0)
 
@@ -1312,10 +1233,8 @@ class FusedTransformer(nn.Layer):
 
         kwargs["multi_block_output"] = tmp_out
         kwargs["input_ids"] = input_ids
-        if (
-            self.return_all_hidden_states
-            or self.inference_args.moe_config.has_multimodality
-        ):
+        if (self.return_all_hidden_states
+                or self.inference_args.moe_config.has_multimodality):
             return kwargs["multi_block_output"], kwargs["cum_offsets"], caches
         else:
             out = self.post_process(**kwargs)
