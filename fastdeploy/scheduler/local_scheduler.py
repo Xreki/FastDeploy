@@ -137,7 +137,7 @@ class LocalScheduler(object):
                 batch: int
         """
         if available_blocks <= reserved_output_blocks or batch < 1:
-            llm_logger.warning(
+            llm_logger.debug(
                 f"Scheduler's resource are insufficient: available_blocks={available_blocks} "
                 f"reserved_output_blocks={reserved_output_blocks} batch={batch} "
                 f"max_num_batched_tokens={max_num_batched_tokens}")
