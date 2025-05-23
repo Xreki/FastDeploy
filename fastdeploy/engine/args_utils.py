@@ -140,23 +140,23 @@ class EngineArgs:
     """
     Port of redis
     """
-    scheduler_port: int = 6379,
+    scheduler_port: int = 6379
     """
     DB of redis
     """
-    scheduler_db: int = 0,
+    scheduler_db: int = 0
     """
     Password of redis
     """
-    scheduler_password: Optional[str] = None,
+    scheduler_password: Optional[str] = None
     """
     Topic of scheduler
     """
-    scheduler_topic: str = "default",
+    scheduler_topic: str = "default"
     """
     Max write time of redis
     """
-    scheduler_remote_write_time: int = 3,
+    scheduler_remote_write_time: int = 3
 
     def __post_init__(self):
         """
