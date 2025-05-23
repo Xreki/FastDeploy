@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from functools import partial
 
 import numpy as np
@@ -720,14 +721,59 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
                 "weight_only_int8"
             })
         elif self.inference_args.weight_block_size[0] != -1:
-            quant_cls = get_quantization_config("wfp8afp8")
+            quant_cls = get_quantization_config("block_wise")
             llm_config.quant_config = quant_cls.from_config(
                 {"weight_block_size": self.inference_args.weight_block_size})
+        elif self.weight_dtype == "int4" and self.act_dtype in [
+                "bfloat16",
+                "float16",
+                "float32",
+        ]:
+            quant_cls = get_quantization_config("weight_only")
+            llm_config.quant_config = quant_cls.from_config({
+                "weight_only_linear_arch":
+                self.inference_args.weight_only_linear_arch,
+                "algo":
+                "weight_only_int4"
+            })
+        elif (self.inference_args.weight_dtype == "int4"
+              and self.inference_args.act_dtype == "float8_e4m3fn"):  # W4Afp8
+            quant_cls = get_quantization_config("w4afp8")
+            llm_config.quant_config = quant_cls.from_config({
+                "weight_scale_dict":
+                self.inference_args.weight_scale_dict,
+                "act_scale_dict":
+                self.inference_args.act_scale_dict
+            })
+        elif self.inference_args.weight_dtype == "int8" and self.inference_args.act_dtype == self.weight_dtype:
+            use_gemm_dequant = os.getenv("FLAGS_use_gemm_dequant")
+            if use_gemm_dequant is not None:
+                use_gemm_dequant = int(use_gemm_dequant) == 1
+            else:
+                use_gemm_dequant = False
+            quant_cls = get_quantization_config("w8a8")
+            llm_config.quant_config = quant_cls.from_config({
+                "weight_scale_dict":
+                self.inference_args.weight_scale_dict,
+                "act_scale_dict":
+                self.inference_args.act_scale_dict,
+                "use_gemm_dequant":
+                use_gemm_dequant
+            })
+        elif "float8" in self.inference_args.weight_dtype and self.inference_args.act_dtype == self.inference_args.weight_dtype:
+            quant_cls = get_quantization_config("wfp8afp8")
+            llm_config.quant_config = quant_cls.from_config({
+                "weight_scale_dict":
+                self.inference_args.weight_scale_dict,
+                "act_scale_dict":
+                self.inference_args.act_scale_dict
+            })
+
         else:
             llm_config.quant_config = None
         llm_config.model_config.use_smooth_quant = self.use_smooth_quant  # we will move use_smooth_quant to quant_config later
-        llm_config.model_config.weight_dtype = self.inference_args.weight_dtype  # we will move use_smooth_quant to quant_config later
-        llm_config.model_config.act_dtype = self.inference_args.act_dtype  # we will move use_smooth_quant to quant_config later
+        llm_config.model_config.weight_dtype = self.inference_args.weight_dtype  # we will remove later
+        llm_config.model_config.act_dtype = self.inference_args.act_dtype  # we will remove act_dtype later
         llm_config.parallel_config.mp_size = mp_size
         llm_config.load_config.fmt_keys = fmt_keys
         if self.inference_args.use_avx512:

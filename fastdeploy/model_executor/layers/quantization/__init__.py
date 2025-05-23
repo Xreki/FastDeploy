@@ -20,6 +20,9 @@ from .quant_base import QuantConfigBase
 
 QUANTIZATION_METHODS: List[str] = [
     "weight_only",
+    "block_wise",
+    "w4afp8",
+    "w8a8",
     "wfp8afp8",
 ]
 
@@ -28,12 +31,17 @@ def get_quantization_config(quantization: str) -> Type[QuantConfigBase]:
     if quantization not in QUANTIZATION_METHODS:
         raise ValueError(f"Invalid quantization method: {quantization}")
 
+    from .block_wise import BlockWiseConfig
+    from .w4_afp8 import W4AFP8Config
+    from .w8_a8 import W8A8Config
     from .weight_only import WeightOnlyConfig
     from .wfp8_afp8 import WFP8AFP8Config
-
     method_to_config: Dict[str, Type[QuantConfigBase]] = {
         "weight_only": WeightOnlyConfig,
-        "wfp8afp8": WFP8AFP8Config,
+        "block_wise": BlockWiseConfig,
+        "w4afp8": W4AFP8Config,
+        "w8a8": W8A8Config,
+        "wfp8afp8": WFP8AFP8Config
     }
 
     return method_to_config[quantization]

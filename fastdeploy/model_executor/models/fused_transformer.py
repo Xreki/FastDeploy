@@ -37,7 +37,7 @@ from fastdeploy.inference_args import GenerationPhase
 from ..layers.activation import Activation
 from ..layers.attention.base import Attention
 from ..layers.ffn1 import FFN1, FFN1Split
-from ..layers.linear import FFN2, Linear
+from ..layers.linear import FFN2, RowParallelLinear
 from ..layers.normalization import Normalization
 from ..layers.qkv_linear import QKVLinear
 from .micro_batch_control import MicroBatchControl
@@ -141,7 +141,7 @@ class FusedTransformer(nn.Layer):
             ) for i in range(self.num_layers)
         ])
         self.out_linear_layers = nn.LayerList([
-            Linear(
+            RowParallelLinear(
                 llm_config=llm_config,
                 layer_name=
                 f"{base_model_prefix}.decoder.layers.{i}.self_attn.out_proj",

@@ -14,24 +14,21 @@
 # limitations under the License.
 """
 # cipher_token=WjI1fQOvhN  # do not edit this line
-import os
 
 import paddle
 from paddle import nn
 from paddle.nn.quant import weight_quantize
-from paddlenlp.utils.log import logger
 
 import fastdeploy
 from fastdeploy.platforms import current_platform
-from fastdeploy.platforms.utils import (convert_to_npu_dequant_scale,
-                                        xpu_quant_weight)
+from fastdeploy.platforms.utils import xpu_quant_weight
 
 from .utils import _set_var_distributed, get_tensor, per_block_cast_to_fp8
 
 
-class Linear(nn.Layer):
+class RowParallelLinear(nn.Layer):
     """
-    Linear Layer
+    RowParallelLinear Layer
     """
 
     def __init__(
@@ -83,25 +80,10 @@ class Linear(nn.Layer):
             self.smooth_name = self.layer_name + ".smooth_weight"
         self._dtype = self._helper.get_default_dtype()
 
-        self.use_gemm_dequant = os.getenv("FLAGS_use_gemm_dequant")
-        if self.use_gemm_dequant is not None:
-            self.use_gemm_dequant = int(self.use_gemm_dequant) == 1
-        else:
-            self.use_gemm_dequant = False
-
         if llm_config.quant_config:
             self.quant_method = llm_config.quant_config.get_quant_method(self)
-
-        self.quant_name = ""
-        if llm_config.quant_config is not None:
-            self.quant_name = llm_config.quant_config.get_name()
-        if self.quant_name == "w8" or self.quant_name == "wfp8afp8":
             self.quant_method.create_weights(self)
-        if (llm_config.model_config.weight_dtype == "int8"
-                and llm_config.model_config.act_dtype == "int8") or (
-                    "float8" in llm_config.model_config.weight_dtype
-                    and "float8" in llm_config.model_config.act_dtype):
-            self.set_ptq_scale()  # init and load scale
+
         self.init_weight()
 
     def is_y_transposed(self):
@@ -216,64 +198,6 @@ class Linear(nn.Layer):
             return self._dtype
         return self.weight_dtype
 
-    def set_ptq_scale(self):
-        """
-        Set the post-training quantization (PTQ) scale for the layer.
-
-        This method fetches weight and input activation scales from the inference arguments,
-        and computes the output scale for the layer.
-        It also handles skipping quantization for missing scales.
-
-        Args:
-            None (Method operates on the instance's attributes and arguments.)
-
-        Returns:
-            None (Modifies the instance's attributes.)
-
-        Raises:
-            None
-        """
-        if self.inference_args.weight_block_size[0] != -1:
-            return
-
-        weight_scale = self.inference_args.weight_scale_dict.get(
-            self.layer_name + ".weight_quanter")
-        in_scale = self.inference_args.act_scale_dict.get(
-            self.layer_name + ".activation_quanter")
-
-        if weight_scale is None or in_scale is None:
-            logger.debug(f"{self.layer_name} skip quant")
-            self.skip_quant = True
-            return
-
-        if "float8" in self.weight_dtype:
-            max_range = 448.0
-            self.scalar_scale_name = self.layer_name + ".scalar_weight_quanter"
-            self.scalar_scale = self.create_parameter(
-                shape=([1]),
-                attr=paddle.ParamAttr(name=self.scalar_scale_name),
-                dtype="float32",
-            )
-            self.scalar_scale.set_value(
-                paddle.to_tensor([1.0 / (max_range * in_scale)],
-                                 dtype="float32"))
-            linear_out_scale = paddle.to_tensor(weight_scale /
-                                                max_range).astype("float32")
-        else:
-            max_range = 127.0
-            linear_out_scale = paddle.to_tensor(
-                weight_scale /
-                (max_range * max_range * in_scale)).astype("float32")
-        self.linear_out_scale = self.create_parameter(
-            shape=[self.embed_dim],
-            attr=paddle.ParamAttr(name=self.out_scale_name),
-            dtype="float32",
-            is_bias=False,
-            default_initializer=paddle.nn.initializer.Constant(0),
-        )
-        self.linear_out_scale.set_value(
-            convert_to_npu_dequant_scale(linear_out_scale))
-
     def load_state_dict(self, state_dict):
         """
         Load the checkpoint state dictionary into the layer.
@@ -284,46 +208,11 @@ class Linear(nn.Layer):
         # weight
         weight_tensor = get_tensor(state_dict.pop(self.weight_key))
 
-        if self.skip_quant:
-            weight_tensor = weight_tensor.cast(self._dtype)
+        if self.llm_config.quant_config:
+            self.quant_method.process_weights_after_loading(
+                self, weight_tensor)
         else:
-            if self.quant_name == "wfp8afp8" or self.quant_name == "w8":
-                self.quant_method.process_weights_after_loading(
-                    self, weight_tensor)
-            elif self.weight_dtype == "int4" and self.act_dtype in [
-                    "bfloat16",
-                    "float16",
-                    "float32",
-            ]:  # WINT4
-                quanted_weight_tensor, weight_scale_tensor = weight_quantize(
-                    weight_tensor.cpu(),
-                    algo="weight_only_int4",
-                    arch=self.inference_args.weight_only_linear_arch,
-                )
-                self.linear_weight.set_value(quanted_weight_tensor)
-                self.linear_weight_scale.set_value(weight_scale_tensor)
-            elif (self.weight_dtype == "int4"
-                  and self.act_dtype == "float8_e4m3fn"):  # W4Afp8
-                quanted_weight_tensor, weight_scale_tensor = (
-                    fastdeploy.model_executor.ops.gpu.
-                    scaled_gemm_f8_i4_f16_weight_quantize(
-                        paddle.cast(weight_tensor, "float32").cpu(),
-                        groupsize=-1,
-                        scale_dtype="float16",
-                    ))
-                weight_scale_tensor = paddle.view(weight_scale_tensor,
-                                                  self._dtype)
-                self.linear_weight.set_value(quanted_weight_tensor)
-                self.linear_weight_scale.set_value(weight_scale_tensor)
-            else:  # bf16/fp16/fp32, A8W8, FP8
-                if self.is_y_transposed():
-                    weight_tensor = weight_tensor.transpose([1, 0])
-                weight_tensor = paddle.cast(weight_tensor, self.weight_dtype)
-                if ("float8" in self.weight_dtype
-                    ):  # TODO(wangzhe24) FP8 cannot use set_value now
-                    self.linear_weight.copy_(weight_tensor, False)
-                else:
-                    self.linear_weight.set_value(weight_tensor)
+            self.linear_weight.set_value(weight_tensor)
 
         # bias
         if self.with_bias:
@@ -371,55 +260,15 @@ class Linear(nn.Layer):
         Raises:
             NotImplementedError: If the weight dtype is not float8 or act dtype is not equal to weight dtype.
         """
-        if self.skip_quant:
-            linear_out = paddle.matmul(x, self.linear_weight, False, True)
-            return linear_out
-        if self.quant_name == "wfp8afp8" or self.quant_name == "w8":
+        if self.llm_config.quant_config:
             linear_out = self.quant_method.apply(self, x)
-        elif self.weight_dtype == "int8" and self.act_dtype == self.weight_dtype:
-            if self.use_gemm_dequant:
-                linear_out = fastdeploy.model_executor.ops.gpu.gemm_dequant(
-                    x, self.linear_weight, self.linear_out_scale, self._dtype)
-            else:
-                linear_out = paddle.matmul(x, self.linear_weight, False, True)
-                linear_out = fastdeploy.model_executor.ops.gpu.dequant_int8(
-                    linear_out, self.linear_out_scale, self._dtype)
-        elif self.weight_dtype == "int4" and self.act_dtype == "float8_e4m3fn":
-            linear_out = fastdeploy.model_executor.ops.gpu.scaled_gemm_f8_i4_f16(
-                x,
-                self.linear_weight,
-                self.linear_weight_scale,
-                zero_points=None,
-                bias=None,
-                out_scale=self.inference_args.weight_scale_dict.get(
-                    self.layer_name + ".weight_quanter") /
-                (self.inference_args.act_scale_dict.get(
-                    self.layer_name + ".activation_quanter") * 448 * 448),
-                groupsize=0,
-                out_dtype=self._dtype,
-            )
-        elif "float8" in self.weight_dtype and self.act_dtype == self.weight_dtype:
-            linear_out = fastdeploy.model_executor.ops.gpu.per_channel_fp8_fp8_half_gemm_fused(
-                x,
-                self.linear_weight,
-                bias=None,
-                scalar_scale=self.scalar_scale,
-                channel_scale=self.linear_out_scale,
-                transpose_x=False,
-                transpose_y=True,
-                output_dtype=self._dtype,
-            )
-        elif (self.weight_dtype in ["bfloat16", "float16", "float32"]
-              and self.act_dtype == self.weight_dtype):
-            linear_out = paddle.matmul(x, self.linear_weight)
         else:
-            raise ValueError(
-                f"Linear is not implemented for W[{self.weight_dtype}]A[{self.act_dtype}] yet."
-            )
+            linear_out = paddle.matmul(x, self.linear_weight)
+
         return linear_out
 
 
-class FFN2(Linear):
+class FFN2(RowParallelLinear):
     """
     FFN2 is a Linear layer with different weight dimensions.
     """
