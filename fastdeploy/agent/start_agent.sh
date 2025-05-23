@@ -5,7 +5,7 @@
 if [ -n "$CE_root_path" ]; then
     export ROLLOUT_WORKER_ROOT="$CE_root_path/third_party/FastDeploy"
 else
-    export ROLLOUT_WORKER_ROOT=`PWD`
+    export ROLLOUT_WORKER_ROOT=`pwd`
 fi
 export ROLLOUT_CONTROLLER_HOST=${rollout_controller_host:-"http://10.11.155.41:8771"}
 
