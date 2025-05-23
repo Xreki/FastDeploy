@@ -46,13 +46,26 @@ bash tools/build_wheel.sh 0
 python -m fastdeploy.entrypoints.openai.api_server --model ernie-45-turbo --port 8188 --tensor-parallel-size 8
 ```
 
-使用如下命令请求服务
+使用如下命令请求纯文模型服务
 ```
 curl -X POST "http://0.0.0.0:8188/v1/chat/completions" \
 -H "Content-Type: application/json" \
 -d '{
   "messages": [
     {"role": "user", "content": "Hello!"}
+  ]
+}'
+```
+使用如下命令请求多模模型服务
+```
+curl -X POST "http://0.0.0.0:8188/v1/chat/completions" \
+-H "Content-Type: application/json" \
+-d '{
+  "messages": [
+    {"role": "user", "content": [
+      {"type": "image_url", "image_url": {"url": "https://ku.baidu-int.com/vk-assets-ltd/space/2024/09/13/933d1e0a0760498e94ec0f2ccee865e0", "detail": "high"}},
+      {"type": "text", "text": "请描述图片内容"}
+    ]}
   ]
 }'
 ```

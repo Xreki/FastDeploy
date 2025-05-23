@@ -49,7 +49,7 @@ class CustomUserChatCompletionMessageParam(TypedDict, total=False):
     content: Required[Union[str, List[CustomChatCompletionContentPartParam]]]
     """The contents of the user message"""
 
-    role: Required[Literal["user"]]
+    role: Required[str]
     """The role of the messages author, in this case `user`."""
 
     name: str
