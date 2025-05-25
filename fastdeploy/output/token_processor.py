@@ -102,7 +102,7 @@ class TokenProcessor(object):
             if use_pip_eff_llm is None:
                 from fastdeploy.model_executor.ops.gpu import get_output, speculate_get_output
             else:
-                from efficientllm.ops.gpu import get_output, speculate_get_output
+                from efficientllm.gpu import get_output
 
         while True:
             try:

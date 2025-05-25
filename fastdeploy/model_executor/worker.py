@@ -165,10 +165,16 @@ class Worker:
         step cuda
         """
         if "ErnieForCausalLM" in self.model_cfg.architectures:
-            from fastdeploy.model_executor.ops.gpu import step_paddle
+            if os.getenv('USE_PIP_EFF_LLM'):
+                from efficientllm.gpu import step_paddle
+            else:
+                from fastdeploy.model_executor.ops.gpu import step_paddle
             from fastdeploy.model_executor.model_runner.model_runner_inference import ModelRunner
         elif "ErnieMoEVLForCausalLM" in self.model_cfg.architectures:
-            from fastdeploy.model_executor.ops.gpu import step_paddle
+            if os.getenv('USE_PIP_EFF_LLM'):
+                from efficientllm.gpu import step_paddle
+            else:
+                from fastdeploy.model_executor.ops.gpu import step_paddle
             from fastdeploy.model_executor.model_runner.model_runner_vl_inference import ModelRunner
         else:
             from paddlenlp_ops import step_paddle
