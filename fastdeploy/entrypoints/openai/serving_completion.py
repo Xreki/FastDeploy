@@ -263,6 +263,7 @@ class OpenAIServingCompletion:
                         model=model_name,
                         choices=choices
                     )
+                    choices = []
 
                 yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
 
