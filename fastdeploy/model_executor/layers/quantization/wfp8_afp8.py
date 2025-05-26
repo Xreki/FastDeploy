@@ -24,7 +24,9 @@ from .quant_base import QuantConfigBase, QuantMethodBase
 
 
 class WFP8AFP8Config(QuantConfigBase):
-
+    """
+    Quantization config for weight and activation with FP8.
+    """
     def __init__(self, weight_scale_dict, act_scale_dict) -> None:
         super().__init__()
         self.weight_scale_dict = weight_scale_dict
@@ -44,7 +46,9 @@ class WFP8AFP8Config(QuantConfigBase):
 
 
 class WFP8AFP8LinearMethod(QuantMethodBase):
-
+    """
+    Weight and activation quantization method for linear layer with FP8
+    """
     def __init__(
         self,
         quant_config: WFP8AFP8Config,

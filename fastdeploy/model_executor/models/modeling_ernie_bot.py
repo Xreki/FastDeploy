@@ -562,8 +562,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             moe_topk=moe_topk,
             moe_num_shared_experts=moe_num_shared_experts,
             moe_layer_start_index=moe_layer_start_index,
-            moe_use_ffn_shared_weight_and_bias=
-            moe_use_ffn_shared_weight_and_bias,
+            moe_use_ffn_shared_weight_and_bias=moe_use_ffn_shared_weight_and_bias,
             moe_group=moe_group,
             moe_quant_type=moe_quant_type,
             use_ep=use_ep,
@@ -760,7 +759,8 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
                 "use_gemm_dequant":
                 use_gemm_dequant
             })
-        elif "float8" in self.inference_args.weight_dtype and self.inference_args.act_dtype == self.inference_args.weight_dtype:
+        elif "float8" in self.inference_args.weight_dtype and 
+            self.inference_args.act_dtype == self.inference_args.weight_dtype:
             quant_cls = get_quantization_config("wfp8afp8")
             llm_config.quant_config = quant_cls.from_config({
                 "weight_scale_dict":
@@ -771,7 +771,8 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
 
         else:
             llm_config.quant_config = None
-        llm_config.model_config.use_smooth_quant = self.use_smooth_quant  # we will move use_smooth_quant to quant_config later
+        # we will move use_smooth_quant to quant_config later
+        llm_config.model_config.use_smooth_quant = self.use_smooth_quant
         llm_config.model_config.weight_dtype = self.inference_args.weight_dtype  # we will remove later
         llm_config.model_config.act_dtype = self.inference_args.act_dtype  # we will remove act_dtype later
         llm_config.parallel_config.mp_size = mp_size
@@ -1179,8 +1180,7 @@ class ErnieBotForGeneration(nn.Layer):
         if self.gpt.inference_args.use_avx512:
             self.lm_head = LMHeadAVX(
                 norm_layer_name=f"{self.base_model_prefix}.decoder.norm",
-                linear_layer_name=
-                f"{self.base_model_prefix}.output_linear.out_linear",
+                linear_layer_name=f"{self.base_model_prefix}.output_linear.out_linear",
                 input_dim=self.hidden_size,
                 output_dim=self.gpt.vocab_size,
                 have_norm_bias=self.have_norm_bias,
@@ -1191,8 +1191,7 @@ class ErnieBotForGeneration(nn.Layer):
         elif current_platform.is_npu():
             self.lm_head = LMHeadNPU(
                 norm_layer_name=f"{self.base_model_prefix}.decoder.norm",
-                linear_layer_name=
-                f"{self.base_model_prefix}.output_linear.out_linear",
+                linear_layer_name=f"{self.base_model_prefix}.output_linear.out_linear",
                 input_dim=self.hidden_size,
                 output_dim=self.gpt.vocab_size,
                 epsilon=1e-5,
@@ -1227,10 +1226,8 @@ class ErnieBotForGeneration(nn.Layer):
             else:
                 self.lm_head = LMHead(
                     layer_name=lmhead_name,
-                    linear_weight_key=
-                    f"{self.base_model_prefix}.output_linear.out_linear.weight",
-                    linear_bias_key=
-                    (f"{self.base_model_prefix}.output_linear.out_linear.bias"
+                    linear_weight_key=f"{self.base_model_prefix}.output_linear.out_linear.weight",
+                    linear_bias_key=(f"{self.base_model_prefix}.output_linear.out_linear.bias"
                      if self.have_norm_bias else None),
                     input_dim=self.hidden_size,
                     output_dim=self.gpt.vocab_size,

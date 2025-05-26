@@ -25,7 +25,9 @@ from .quant_base import QuantConfigBase, QuantMethodBase
 
 
 class W8A8Config(QuantConfigBase):
-
+    """
+    quantization config for weight 8bits and activation 8bits
+    """
     def __init__(self, weight_scale_dict, act_scale_dict,
                  use_gemm_dequant) -> None:
         super().__init__()
@@ -48,7 +50,9 @@ class W8A8Config(QuantConfigBase):
 
 
 class W8A8LinearMethod(QuantMethodBase):
-
+    """
+    quantization method for weight 8bits and activation 8bits of linear layer
+    """
     def __init__(
         self,
         quant_config: W8A8Config,

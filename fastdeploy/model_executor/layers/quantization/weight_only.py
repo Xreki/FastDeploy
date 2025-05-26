@@ -25,7 +25,9 @@ from .quant_base import QuantConfigBase, QuantMethodBase
 
 
 class WeightOnlyConfig(QuantConfigBase):
-
+    """
+    Quantization config for weight only
+    """
     def __init__(
         self,
         weight_only_linear_arch: int,
@@ -52,7 +54,9 @@ class WeightOnlyConfig(QuantConfigBase):
 
 
 class WeightOnlyLinearMethod(QuantMethodBase):
-
+    """
+    Weight only quantization method for linear layer
+    """
     def __init__(
         self,
         quant_config: WeightOnlyConfig,
@@ -84,7 +88,9 @@ class WeightOnlyLinearMethod(QuantMethodBase):
 
 
 class GPUWeightOnlyLinearMethod(WeightOnlyLinearMethod):
-
+    """
+    Weight only quantization method for linear layer on GPU
+    """
     def __init__(
         self,
         quant_config: WeightOnlyConfig,
@@ -104,7 +110,9 @@ class GPUWeightOnlyLinearMethod(WeightOnlyLinearMethod):
 
 
 class XPUWeightOnlyLinearMethod(WeightOnlyLinearMethod):
-
+    """
+    Weight only quantization method for linear layer on XPU
+    """
     def __init__(
         self,
         quant_config: WeightOnlyConfig,

@@ -28,6 +28,9 @@ QUANTIZATION_METHODS: List[str] = [
 
 
 def get_quantization_config(quantization: str) -> Type[QuantConfigBase]:
+    """
+    Get the quantization config class by the quantization name.
+    """
     if quantization not in QUANTIZATION_METHODS:
         raise ValueError(f"Invalid quantization method: {quantization}")
 

@@ -23,7 +23,9 @@ from .quant_base import QuantConfigBase, QuantMethodBase
 
 
 class W4AFP8Config(QuantConfigBase):
-
+    """
+    quantization config for weight 4bits and activation fp8
+    """
     def __init__(self, weight_scale_dict, act_scale_dict) -> None:
         super().__init__()
         self.weight_scale_dict = weight_scale_dict
@@ -43,7 +45,9 @@ class W4AFP8Config(QuantConfigBase):
 
 
 class W4AFP8LinearMethod(QuantMethodBase):
-
+    """
+    W4 AFP8 quant method for linear
+    """
     def __init__(
         self,
         quant_config: W4AFP8Config,

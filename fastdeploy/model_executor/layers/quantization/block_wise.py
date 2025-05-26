@@ -25,7 +25,9 @@ from .quant_base import QuantConfigBase, QuantMethodBase
 
 
 class BlockWiseConfig(QuantConfigBase):
-
+    """
+    block wise quantization config
+    """
     def __init__(self, weight_block_size: list = [-1, -1]) -> None:
         super().__init__()
         self.weight_block_size = weight_block_size
@@ -43,7 +45,9 @@ class BlockWiseConfig(QuantConfigBase):
 
 
 class BlockWiseLinearMethod(QuantMethodBase):
-
+    """
+    block wise quantization method for linear
+    """
     def __init__(
         self,
         quant_config: BlockWiseConfig,
