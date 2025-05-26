@@ -27,4 +27,4 @@ export FD_MODEL_NAME="2"
 
 rm -rf ./log*
 
-python fastdeploy/entrypoints/openai/api_server.py --config fastdeploy/agent_work_45T.yaml --port 9809 --engine-worker-queue-port 9091 --tensor-parallel-size 2
+python fastdeploy/entrypoints/openai/api_server.py --config fastdeploy/agent_work_45T.yaml --port 9809 --engine-worker-queue-port 9094 --tensor-parallel-size 2
