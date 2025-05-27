@@ -21,6 +21,7 @@ import fastdeploy
 
 from .quant_base import QuantConfigBase, QuantMethodBase
 
+QUANT_SCALING_FACTOR = 448
 
 class W4AFP8Config(QuantConfigBase):
     """
@@ -58,7 +59,7 @@ class W4AFP8LinearMethod(QuantMethodBase):
     def create_weights(self, layer):
         pass
 
-    def process_weights_after_loading(self, layer, weights) -> None:
+    def process_loaded_weights(self, layer, weights) -> None:
         quanted_weight_tensor, weight_scale_tensor = (
             fastdeploy.model_executor.ops.gpu.
             scaled_gemm_f8_i4_f16_weight_quantize(
@@ -81,7 +82,7 @@ class W4AFP8LinearMethod(QuantMethodBase):
                 layer.layer_name + ".weight_quanter") /
             (self.quant_config.act_scale_dict.get(layer.layer_name +
                                                   ".activation_quanter") *
-             448 * 448),
+             QUANT_SCALING_FACTOR * QUANT_SCALING_FACTOR),
             groupsize=0,
             out_dtype=layer._dtype,
         )

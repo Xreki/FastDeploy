@@ -28,6 +28,7 @@ class W8A8Config(QuantConfigBase):
     """
     quantization config for weight 8bits and activation 8bits
     """
+
     def __init__(self, weight_scale_dict, act_scale_dict,
                  use_gemm_dequant) -> None:
         super().__init__()
@@ -53,6 +54,7 @@ class W8A8LinearMethod(QuantMethodBase):
     """
     quantization method for weight 8bits and activation 8bits of linear layer
     """
+
     def __init__(
         self,
         quant_config: W8A8Config,
@@ -84,7 +86,7 @@ class W8A8LinearMethod(QuantMethodBase):
         layer.linear_out_scale.set_value(
             convert_to_npu_dequant_scale(linear_out_scale))
 
-    def process_weights_after_loading(self, layer, weights) -> None:
+    def process_loaded_weights(self, layer, weights) -> None:
         if self.skip_quant:
             logger.debug(f"{layer.layer_name} skip quant")
             weight_tensor = weights.cast(layer._dtype)

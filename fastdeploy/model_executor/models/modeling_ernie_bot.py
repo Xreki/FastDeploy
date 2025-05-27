@@ -28,7 +28,7 @@ from paddle.distributed import fleet
 from paddlenlp.transformers import PretrainedModel, register_base_model
 from paddlenlp.utils.log import logger
 
-from fastdeploy.config import FMTKeys, LLMConfig, ModelConfig
+from fastdeploy.config import WeightKeys, LLMConfig, ModelConfig
 from fastdeploy.inference_args import GenerationPhase, InferenceArgs
 from fastdeploy.platforms import current_platform
 
@@ -572,7 +572,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             scale_dir=scale_dir,
         )
 
-        fmt_keys = FMTKeys(num_layers)
+        fmt_keys = WeightKeys(num_layers)
         is_mtp = draft_type in ["eagle", "mtp"]
         self.is_mtp = is_mtp
         base_model_prefix = "gpt.mtp" if is_mtp else "gpt"
@@ -776,7 +776,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         llm_config.model_config.weight_dtype = self.inference_args.weight_dtype  # we will remove later
         llm_config.model_config.act_dtype = self.inference_args.act_dtype  # we will remove act_dtype later
         llm_config.parallel_config.mp_size = mp_size
-        llm_config.load_config.fmt_keys = fmt_keys
+        llm_config.load_config.weight_keys = fmt_keys
         if self.inference_args.use_avx512:
             self.decoder = FusedAvxTransformer(
                 inference_args=self.inference_args,

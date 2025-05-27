@@ -34,7 +34,7 @@ class QuantMethodBase(ABC):
         Expects create_weights to have been called before on the layer."""
         raise NotImplementedError
 
-    def process_weights_after_loading(self, layer, weights):
+    def process_loaded_weights(self, layer, weights):
         """Process the weight after loading.
 
         This can be used for example, to transpose weights for computation.

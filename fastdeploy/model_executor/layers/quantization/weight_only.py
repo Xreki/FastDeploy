@@ -27,7 +27,11 @@ from .quant_base import QuantConfigBase, QuantMethodBase
 class WeightOnlyConfig(QuantConfigBase):
     """
     Quantization config for weight only
+    Args:
+        weight_only_linear_arch: The architecture of weight only linear layer
+        algo: The quant algorithm("weight_only_int8" or "weight_only_int4") used for weight only linear layer
     """
+
     def __init__(
         self,
         weight_only_linear_arch: int,
@@ -57,6 +61,7 @@ class WeightOnlyLinearMethod(QuantMethodBase):
     """
     Weight only quantization method for linear layer
     """
+
     def __init__(
         self,
         quant_config: WeightOnlyConfig,
@@ -73,8 +78,9 @@ class WeightOnlyLinearMethod(QuantMethodBase):
             is_bias=False,
         )
 
-    def process_weights_after_loading(self, layer, weights) -> None:
-        pass
+    @abstractmethod
+    def process_loaded_weights(self, layer, weights) -> None:
+        raise NotImplementedError
 
     def apply(self, layer, x):
         linear_out = weight_only_linear(
@@ -90,14 +96,17 @@ class WeightOnlyLinearMethod(QuantMethodBase):
 class GPUWeightOnlyLinearMethod(WeightOnlyLinearMethod):
     """
     Weight only quantization method for linear layer on GPU
+    The weights are loaded in the BF16 numerical format. After loading, the quantization coefficients will be computed,
+    and the weights will be quantized to int8 or int4.
     """
+
     def __init__(
         self,
         quant_config: WeightOnlyConfig,
     ) -> None:
         super().__init__(quant_config)
 
-    def process_weights_after_loading(self, layer, weight) -> None:
+    def process_loaded_weights(self, layer, weight) -> None:
         quanted_weight_tensor, weight_scale_tensor = weight_quantize(
             weight,
             algo=self.quant_config.algo,
@@ -113,13 +122,14 @@ class XPUWeightOnlyLinearMethod(WeightOnlyLinearMethod):
     """
     Weight only quantization method for linear layer on XPU
     """
+
     def __init__(
         self,
         quant_config: WeightOnlyConfig,
     ) -> None:
         super().__init__(quant_config)
 
-    def process_weights_after_loading(self, layer, weight) -> None:
+    def process_loaded_weights(self, layer, weight) -> None:
         quanted_weight_tensor, weight_scale_tensor = xpu_quant_weight(
             weight.cpu().numpy())
         layer.linear_weight.set_value(quanted_weight_tensor)

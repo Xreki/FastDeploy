@@ -313,7 +313,6 @@ class DeviceConfig:
     """
     Configuration for device settings.
     """
-    use_avx512 = False,  # Whether to enable AVX512 instruction optimization
 
 
 @dataclass
@@ -326,7 +325,7 @@ class AdditionalConfig:
     ep_just_for_test = True,  # whether to use ep just for test
 
 
-class FMTKeys:
+class WeightKeys:
     """
     The parameter keys stored in your model_state.padarams.
     """
@@ -361,8 +360,8 @@ class LoadConfig:
     Configuration for loading parameter
     """
 
-    fmt_keys: Optional[
-        FMTKeys] = None,  # Keys stored in your model, which is used to retrieve weights from the state dict.
+    weight_keys: Optional[
+        WeightKeys] = None,  # Keys stored in your model, which is used to retrieve weights from the state dict.
 
 
 @dataclass

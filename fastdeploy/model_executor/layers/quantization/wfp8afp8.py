@@ -27,6 +27,7 @@ class WFP8AFP8Config(QuantConfigBase):
     """
     Quantization config for weight and activation with FP8.
     """
+
     def __init__(self, weight_scale_dict, act_scale_dict) -> None:
         super().__init__()
         self.weight_scale_dict = weight_scale_dict
@@ -49,6 +50,7 @@ class WFP8AFP8LinearMethod(QuantMethodBase):
     """
     Weight and activation quantization method for linear layer with FP8
     """
+
     def __init__(
         self,
         quant_config: WFP8AFP8Config,
@@ -57,11 +59,13 @@ class WFP8AFP8LinearMethod(QuantMethodBase):
         self.quant_config = quant_config
 
     def create_weights(self, layer):
+        # TODO(YuanRisheng): set weight logic should be moved to process_loaded_weights func
         weight_scale = self.quant_config.weight_scale_dict.get(
             layer.layer_name + ".weight_quanter")
         in_scale = self.quant_config.act_scale_dict.get(layer.layer_name +
                                                         ".activation_quanter")
         self.skip_quant = False
+        # we will skip quant if weight_scale is not found or in_scale is not found
         if weight_scale is None or in_scale is None:
             self.skip_quant = True
         else:
@@ -87,7 +91,8 @@ class WFP8AFP8LinearMethod(QuantMethodBase):
             layer.linear_out_scale.set_value(
                 convert_to_npu_dequant_scale(linear_out_scale))
 
-    def process_weights_after_loading(self, layer, weights) -> None:
+    def process_loaded_weights(self, layer, weights) -> None:
+        # TODO(YuanRisheng): We should abstract the ‌skip_quant‌ logic to adapt to more quant methods
         if self.skip_quant:
             weight_tensor = weights.cast(layer._dtype)
             layer.linear_weight.set_value(weight_tensor)

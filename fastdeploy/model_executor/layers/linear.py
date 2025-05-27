@@ -61,9 +61,9 @@ class RowParallelLinear(nn.Layer):
         self.num_heads = llm_config.model_config.num_attention_heads // self.nranks
         self.dim_feedforward = llm_config.model_config.ffn_hidden_size // self.nranks
 
-        self.weight_key = llm_config.load_config.fmt_keys.out_linear_weight_keys[
+        self.weight_key = llm_config.load_config.weight_keys.out_linear_weight_keys[
             layer_index]
-        self.bias_key = llm_config.load_config.fmt_keys.out_linear_bias_keys[
+        self.bias_key = llm_config.load_config.weight_keys.out_linear_bias_keys[
             layer_index]
         self.with_bias = True if self.bias_key is not None else False
 
@@ -209,8 +209,7 @@ class RowParallelLinear(nn.Layer):
         weight_tensor = get_tensor(state_dict.pop(self.weight_key))
 
         if self.llm_config.quant_config:
-            self.quant_method.process_weights_after_loading(
-                self, weight_tensor)
+            self.quant_method.process_loaded_weights(self, weight_tensor)
         else:
             self.linear_weight.set_value(weight_tensor)
 

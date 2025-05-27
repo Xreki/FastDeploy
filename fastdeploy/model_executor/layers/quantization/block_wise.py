@@ -23,11 +23,17 @@ import fastdeploy.model_executor.ops.gpu.deep_gemm as deep_gemm
 from ..utils import per_block_cast_to_fp8
 from .quant_base import QuantConfigBase, QuantMethodBase
 
+QUANT_ALIGNMENT_OFFSET = 127
+QUANT_BLOCK_SIZE = 128
+
 
 class BlockWiseConfig(QuantConfigBase):
     """
-    block wise quantization config
+    block wise quantization config, only support fp8 quant and only supports loading weights in BF16 format.
+    After loading the weights, it will automatically compute quantization sparsity and dynamically perform
+    per-token quantization of activations during inference.
     """
+
     def __init__(self, weight_block_size: list = [-1, -1]) -> None:
         super().__init__()
         self.weight_block_size = weight_block_size
@@ -48,6 +54,7 @@ class BlockWiseLinearMethod(QuantMethodBase):
     """
     block wise quantization method for linear
     """
+
     def __init__(
         self,
         quant_config: BlockWiseConfig,
@@ -58,8 +65,9 @@ class BlockWiseLinearMethod(QuantMethodBase):
     def create_weights(self, layer):
         layer.linear_weight_scale = self.create_parameter(
             shape=[
-                (layer.embed_dim + 127) // 128,
-                (layer.num_heads * layer.head_dim + 127) // 128,
+                (layer.embed_dim + QUANT_ALIGNMENT_OFFSET) // QUANT_BLOCK_SIZE,
+                (layer.num_heads * layer.head_dim + QUANT_ALIGNMENT_OFFSET) //
+                QUANT_BLOCK_SIZE,
             ],
             attr=paddle.ParamAttr(name=layer.layer_name +
                                   ".weight_block_scale"),
@@ -67,7 +75,7 @@ class BlockWiseLinearMethod(QuantMethodBase):
             is_bias=False,
         )
 
-    def process_weights_after_loading(self, layer, weights) -> None:
+    def process_loaded_weights(self, layer, weights) -> None:
         weight_tensor = weights.transpose([1, 0])
         quanted_weight_tensor, weight_block_scale_tensor = (
             per_block_cast_to_fp8(weight_tensor))

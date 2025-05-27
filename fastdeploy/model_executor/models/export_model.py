@@ -191,8 +191,6 @@ def build_stream_line_model(
     speculative_config.is_mtp = draft_type in ["eagle", "mtp"]
     speculative_config.draft_type = draft_type
 
-    device_config.use_avx512 = use_avx512
-
     additional_config.use_fake_parameter = use_fake_parameter
     additional_config.ep_just_for_test = ep_just_for_test
 

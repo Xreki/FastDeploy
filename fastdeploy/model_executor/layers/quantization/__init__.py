@@ -35,10 +35,10 @@ def get_quantization_config(quantization: str) -> Type[QuantConfigBase]:
         raise ValueError(f"Invalid quantization method: {quantization}")
 
     from .block_wise import BlockWiseConfig
-    from .w4_afp8 import W4AFP8Config
-    from .w8_a8 import W8A8Config
+    from .w4afp8 import W4AFP8Config
+    from .w8a8 import W8A8Config
     from .weight_only import WeightOnlyConfig
-    from .wfp8_afp8 import WFP8AFP8Config
+    from .wfp8afp8 import WFP8AFP8Config
     method_to_config: Dict[str, Type[QuantConfigBase]] = {
         "weight_only": WeightOnlyConfig,
         "block_wise": BlockWiseConfig,
