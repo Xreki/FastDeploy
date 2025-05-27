@@ -194,7 +194,7 @@ class DataProcessor:
             # Append assistant prefix in eval
             self._add_text(self.role_prefixes["bot"], outputs)
 
-        return self._pack_outputs(outputs)
+        return outputs
 
     def _add_special_token(self, token: Union[str, int], outputs: Dict) -> None:
         token_id = token if isinstance(token, int) else self.tokenizer.convert_tokens_to_ids(token)
@@ -387,20 +387,3 @@ class DataProcessor:
 
         coords = list(zip(time_idx, h_idx, w_idx))
         return [[start_idx + ti, start_idx + hi, start_idx + wi] for ti, hi, wi in coords]
-
-    def _pack_outputs(self, outs: Dict) -> Dict[str, Any]:
-        # Stack or nullify image-related fields
-        if not outs["images"]:
-            outs["images"] = None
-            outs["grid_thw"] = None
-            outs["image_type_ids"] = None
-        else:
-            outs["images"] = np.vstack(outs["images"])
-            outs["grid_thw"] = np.vstack(outs["grid_thw"])
-            outs["image_type_ids"] = np.array(outs["image_type_ids"])
-
-        # Convert lists to arrays
-        outs["input_ids"] = np.array(outs["input_ids"], dtype=np.int64)
-        outs["token_type_ids"] = np.array(outs["token_type_ids"], dtype=np.int64)
-        outs["position_ids"] = np.array(outs["position_ids"], dtype=np.int64)
-        return outs

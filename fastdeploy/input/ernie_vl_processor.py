@@ -17,7 +17,7 @@
 
 import os
 import numpy as np
-from fastdeploy.input.mm_processor import DataProcessor
+from fastdeploy.input.mm_processor import DataProcessor, IDS_TYPE_FLAG
 from fastdeploy.input.ernie_processor import ErnieProcessor
 from fastdeploy.engine.request import Request
 from fastdeploy.entrypoints.chat_utils import parse_chat_messages
@@ -78,6 +78,11 @@ class ErnieMoEVLProcessor(ErnieProcessor):
         messages = request.get("messages")
         messages = parse_chat_messages(messages)
         output = self.ernie_processor.process(messages)
+        metadata = request.get("metadata")
+        # 如果metadata包含之前输出的token，将这些token添加到input_ids末尾
+        if metadata and metadata.get("generated_token_ids"):
+            self.append_generated_tokens(output, metadata["generated_token_ids"])
+        output = self.pack_outputs(output)
         request["prompt_token_ids"] = output["input_ids"]
         request["prompt_token_ids_len"] = len(request["prompt_token_ids"])
         request["multimodal_inputs"] = output
@@ -87,3 +92,33 @@ class ErnieMoEVLProcessor(ErnieProcessor):
             request['prompt_token_ids'] = request['prompt_token_ids'][:max_model_len - 1]
 
         return request
+
+    def append_generated_tokens(self, multimodal_inputs, generated_token_ids):
+        "append already generated tokens"
+        
+        num_tokens = len(generated_token_ids)
+        multimodal_inputs["input_ids"].extend(generated_token_ids)
+        multimodal_inputs["token_type_ids"].extend([IDS_TYPE_FLAG["text"]] * num_tokens)
+
+        start = multimodal_inputs["cur_position"]
+        for i in range(num_tokens):
+            multimodal_inputs["position_ids"].append([start + i] * 3)
+        multimodal_inputs["cur_position"] += num_tokens
+
+    def pack_outputs(self, outs):
+        # Stack or nullify image-related fields
+        if not outs["images"]:
+            outs["images"] = None
+            outs["grid_thw"] = None
+            outs["image_type_ids"] = None
+        else:
+            outs["images"] = np.vstack(outs["images"])
+            outs["grid_thw"] = np.vstack(outs["grid_thw"])
+            outs["image_type_ids"] = np.array(outs["image_type_ids"])
+
+        # Convert lists to arrays
+        outs["input_ids"] = np.array(outs["input_ids"], dtype=np.int64)
+        outs["token_type_ids"] = np.array(outs["token_type_ids"], dtype=np.int64)
+        outs["position_ids"] = np.array(outs["position_ids"], dtype=np.int64)
+
+        return outs
