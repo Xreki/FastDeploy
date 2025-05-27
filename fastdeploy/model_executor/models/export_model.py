@@ -144,6 +144,7 @@ def build_stream_line_model(
     scale_dir: str = "None",
     output_via_mq: bool = True,
     use_safetensors: bool = False,
+    embeddings_column_cut: bool = False,
 ):
     """
     Build a fused inference model
@@ -205,6 +206,12 @@ def build_stream_line_model(
     if num_key_value_heads is None:
         num_key_value_heads = -1
 
+    if num_key_value_heads < tensor_parallel_degree:
+        logger.warning(
+            f"key value heads num is {num_key_value_heads}, tensor parallel degree is {tensor_parallel_degree}"
+        )
+        num_key_value_heads = tensor_parallel_degree
+    
     if config.get("ffn_hidden_size", None) is not None:
         ffn_hidden_size = config["ffn_hidden_size"]
     elif config.get("intermediate_size", None) is not None:
@@ -224,10 +231,16 @@ def build_stream_line_model(
     if num_layers is None:
         raise ValueError(f"num_layers<{num_layers}> is invalid")
 
+    remove_tail_layer = config.get("remove_tail_layer")
+    if remove_tail_layer is True:
+        num_layers -= 1
+    elif isinstance(remove_tail_layer, int):
+        num_layers -= remove_tail_layer
+
     use_moe = config.get("moe_layer_start_index", num_layers) < num_layers
 
     if use_fake_parameter:
-        context = contextlib.nullcontext()
+        context = paddle.LazyGuard()
     elif use_safetensors:
         context = paddle.LazyGuard()
         state_dict = load_tp_checkpoint(
@@ -373,7 +386,7 @@ def build_stream_line_model(
             moe_use_ffn_shared_weight_and_bias=config.get(
                 "moe_use_ffn_shared_weight_and_bias", False
             ),
-            moe_group=config.get("moe_group", False),
+            moe_group=config.get("moe_group_experts", False),
             moe_quant_type=moe_quant_type,
             use_ep=use_ep,
             ep_just_for_test=ep_just_for_test,
@@ -383,6 +396,7 @@ def build_stream_line_model(
             scale_dir=scale_dir,
             output_via_mq=output_via_mq,
             erine_config=erine_config,
+            embeddings_column_cut=embeddings_column_cut,
         )
     if use_beam_search:
         decode_strategy = "beam_search"
@@ -429,6 +443,7 @@ def build_stream_line_model(
         "speculate_verify_window": speculate_verify_window,
         "return_all_hidden_states": return_all_hidden_states,
         "fake_server_p": fake_server_p,
+        "lm_head_column_cut": not embeddings_column_cut,
     }
     with context:
         model = ErnieBotForGeneration(model, configs)

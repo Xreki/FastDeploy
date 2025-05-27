@@ -472,6 +472,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         weight_block_size=[-1, -1],
         scale_dir="None",
         output_via_mq=True,
+        embeddings_column_cut=False,
         erine_config=None,
     ):
         """
@@ -716,6 +717,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             rope_head_dim=hidden_size // num_attention_heads,
             prefix_name="gpt.mtp" if is_mtp else "gpt",
             use_ep=self.inference_args.use_ep,
+            column_cut=embeddings_column_cut,
         )
 
         # get ring_id
@@ -1324,6 +1326,105 @@ class ErnieBotForGeneration(nn.Layer):
         unfinished_scores = (scores * length + next_scores) / (length + 1)
         scores = paddle.where(unfinished_flag, unfinished_scores, scores)
         return scores
+
+    def get_name_mappings_to_training(self):
+        """Generate mapping between inference and training parameter names with MoE support."""
+        
+        # Extract configs with defaults
+        configs = self.configs
+        moe_layer_start_index = configs.get("moe_layer_start_index", 3)
+        num_layers = configs.get("num_layers", 54)
+        moe_use_gate_correction_bias = configs.get("moe_use_gate_correction_bias", True)
+        have_bias = configs.get("have_norm_bias", False)
+        moe_num_experts = configs.get("moe_num_experts", 64)
+        
+        # Prepare placeholders
+        place_holders = ["weight"] + (["bias"] if have_bias else [])
+        
+        # Initialize mapping dictionary
+        infer_to_train = {}
+
+        # Static mappings (non-layer specific)
+        static_mappings = {
+            "gpt.embeddings.word_embeddings.weight": "ernie.embed_tokens.weight",
+            "gpt.norm.ln_weight": "ernie.norm.weight",
+            "lm_head.out_linear.weight": "lm_head.weight"
+        }
+        infer_to_train.update(static_mappings)
+        infer_base_name = "gpt.decoder"
+
+        # Helper function to add layer mappings
+        def _add_layer_mappings(layer_idx, is_moe_layer=False):
+            # Handle special case for layer 0's input layernorm
+            if layer_idx == 0:
+                for ph in place_holders:
+                    infer_key = f"{infer_base_name}.norm_before_qkv.ln_{ph}"
+                    train_key = f"ernie.layers.{layer_idx}.input_layernorm.{ph}"
+                    infer_to_train[infer_key] = train_key
+            else:
+                for ph in place_holders:
+                    infer_key = f"{infer_base_name}.bias_residual_layernorm_layers.{layer_idx - 1}.ln_{ph}"
+                    train_key = f"ernie.layers.{layer_idx}.input_layernorm.{ph}"
+                    infer_to_train[infer_key] = train_key
+
+            # Common attention mappings
+            for ph in place_holders:
+                infer_to_train[f"{infer_base_name}.qkv_linear_layers.{layer_idx}.qkv_{ph}"] = \
+                    f"ernie.layers.{layer_idx}.self_attn.qkv_proj.{ph}"
+                
+                infer_to_train[f"{infer_base_name}.out_linear_layers.{layer_idx}.linear_{ph}"] = \
+                    f"ernie.layers.{layer_idx}.self_attn.o_proj.{ph}"
+
+            # Post-attention layernorm
+            for ph in place_holders:
+                infer_to_train[f"{infer_base_name}.ffn_layernorm_layers.{layer_idx}.ln_{ph}"] = \
+                    f"ernie.layers.{layer_idx}.post_attention_layernorm.{ph}"
+
+            if not is_moe_layer:
+                # Dense FFN mappings
+                for ph in place_holders:
+                    infer_to_train[f"{infer_base_name}.ffn1_layers.{layer_idx}.ffn1_{ph}"] = \
+                        f"ernie.layers.{layer_idx}.mlp.up_gate_proj.{ph}"
+                    
+                    infer_to_train[f"{infer_base_name}.ffn2_layers.{layer_idx}.linear_{ph}"] = \
+                        f"ernie.layers.{layer_idx}.mlp.down_proj.{ph}"
+            else:
+                # MoE specific mappings
+                infer_to_train[f"{infer_base_name}.moe_layers.{layer_idx}.gate_weight"] = \
+                    f"ernie.layers.{layer_idx}.mlp.gate.weight"
+
+                if moe_use_gate_correction_bias:
+                    infer_to_train[f"{infer_base_name}.moe_layers.{layer_idx}.gate_correction_bias"] = \
+                        f"ernie.layers.{layer_idx}.mlp.moe_statics.e_score_correction_bias"
+
+                # MoE experts mappings
+                for expert_idx in range(moe_num_experts):
+                    for ph in place_holders:
+                        # FFN1 (up_gate_proj)
+                        ffn1_key = f"{infer_base_name}.moe_layers.{layer_idx}.moe_ffn1_weight"
+                        if ffn1_key not in infer_to_train:
+                            infer_to_train[ffn1_key] = []
+                        infer_to_train[ffn1_key].append(
+                            f"ernie.layers.{layer_idx}.mlp.experts.{expert_idx}.up_gate_proj.{ph}"
+                        )
+                        
+                        # FFN2 (down_proj)
+                        ffn2_key = f"{infer_base_name}.moe_layers.{layer_idx}.moe_ffn2_weight"
+                        if ffn2_key not in infer_to_train:
+                            infer_to_train[ffn2_key] = []
+                        infer_to_train[ffn2_key].append(
+                            f"ernie.layers.{layer_idx}.mlp.experts.{expert_idx}.down_proj.{ph}"
+                        )
+
+        # Process non-MoE layers
+        for layer_idx in range(moe_layer_start_index):
+            _add_layer_mappings(layer_idx, is_moe_layer=False)
+
+        # Process MoE layers
+        for layer_idx in range(moe_layer_start_index, num_layers):
+            _add_layer_mappings(layer_idx, is_moe_layer=True)
+
+        return infer_to_train
 
     def get_output_padding_offset(
         self, seq_lens_this_time, seq_lens_encoder, seq_lens_decoder
