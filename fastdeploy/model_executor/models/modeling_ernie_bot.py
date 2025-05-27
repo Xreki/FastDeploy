@@ -759,8 +759,8 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
                 "use_gemm_dequant":
                 use_gemm_dequant
             })
-        elif "float8" in self.inference_args.weight_dtype and 
-            self.inference_args.act_dtype == self.inference_args.weight_dtype:
+        elif ("float8" in self.inference_args.weight_dtype and 
+            self.inference_args.act_dtype == self.inference_args.weight_dtype):
             quant_cls = get_quantization_config("wfp8afp8")
             llm_config.quant_config = quant_cls.from_config({
                 "weight_scale_dict":
