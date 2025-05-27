@@ -1166,7 +1166,7 @@ def model_convert_fp8(model_path, device=None):
     weight_scales_path = os.path.join(model_path, "weight_scales_0.json")
     with open(weight_scales_path, "r") as weight_scales_file:
         weight_scales = json.load(weight_scales_file)
-        if "gpt.decoder.layers." + str(0) + ".gate.weight_quanter" in weight_scales:
+        if "ernie.decoder.layers." + str(0) + ".gate.weight_quanter" in weight_scales:
             logger.info("FP8 model checkpoint already converted")
             return
         else:
@@ -1184,31 +1184,31 @@ def model_convert_fp8(model_path, device=None):
     new_path = os.path.join(model_path, "model_state.pdparams")
 
     for i in range(0, nums_layers):
-        ffn1_weights = params_states["gpt.decoder.layers." + str(i) + ffn1_weights_name]
+        ffn1_weights = params_states["ernie.decoder.layers." + str(i) + ffn1_weights_name]
         ffn1_weights_0 = ffn1_weights[:, ::2]
         ffn1_weights_1 = ffn1_weights[:, 1::2]
 
         ffn1_weights_0_range = paddle.abs(ffn1_weights_0).max()
         ffn1_weights_1_range = paddle.abs(ffn1_weights_1).max()
 
-        weight_scales["gpt.decoder.layers." + str(i) + ".gate.weight_quanter"] = (
+        weight_scales["ernie.decoder.layers." + str(i) + ".gate.weight_quanter"] = (
             paddle.cast(ffn1_weights_0_range, "float").numpy().tolist()
         )
-        weight_scales["gpt.decoder.layers." + str(i) + ".up.weight_quanter"] = (
+        weight_scales["ernie.decoder.layers." + str(i) + ".up.weight_quanter"] = (
             paddle.cast(ffn1_weights_1_range, "float").numpy().tolist()
         )
-        params_states["gpt.decoder.layers." + str(i) + gate_weights_name] = (
+        params_states["ernie.decoder.layers." + str(i) + gate_weights_name] = (
             ffn1_weights_0 * 448 / ffn1_weights_0_range
         )
-        params_states["gpt.decoder.layers." + str(i) + up_weights_name] = (
+        params_states["ernie.decoder.layers." + str(i) + up_weights_name] = (
             ffn1_weights_1 * 448 / ffn1_weights_1_range
         )
-        del params_states["gpt.decoder.layers." + str(i) + ffn1_weights_name]
+        del params_states["ernie.decoder.layers." + str(i) + ffn1_weights_name]
 
-        ffn1_bias = params_states["gpt.decoder.layers." + str(i) + ffn1_bias_name]
-        params_states["gpt.decoder.layers." + str(i) + gate_bias_name] = ffn1_bias[::2]
-        params_states["gpt.decoder.layers." + str(i) + up_bias_name] = ffn1_bias[1::2]
-        del params_states["gpt.decoder.layers." + str(i) + ffn1_bias_name]
+        ffn1_bias = params_states["ernie.decoder.layers." + str(i) + ffn1_bias_name]
+        params_states["ernie.decoder.layers." + str(i) + gate_bias_name] = ffn1_bias[::2]
+        params_states["ernie.decoder.layers." + str(i) + up_bias_name] = ffn1_bias[1::2]
+        del params_states["ernie.decoder.layers." + str(i) + ffn1_bias_name]
 
     with open(model_path + "/weight_scales_0.json", "w") as weight_scales_file:
         json.dump(weight_scales, weight_scales_file)
