@@ -13,6 +13,47 @@ export ROLLOUT_CONTROLLER_HOST=${rollout_controller_host:-"http://10.11.155.41:8
 source ${ROLLOUT_WORKER_ROOT}/fastdeploy/agent/build_env.sh
 source "${ROLLOUT_WORKER_ROOT}/${FASTDEPLOY_ENV_NAME}/bin/activate"
 
+FILES=("agent_work.yaml" "agent_work_45T.yaml")
+
+# 写入agent_work.yaml 和 agent_work_45T.yaml 的 scheduler 段
+for YAML_FILE in "${FILES[@]}"; do
+  echo "处理文件: $YAML_FILE"
+
+  SKIP_SCHEDULER=false
+
+  # 控制开关
+  if [ "$SCHEDULER_SWITCH" != "true" ]; then
+    echo "SCHEDULER_SWITCH 不是 true，跳过写入 $YAML_FILE。"
+    SKIP_SCHEDULER=true
+  fi
+
+  # 如果已有 scheduler 段，则跳过写入
+  if grep -qE '^\s*scheduler\s*:' "$YAML_FILE"; then
+    echo "文件 $YAML_FILE 中已存在 scheduler 段，跳过写入。"
+    SKIP_SCHEDULER=true
+  fi
+
+  # 写入 scheduler 段
+  if [ "$SKIP_SCHEDULER" != "true" ]; then
+    {
+      echo ""
+      echo "scheduler:"
+      [ -n "$SCHEDULER_NAME" ] && echo "  name: $SCHEDULER_NAME"
+      [ -n "$SCHEDULER_TTL" ] && echo "  ttl: $SCHEDULER_TTL"
+      [ -n "$SCHEDULER_WAIT_RESPONSE_TIMEOUT" ] && echo "  wait_response_timeout: $SCHEDULER_WAIT_RESPONSE_TIMEOUT"
+      [ -n "$SCHEDULER_HOST" ] && echo "  host: $SCHEDULER_HOST"
+      [ -n "$SCHEDULER_PORT" ] && echo "  port: $SCHEDULER_PORT"
+      [ -n "$SCHEDULER_DB" ] && echo "  db: $SCHEDULER_DB"
+      [ -n "$SCHEDULER_PASSWORD" ] && echo "  password: $SCHEDULER_PASSWORD"
+      [ -n "$SCHEDULER_TOPIC" ] && echo "  topic: $SCHEDULER_TOPIC"
+      [ -n "$SCHEDULER_REMOTE_WRITE_TIME" ] && echo "  remote_write_time: $SCHEDULER_REMOTE_WRITE_TIME"
+    } >> "$YAML_FILE"
+
+    echo "指定 scheduler 配置已追加到 $YAML_FILE"
+  fi
+
+  echo ""
+done
 
 # 参数检查
 if [ $# -ne 3 ]; then
