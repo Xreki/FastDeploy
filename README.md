@@ -78,7 +78,7 @@ FastDeploy提供与OpenAI完全兼容的服务API(字段`model`与`api_key`目�
 
 # 代码说明
 - [代码目录说明](docs/code_guide.md)
-- FastDeploy的使用中存在任何建议和问题，可随时如流反馈。
+- FastDeploy的使用中存在任何建议和问题，可随时如流反馈，如流群8339034。
 
 # 开源说明
 
