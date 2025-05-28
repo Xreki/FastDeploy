@@ -407,7 +407,6 @@ class Config:
                 llm_logger.info(f"Reset parameter {value_name} = {value} from configuration.")
 
         reset_value(self.cache_config, "block_size", "infer_model_block_size")
-        reset_value(self.model_config, "max_model_len", "infer_model_max_seq_len")
         reset_value(self.model_config, "return_full_hidden_states", "return_full_hidden_states")
         reset_value(self.cache_config, "cache_dtype", "infer_model_dtype")
 
