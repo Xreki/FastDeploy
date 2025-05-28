@@ -19,6 +19,7 @@ import paddle
 import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
 import random
+import os
 
 from paddlenlp.trl import llm_utils
 from paddlenlp.trl.llm_utils import get_rotary_position_embedding
@@ -80,7 +81,7 @@ class ModelRunner(ModelRunnerBase):
         predictor_args.append_attn = True
 
         local_test = False
-        if self.model_cfg.run_mode == "test":
+        if os.getenv("RUN_MODE", "") == "test":
             local_test = True
         
         if dynamic_load_weight:
