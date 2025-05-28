@@ -18,8 +18,6 @@ import random
 
 import numpy as np
 import paddle
-import paddle.distributed as dist
-import paddle.distributed.fleet as fleet
 
 from fastdeploy.worker.model_runner.model_runner_base import ModelRunnerBase
 
@@ -60,10 +58,13 @@ class ModelRunner(ModelRunnerBase):
             self.model = efficientllm_model
         else:
             if use_pip_eff_llm is None:
-                from fastdeploy.model_executor.models.export_model import build_stream_line_model
-                from fastdeploy.model_executor.models.tokenizer import ErnieBotTokenizer
+                from fastdeploy.model_executor.models.export_model import \
+                    build_stream_line_model
+                from fastdeploy.model_executor.models.tokenizer import \
+                    ErnieBotTokenizer
             else:
-                from efficientllm.models.export_model import build_stream_line_model
+                from efficientllm.models.export_model import \
+                    build_stream_line_model
                 from efficientllm.models.tokenizer import ErnieBotTokenizer
             vocab_file_names = [
                 "tokenizer.model", "spm.model", "ernie_token_100k.model"
@@ -71,13 +72,13 @@ class ModelRunner(ModelRunnerBase):
             for i in range(len(vocab_file_names)):
                 if os.path.exists(
                         os.path.join(self.args.model_name_or_path,
-                                    vocab_file_names[i])):
+                                     vocab_file_names[i])):
                     ErnieBotTokenizer.resource_files_names[
                         "vocab_file"] = vocab_file_names[i]
                     break
             config, tokenizer, model = build_stream_line_model(
                 os.path.join(self.args.model_name_or_path,
-                            os.getenv("CONFIG_JSON_FILE", "config.json")),
+                             os.getenv("CONFIG_JSON_FILE", "config.json")),
                 self.args.model_name_or_path,
                 self.args.dtype,
                 block_size=self.args.block_size,
@@ -229,7 +230,7 @@ class ModelRunner(ModelRunnerBase):
             rot_emb: [2, 1, S, 1, D // 2] or [2, 1, S, 1, D], cos + sin
         """
         bsz, max_model_len = position_ids.shape[:2]
-        inv_freq = rope_theta ** (
+        inv_freq = rope_theta**(
             -paddle.arange(0, head_dim, 2, dtype="float32") / head_dim)
 
         # shape: [B, S, D/2]

@@ -142,6 +142,7 @@ class ModelConfig(PretrainedConfig):
             self.num_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
         self.num_key_value_heads = num_key_value_heads
+        self.head_dim = hidden_size // num_attention_heads
         self.hidden_act = hidden_act
         self.hidden_dropout_prob = hidden_dropout_prob
         self.attention_probs_dropout_prob = attention_probs_dropout_prob

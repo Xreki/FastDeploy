@@ -17,13 +17,14 @@
 import json
 import os
 from datetime import datetime
-from typing import Literal, Optional, Dict, List, Any
+from typing import Any, Dict, List, Literal, Optional
 
-from fastdeploy.utils import llm_logger, check_unified_ckpt, get_host_ip, is_port_available
-from fastdeploy.download_model import download_from_txt
 from fastdeploy.scheduler import SchedulerConfig
+from fastdeploy.utils import (check_unified_ckpt, get_host_ip,
+                              is_port_available, llm_logger)
 
 TaskOption = Literal["generate"]
+
 
 class ModelConfig:
     """
@@ -34,6 +35,7 @@ class ModelConfig:
         is_unified_ckpt (bool): Flag indicating if the checkpoint is unified.
         model_name_or_path (str): Name or path of the model.
     """
+
     def __init__(self,
                  model_name_or_path: str,
                  config_json_file: str = "config.json",
@@ -56,19 +58,26 @@ class ModelConfig:
             try:
                 from paddlenlp.transformers import AutoConfig
                 config = AutoConfig.from_pretrained(model_name_or_path)
-                config_dict = {k: v for k, v in vars(config).items() if not k.startswith('_')}
+                config_dict = {
+                    k: v
+                    for k, v in vars(config).items() if not k.startswith('_')
+                }
                 for key, value in config_dict.items():
                     setattr(self, key, value)
-            except Exception as e:
-                llm_logger.error("Don't support the current model, you can use `paddlenlp` to register your model.")
-                raise ValueError("Don't support the current model, you can use `paddlenlp` to register your model.")
+            except Exception:
+                llm_logger.error(
+                    "Don't support the current model, you can use `paddlenlp` to register your model."
+                )
+                raise ValueError(
+                    "Don't support the current model, you can use `paddlenlp` to register your model."
+                )
         else:
             with open(config_file, "r", encoding="utf-8") as f:
                 config_dict = json.load(f)
                 for key, value in config_dict.items():
                     try:
                         setattr(self, key, value)
-                    except Exception as e:
+                    except Exception:
                         continue
 
         self.model_name_or_path = model_name_or_path
@@ -98,25 +107,28 @@ class ModelConfig:
         self.max_stop_seqs_num = int(os.getenv("MAX_STOP_SEQS_NUM", "5"))
         self.stop_seqs_max_len = int(os.getenv("STOP_SEQS_MAX_LEN", "8"))
 
-        self.ellm_dynamic_quant_type = os.getenv("ELLM_DYNAMIC_QUANT_TYPE", "default")
+        self.ellm_dynamic_quant_type = os.getenv("ELLM_DYNAMIC_QUANT_TYPE",
+                                                 "default")
         # 动态图推理是否使用停止序列
-        self.ellm_dynamic_use_stop_seqs = int(os.getenv("ELLM_DYNAMIC_USE_STOP_SEQS", "0")) == 1
+        self.ellm_dynamic_use_stop_seqs = int(
+            os.getenv("ELLM_DYNAMIC_USE_STOP_SEQS", "0")) == 1
 
         def reset_config_value(key, value):
             if not hasattr(self, key.lower()):
                 if os.getenv(key, None):
                     value = eval(os.getenv(key))
-                    llm_logger.info(f"Get parameter `{key}` = {value} from environment.")
+                    llm_logger.info(
+                        f"Get parameter `{key}` = {value} from environment.")
                 else:
-                    llm_logger.info(f"Parameter `{key}` will use default value {value}.")
+                    llm_logger.info(
+                        f"Parameter `{key}` will use default value {value}.")
                 setattr(self, key.lower(), value)
 
         if  "ErnieForCausalLM" in self.architectures and not hasattr(self, "model_name"):
             self.model_name = os.getenv("FD_MODEL_NAME")
             assert self.model_name is not None, (
                 "There is no parameter model_name in config.json or "
-                "FD_MODEL_NAME in environment variables."
-            )
+                "FD_MODEL_NAME in environment variables.")
 
         reset_config_value("COMPRESSION_RATIO", 1.0)
         reset_config_value("ROPE_THETA", 10000)
@@ -132,7 +144,9 @@ class ModelConfig:
         llm_logger.info("Model Configuration Information :")
         for k, v in self.__dict__.items():
             llm_logger.info("{:<20}:{:<6}{}".format(k, "", v))
-        llm_logger.info("=============================================================")
+        llm_logger.info(
+            "=============================================================")
+
 
 class CacheConfig:
     """
@@ -147,6 +161,7 @@ class CacheConfig:
         enc_dec_block_num (int): Number of encoder-decoder blocks.
         enable_prefix_caching (bool): Flag to enable prefix caching.
     """
+
     def __init__(
         self,
         block_size: int,
@@ -188,10 +203,8 @@ class CacheConfig:
                 "GPU memory utilization must be less than 1.0. Got "
                 f"{self.gpu_memory_utilization}.")
         if self.kv_cache_ratio > 1.0:
-            raise ValueError(
-                "KV cache ratio must be less than 1.0. Got "
-                f"{self.kv_cache_ratio}.")
-
+            raise ValueError("KV cache ratio must be less than 1.0. Got "
+                             f"{self.kv_cache_ratio}.")
 
     def postprocess(self, num_total_tokens, number_of_tasks):
         """
@@ -202,19 +215,22 @@ class CacheConfig:
             self.total_block_num = self.num_gpu_blocks_override
         else:
             length = num_total_tokens // number_of_tasks
-            block_num = (length + self.block_size - 1 + self.enc_dec_block_num) // self.block_size
-            self.total_block_num =  block_num * number_of_tasks
-            llm_logger.info(f"Doing profile, the total_block_num:{self.total_block_num}")
+            block_num = (length + self.block_size - 1 +
+                         self.enc_dec_block_num) // self.block_size
+            self.total_block_num = block_num * number_of_tasks
+            llm_logger.info(
+                f"Doing profile, the total_block_num:{self.total_block_num}")
         self.max_block_num = int(self.total_block_num * self.kv_cache_ratio)
 
     def reset(self, num_gpu_blocks):
         """
         reset gpu block number
         """
-        self.total_block_num  = num_gpu_blocks
+        self.total_block_num = num_gpu_blocks
         self.max_block_num = int(self.total_block_num * self.kv_cache_ratio)
-        llm_logger.info((f"Reset block num, the total_block_num:{self.total_block_num},"
-            f" max_block_num:{self.max_block_num}"))
+        llm_logger.info(
+            (f"Reset block num, the total_block_num:{self.total_block_num},"
+             f" max_block_num:{self.max_block_num}"))
 
     def print(self):
         """
@@ -223,8 +239,9 @@ class CacheConfig:
         """
         llm_logger.info("Cache Configuration Information :")
         for k, v in self.__dict__.items():
-                llm_logger.info("{:<20}:{:<6}{}".format(k, "", v))
-        llm_logger.info("=============================================================")
+            llm_logger.info("{:<20}:{:<6}{}".format(k, "", v))
+        llm_logger.info(
+            "=============================================================")
 
 
 class Config:
@@ -245,6 +262,7 @@ class Config:
         speculative_config (Optional[Dict[str, Any]]): Speculative execution configuration.
         use_warmup (bool): Flag to use warmup.
     """
+
     def __init__(
         self,
         model_config: ModelConfig,
@@ -302,25 +320,25 @@ class Config:
         # TODO
         self.max_prefill_batch = 3
         if enable_mm:
-            self.max_prefill_batch = 1 # TODO:当前多模prefill阶段只支持并行度为1,待优化
+            self.max_prefill_batch = 1  # TODO:当前多模prefill阶段只支持并行度为1,待优化
 
         self.engine_worker_queue_port = engine_worker_queue_port
-        self.device_ids = ",".join([str(i) for i in range(self.tensor_parallel_size)])
-        self.device_ids = os.getenv("CUDA_VISIBLE_DEVICES",
-                                    self.device_ids)
+        self.device_ids = ",".join(
+            [str(i) for i in range(self.tensor_parallel_size)])
+        self.device_ids = os.getenv("CUDA_VISIBLE_DEVICES", self.device_ids)
 
         self.read_from_config()
         self.postprocess()
         self.check()
         self.print()
 
-
     def postprocess(self):
         """
         calculate some parameters
         """
         if len(self.device_ids.split(',')) > self.tensor_parallel_size:
-            self.device_ids = ",".join(self.device_ids.split(',')[:self.tensor_parallel_size:])
+            self.device_ids = ",".join(
+                self.device_ids.split(',')[:self.tensor_parallel_size:])
         assert len(self.device_ids.split(',')) == self.tensor_parallel_size
 
         assert self.tensor_parallel_size % self.nnode == 0, f"tensor_parallel_size: {self.tensor_parallel_size} should be divisible by nnode: {self.nnode}"
@@ -333,8 +351,8 @@ class Config:
         if self.max_num_batched_tokens is None:
             self.max_num_batched_tokens = self.max_model_len
 
-        self.cache_config.postprocess(self.max_num_batched_tokens, self.max_num_seqs)
-
+        self.cache_config.postprocess(self.max_num_batched_tokens,
+                                      self.max_num_seqs)
 
     def check(self):
         """
@@ -343,17 +361,22 @@ class Config:
         assert (
             self.max_num_seqs <= 256
         ), "The parameter `max_num_seqs` is not allowed to exceed 256, " "but now it's {}.".format(
-            self.max_num_seqs
-        )
-        assert (is_port_available('0.0.0.0', self.engine_worker_queue_port)
-				), f"The parameter `engine_worker_queue_port`:{self.engine_worker_queue_port} is already in use."
-        assert (8 >= self.tensor_parallel_size > 0), f"tensor_parallel_size: {self.tensor_parallel_size} should be between 1 and 8"
+            self.max_num_seqs)
+        assert (
+            is_port_available('0.0.0.0', self.engine_worker_queue_port)
+        ), f"The parameter `engine_worker_queue_port`:{self.engine_worker_queue_port} is already in use."
+        assert (
+            8 >= self.tensor_parallel_size > 0
+        ), f"tensor_parallel_size: {self.tensor_parallel_size} should be between 1 and 8"
         assert (self.nnode >= 1), f"nnode: {self.nnode} should no less than 1"
-        assert (self.max_model_len >= 16), f"max_model_len: {self.max_model_len} should be larger than 16"
-        assert (self.max_num_seqs >= 1), f"max_num_seqs: {self.max_num_seqs} should be larger than 1"
+        assert (
+            self.max_model_len >= 16
+        ), f"max_model_len: {self.max_model_len} should be larger than 16"
+        assert (
+            self.max_num_seqs
+            >= 1), f"max_num_seqs: {self.max_num_seqs} should be larger than 1"
 
         self.scheduler_config.check()
-
 
     def print(self, file=None):
         """
@@ -362,7 +385,8 @@ class Config:
         Args:
             file (str): the path of file to save config
         """
-        llm_logger.info("=================== Configuration Information ===============")
+        llm_logger.info(
+            "=================== Configuration Information ===============")
         for k, v in self.__dict__.items():
             if k == "generation_config" and v is not None:
                 for gck, gcv in v.to_dict().items():
@@ -371,7 +395,8 @@ class Config:
                 v.print()
             else:
                 llm_logger.info("{:<20}:{:<6}{}".format(k, "", v))
-        llm_logger.info("=============================================================")
+        llm_logger.info(
+            "=============================================================")
         if file is not None:
             f = open(file, "a")
             now_time = datetime.now()
@@ -379,7 +404,6 @@ class Config:
             for k, v in self.__dict__.items():
                 f.write("{:<20}:{:<6}{}\n".format(k, "", v))
             f.close()
-
 
     def read_from_config(self):
         """
@@ -390,13 +414,16 @@ class Config:
             if hasattr(cls, key):
                 value = getattr(cls, key)
                 setattr(cls, value_name, value)
-                llm_logger.info(f"Reset parameter {value_name} = {value} from configuration.")
+                llm_logger.info(
+                    f"Reset parameter {value_name} = {value} from configuration."
+                )
 
         reset_value(self.cache_config, "block_size", "infer_model_block_size")
-        reset_value(self.model_config, "max_model_len", "infer_model_max_seq_len")
-        reset_value(self.model_config, "return_full_hidden_states", "return_full_hidden_states")
+        reset_value(self.model_config, "max_model_len",
+                    "infer_model_max_seq_len")
+        reset_value(self.model_config, "return_full_hidden_states",
+                    "return_full_hidden_states")
         reset_value(self.cache_config, "cache_dtype", "infer_model_dtype")
-
 
     def __str__(self) -> str:
         return json.dumps(self.__dict__, indent=4)

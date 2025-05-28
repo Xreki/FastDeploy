@@ -36,10 +36,10 @@ from fastdeploy.inference_args import GenerationPhase
 
 from ..layers.activation import Activation
 from ..layers.attention.base import Attention
-from ..layers.ffn1 import FFN1, FFN1Split
-from ..layers.linear import FFN2, RowParallelLinear
+from ..layers.ffn1 import FFN1Split
+from ..layers.linear import FFN2, MergedColumnParallelLinear, RowParallelLinear
 from ..layers.normalization import LayerNorm, RMSNorm
-from ..layers.qkv_linear import QKVLinear
+from ..layers.qkv_linear import QKVParallelLinear
 from .micro_batch_control import MicroBatchControl
 
 EP_MICRO_BATCH_NUM = 2  # DeepEP can only support
@@ -122,8 +122,13 @@ class FusedTransformer(nn.Layer):
         )
 
         self.qkv_linear_layers = nn.LayerList([
+<<<<<<< HEAD
             QKVLinear(
                 inference_args=inference_args,
+=======
+            QKVParallelLinear(
+                llm_config=llm_config,
+>>>>>>> wenxin-tools-325, refactor qkv and ffn1_concat
                 layer_name=
                 f"{base_model_prefix}.decoder.layers.{i}.self_attn.qkv_proj",
                 weight_key=fmt_keys.qkv_linear_weight_keys[i],
@@ -174,8 +179,13 @@ class FusedTransformer(nn.Layer):
         ])
         if ffn1_concat:
             self.ffn1_layers = nn.LayerList([
+<<<<<<< HEAD
                 FFN1(
                     inference_args=inference_args,
+=======
+                MergedColumnParallelLinear(
+                    llm_config=llm_config,
+>>>>>>> wenxin-tools-325, refactor qkv and ffn1_concat
                     layer_name=
                     f"{base_model_prefix}.decoder.layers.{i}.linear1",
                     weight_key=fmt_keys.ffn1_weight_keys[i],
