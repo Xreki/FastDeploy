@@ -104,7 +104,6 @@ class ModelConfig:
 
         If an attribute is not present or is an empty string in the environment variables, use the default value.
         """
-        self.run_mode = os.getenv("RUN_MODE", "")
         self.max_stop_seqs_num = int(os.getenv("MAX_STOP_SEQS_NUM", "5"))
         self.stop_seqs_max_len = int(os.getenv("STOP_SEQS_MAX_LEN", "8"))
 
