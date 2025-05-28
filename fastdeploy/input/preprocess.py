@@ -24,10 +24,8 @@ class InputPreprocessor:
             key in the Hugging Face Transformers' model registry (https://huggingface.co/models).
             The model will be downloaded from the Hugging Face model hub if necessary.
             If a path is provided, the model will be loaded from that path.
-        enable_mm_registry (bool, optional):
-            Whether to use the MMSelfAttention registry for loading pre-trained models. Defaults to False.
-            If True, the model will be loaded using the MMSelfAttention registry. Otherwise, the model will be
-            loaded directly from the specified path.
+        enable_mm (bool, optional):
+            Whether to use the multi-modal model processor. Defaults to False.
 
         Raises:
             ValueError:
@@ -37,11 +35,11 @@ class InputPreprocessor:
     def __init__(
         self,
         model_name_or_path: str,
-        enable_mm_registry: bool = False,
+        enable_mm: bool = False,
     ) -> None:
 
         self.model_name_or_path = model_name_or_path
-        self.enable_mm_registry = enable_mm_registry
+        self.enable_mm = enable_mm
 
 
     def create_processor(self):
@@ -56,7 +54,7 @@ class InputPreprocessor:
             DataProcessor or MultiModalRegistry.Processor (Union[DataProcessor, MultiModalRegistry.Processor]): 数据处理器。
         """
         architectures = ModelConfig(self.model_name_or_path).architectures
-        if not self.enable_mm_registry:
+        if not self.enable_mm:
             if "ErnieForCausalLM" not in architectures:
                 from fastdeploy.input.text_processor import DataProcessor
                 self.processor = DataProcessor(model_name_or_path=self.model_name_or_path)
@@ -65,8 +63,7 @@ class InputPreprocessor:
                 self.processor = ErnieProcessor(model_name_or_path=self.model_name_or_path)
         else:
             if "ErnieMoEVLForCausalLM" not in architectures:
-                from fastdeploy.input.mm_register import MultiModalRegistry
-                self.processor = MultiModalRegistry.create_processor(self.model_name_or_path)
+                raise ValueError(f"Model {self.model_name_or_path} is not a valid ErnieMoEVL model.")
             else:
                 from fastdeploy.input.ernie_vl_processor import ErnieMoEVLProcessor
                 self.processor = ErnieMoEVLProcessor(model_name_or_path=self.model_name_or_path)
