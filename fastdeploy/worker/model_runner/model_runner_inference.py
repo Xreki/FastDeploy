@@ -60,8 +60,8 @@ class ModelRunner(ModelRunnerBase):
             self.model = efficientllm_model
         else:
             if use_pip_eff_llm is None:
-                from ..models.export_model import build_stream_line_model
-                from ..models.tokenizer import ErnieBotTokenizer
+                from fastdeploy.model_executor.models.export_model import build_stream_line_model
+                from fastdeploy.model_executor.models.tokenizer import ErnieBotTokenizer
             else:
                 from efficientllm.models.export_model import build_stream_line_model
                 from efficientllm.models.tokenizer import ErnieBotTokenizer

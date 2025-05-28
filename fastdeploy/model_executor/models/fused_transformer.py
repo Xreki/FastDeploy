@@ -38,7 +38,7 @@ from ..layers.activation import Activation
 from ..layers.attention.base import Attention
 from ..layers.ffn1 import FFN1, FFN1Split
 from ..layers.linear import FFN2, RowParallelLinear
-from ..layers.normalization import Normalization
+from ..layers.normalization import LayerNorm, RMSNorm
 from ..layers.qkv_linear import QKVLinear
 from .micro_batch_control import MicroBatchControl
 
@@ -55,7 +55,6 @@ class FusedTransformer(nn.Layer):
         inference_args,
         fmt_keys,
         act_method="gelu",
-        norm_type="layernorm",
         epsilon=1e-5,
         ffn1_concat=True,
         use_smooth_quant=True,
@@ -63,7 +62,6 @@ class FusedTransformer(nn.Layer):
         rope_3d=False,
         use_neox_rotary_style=False,
         fuse_ffn_act=False,
-        have_norm_bias=False,
         ring_id=-1,
         return_all_hidden_states=False,
         base_model_prefix="gpt",
@@ -77,7 +75,6 @@ class FusedTransformer(nn.Layer):
             inference_args (InferenceArgs): Configuration arguments for model inference.
             fmt_keys (FMTKeys): Keys stored in your model, which is used to retrieve weights from the state dict.
             act_method (str, optional): Activation method, defaults to "gelu".
-            norm_type (str, optional): Normalization type, defaults to "layernorm".
             epsilon (float, optional): Epsilon value for normalization layers, defaults to 1e-5.
             ffn1_concat (bool, optional): Whether to concatenate FFN1 layer outputs, defaults to True.
             use_smooth_quant (bool, optional): Whether to use smooth quantization, defaults to True.
@@ -117,24 +114,18 @@ class FusedTransformer(nn.Layer):
         if self.nranks > 1:
             assert ring_id != -1
 
-        self.norm_before_qkv = Normalization(
-            inference_args=inference_args,
+        self.norm_before_qkv = RMSNorm(
+            llm_config,
+            hidden_size=llm_config.model_config.hidden_size,
+            eps=epsilon,
             layer_name=f"{base_model_prefix}.decoder.layers.0.norm1",
-            weight_key=fmt_keys.norm_before_qkv_weight_keys[0],
-            bias_key=fmt_keys.norm_before_qkv_bias_keys[0]
-            if have_norm_bias else None,
-            norm_type=norm_type,
-            epsilon=epsilon,
-            quant_scale=self.act_scales.get(
-                f"{base_model_prefix}.decoder.layers.0.self_attn.qkv_proj.activation_quanter",
-                -1,
-            ),
         )
 
         self.qkv_linear_layers = nn.LayerList([
             QKVLinear(
                 inference_args=inference_args,
-                layer_name=f"{base_model_prefix}.decoder.layers.{i}.self_attn.qkv_proj",
+                layer_name=
+                f"{base_model_prefix}.decoder.layers.{i}.self_attn.qkv_proj",
                 weight_key=fmt_keys.qkv_linear_weight_keys[i],
                 bias_key=fmt_keys.qkv_linear_bias_keys[i],
             ) for i in range(self.num_layers)
@@ -142,7 +133,8 @@ class FusedTransformer(nn.Layer):
         self.out_linear_layers = nn.LayerList([
             RowParallelLinear(
                 llm_config=llm_config,
-                layer_name=f"{base_model_prefix}.decoder.layers.{i}.self_attn.out_proj",
+                layer_name=
+                f"{base_model_prefix}.decoder.layers.{i}.self_attn.out_proj",
                 layer_index=i,
             ) for i in range(self.num_layers)
         ])
@@ -171,27 +163,21 @@ class FusedTransformer(nn.Layer):
             ) for i in range(self.num_layers)
         ])
         self.ffn_layernorm_layers = nn.LayerList([
-            Normalization(
-                inference_args=inference_args,
+            RMSNorm(
+                llm_config,
+                hidden_size=llm_config.model_config.hidden_size,
+                eps=epsilon,
                 layer_name=f"{base_model_prefix}.decoder.layers.{i}.norm2",
-                weight_key=fmt_keys.ffn_layernorm_weight_keys[i],
-                bias_key=(fmt_keys.ffn_layernorm_bias_keys[i]
-                          if have_norm_bias else None),
-                norm_type=norm_type,
-                epsilon=epsilon,
                 linear_bias=getattr(self.out_linear_layers[i], "linear_bias",
                                     None),
-                quant_scale=self.act_scales.get(
-                    f"{base_model_prefix}.decoder.layers.{i}.linear1.activation_quanter",
-                    -1,
-                ),
             ) for i in range(self.num_layers)
         ])
         if ffn1_concat:
             self.ffn1_layers = nn.LayerList([
                 FFN1(
                     inference_args=inference_args,
-                    layer_name=f"{base_model_prefix}.decoder.layers.{i}.linear1",
+                    layer_name=
+                    f"{base_model_prefix}.decoder.layers.{i}.linear1",
                     weight_key=fmt_keys.ffn1_weight_keys[i],
                     bias_key=fmt_keys.ffn1_bias_keys[i],
                     activation=act_method,
@@ -210,7 +196,8 @@ class FusedTransformer(nn.Layer):
             self.ffn1_layers = nn.LayerList([
                 FFN1Split(
                     inference_args=inference_args,
-                    gate_layer_name=f"{base_model_prefix}.decoder.layers.{i}.gate",
+                    gate_layer_name=
+                    f"{base_model_prefix}.decoder.layers.{i}.gate",
                     up_layer_name=f"{base_model_prefix}.decoder.layers.{i}.up",
                 ) for i in range(self.num_layers)
             ])
@@ -262,11 +249,16 @@ class FusedTransformer(nn.Layer):
                         inference_args=inference_args,
                         moe_config=inference_args.moe_config,
                         layer_name=f"moe_layers.{i}",
-                        gate_weight_key=f"ernie.decoder.moe_layers.{i}.gate_weight",
-                        ffn1_expert_weight_key=f"ernie.decoder.moe_layers.{i}.moe_ffn1_weight",
-                        ffn2_expert_weight_key=f"ernie.decoder.moe_layers.{i}.moe_ffn2_weight",
-                        ffn1_bias_key=f"ernie.decoder.moe_layers.{i}.moe_ffn1_bias",
-                        ffn2_bias_key=f"ernie.decoder.moe_layers.{i}.moe_ffn2_bias",
+                        gate_weight_key=
+                        f"ernie.decoder.moe_layers.{i}.gate_weight",
+                        ffn1_expert_weight_key=
+                        f"ernie.decoder.moe_layers.{i}.moe_ffn1_weight",
+                        ffn2_expert_weight_key=
+                        f"ernie.decoder.moe_layers.{i}.moe_ffn2_weight",
+                        ffn1_bias_key=
+                        f"ernie.decoder.moe_layers.{i}.moe_ffn1_bias",
+                        ffn2_bias_key=
+                        f"ernie.decoder.moe_layers.{i}.moe_ffn2_bias",
                         layer_idx=i,
                     ) for i in range(self.num_layers)
                 ])
@@ -315,15 +307,18 @@ class FusedTransformer(nn.Layer):
                         + ".{}.up_gate_proj.weight",
                         ffn2_expert_weight_key=f"ernie.layers.{i}.mlp.experts"
                         + ".{}.down_proj.weight",
-                        ffn1_expert_weight_scale_key=f"ernie.layers.{i}.mlp.experts" +
+                        ffn1_expert_weight_scale_key=
+                        f"ernie.layers.{i}.mlp.experts" +
                         ".{}.up_gate_proj.weight_quanter",
-                        ffn2_expert_weight_scale_key=f"ernie.layers.{i}.mlp.experts" +
+                        ffn2_expert_weight_scale_key=
+                        f"ernie.layers.{i}.mlp.experts" +
                         ".{}.down_proj.weight_quanter",
                         ffn1_expert_in_scale_key=f"ernie.layers.{i}.mlp.experts"
                         + ".{}.up_gate_proj.activation_quanter",
                         ffn2_expert_in_scale_key=f"ernie.layers.{i}.mlp.experts"
                         + ".{}.down_proj.activation_quanter",
-                        gate_correction_bias_key=f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
+                        gate_correction_bias_key=
+                        f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
                         ffn1_bias_key=None,
                         ffn2_bias_key=None,
                         ffn1_shared_weight_key=None,
@@ -376,7 +371,8 @@ class FusedTransformer(nn.Layer):
                         + ".{}.up_gate_proj.weight",
                         ffn2_expert_weight_key=f"ernie.layers.{i}.mlp.experts"
                         + ".{}.down_proj.weight",
-                        gate_correction_bias_key=f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
+                        gate_correction_bias_key=
+                        f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
                         ffn1_bias_key=None,
                         ffn2_bias_key=None,
                         ffn1_shared_weight_key=None,
@@ -391,36 +387,26 @@ class FusedTransformer(nn.Layer):
                 ])
 
         self.bias_residual_layernorm_layers = nn.LayerList([
-            Normalization(
-                inference_args=inference_args,
+            RMSNorm(
+                llm_config,
+                hidden_size=llm_config.model_config.hidden_size,
+                eps=epsilon,
                 layer_name=f"{base_model_prefix}.decoder.layers.{i + 1}.norm1",
-                weight_key=fmt_keys.norm_before_qkv_weight_keys[i + 1],
-                bias_key=(fmt_keys.norm_before_qkv_bias_keys[i + 1]
-                          if have_norm_bias else None),
-                norm_type=norm_type,
-                epsilon=epsilon,
                 linear_bias=(getattr(self.ffn2_layers[i], "linear_bias", None)
                              if not inference_args.moe_config.use_moe else
                              None),
-                quant_scale=self.act_scales.get(
-                    f"{base_model_prefix}.decoder.layers.{i + 1}.self_attn.qkv_proj.activation_quanter",
-                    -1,
-                ),
             ) for i in range(self.num_layers - 1)
         ])
 
-        self.last_layernorm = Normalization(
-            inference_args=inference_args,
+        self.last_layernorm = LayerNorm(
+            llm_config,
             layer_name="last_layernorm",
-            weight_key=None,
-            bias_key=None,
-            norm_type="layernorm",
-            epsilon=epsilon,
+            hidden_size=llm_config.model_config.hidden_size,
+            eps=epsilon,
             linear_bias=(getattr(self.ffn2_layers[self.num_layers -
                                                   1], "linear_bias", None)
                          if not inference_args.moe_config.use_moe else None),
         )
-
         logger.info(
             f"FusedTransformer inference_args {self.inference_args.__dict__}")
 

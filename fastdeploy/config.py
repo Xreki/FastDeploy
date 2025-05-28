@@ -126,6 +126,11 @@ class ModelConfig(PretrainedConfig):
         moe_use_gate_correction_bias: bool | None = None,
         moe_gate_corrrect_bias: bool | None = None,
         num_hidden_layers: int | None = None,
+        prefix_name="",
+        freeze_embedding=False,
+        rope_head_dim=None,
+        base_model_prefix=None,
+        use_moe=False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -191,6 +196,11 @@ class ModelConfig(PretrainedConfig):
         self.add_tail_layer = add_tail_layer
         self.use_var_len_flash_attn = use_var_len_flash_attn
         self.system_prompt_version = system_prompt_version
+        self.prefix_name = prefix_name
+        self.freeze_embedding = freeze_embedding
+        self.rope_head_dim = rope_head_dim
+        self.use_moe = use_moe
+        self.base_model_prefix = base_model_prefix
         if moe_layer_start_index is not None:
             self.moe_layer_start_index = moe_layer_start_index
         if moe_intermediate_sizes is not None:
@@ -295,6 +305,7 @@ class ParallelConfig:
     tensor_parallel_rank = None,  # TP rank ID
     tensor_parallel_degree = None,  # TP degree
     mp_size = 1,  # mp size
+    column_cut = False,  # (bool, optional): The embedding weight distributed on your gpu cards is divided by row or column. Defaults to False means divide by row. When vocab_size can not be divided by world_size but hidden_size can, we can consider split embedding weight by column.
 
 
 @dataclass
@@ -362,6 +373,80 @@ class LoadConfig:
 
     weight_keys: Optional[
         WeightKeys] = None,  # Keys stored in your model, which is used to retrieve weights from the state dict.
+
+    act_scales = None
+
+    def _post_init(self, model_config):
+        if self.weight_keys:
+            self.norm_layer_mapping = self._create_weight_key_by_layer_name(
+                model_config)
+        else:
+            self.norm_layer_mapping = {}
+        self.quant_scale_mapping = self._create_quant_scale_mapping(
+            model_config)
+
+    def _create_weight_key_by_layer_name(self, model_config) -> dict:
+        mapping = {}
+        weight_keys = self.weight_keys
+
+        num_layers = model_config.num_layers
+        for i in range(num_layers):
+            if i == 0:
+                layer_name = f"{model_config.base_model_prefix}.decoder.layers.0.norm1"
+                mapping[layer_name] = weight_keys.norm_before_qkv_weight_keys[
+                    0]
+            if i < num_layers:
+                layer_name = f"{model_config.base_model_prefix}.decoder.layers.{i}.norm2"
+                mapping[layer_name] = weight_keys.ffn_layernorm_weight_keys[i]
+
+        for i in range(num_layers - 1):
+            layer_name = f"{model_config.base_model_prefix}.decoder.layers.{i+1}.norm1"
+            mapping[layer_name] = weight_keys.norm_before_qkv_weight_keys[i +
+                                                                          1]
+
+        layer_name = f"{model_config.base_model_prefix}.decoder.norm"
+        if not model_config.use_moe:
+            mapping[
+                layer_name] = f"{model_config.base_model_prefix}.decoder.norm.weight"
+        else:
+            mapping[layer_name] = "ernie.norm.weight"
+
+        layer_name = f"{model_config.base_model_prefix}.e_norm"
+        mapping[layer_name] = f"{model_config.base_model_prefix}.e_norm.weight"
+        layer_name = f"{model_config.base_model_prefix}.h_norm"
+        mapping[layer_name] = f"{model_config.base_model_prefix}.h_norm.weight"
+
+        return mapping
+
+    def _create_quant_scale_mapping(self, model_config) -> dict:
+        mapping = {}
+        act_scales = self.act_scales
+        num_layers = model_config.num_layers
+        for i in range(num_layers):
+            if i == 0:
+                layer_name = f"{model_config.base_model_prefix}.decoder.layers.0.norm1"
+                mapping[layer_name] = act_scales.get(
+                    f"{model_config.base_model_prefix}.decoder.layers.0.self_attn.qkv_proj.activation_quanter",
+                    -1)
+            if i < num_layers:
+                layer_name = f"{model_config.base_model_prefix}.decoder.layers.{i}.norm2"
+                mapping[layer_name] = act_scales.get(
+                    f"{model_config.base_model_prefix}.decoder.layers.{i}.linear1.activation_quanter",
+                    -1)
+
+        for i in range(num_layers - 1):
+            layer_name = f"{model_config.base_model_prefix}.decoder.layers.{i+1}.norm1"
+            mapping[layer_name] = act_scales.get(
+                f"{model_config.base_model_prefix}.decoder.layers.{i + 1}.self_attn.qkv_proj.activation_quanter",
+                -1)
+
+        return mapping
+
+    def get_weight_key_by_layer_name(self, layer_name: str) -> Optional[str]:
+        return self.norm_layer_mapping.get(layer_name)
+
+    def get_quant_scale_by_layer_name(self, layer_name: str) -> Optional[int]:
+        return self.quant_scale_mapping.get(layer_name)
 
 
 @dataclass

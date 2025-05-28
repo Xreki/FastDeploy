@@ -28,13 +28,13 @@ from paddle.distributed import fleet
 from paddlenlp.transformers import PretrainedModel, register_base_model
 from paddlenlp.utils.log import logger
 
-from fastdeploy.config import WeightKeys, LLMConfig, ModelConfig
+from fastdeploy.config import LLMConfig, ModelConfig, WeightKeys
 from fastdeploy.inference_args import GenerationPhase, InferenceArgs
 from fastdeploy.platforms import current_platform
 
-from ..layers.embeddings import Embeddings
+from ..layers.embeddings import VocabParallelEmbedding
 from ..layers.lm_head import LMHead, LMHeadAVX, LMHeadNPU
-from ..layers.normalization import Normalization
+from ..layers.normalization import RMSNorm
 
 try:
     from paddlenlp.transformers.generation_utils import (
@@ -507,12 +507,6 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         else:
             self.norm_type = "layernorm"
 
-        if self.norm_type == "rmsnorm":
-            # rms_norm don't have norm_bias
-            self.have_norm_bias = False
-        elif self.norm_type == "layernorm":
-            self.have_norm_bias = True
-
         if activation == "SwiGLU":
             activation = "swiglu"
 
@@ -562,7 +556,8 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             moe_topk=moe_topk,
             moe_num_shared_experts=moe_num_shared_experts,
             moe_layer_start_index=moe_layer_start_index,
-            moe_use_ffn_shared_weight_and_bias=moe_use_ffn_shared_weight_and_bias,
+            moe_use_ffn_shared_weight_and_bias=
+            moe_use_ffn_shared_weight_and_bias,
             moe_group=moe_group,
             moe_quant_type=moe_quant_type,
             use_ep=use_ep,
@@ -577,6 +572,20 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         self.is_mtp = is_mtp
         base_model_prefix = "gpt.mtp" if is_mtp else "gpt"
         self.base_model_prefix = base_model_prefix
+
+        llm_config.model_config.max_position_embeddings = max_position_embeddings
+        llm_config.model_config.initializer_range = self.initializer_range
+        llm_config.parallel_config.sequence_parallel = sequence_parallel
+        llm_config.model_config.freeze_embedding = freeze_embedding
+        llm_config.model_config.weight_sharing = weight_sharing
+        llm_config.model_config.weight_sharing_add_bias = weight_sharing_add_bias
+        llm_config.parallel_config.use_ep = use_ep
+        llm_config.model_config.rope_head_dim = hidden_size // num_attention_heads
+        llm_config.model_config.prefix_name = "gpt.mtp" if is_mtp else "gpt"
+        llm_config.model_config.use_rope = use_rope
+        llm_config.parallel_config.column_cut = False
+        llm_config.model_config.base_model_prefix = base_model_prefix
+        llm_config.model_config.use_moe = use_moe
 
         if use_moe and moe_layer_start_index > 0:
             fmt_keys.norm_before_qkv_weight_keys = [
@@ -665,23 +674,13 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
                 for i in range(num_layers)
             ]
 
-        self.embeddings = Embeddings(
+        self.embeddings = VocabParallelEmbedding(
+            llm_config=llm_config,
+            num_embeddings=vocab_size,
+            embedding_dim=hidden_size,
+            params_dtype=paddle.get_default_dtype,
             layer_name=(f"{base_model_prefix}.embeddings.word_embeddings"
                         if not use_moe else "ernie.embed_tokens"),
-            vocab_size=vocab_size,
-            hidden_size=hidden_size,
-            hidden_dropout_prob=hidden_dropout_prob,
-            max_position_embeddings=max_position_embeddings,
-            type_vocab_size=type_vocab_size,
-            initializer_range=self.initializer_range,
-            sequence_parallel=sequence_parallel,
-            freeze_embedding=freeze_embedding,
-            weight_sharing=weight_sharing,
-            weight_sharing_add_bias=weight_sharing_add_bias,
-            use_rope=use_rope,
-            rope_head_dim=hidden_size // num_attention_heads,
-            prefix_name="gpt.mtp" if is_mtp else "gpt",
-            use_ep=self.inference_args.use_ep,
         )
 
         # get ring_id
@@ -759,8 +758,9 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
                 "use_gemm_dequant":
                 use_gemm_dequant
             })
-        elif ("float8" in self.inference_args.weight_dtype and 
-            self.inference_args.act_dtype == self.inference_args.weight_dtype):
+        elif ("float8" in self.inference_args.weight_dtype
+              and self.inference_args.act_dtype
+              == self.inference_args.weight_dtype):
             quant_cls = get_quantization_config("wfp8afp8")
             llm_config.quant_config = quant_cls.from_config({
                 "weight_scale_dict":
@@ -777,6 +777,12 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         llm_config.model_config.act_dtype = self.inference_args.act_dtype  # we will remove act_dtype later
         llm_config.parallel_config.mp_size = mp_size
         llm_config.load_config.weight_keys = fmt_keys
+        llm_config.quant_config.quant_round_type = self.inference_args.quant_round_type
+        llm_config.quant_config.quant_max_bound = self.inference_args.quant_max_bound
+        llm_config.quant_config.quant_min_bound = self.inference_args.quant_min_bound
+        llm_config.load_config.act_scales = self.inference_args.act_scale_dict
+        llm_config.load_config._post_init(llm_config.model_config)
+
         if self.inference_args.use_avx512:
             self.decoder = FusedAvxTransformer(
                 inference_args=self.inference_args,
@@ -796,45 +802,35 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
                 act_method=activation,
                 rope_theta=rope_theta,
                 rope_3d=rope_3d,
-                norm_type=self.norm_type,
                 ffn1_concat=self.ffn1_concat,
                 use_smooth_quant=self.use_smooth_quant,
                 fuse_ffn_act=self.fuse_ffn_act,
                 ring_id=ring_id,
-                have_norm_bias=self.have_norm_bias,
                 return_all_hidden_states=self.return_all_hidden_states,
                 base_model_prefix=base_model_prefix,
                 draft_type=draft_type,
                 llm_config=llm_config,
             )
 
-            self.norm = Normalization(
-                inference_args=self.inference_args,
+            self.norm = RMSNorm(
+                llm_config,
+                hidden_size=llm_config.model_config.hidden_size,
+                eps=1e-5,
                 layer_name=f"{base_model_prefix}.decoder.norm",
-                weight_key=(f"{self.base_model_prefix}.decoder.norm.weight"
-                            if not self.use_moe else "ernie.norm.weight"),
-                bias_key=(f"{self.base_model_prefix}.decoder.norm.bias" if
-                          self.have_norm_bias and not self.is_mtp else None),
-                norm_type=self.norm_type if not self.is_mtp else "rmsnorm",
-                epsilon=1e-5,
             )
 
             if is_mtp:
-                self.e_norm = Normalization(
-                    inference_args=self.inference_args,
+                self.e_norm = RMSNorm(
+                    llm_config,
+                    hidden_size=llm_config.model_config.hidden_size,
+                    eps=1e-5,
                     layer_name=f"{base_model_prefix}.e_norm",
-                    weight_key=f"{base_model_prefix}.e_norm.weight",
-                    bias_key=None,
-                    norm_type="rmsnorm",
-                    epsilon=1e-5,
                 )
-                self.h_norm = Normalization(
-                    inference_args=self.inference_args,
+                self.h_norm = RMSNorm(
+                    llm_config,
+                    hidden_size=llm_config.model_config.hidden_size,
+                    eps=1e-5,
                     layer_name=f"{base_model_prefix}.h_norm",
-                    weight_key=f"{base_model_prefix}.h_norm.weight",
-                    bias_key=None,
-                    norm_type="rmsnorm",
-                    epsilon=1e-5,
                 )
 
                 from paddle.distributed.fleet.meta_parallel import \
@@ -1180,7 +1176,8 @@ class ErnieBotForGeneration(nn.Layer):
         if self.gpt.inference_args.use_avx512:
             self.lm_head = LMHeadAVX(
                 norm_layer_name=f"{self.base_model_prefix}.decoder.norm",
-                linear_layer_name=f"{self.base_model_prefix}.output_linear.out_linear",
+                linear_layer_name=
+                f"{self.base_model_prefix}.output_linear.out_linear",
                 input_dim=self.hidden_size,
                 output_dim=self.gpt.vocab_size,
                 have_norm_bias=self.have_norm_bias,
@@ -1191,7 +1188,8 @@ class ErnieBotForGeneration(nn.Layer):
         elif current_platform.is_npu():
             self.lm_head = LMHeadNPU(
                 norm_layer_name=f"{self.base_model_prefix}.decoder.norm",
-                linear_layer_name=f"{self.base_model_prefix}.output_linear.out_linear",
+                linear_layer_name=
+                f"{self.base_model_prefix}.output_linear.out_linear",
                 input_dim=self.hidden_size,
                 output_dim=self.gpt.vocab_size,
                 epsilon=1e-5,
@@ -1226,8 +1224,10 @@ class ErnieBotForGeneration(nn.Layer):
             else:
                 self.lm_head = LMHead(
                     layer_name=lmhead_name,
-                    linear_weight_key=f"{self.base_model_prefix}.output_linear.out_linear.weight",
-                    linear_bias_key=(f"{self.base_model_prefix}.output_linear.out_linear.bias"
+                    linear_weight_key=
+                    f"{self.base_model_prefix}.output_linear.out_linear.weight",
+                    linear_bias_key=
+                    (f"{self.base_model_prefix}.output_linear.out_linear.bias"
                      if self.have_norm_bias else None),
                     input_dim=self.hidden_size,
                     output_dim=self.gpt.vocab_size,
