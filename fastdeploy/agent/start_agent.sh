@@ -56,12 +56,13 @@ for YAML_FILE in "${FILES[@]}"; do
 done
 
 # 参数检查
-if [ $# -lt 3 ] || [ $# -gt 4 ]; then
-    echo "用法: $0 <卡数> <实例数> <任务ID> [运行模式]"
+if [ $# -lt 3 ] || [ $# -gt 5 ]; then
+    echo "用法: $0 <卡数> <实例数> <任务ID> [运行模式] [起始卡数]"
     echo "卡数: 1-8, 表示每个实例使用的GPU数量"
     echo "实例数: 要启动的实例数量"
     echo "任务ID: job id"
     echo "运行模式: (可选) 指定运行模式，默认为空"
+    echo "起始卡数: (可选) 指定起始卡，默认为0"
     exit 1
 fi
 
@@ -69,6 +70,7 @@ CARDS_PER_INSTANCE=$1
 NUM_INSTANCES=$2
 JOB_ID=$3
 RUN_MODE=${4:-""}  # 如果未提供第四个参数，则默认为空字符串
+START_CARDS=${5:-0}
 
 export RUN_MODE="$RUN_MODE"
 
@@ -91,7 +93,7 @@ for ((i=0; i<$NUM_INSTANCES; i++)); do
     # 生成device_id字符串,每个实例递增
     DEVICE_ID=""
     for ((j=0; j<$CARDS_PER_INSTANCE; j++)); do
-        curr_id=$((i * CARDS_PER_INSTANCE + j))
+        curr_id=$((START_CARDS + i * CARDS_PER_INSTANCE + j))
         if [ $j -eq 0 ]; then
             DEVICE_ID="$curr_id"
         else
