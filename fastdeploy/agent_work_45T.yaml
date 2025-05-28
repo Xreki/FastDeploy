@@ -1,3 +1,4 @@
+# model: "/root/paddlejob/workspace/env_run/gaoziyuan/gexiao_TP8_45t"
 model: "/shared_ipc_meta/"
 max_model_len: 33792
 max_num_seqs: 32

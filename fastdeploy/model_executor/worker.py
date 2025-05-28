@@ -270,7 +270,7 @@ class Worker:
 
 
             if self.rank % mp_num_per_node == 0:
-                if self.engine_worker_queue.num_tasks() > 0:
+                if self.engine_worker_queue.num_tasks() > 0 and self.infer_engine.prefill_finished():
                     if self.nnode > 1:
                         self.engine_worker_queue.read_finish_flag.set(1)
                     else:
@@ -307,8 +307,8 @@ class Worker:
             self.infer_engine.share_inputs["infer_seed"].add_(infer_seed_increment)
             self.infer_engine.share_inputs["infer_seed"][:] %= self.MAX_INFER_SEED
 
+            self.infer_engine.update_chunked_prefill(req_dicts[0].token_chunk_size)
             self.step_cuda()
-
 
     def determine_num_available_blocks(self):
         """Profiles the peak memory usage of the model to determine how many
@@ -437,6 +437,7 @@ def parse_args():
     parser.add_argument("--dynamic_load_weight", type=int, default=0, help="dynamic load weight or not")
     parser.add_argument("--pad_token_id", type=int, default=-1, help="pad token id")
     parser.add_argument("--eos_tokens_lens", type=int, default=2, help="eos token lens")
+    parser.add_argument("--enable_chunked_prefill", action='store_true', help="enable chunked prefill")
     args = parser.parse_args()
     return args
 

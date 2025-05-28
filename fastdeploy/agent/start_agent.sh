@@ -15,19 +15,21 @@ source "${ROLLOUT_WORKER_ROOT}/${FASTDEPLOY_ENV_NAME}/bin/activate"
 
 
 # 参数检查
-if [ $# -ne 3 ]; then
-    echo "用法: $0 <卡数> <实例数> <任务ID>"
+if [ $# -lt 3 ] || [ $# -gt 4 ]; then
+    echo "用法: $0 <卡数> <实例数> <任务ID> [运行模式]"
     echo "卡数: 1-8, 表示每个实例使用的GPU数量"
     echo "实例数: 要启动的实例数量"
     echo "任务ID: job id"
+    echo "运行模式: (可选) 指定运行模式，默认为空"
     exit 1
 fi
-
-
 
 CARDS_PER_INSTANCE=$1
 NUM_INSTANCES=$2
 JOB_ID=$3
+RUN_MODE=${4:-""}  # 如果未提供第四个参数，则默认为空字符串
+
+export RUN_MODE="$RUN_MODE"
 
 # 验证卡数参数
 if [ $CARDS_PER_INSTANCE -lt 1 ] || [ $CARDS_PER_INSTANCE -gt 8 ]; then
