@@ -65,7 +65,7 @@ class FusedTransformer(nn.Layer):
         have_norm_bias=False,
         ring_id=-1,
         return_all_hidden_states=False,
-        base_model_prefix="gpt",
+        base_model_prefix="ernie",
         draft_type="",
     ):
         """
