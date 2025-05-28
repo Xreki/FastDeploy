@@ -80,6 +80,9 @@ class ModelRunner(ModelRunnerBase):
         predictor_args.append_attn = True
 
         local_test = False
+        if self.model_cfg.run_mode == "test":
+            local_test = True
+        
         if dynamic_load_weight:
             from paddlenlp.experimental.transformers.inference_model import InferenceModel
             self.model = InferenceModel(predictor_args, model_args,
