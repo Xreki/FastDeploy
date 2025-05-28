@@ -21,6 +21,11 @@ for YAML_FILE in "${FILES[@]}"; do
 
   SKIP_SCHEDULER=false
 
+  if [ ! -f "$YAML_FILE" ]; then
+    echo "文件 $YAML_FILE 不存在，跳过。"
+    continue
+  fi
+
   # 控制开关
   if [ "$SCHEDULER_SWITCH" != "true" ]; then
     echo "SCHEDULER_SWITCH 不是 true，跳过写入 $YAML_FILE。"
