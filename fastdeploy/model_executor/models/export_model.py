@@ -145,6 +145,7 @@ def build_stream_line_model(
     output_via_mq: bool = True,
     use_safetensors: bool = False,
     embeddings_column_cut: bool = False,
+    use_empty_parameter: bool = False,
 ):
     """
     Build a fused inference model
@@ -185,11 +186,11 @@ def build_stream_line_model(
         tokenizer = ErnieBotTokenizer.from_pretrained(model_path)
 
     config, _ = PretrainedConfig.get_config_dict(model_path)
-    erine_config = ModelConfig.from_dict(config)
+    ernie_config = ModelConfig.from_dict(config)
     tensor_parallel_rank, tensor_parallel_degree = llm_utils.init_dist_env()
-    erine_config.tensor_parallel_rank = tensor_parallel_rank
-    erine_config.tensor_parallel_degree = tensor_parallel_degree
-    erine_config.is_mtp = draft_type in ["eagle", "mtp"]
+    ernie_config.tensor_parallel_rank = tensor_parallel_rank
+    ernie_config.tensor_parallel_degree = tensor_parallel_degree
+    ernie_config.is_mtp = draft_type in ["eagle", "mtp"]
     # use the length of tokenizer as the origin vocab size
     ori_vocab_size = len(tokenizer)
 
@@ -239,12 +240,14 @@ def build_stream_line_model(
 
     use_moe = config.get("moe_layer_start_index", num_layers) < num_layers
 
-    if use_fake_parameter:
+    if use_empty_parameter:
         context = paddle.LazyGuard()
+    elif use_fake_parameter:
+        context = contextlib.nullcontext()
     elif use_safetensors:
         context = paddle.LazyGuard()
         state_dict = load_tp_checkpoint(
-            model_path, ErnieBotFusedModel, erine_config, return_numpy=True
+            model_path, ErnieBotFusedModel, ernie_config, return_numpy=True
         )
     elif use_moe:
         tensor_parallel_degree = dist.get_world_size()
@@ -327,7 +330,7 @@ def build_stream_line_model(
         state_dict = load_tp_checkpoint(
                 model_path,
                 ErnieBotFusedModel,
-                erine_config,
+                ernie_config,
                 return_numpy=True,
             )
     use_rmsnorm = config.get("use_rmsnorm", False)
@@ -395,7 +398,7 @@ def build_stream_line_model(
             weight_block_size=config.get("weight_block_size", [-1, -1]),
             scale_dir=scale_dir,
             output_via_mq=output_via_mq,
-            erine_config=erine_config,
+            ernie_config=ernie_config,
             embeddings_column_cut=embeddings_column_cut,
         )
     if use_beam_search:

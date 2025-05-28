@@ -115,14 +115,12 @@ class AvxFusedTransformer(nn.Layer):
 
         for i in range(self.inference_args.num_layers):
             ln_weight = self.create_parameter(
-                attr=paddle.ParamAttr(name=f"gpt.decoder.layers.{i}.norm1.weight"),
                 shape=[self.inference_args.hidden_size],
                 dtype=self._dtype,
             )
             ln_bias = None
             if self._with_ln_bias:
                 ln_bias = self.create_parameter(
-                    attr=paddle.ParamAttr(name=f"gpt.decoder.layers.{i}.norm1.bias"),
                     shape=[self.inference_args.hidden_size],
                     is_bias=True,
                     dtype=self._dtype,
@@ -137,9 +135,6 @@ class AvxFusedTransformer(nn.Layer):
                     )
                     * self.head_dim,
                 ],
-                attr=paddle.ParamAttr(
-                    name=f"gpt.decoder.layers.{i}.self_attn.qkv_proj.weight"
-                ),
                 dtype=self._dtype,
                 is_bias=False,
             )
@@ -154,9 +149,6 @@ class AvxFusedTransformer(nn.Layer):
                         )
                         * self.head_dim
                     ],
-                    attr=paddle.ParamAttr(
-                        name=f"gpt.decoder.layers.{i}.self_attn.qkv_proj.bias"
-                    ),
                     dtype=self._dtype,
                     is_bias=True,
                 )
@@ -166,9 +158,6 @@ class AvxFusedTransformer(nn.Layer):
                     self.inference_args.num_attention_heads * self.head_dim,
                     self.inference_args.hidden_size,
                 ],
-                attr=paddle.ParamAttr(
-                    name=f"gpt.decoder.layers.{i}.self_attn.out_proj.weight"
-                ),
                 dtype=self._dtype,
                 is_bias=False,
             )
@@ -176,16 +165,12 @@ class AvxFusedTransformer(nn.Layer):
             if self._with_out_linear_bias:
                 linear_bias = self.create_parameter(
                     shape=[self.inference_args.hidden_size],
-                    attr=paddle.ParamAttr(
-                        name=f"gpt.decoder.layers.{i}.self_attn.out_proj.bias"
-                    ),
                     dtype=self._dtype,
                     is_bias=True,
                 )
 
             ffn_ln_weight = self.create_parameter(
                 shape=[self.inference_args.hidden_size],
-                attr=paddle.ParamAttr(name=f"gpt.decoder.layers.{i}.norm2.weight"),
                 is_bias=False,
                 dtype=self._dtype,
             )
@@ -194,7 +179,6 @@ class AvxFusedTransformer(nn.Layer):
             if self._with_ffn_ln_bias:
                 ffn_ln_bias = self.create_parameter(
                     shape=[self.inference_args.hidden_size],
-                    attr=paddle.ParamAttr(name=f"gpt.decoder.layers.{i}.norm2.bias"),
                     is_bias=True,
                     dtype=self._dtype,
                 )
@@ -204,7 +188,6 @@ class AvxFusedTransformer(nn.Layer):
                     self.inference_args.hidden_size,
                     self.inference_args.ffn_hidden_size,
                 ],
-                attr=paddle.ParamAttr(name=f"gpt.decoder.layers.{i}.gate.weight"),
                 dtype=self._dtype,
                 is_bias=False,
             )
@@ -213,7 +196,6 @@ class AvxFusedTransformer(nn.Layer):
                     self.inference_args.hidden_size,
                     self.inference_args.ffn_hidden_size,
                 ],
-                attr=paddle.ParamAttr(name=f"gpt.decoder.layers.{i}.up.weight"),
                 dtype=self._dtype,
                 is_bias=False,
             )
@@ -223,13 +205,11 @@ class AvxFusedTransformer(nn.Layer):
             if self._with_gate_up_bias:
                 gate_bias = self.create_parameter(
                     shape=[self.inference_args.ffn_hidden_size],
-                    attr=paddle.ParamAttr(name=f"gpt.decoder.layers.{i}.gate.bias"),
                     dtype=self._dtype,
                     is_bias=True,
                 )
                 up_bias = self.create_parameter(
                     shape=[self.inference_args.ffn_hidden_size],
-                    attr=paddle.ParamAttr(name=f"gpt.decoder.layers.{i}.up.bias"),
                     dtype=self._dtype,
                     is_bias=True,
                 )
@@ -239,7 +219,6 @@ class AvxFusedTransformer(nn.Layer):
                     self.inference_args.ffn_hidden_size,
                     self.inference_args.hidden_size,
                 ],
-                attr=paddle.ParamAttr(name=f"gpt.decoder.layers.{i}.linear2.weight"),
                 dtype=self._dtype,
                 is_bias=False,
             )
@@ -248,7 +227,6 @@ class AvxFusedTransformer(nn.Layer):
             if self._with_ffn2_bias:
                 ffn2_bias = self.create_parameter(
                     shape=[self.inference_args.hidden_size],
-                    attr=paddle.ParamAttr(name=f"gpt.decoder.layers.{i}.linear2.bias"),
                     dtype=self._dtype,
                     is_bias=True,
                 )
@@ -293,13 +271,13 @@ class AvxFusedTransformer(nn.Layer):
         for i in range(self.inference_args.num_layers):
             # ln
             ln_weight_tensor = paddle.cast(
-                get_tensor(state_dict.pop(f"gpt.decoder.layers.{i}.norm1.weight")),
+                get_tensor(state_dict.pop(f"ernie.decoder.layers.{i}.norm1.weight")),
                 self._dtype,
             )
             self.ln_weights[i].set_value(ln_weight_tensor)
             if self._with_ln_bias:
                 ln_bias_tensor = paddle.cast(
-                    get_tensor(state_dict.pop(f"gpt.decoder.layers.{i}.norm1.bias")),
+                    get_tensor(state_dict.pop(f"ernie.decoder.layers.{i}.norm1.bias")),
                     self._dtype,
                 )
                 self.ln_biases[i].set_value(ln_bias_tensor)
@@ -309,7 +287,7 @@ class AvxFusedTransformer(nn.Layer):
                 qkv_proj_weight = (
                     get_tensor(
                         state_dict.pop(
-                            f"gpt.decoder.layers.{i}.self_attn.qkv_proj.weight"
+                            f"ernie.decoder.layers.{i}.self_attn.qkv_proj.weight"
                         )
                     )
                     .reshape(
@@ -326,7 +304,7 @@ class AvxFusedTransformer(nn.Layer):
                 )
             else:
                 qkv_proj_weight = get_tensor(
-                    state_dict.pop(f"gpt.decoder.layers.{i}.self_attn.qkv_proj.weight")
+                    state_dict.pop(f"ernie.decoder.layers.{i}.self_attn.qkv_proj.weight")
                 ).reshape(
                     [
                         self.inference_args.hidden_size,
@@ -373,7 +351,7 @@ class AvxFusedTransformer(nn.Layer):
                     qkv_bias = (
                         get_tensor(
                             state_dict.pop(
-                                f"gpt.decoder.layers.{i}.self_attn.qkv_proj.bias"
+                                f"ernie.decoder.layers.{i}.self_attn.qkv_proj.bias"
                             )
                         )
                         .reshape(
@@ -391,7 +369,7 @@ class AvxFusedTransformer(nn.Layer):
                     # GQA
                     qkv_bias = get_tensor(
                         state_dict.pop(
-                            f"gpt.decoder.layers.{i}.self_attn.qkv_proj.bias"
+                            f"ernie.decoder.layers.{i}.self_attn.qkv_proj.bias"
                         )
                     ).reshape(
                         [
@@ -434,7 +412,7 @@ class AvxFusedTransformer(nn.Layer):
             # out_linear
             linear_weight_tensor = paddle.cast(
                 get_tensor(
-                    state_dict.pop(f"gpt.decoder.layers.{i}.self_attn.out_proj.weight")
+                    state_dict.pop(f"ernie.decoder.layers.{i}.self_attn.out_proj.weight")
                 ),
                 self._dtype,
             )
@@ -443,7 +421,7 @@ class AvxFusedTransformer(nn.Layer):
                 linear_biase_tensor = paddle.cast(
                     get_tensor(
                         state_dict.pop(
-                            f"gpt.decoder.layers.{i}.self_attn.out_proj.bias"
+                            f"ernie.decoder.layers.{i}.self_attn.out_proj.bias"
                         )
                     ),
                     self._dtype,
@@ -451,19 +429,19 @@ class AvxFusedTransformer(nn.Layer):
                 self.linear_biases[i].set_value(linear_biase_tensor)
             # ffnln
             ffn_ln_weight_tensor = paddle.cast(
-                get_tensor(state_dict.pop(f"gpt.decoder.layers.{i}.norm2.weight")),
+                get_tensor(state_dict.pop(f"ernie.decoder.layers.{i}.norm2.weight")),
                 self._dtype,
             )
             self.ffn_ln_weights[i].set_value(ffn_ln_weight_tensor)
             if self._with_ffn_ln_bias:
                 ffn_ln_biase_tensor = paddle.cast(
-                    get_tensor(state_dict.pop(f"gpt.decoder.layers.{i}.norm2.bias")),
+                    get_tensor(state_dict.pop(f"ernie.decoder.layers.{i}.norm2.bias")),
                     self._dtype,
                 )
                 self.ffn_ln_biases[i].set_value(ffn_ln_biase_tensor)
             # gate and up
             ffn1_weight_tensor = paddle.to_tensor(
-                state_dict[f"gpt.decoder.layers.{i}.linear1.weight"]
+                state_dict[f"ernie.decoder.layers.{i}.linear1.weight"]
             )
             converted_ffn1_weight_tensor = paddle.zeros(
                 shape=list(ffn1_weight_tensor.shape),
@@ -483,7 +461,7 @@ class AvxFusedTransformer(nn.Layer):
             self.up_weights[i].set_value(gate_up_list[1])
             if self._with_gate_up_bias:
                 ffn1_bias_tensor = paddle.to_tensor(
-                    state_dict[f"gpt.decoder.layers.{i}.linear1.bias"]
+                    state_dict[f"ernie.decoder.layers.{i}.linear1.bias"]
                 )
                 converted_ffn1_bias_tensor = paddle.zeros(
                     shape=list(ffn1_bias_tensor.shape),
@@ -498,13 +476,13 @@ class AvxFusedTransformer(nn.Layer):
                 self.up_biases[i].set_value(gate_up_bias_list[1])
             # ffn2
             ffn2_weight_tensor = paddle.cast(
-                get_tensor(state_dict.pop(f"gpt.decoder.layers.{i}.linear2.weight")),
+                get_tensor(state_dict.pop(f"ernie.decoder.layers.{i}.linear2.weight")),
                 self._dtype,
             )
             self.ffn2_weights[i].set_value(ffn2_weight_tensor)
             if self._with_ln_bias:
                 ffn2_biase_tensor = paddle.cast(
-                    get_tensor(state_dict.pop(f"gpt.decoder.layers.{i}.linear2.bias")),
+                    get_tensor(state_dict.pop(f"ernie.decoder.layers.{i}.linear2.bias")),
                     self._dtype,
                 )
                 self.ffn2_biases[i].set_value(ffn2_biase_tensor)

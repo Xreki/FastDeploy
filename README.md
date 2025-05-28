@@ -1,4 +1,13 @@
-# FastDeploy: Large Language Model Serving
+# FastDeploy: 大模型推理部署工具
+
+FastDeploy 是飞桨（PaddlePaddle）开源的面向大模型的推理部署工具。当前，FastDeploy 支持 ERNIE-45-Turbo、ERNIE-X1-Turbo 和 ERNIE-45-Turbo-VL 模型，其推理部署功能涵盖：
+
+- 一行命令即可快速实现模型的服务化部署，并支持流式生成
+- 利用张量并行技术加速模型推理
+- 支持 PagedAttention 与 continuous batching（动态批处理）
+- 兼容 OpenAI 的 HTTP 协议
+- 提供 Weight only int8/int4 无损压缩方案
+- 支持 Prometheus Metrics 指标
 
 ## 环境依赖
 - A800/H800/H100
@@ -70,7 +79,7 @@ FastDeploy提供与OpenAI完全兼容的服务API(字段`model`与`api_key`目�
 
 # 代码说明
 - [代码目录说明](docs/code_guide.md)
-- FastDeploy的使用中存在任何建议和问题，可随时如流反馈。
+- FastDeploy的使用中存在任何建议和问题，可随时如流反馈，如流群8339034。
 
 # 开源说明
 

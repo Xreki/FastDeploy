@@ -191,6 +191,21 @@ class ModelRunnerBase(ABC):
                 [self.model_cfg.max_stop_seqs_num, self.model_cfg.stop_seqs_max_len], -1, **int64_config
             ),
         })
+    
+    def update_chunked_prefill(self, token_chunk_size=384):
+        """
+        更新chunked prefill相关参数
+        """
+        if not self.args.enable_chunked_prefill:
+            return
+        
+        raise NotImplementedError("currently chunked_prefill is not supported.")
+    
+    def prefill_finished(self):
+        """
+        判断是否已经完成了prefill操作
+        """
+        return True
 
     @abstractmethod
     def init_rotary_position_embedding(self, max_model_len):

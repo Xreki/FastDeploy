@@ -65,6 +65,7 @@ class DynamicLoadModel(nn.Layer):
         vision_model=None,
         resampler_model=None,
         use_for_train: bool = False,
+        use_empty_parameter: bool = True,
         **kwargs,
     ):
         """
@@ -95,6 +96,7 @@ class DynamicLoadModel(nn.Layer):
         self.kwargs = kwargs
         self.pad_vocab = pad_vocab
         self.output_via_mq = output_via_mq
+        self.use_empty_parameter = use_empty_parameter
 
         self.load_model_from_ipc = load_model_from_ipc
         self.first_load = True
@@ -199,6 +201,7 @@ class DynamicLoadModel(nn.Layer):
                                                   False),
             tokenizer=self.tokenizer,
             pad_vocab=self.pad_vocab,
+            use_empty_parameter=self.use_empty_parameter,
         )
         model.eval()
 
@@ -285,9 +288,10 @@ class DynamicLoadModel(nn.Layer):
             infer_model_state_dict = self.model.state_dict()
 
             for name, param in state_dict.items():
-                if name in infer_model_state_dict:
+                replace_name = name.replace("gpt.", "ernie.")
+                if replace_name in infer_model_state_dict:
                     logger.info(f"Updating model parameter: {name}")
-                    update_param = infer_model_state_dict[name]
+                    update_param = infer_model_state_dict[replace_name]
 
                     if update_param.dtype != param.dtype:
                         raise TypeError(
