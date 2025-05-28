@@ -465,7 +465,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         scale_dir="None",
         output_via_mq=True,
         embeddings_column_cut=False,
-        erine_config=None,
+        ernie_config=None,
     ):
         """
         Initializer for the ErnieBotFusedModel class.
@@ -503,7 +503,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             use_fast_ffn (bool): Whether to use a fast feed-forward network.
             use_avx512 (bool): Whether to use AVX512 instructions.
         """
-        super(ErnieBotFusedModel, self).__init__(erine_config)
+        super(ErnieBotFusedModel, self).__init__(ernie_config)
         self.msg_queue_id = msg_queue_id
         self.initializer_range = initializer_range
         self.hidden_size = hidden_size
