@@ -57,20 +57,20 @@ done
 
 # 参数检查
 if [ $# -lt 3 ] || [ $# -gt 5 ]; then
-    echo "用法: $0 <卡数> <实例数> <任务ID> [运行模式] [起始卡数]"
+    echo "用法: $0 <卡数> <实例数> <任务ID> [起始卡数] [运行模式]"
     echo "卡数: 1-8, 表示每个实例使用的GPU数量"
     echo "实例数: 要启动的实例数量"
     echo "任务ID: job id"
-    echo "运行模式: (可选) 指定运行模式，默认为空"
     echo "起始卡数: (可选) 指定起始卡，默认为0"
+    echo "运行模式: (可选) 指定运行模式，默认为空"
     exit 1
 fi
 
 CARDS_PER_INSTANCE=$1
 NUM_INSTANCES=$2
 JOB_ID=$3
-RUN_MODE=${4:-""}  # 如果未提供第四个参数，则默认为空字符串
-START_CARDS=${5:-0}
+START_CARDS=${4:-0}
+RUN_MODE=${5:-""}  # 如果未提供第四个参数，则默认为空字符串
 
 export RUN_MODE="$RUN_MODE"
 
