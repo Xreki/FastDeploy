@@ -40,23 +40,41 @@ class ModelRunner(ModelRunnerBase):
 
     def _load_model(self, model_name, dynamic_load_weight):
         use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
-        local_test = False
-        if dynamic_load_weight and use_pip_eff_llm is not None:
-            from efficientllm.models.efficientllm_model import EfficientModel
-            efficientllm_model = EfficientModel(
-                model_name_or_path=self.args.model_name_or_path,
-                dtype=self.args.dtype,
-                block_size=self.args.block_size,
-                max_len=self.args.max_model_len,
-                gemm_method="weight_only_int8",
-                moe_quant_type="weight_only_int8",
-                load_model_from_ipc=dynamic_load_weight,
-                nranks=self.nranks,
-                rank=self.rank,
-                embeddings_column_cut=False,
-                local_test=local_test,
-            )
-            efficientllm_model.eval()
+        
+        local_test = True
+        if dynamic_load_weight:
+            if use_pip_eff_llm:
+                from efficientllm.models.efficientllm_model import EfficientModel
+                efficientllm_model = EfficientModel(
+                    model_name_or_path=self.args.model_name_or_path,
+                    dtype=self.args.dtype,
+                    block_size=self.args.block_size,
+                    max_len=self.args.max_model_len,
+                    gemm_method="weight_only_int8",
+                    moe_quant_type="weight_only_int8",
+                    load_model_from_ipc=dynamic_load_weight,
+                    nranks=self.nranks,
+                    rank=self.rank,
+                    embeddings_column_cut=False,
+                    local_test=local_test,
+                )
+                efficientllm_model.eval()
+            else:
+                from ..models.dynamic_load_model import DynamicLoadModel
+                efficientllm_model = DynamicLoadModel(
+                    model_name_or_path=self.args.model_name_or_path,
+                    dtype=self.args.dtype,
+                    block_size=self.args.block_size,
+                    max_len=self.args.max_model_len,
+                    gemm_method="weight_only_int8",
+                    moe_quant_type="weight_only_int8",
+                    load_model_from_ipc=dynamic_load_weight,
+                    nranks=self.nranks,
+                    rank=self.rank,
+                    embeddings_column_cut=False,
+                    local_test=local_test
+                )
+
             self.model = efficientllm_model
         else:
             if use_pip_eff_llm is None:
