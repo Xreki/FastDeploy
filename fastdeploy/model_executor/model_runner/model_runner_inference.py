@@ -50,7 +50,7 @@ class ModelRunner(ModelRunnerBase):
                     dtype=self.args.dtype,
                     block_size=self.args.block_size,
                     max_len=self.args.max_model_len,
-                    gemm_method="weight_only_int8",
+                    export_model_type="W8A16C16",
                     moe_quant_type="weight_only_int8",
                     load_model_from_ipc=dynamic_load_weight,
                     nranks=self.nranks,
