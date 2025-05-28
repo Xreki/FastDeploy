@@ -549,7 +549,7 @@ class LLMEngine(object):
             "TRAINER_INSTANCES_NUM": 1,
             "TRAINER_INSTANCES": "0.0.0.0",
             "ENABLE_EFFICIENTLLM_LOAD_MODEL_CONCURRENCY": 0,
-            "LOAD_STATE_DICT_THREAD_NUM": 8,
+            "LOAD_STATE_DICT_THREAD_NUM": len(self.cfg.device_ids.split(',')),
             "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION": "python",
             "FLAGS_use_append_attn": 1,
             "NCCL_ALGO": "Ring",

@@ -30,6 +30,10 @@ import numpy as np
 from paddlenlp.transformers import PretrainedTokenizer
 from paddlenlp.transformers.model_utils import _add_variant
 from paddlenlp.transformers.utils import paddlenlp_load
+from paddlenlp.transformers.model_utils import load_tp_checkpoint
+from safetensors import safe_open
+
+
 
 from paddlenlp.utils.env import (
     PADDLE_WEIGHTS_INDEX_NAME,
@@ -1214,3 +1218,71 @@ def model_convert_fp8(model_path, device=None):
         json.dump(weight_scales, weight_scales_file)
 
     paddle.save(params_states, new_path)
+
+def get_safe_tensor_file(model_path):
+    """
+    get_safe_tensor_file
+    """
+    with open(
+        os.path.join(model_path, "model.safetensors.index.json"), "r"
+    ) as f:
+        weight_map = json.load(f)["weight_map"]
+        safe_tensor_list = list(set(weight_map.values()))
+        key_name_list = list(set(weight_map.keys()))
+        safe_tensor_list = [
+            os.path.join(model_path, v) for v in safe_tensor_list
+        ]
+
+    return key_name_list, safe_tensor_list
+
+
+def safetensors_weights_iterator(
+    safe_tensor_list: list[str],
+):
+    """
+    safetensors_weights_iterator
+    """
+    for st_file in tqdm(
+        safe_tensor_list,
+        desc="Loading safetensors checkpoint shards",
+    ):
+        with safe_open(st_file, framework="np") as f:
+            for name in f.keys():  # noqa: SIM118
+                param = f.get_tensor(name)
+                yield name, param
+
+
+def get_state_dict(model_path, config):
+    """
+    get_sate_dict
+    """
+    state_dict = {}
+    _, safe_tensor_list = get_safe_tensor_file(
+        os.path.join(model_path, f"rank{config.tensor_parallel_rank}")
+    )
+    weights_iterator = safetensors_weights_iterator(safe_tensor_list)
+    for name, weight in weights_iterator:
+        state_dict[name] = weight
+    return state_dict
+
+
+def load_checkpoint(model_path, cls, config, return_numpy=True):
+    """
+    load_checkpoint
+    """
+    rank_dirs = [
+        f
+        for f in os.listdir(model_path)
+        if f.startswith("rank") and os.path.isdir(os.path.join(model_path, f))
+    ]
+    if len(rank_dirs) > 1:
+        if config.tensor_parallel_degree != len(rank_dirs):
+            raise ValueError(
+                f"Your model only supports loading with tp{len(rank_dirs)}"
+            )
+        state_dict = get_state_dict(model_path, config)
+    else:
+        state_dict = load_tp_checkpoint(
+            model_path, cls, config, return_numpy=return_numpy
+        )
+    return state_dict
