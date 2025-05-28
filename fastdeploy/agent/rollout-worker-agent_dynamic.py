@@ -269,32 +269,32 @@ def start() -> str:
 
 def background_stop(job_id: str) -> None:
     """Stop worker by calling downstream HTTP APIs"""
-    ip = get_local_ip()
     max_retries = 3
-    retry_interval = 1  # seconds
-
     try:
-        # Call clear_load_weight API with 300s timeout (不重试)
+        # Call clear_load_weight API with 30s timeout (重试3次)
         print(f"Stopping worker with job_id: {job_id}")
-        clear_response = requests.get(
-            f"{rollout_worker_host}:{rollout_worker_http_port}/clear_load_weight",
-            timeout=300
-        )
-
-        if clear_response.status_code != 200:
-            logging.error(f"Failed to clear load weight: {clear_response.text} {clear_response.status_code}")
-            print(f"Failed to clear load weight: {clear_response.text}, {clear_response.status_code}")
-            return
+        cnt = 0
+        while cnt < max_retries:    
+            clear_response = requests.get(
+                f"{rollout_worker_host}:{rollout_worker_http_port}/clear_load_weight",
+                timeout=30
+            )
+            
+            if clear_response.status_code != 200:
+                logging.error(f"Failed to clear load weight: {clear_response.text} {clear_response.status_code}")
+                print(f"Failed to clear load weight: {clear_response.text}, {clear_response.status_code}")
+            else:
+                logging.info("Successfully cleared load weight")
+                print("Successfully cleared load weight")
+                # 仅对通知controller的请求进行重试
+                notice_controller(job_id, "", "stopped", "normal_stop")
+                return
+            cnt += 1
     except requests.exceptions.RequestException as e:
         logging.error(f"Error calling clear_load_weight: {str(e)}")
         print("Failed to clear load weight", str(e))
         return
 
-    logging.info("Successfully cleared load weight")
-    print("Successfully cleared load weight")
-
-    # 仅对通知controller的请求进行重试
-    notice_controller(job_id, "", "stopped", "normal_stop")
 
 
 @app.route('/infer/stop', methods=['POST'])
