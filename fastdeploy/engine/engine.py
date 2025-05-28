@@ -248,13 +248,18 @@ class LLMEngine(object):
                     int(self.resource_manager.available_batch()),
                     self.cfg.max_prefill_batch)
 
+                if self.cfg.enable_chunked_prefill:
+                    cur_max_num_batched_tokens = self.cfg.max_model_len * num_prefill_batch
+                else:
+                    cur_max_num_batched_tokens = self.cfg.max_num_batched_tokens
+
                 tasks = self.scheduler.get_requests(
                     available_blocks=self.resource_manager.available_block_num(
                     ),
                     block_size=self.cfg.cache_config.block_size,
                     reserved_output_blocks=self.cfg.cache_config.
                     enc_dec_block_num,
-                    max_num_batched_tokens=self.cfg.max_num_batched_tokens,
+                    max_num_batched_tokens=cur_max_num_batched_tokens,
                     batch=num_prefill_batch)
 
                 if len(tasks) == 0:
@@ -398,9 +403,12 @@ class LLMEngine(object):
             raise EngineError(error_msg, error_code=500)
 
         self.token_processor.number_of_tasks += len(tasks)
+        token_chunk_size =(self.cfg.max_num_batched_tokens // len(tasks)) // self.cfg.cache_config.block_size * self.cfg.cache_config.block_size
         for i in range(len(tasks)):
             self.token_processor.number_of_input_tokens += tasks[
                 i].prompt_token_ids_len
+
+            tasks[i].set("token_chunk_size", token_chunk_size)
 
         llm_logger.info(f"Tasks are sent to engine, req_ids={req_ids}")
         self.engine_worker_queue.put_tasks(
@@ -584,6 +592,13 @@ class LLMEngine(object):
             f" --dynamic_load_weight {self.cfg.model_config.dynamic_load_weight}"
             f" --kv_cache_ratio {self.cfg.cache_config.kv_cache_ratio} --dtype {self.cfg.cache_config.cache_dtype}"
         )
+        worker_append_flag = {
+            "enable_chunked_prefill": self.cfg.enable_chunked_prefill,
+        }
+        for worker_flag, value in worker_append_flag.items():
+            if value:
+                arguments = arguments + f" --{worker_flag}"
+
         if self.cfg.nnode > 1:
             pd_cmd = pd_cmd + f" --ips {self.cfg.ips}"
         log_dir = os.getenv("FD_LOG_DIR", default="log")
