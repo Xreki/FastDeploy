@@ -13,29 +13,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-
-
 import os
+
 import numpy as np
-from fastdeploy.input.mm_processor import DataProcessor
-from fastdeploy.input.ernie_processor import ErnieProcessor
+
 from fastdeploy.engine.request import Request
 from fastdeploy.entrypoints.chat_utils import parse_chat_messages
+from fastdeploy.input.ernie_processor import ErnieProcessor
+from fastdeploy.input.mm_processor import DataProcessor
+
 
 class ErnieMoEVLProcessor(ErnieProcessor):
     """The processor class for ERNIE MoE VL models."""
+
     def __init__(self, model_name_or_path):
         self.use_hf_tokenizer = False
         self.is_thinking = False
 
-        model_name_or_path = os.path.dirname(model_name_or_path)
+        if "merge_llm_model" in model_name_or_path:
+            model_name_or_path = os.path.dirname(model_name_or_path)
         tokenizer_path = model_name_or_path
         preprocessor_path = model_name_or_path
-        
+
         self.ernie_processor = DataProcessor(
-            tokenizer_name=tokenizer_path, 
-            image_preprocessor_name=preprocessor_path
-        )
+            tokenizer_name=tokenizer_path,
+            image_preprocessor_name=preprocessor_path)
         self.decode_status = dict()
         self._load_tokenizer()
         self.eos_token_ids = [self.tokenizer.eos_token_id]
@@ -60,13 +62,14 @@ class ErnieMoEVLProcessor(ErnieProcessor):
         task = request.to_dict()
         self.process_request_dict(task, max_model_len)
         request = Request.from_dict(task)
-        
+
         return request
-    
+
     def process_request_dict(self, request, max_model_len=None):
         """process the input data"""
 
-        if request.get("eos_token_ids") is None or len(request.get("eos_token_ids")) == 0:
+        if request.get("eos_token_ids") is None or len(
+                request.get("eos_token_ids")) == 0:
             request["eos_token_ids"] = self.eos_token_ids
 
         stop_sequences = request.get("stop", [])
@@ -83,7 +86,9 @@ class ErnieMoEVLProcessor(ErnieProcessor):
         request["multimodal_inputs"] = output
 
         # 截断超过长度限制的prompt
-        if max_model_len is not None and len(request['prompt_token_ids']) > max_model_len:
-            request['prompt_token_ids'] = request['prompt_token_ids'][:max_model_len - 1]
+        if max_model_len is not None and len(
+                request['prompt_token_ids']) > max_model_len:
+            request['prompt_token_ids'] = request[
+                'prompt_token_ids'][:max_model_len - 1]
 
         return request
