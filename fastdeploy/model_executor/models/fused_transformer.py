@@ -408,6 +408,7 @@ class FusedTransformer(nn.Layer):
 
         enable_efficientllm_load_model_concurrency = int(
             os.getenv("ENABLE_EFFICIENTLLM_LOAD_MODEL_CONCURRENCY", "1"))
+        enable_efficientllm_load_model_concurrency = 0
 
         self.norm_before_qkv.load_state_dict(state_dict)
 

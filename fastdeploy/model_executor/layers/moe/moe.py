@@ -536,47 +536,22 @@ class FusedMoE(nn.Layer):
                 ffn1_weight_tensor.reshape(
                     [self.num_local_experts, -1,
                      ffn1_weight_tensor.shape[-1]]))
-        elif self.moe_quant_type == "weight_only_int4":  # WINT4 MOE
-            if paddle.is_compiled_with_cuda():
-                for i in range(self.num_local_experts):
-                    ffn1_weight_tensor_i, ffn1_weight_scale_tensor_i = weight_quantize(
-                        ffn1_weight_tensor[i],
-                        algo="weight_only_int4",
-                        arch=self.weight_only_linear_arch,
-                    )
-                    ffn1_weight_tensor_list.append(ffn1_weight_tensor_i)
-                    ffn1_weight_scale_tensor_list.append(
-                        ffn1_weight_scale_tensor_i)
+        elif self.moe_quant_type in ["weight_only_int4", "weight_only_int8"]:
+            for i in range(self.num_local_experts):
+                quant_weight, scale = weight_quantize(
+                    ffn1_weight_tensor[i],
+                    algo=self.moe_quant_type,
+                    arch=self.weight_only_linear_arch,
+                )
+                ffn1_weight_tensor_list.append(quant_weight)
+                ffn1_weight_scale_tensor_list.append(scale)
             ffn1_weight_tensor = paddle.concat(ffn1_weight_tensor_list, axis=0)
-            ffn1_weight_scale_tensor = paddle.concat(
-                ffn1_weight_scale_tensor_list, axis=0)
-            self.moe_ffn1_weight_scale.set_value(
-                ffn1_weight_scale_tensor.cast(
-                    paddle.get_default_dtype()).reshape(
-                        [self.num_local_experts, -1]))
             self.moe_ffn1_weight.set_value(
                 ffn1_weight_tensor.reshape(self.ffn1_weight_shape))
-        elif self.moe_quant_type == "weight_only_int8":  # WINT8 MOE
-            if paddle.is_compiled_with_cuda():
-                for i in range(self.num_local_experts):
-                    ffn1_weight_tensor_i, ffn1_weight_scale_tensor_i = weight_quantize(
-                        ffn1_weight_tensor[i],
-                        algo="weight_only_int8",
-                        arch=self.weight_only_linear_arch,
-                    )
-                    ffn1_weight_tensor_list.append(ffn1_weight_tensor_i)
-                    ffn1_weight_scale_tensor_list.append(
-                        ffn1_weight_scale_tensor_i)
-            ffn1_weight_tensor = paddle.concat(ffn1_weight_tensor_list, axis=0)
-            ffn1_weight_scale_tensor = paddle.concat(
+            ffn1_weight_scale_tensor = paddle.stack(
                 ffn1_weight_scale_tensor_list, axis=0)
-            self.moe_ffn1_weight_scale.set_value(
-                ffn1_weight_scale_tensor.cast(
-                    paddle.get_default_dtype()).reshape(
-                        [self.num_local_experts, -1]))
-            self.moe_ffn1_weight.set_value(
-                ffn1_weight_tensor.reshape(
-                    [self.num_local_experts, self.hidden_size, -1]))
+            self.moe_ffn1_weight_scale.set_value(ffn1_weight_scale_tensor)
+
         else:  # default
             self.moe_ffn1_weight.set_value(
                 ffn1_weight_tensor.reshape(
@@ -634,49 +609,21 @@ class FusedMoE(nn.Layer):
                 ffn2_weight_tensor.reshape(
                     [self.num_local_experts, -1,
                      ffn2_weight_tensor.shape[-1]]))
-        elif self.moe_quant_type == "weight_only_int4":
-            if paddle.is_compiled_with_cuda():
-                for i in range(self.num_local_experts):
-                    ffn2_weight_tensor_i, ffn2_weight_scale_tensor_i = weight_quantize(
-                        ffn2_weight_tensor[i],
-                        algo="weight_only_int4",
-                        arch=self.weight_only_linear_arch,
-                    )
-                    ffn2_weight_tensor_list.append(ffn2_weight_tensor_i)
-                    ffn2_weight_scale_tensor_list.append(
-                        ffn2_weight_scale_tensor_i)
+        elif self.moe_quant_type in ["weight_only_int4", "weight_only_int8"]:
+            for i in range(self.num_local_experts):
+                quant_weight, scale = weight_quantize(
+                    ffn2_weight_tensor[i],
+                    algo=self.moe_quant_type,
+                    arch=self.weight_only_linear_arch,
+                )
+                ffn2_weight_tensor_list.append(quant_weight)
+                ffn2_weight_scale_tensor_list.append(scale)
             ffn2_weight_tensor = paddle.concat(ffn2_weight_tensor_list, axis=0)
             ffn2_weight_scale_tensor = paddle.stack(
                 ffn2_weight_scale_tensor_list, axis=0)
-            self.moe_ffn2_weight_scale.set_value(
-                ffn2_weight_scale_tensor.cast(paddle.get_default_dtype()))
+            self.moe_ffn2_weight_scale.set_value(ffn2_weight_scale_tensor)
             self.moe_ffn2_weight.set_value(
                 ffn2_weight_tensor.reshape(self.ffn2_weight_shape))
-
-        elif self.moe_quant_type == "weight_only_int8":
-            if paddle.is_compiled_with_cuda():
-                for i in range(self.num_local_experts):
-                    ffn2_weight_tensor_i, ffn2_weight_scale_tensor_i = weight_quantize(
-                        ffn2_weight_tensor[i],
-                        algo="weight_only_int8",
-                        arch=self.weight_only_linear_arch,
-                    )
-                    ffn2_weight_tensor_list.append(ffn2_weight_tensor_i)
-                    ffn2_weight_scale_tensor_list.append(
-                        ffn2_weight_scale_tensor_i)
-            ffn2_weight_tensor = paddle.concat(ffn2_weight_tensor_list, axis=0)
-            ffn2_weight_scale_tensor = paddle.concat(
-                ffn2_weight_scale_tensor_list, axis=0)
-            self.moe_ffn2_weight_scale.set_value(
-                ffn2_weight_scale_tensor.cast(
-                    paddle.get_default_dtype()).reshape(
-                        [self.num_local_experts, -1]))
-            self.moe_ffn2_weight.set_value(
-                ffn2_weight_tensor.reshape([
-                    self.num_local_experts,
-                    self.moe_config.moe_intermediate_size // self.tp_size,
-                    -1,
-                ]))
         else:
             self.moe_ffn2_weight.set_value(
                 ffn2_weight_tensor.reshape([
