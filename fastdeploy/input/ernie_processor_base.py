@@ -101,8 +101,7 @@ class ErnieProcessor(BaseDataProcessor):
             if request.prompt is not None:
                 request.prompt_token_ids = self.text2ids(request.prompt, max_model_len, system)
             elif request.messages is not None:
-                request.prompt_token_ids = self.messages2ids(
-                    request.to_dict())
+                request.prompt_token_ids = self.messages2ids(request.messages, max_model_len)
             else:
                 raise ValueError(f"The request should have `input_ids`, `text` or `messages`: {request}.")
             if self.model_name == "base":
@@ -149,8 +148,7 @@ class ErnieProcessor(BaseDataProcessor):
                     system
                 )
             elif 'messages' in request:
-                request['prompt_token_ids'] = self.messages2ids(
-                    request)
+                request['prompt_token_ids'] = self.messages2ids(request['messages'], max_model_len)
             else:
                 raise ValueError(f"Request must contain 'prompt_token_ids', 'prompt', or 'messages': {request}")
         if self.model_name == "base":
@@ -270,7 +268,7 @@ class ErnieProcessor(BaseDataProcessor):
 
         Args:
             text (str): 待转换的文本。
-            system (str): 系统设定，如"你是一位高超的程序员"
+            system (str): 系统设定，如“你是一位高超的程序员”
 
         Returns:
             List[int]: 转换后的 ID 列表。
@@ -383,7 +381,9 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
 
         return system_tokens + context_tokens + suffix_tokens
 
-    def messages2ids_back(self, raw_messages, max_model_len):
+
+
+    def messages2ids(self, raw_messages, max_model_len):
         """
         Convert multi-turn messages into ID sequences.
 
@@ -416,24 +416,6 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
         data_processor_logger.debug(f"processed data : {''.join(tokens)}")
         input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
         return input_ids
-
-    def messages2ids(self, request_or_messages):
-        """
-        Convert multi-turn messages into ID sequences.
-        
-        Args:
-            request_or_messages: Either a request dict containing 'messages' field, 
-                                or a list of message dicts directly
-            
-        Returns:
-            List of token IDs as strings (converted from token objects)
-        """
-        if self.tokenizer.chat_template is None:
-            raise ValueError("This model does not support chat_template.")
-        return self.tokenizer.apply_chat_template(
-            request_or_messages, tokenize=True,
-            split_special_tokens=False, add_special_tokens=False
-        )["input_ids"]
 
 
     def ids2tokens(self, token_id, task_id):
