@@ -44,7 +44,7 @@ from .utils import (
     model_convert_fp8,
     convert_ndarray_dtype
 )
-from paddlenlp.transformers.model_utils import load_tp_checkpoint
+from fastdeploy.model_executor.models.utils import load_checkpoint
 
 from .token_utils import process_index
 
@@ -246,9 +246,8 @@ def build_stream_line_model(
         context = contextlib.nullcontext()
     elif use_safetensors:
         context = paddle.LazyGuard()
-        state_dict = load_tp_checkpoint(
-            model_path, ErnieBotFusedModel, ernie_config, return_numpy=True
-        )
+        state_dict = load_checkpoint(
+            model_path, ErnieBotFusedModel, ernie_config, return_numpy=True)
     elif use_moe:
         tensor_parallel_degree = dist.get_world_size()
         if tensor_parallel_degree > 1:

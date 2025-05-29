@@ -1,7 +1,7 @@
 # model: "/root/paddlejob/workspace/env_run/gaoziyuan/gexiao_TP8_45t"
 model: "/shared_ipc_meta/"
 max_model_len: 33792
-max_num_seqs: 1
+max_num_seqs: 32
 block_ratio: 0.2
 gpu_memory_utilization: 0.8
 dynamic_load_weight: 1
