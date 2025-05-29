@@ -24,9 +24,9 @@ from .utils import (_set_var_distributed, divide, get_tensor,
                     per_block_cast_to_fp8)
 
 
-class ColumnParallelLinear(nn.Layer):
+class LinearBase(nn.Layer):
     """
-    ColumnParallelLinear Layer
+    LinearBase Layer
     """
 
     def __init__(
@@ -37,28 +37,39 @@ class ColumnParallelLinear(nn.Layer):
         output_size: int = None,
         weight_key=None,
         bias_key=None,
+        skip_quant=False,
     ):
         """
-        Initialize a linear layer with additional parameters for inference and quantization.
+        Initializes a linear layer and provides additional parameters required for inference and quantization.
 
         Args:
-            llm_config (LLMConfig): Arguments related to inference, containing
-                attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
+            llm_config (LLMConfig): Inference-related parameters containing attributes such as
+                weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
-            layer_name (str): Unique name of the layer, used for naming internal attributes,
-                you can give it any name you like.
-            layer_index (int): The index of the linear layer in the model
+            layer_name (str): Unique name of the layer, used to name internal attributes.
+                Can be arbitrarily named.
+            input_size (int, optional): Number of input features. Defaults to None.
+            output_size (int, optional): Number of output features. Defaults to None.
+            weight_key (Any, optional): Key for weights. Defaults to None.
+            bias_key (Any, optional): Key for biases. Defaults to None.
+            skip_quant (bool, optional): Whether to skip quantization. Defaults to False.
 
+        Raises:
+            NotImplementedError: Raised if the current platform is not a CUDA platform.
         """
         super().__init__()
+        if current_platform.is_cuda():
+            self.forward = self.forward_cuda
+        else:
+            raise NotImplementedError
+
         self.llm_config = llm_config
-        self.skip_quant = False
+        self.skip_quant = skip_quant
         self.use_smooth_quant = llm_config.model_config.use_smooth_quant
         self.weight_dtype = llm_config.model_config.weight_dtype
         self.act_dtype = llm_config.model_config.act_dtype
-        self.nranks = llm_config.parallel_config.mp_size
         self.input_size = input_size
-        self.output_size = divide(output_size, self.nranks)
+        self.output_size = output_size
         self.weight_key = weight_key
         self.bias_key = bias_key
         self.with_bias = True if self.bias_key is not None else False
@@ -75,11 +86,8 @@ class ColumnParallelLinear(nn.Layer):
             self.smooth_name = self.layer_name + ".smooth_weight"
         self._dtype = self._helper.get_default_dtype()
 
-        self.init_weight()
-
         if llm_config.quant_config:
             self.quant_method = llm_config.quant_config.get_quant_method(self)
-            self.quant_method.create_weights(self)
 
     def is_y_transposed(self):
         """
@@ -140,9 +148,6 @@ class ColumnParallelLinear(nn.Layer):
             is_bias=False,
             default_initializer=paddle.nn.initializer.Constant(0),
         )
-        if self.nranks > 0:
-            # col parallel
-            _set_var_distributed(self.linear_weight, split_axis=-1)
 
         self.linear_bias = None
         if self.with_bias:
@@ -152,9 +157,6 @@ class ColumnParallelLinear(nn.Layer):
                 dtype=self._dtype,
                 is_bias=True,
             )
-            if self.nranks > 0:
-                # col parallel
-                _set_var_distributed(self.linear_bias, split_axis=-1)
 
         # smooth quant
         self.linear_shift = None
@@ -190,9 +192,9 @@ class ColumnParallelLinear(nn.Layer):
             return self._dtype
         if self.weight_dtype == "int4":
             return "int8"
-        # TODO(wangzhe24) create_parameter not support FP8
+
         if "float8" in self.weight_dtype:
-            return self._dtype
+            return "float8_e4m3fn"
         return self.weight_dtype
 
     def load_state_dict(self, state_dict):
@@ -238,7 +240,7 @@ class ColumnParallelLinear(nn.Layer):
                 )
             self.linear_smooth.set_value(smooth_tensor)
 
-    def forward(self, x):
+    def forward_cuda(self, x):
         """
         Forward function for ColumnParallelLinear.
 
@@ -257,6 +259,177 @@ class ColumnParallelLinear(nn.Layer):
             linear_out = paddle.matmul(x, self.linear_weight)
 
         return linear_out
+
+    def forward(self, x):
+        raise NotImplementedError
+
+
+class ReplicatedLinear(LinearBase):
+    """
+    ReplicatedLinear Layer
+    """
+
+    def __init__(
+        self,
+        llm_config,
+        layer_name: str = "",
+        input_size: int = None,
+        output_size: int = None,
+        weight_key=None,
+        bias_key=None,
+        skip_quant=False,
+    ):
+        """
+        Initialize a linear layer with additional parameters for inference and quantization.
+
+        Args:
+            llm_config (LLMConfig): Arguments related to inference, containing
+                attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
+                num_attention_heads, and ffn_hidden_size.
+            layer_name (str): Unique name of the layer, used for naming internal attributes,
+                you can give it any name you like.
+            layer_index (int): The index of the linear layer in the model
+
+        """
+        super().__init__(llm_config=llm_config,
+                         layer_name=layer_name,
+                         input_size=input_size,
+                         output_size=output_size,
+                         weight_key=weight_key,
+                         bias_key=bias_key,
+                         skip_quant=skip_quant)
+        self.nranks = llm_config.parallel_config.mp_size
+        self.input_size = input_size
+        self.init_weight()
+        self.quant_method.create_weights(self)
+
+    def init_weight(self):
+        """
+        Initialize the weights and biases.
+        """
+        self.init_weight_shape(self.is_y_transposed())
+
+        self.linear_weight = self.create_parameter(
+            shape=self.linear_weight_shape,
+            attr=paddle.ParamAttr(name=self.weight_name),
+            dtype=self.get_weight_create_dtype(),
+            is_bias=False,
+            default_initializer=paddle.nn.initializer.Constant(0),
+        )
+
+        self.linear_bias = None
+        if self.with_bias:
+            self.linear_bias = self.create_parameter(
+                shape=[self.output_size],
+                attr=paddle.ParamAttr(name=self.bias_name),
+                dtype=self._dtype,
+                is_bias=True,
+            )
+
+        # smooth quant
+        self.linear_shift = None
+        self.linear_smooth = None
+        if self.use_smooth_quant:
+            self.linear_shift = self.create_parameter(
+                shape=self.linear_shift_shape,
+                attr=paddle.ParamAttr(name=self.shift_name),
+                dtype=self._dtype,
+                is_bias=False,
+            )
+            self.linear_smooth = self.create_parameter(
+                shape=self.linear_smooth_shape,
+                attr=paddle.ParamAttr(name=self.smooth_name),
+                dtype=self._dtype,
+                is_bias=False,
+            )
+
+
+class ColumnParallelLinear(LinearBase):
+    """
+    ColumnParallelLinear Layer
+    """
+
+    def __init__(
+        self,
+        llm_config,
+        layer_name: str = "",
+        input_size: int = None,
+        output_size: int = None,
+        weight_key=None,
+        bias_key=None,
+        skip_quant=False,
+    ):
+        """
+        Initialize a linear layer with additional parameters for inference and quantization.
+
+        Args:
+            llm_config (LLMConfig): Arguments related to inference, containing
+                attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
+                num_attention_heads, and ffn_hidden_size.
+            layer_name (str): Unique name of the layer, used for naming internal attributes,
+                you can give it any name you like.
+            layer_index (int): The index of the linear layer in the model
+
+        """
+        super().__init__(llm_config=llm_config,
+                         layer_name=layer_name,
+                         input_size=input_size,
+                         output_size=output_size,
+                         weight_key=weight_key,
+                         bias_key=bias_key,
+                         skip_quant=skip_quant)
+        self.nranks = llm_config.parallel_config.mp_size
+        self.input_size = input_size
+        self.output_size = divide(output_size, self.nranks)
+        self.init_weight()
+
+        self.quant_method.create_weights(self)
+
+    def init_weight(self):
+        """
+        Initialize the weights and biases.
+        """
+        self.init_weight_shape(self.is_y_transposed())
+
+        self.linear_weight = self.create_parameter(
+            shape=self.linear_weight_shape,
+            attr=paddle.ParamAttr(name=self.weight_name),
+            dtype=self.get_weight_create_dtype(),
+            is_bias=False,
+            default_initializer=paddle.nn.initializer.Constant(0),
+        )
+        if self.nranks > 0:
+            # col parallel
+            _set_var_distributed(self.linear_weight, split_axis=-1)
+
+        self.linear_bias = None
+        if self.with_bias:
+            self.linear_bias = self.create_parameter(
+                shape=[self.output_size],
+                attr=paddle.ParamAttr(name=self.bias_name),
+                dtype=self._dtype,
+                is_bias=True,
+            )
+            if self.nranks > 0:
+                # col parallel
+                _set_var_distributed(self.linear_bias, split_axis=-1)
+
+        # smooth quant
+        self.linear_shift = None
+        self.linear_smooth = None
+        if self.use_smooth_quant:
+            self.linear_shift = self.create_parameter(
+                shape=self.linear_shift_shape,
+                attr=paddle.ParamAttr(name=self.shift_name),
+                dtype=self._dtype,
+                is_bias=False,
+            )
+            self.linear_smooth = self.create_parameter(
+                shape=self.linear_smooth_shape,
+                attr=paddle.ParamAttr(name=self.smooth_name),
+                dtype=self._dtype,
+                is_bias=False,
+            )
 
 
 class MergedColumnParallelLinear(ColumnParallelLinear):
@@ -307,6 +480,72 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
                          input_size=input_size,
                          output_size=output_size,
                          weight_key=weight_key,
+                         bias_key=bias_key,
+                         skip_quant=skip_quant)
+
+    def load_state_dict(self, state_dict):
+        """
+        Load the checkpoint state dictionary into the layer.
+
+        Args:
+            state_dict (dict): A dictionary containing the checkpoint weights and biases.
+        """
+        # weight
+        assert self.weight_key is not None, 'weight_key should not be None.'
+        if self.weight_key in state_dict.keys():
+            weight_tensor = get_tensor(state_dict.pop(self.weight_key))
+        else:
+            gate_weight_key = self.weight_key.replace("linear1", "gate_proj")
+            up_weight_key = self.weight_key.replace("linear1", "up_proj")
+            gate_tensor = get_tensor(state_dict.pop(gate_weight_key))
+            up_tensor = get_tensor(state_dict.pop(up_weight_key))
+            weight_tensor = paddle.concat([gate_tensor, up_tensor], axis=-1)
+
+        if not self.use_fast_ffn:
+            converted_weight_tensor = paddle.concat(
+                [weight_tensor[:, ::2], weight_tensor[:, 1::2]], axis=1)
+        else:
+            converted_weight_tensor = weight_tensor
+
+        state_dict[self.weight_key] = converted_weight_tensor
+
+        super().load_state_dict(state_dict)
+
+
+class QKVParallelLinear(ColumnParallelLinear):
+    """
+    QKVParallelLinear Layer.
+    """
+
+    def __init__(self, llm_config, layer_name, weight_key, bias_key=None):
+        """
+        Initialize the QKV Linear layer with given parameters.
+
+        Args:
+            llm_config (LLMConfig): Arguments related to inference, containing
+                attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
+                num_attention_heads, and ffn_hidden_size.
+
+            layer_name (str): Unique name of the layer, used for naming weights and biases.
+            weight_key (str): Key name of weight in the pdparams state dict.
+            bias_key (str): Key name of bias in the pdparams state dict. Defaults to None, means no bias.
+            with_bias (bool, optional): Whether to include bias term. Defaults to True.
+            skip_quant (bool, optional): Whether to skip quantization steps. Defaults to False.
+        """
+        self.num_heads = llm_config.model_config.num_attention_heads
+        self.kv_num_heads = llm_config.model_config.num_key_value_heads
+        self.embed_dim = llm_config.model_config.hidden_size
+        self.head_dim = llm_config.model_config.head_dim
+        self.nranks = llm_config.parallel_config.mp_size
+        self.num_heads_per_rank = divide(self.num_heads, self.nranks)
+        self.kv_num_heads_per_rank = divide(self.kv_num_heads, self.nranks)
+        input_size = self.embed_dim
+        output_size = (self.num_heads + 2 * self.kv_num_heads) * self.head_dim
+        super().__init__(llm_config=llm_config,
+                         layer_name=layer_name,
+                         input_size=input_size,
+                         output_size=output_size,
+                         weight_key=weight_key,
                          bias_key=bias_key)
 
     def load_state_dict(self, state_dict):
@@ -318,17 +557,50 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         """
         # weight
         assert self.weight_key is not None, 'weight_key should not be None.'
-        weight_tensor = get_tensor(state_dict.pop(self.weight_key))
-
-        if not self.use_fast_ffn:
-            converted_weight_tensor = paddle.concat(
-                [weight_tensor[:, ::2], weight_tensor[:, 1::2]], axis=1)
+        # qkv fused in disk
+        if self.weight_key in state_dict.keys():
+            weight_tensor = get_tensor(state_dict.pop(self.weight_key))
         else:
-            converted_weight_tensor = weight_tensor
+            q_weight_key = self.weight_key.replace("qkv_proj", "q_proj")
+            k_weight_key = self.weight_key.replace("qkv_proj", "k_proj")
+            v_weight_key = self.weight_key.replace("qkv_proj", "v_proj")
+            q_tensor = get_tensor(state_dict.pop(q_weight_key))
+            k_tensor = get_tensor(state_dict.pop(k_weight_key))
+            v_tensor = get_tensor(state_dict.pop(v_weight_key))
+            weight_tensor = paddle.concat([q_tensor, k_tensor, v_tensor],
+                                          axis=-1)
 
-        state_dict[self.weight_key] = converted_weight_tensor.numpy()
+        if self.llm_config.quant_config:
+            self.quant_method.process_loaded_weights(self, weight_tensor)
+        else:
+            self.linear_weight.set_value(weight_tensor)
 
-        super().load_state_dict(state_dict)
+        # bias
+        if self.with_bias:
+            bias_tensor = paddle.to_tensor(
+                get_tensor(state_dict.pop(self.bias_key)))
+            self.linear_bias.set_value(bias_tensor)
+
+        # smooth quant
+        if self.use_smooth_quant:
+            if self.shift_key in state_dict:
+                shift_tensor = get_tensor(state_dict.pop(
+                    self.shift_key)).astype(paddle.get_default_dtype())
+            else:
+                shift_tensor = paddle.zeros(
+                    shape=self.linear_shift_shape,
+                    dtype=paddle.get_default_dtype(),
+                )
+            self.linear_shift.set_value(shift_tensor)
+            if self.smooth_key in state_dict:
+                smooth_tensor = get_tensor(state_dict.pop(
+                    self.smooth_key)).astype(paddle.get_default_dtype())
+            else:
+                smooth_tensor = paddle.ones(
+                    shape=[self.linear_smooth_shape],
+                    dtype=paddle.get_default_dtype(),
+                )
+            self.linear_smooth.set_value(smooth_tensor)
 
 
 class RowParallelLinear(nn.Layer):
