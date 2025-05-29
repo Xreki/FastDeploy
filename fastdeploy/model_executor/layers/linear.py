@@ -260,10 +260,6 @@ class LinearBase(nn.Layer):
 
         return linear_out
 
-    def forward(self, x):
-        raise NotImplementedError
-
-
 class ReplicatedLinear(LinearBase):
     """
     ReplicatedLinear Layer
