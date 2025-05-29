@@ -361,6 +361,8 @@ class ErnieBotPretrainedModel(PretrainedModel):
             config.moe_layer_start_index,
             config.is_mtp,
         )
+        print(mappings)
+        exit(0)
 
         return mappings
 
@@ -580,6 +582,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         llm_config.model_config.weight_sharing = weight_sharing
         llm_config.model_config.weight_sharing_add_bias = weight_sharing_add_bias
         llm_config.parallel_config.use_ep = use_ep
+        llm_config.parallel_config.ep_size = 1 if use_ep else 1
         llm_config.model_config.rope_head_dim = hidden_size // num_attention_heads
         llm_config.model_config.prefix_name = "gpt.mtp" if is_mtp else "gpt"
         llm_config.model_config.use_rope = use_rope
@@ -623,6 +626,13 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
                 for i in range(num_layers)
             ]
             fmt_keys.ffn2_bias_keys = [None for i in range(num_layers)]
+
+            # MoE keys
+            fmt_keys.moe_gate_weight_keys = "ernie.layers.{}.mlp.gate.weight"
+            fmt_keys.moe_gate_correction_bias_keys = "ernie.layers.{}.mlp.moe_statics.e_score_correction_bias"
+            fmt_keys.moe_ffn1_weight_keys = "ernie.layers.{}.mlp.experts.{}.up_gate_proj.weight"
+            fmt_keys.moe_ffn2_weight_keys = "ernie.layers.{}.mlp.experts.{}.down_proj.weight"
+
         else:
             fmt_keys.norm_before_qkv_weight_keys = [
                 f"{base_model_prefix}.decoder.layers.{i}.norm1.weight"

@@ -356,29 +356,16 @@ class FusedTransformer(nn.Layer):
                     )
                 ])
             else:
-                from ..layers.moe.moe import MoELayer
+                from ..layers.moe.moe import FusedMoE
 
                 self.moe_layers = nn.LayerList([
                     None for i in range(
                         self.inference_args.moe_config.moe_layer_start_index)
                 ] + [
-                    MoELayer(
-                        inference_args=inference_args,
+                    FusedMoE(
+                        llm_config=llm_config,
                         moe_config=inference_args.moe_config,
                         layer_name=f"moe_layers.{i}",
-                        gate_weight_key=f"ernie.layers.{i}.mlp.gate.weight",
-                        ffn1_expert_weight_key=f"ernie.layers.{i}.mlp.experts"
-                        + ".{}.up_gate_proj.weight",
-                        ffn2_expert_weight_key=f"ernie.layers.{i}.mlp.experts"
-                        + ".{}.down_proj.weight",
-                        gate_correction_bias_key=
-                        f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
-                        ffn1_bias_key=None,
-                        ffn2_bias_key=None,
-                        ffn1_shared_weight_key=None,
-                        ffn1_shared_bias_key=None,
-                        ffn2_shared_weight_key=None,
-                        ffn2_shared_bias_key=None,
                         layer_idx=i,
                     ) for i in range(
                         self.inference_args.moe_config.moe_layer_start_index,

@@ -305,6 +305,7 @@ class ParallelConfig:
     tensor_parallel_rank = None,  # TP rank ID
     tensor_parallel_degree = None,  # TP degree
     mp_size = 1,  # mp size
+    ep_size = 1,  # ep size
     column_cut = False,  # (bool, optional): The embedding weight distributed on your gpu cards is divided by row or column. Defaults to False means divide by row. When vocab_size can not be divided by world_size but hidden_size can, we can consider split embedding weight by column.
 
 
@@ -363,6 +364,18 @@ class WeightKeys:
         self.ffn1_bias_keys = [None for i in range(num_layers)]
         self.ffn2_weight_keys = [None for i in range(num_layers)]
         self.ffn2_bias_keys = [None for i in range(num_layers)]
+
+        self.moe_gate_weight_keys = None
+        self.moe_gate_correction_bias_keys = None
+        self.moe_ffn1_weight_keys = None
+        self.moe_ffn2_weight_keys = None
+        self.moe_ffn1_bias_keys = None
+        self.moe_ffn2_bias_keys = None
+
+        self.moe_ffn1_weight_scale_key = None
+        self.moe_ffn2_weight_scale_key = None
+        self.moe_ffn1_expert_in_scale_key = None
+        self.moe_ffn2_expert_in_scale_key = None
 
 
 @dataclass
