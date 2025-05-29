@@ -361,8 +361,6 @@ class ErnieBotPretrainedModel(PretrainedModel):
             config.moe_layer_start_index,
             config.is_mtp,
         )
-        print(mappings)
-        exit(0)
 
         return mappings
 
