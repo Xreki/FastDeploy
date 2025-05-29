@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-# cipher_token=WjI1fQOvhN  # do not edit this line
+
 import os
 
 import paddle
@@ -64,7 +64,7 @@ class FusedTransformer(nn.Layer):
         fuse_ffn_act=False,
         ring_id=-1,
         return_all_hidden_states=False,
-        base_model_prefix="gpt",
+        base_model_prefix="ernie",
         draft_type="",
         llm_config=None,
     ):

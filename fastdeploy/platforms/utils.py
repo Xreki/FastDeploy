@@ -12,18 +12,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""
 
-# cipher_token=WjI1fQOvhN  # do not edit this line
-
-
-import numpy as np
-
-import paddle
-
-"""
  !! This file will be deleted after the platform is fully functional
 """
+
+import numpy as np
+import paddle
 
 
 def xpu_clip_and_round(x):
@@ -114,6 +108,7 @@ def convert_to_npu_dequant_scale(deq_scale):
         return deq_scale
     arr = deq_scale.numpy()
     new_deq_scale = np.stack(
-        [arr.reshape(-1, 1), np.zeros_like(arr).reshape(-1, 1)], axis=-1
-    ).reshape(-1)
-    return paddle.to_tensor(np.frombuffer(new_deq_scale.tobytes(), dtype=np.int64))
+        [arr.reshape(-1, 1),
+         np.zeros_like(arr).reshape(-1, 1)], axis=-1).reshape(-1)
+    return paddle.to_tensor(
+        np.frombuffer(new_deq_scale.tobytes(), dtype=np.int64))

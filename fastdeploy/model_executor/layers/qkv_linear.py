@@ -13,20 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-# cipher_token=WjI1fQOvhN  # do not edit this line
+
 import paddle
 from paddle import nn
-from paddle.nn.quant import weight_only_linear
-from paddle.nn.quant import weight_quantize
+from paddle.nn.quant import weight_only_linear, weight_quantize
 from paddlenlp.utils.log import logger
 
 import fastdeploy
 import fastdeploy.model_executor.ops.gpu.deep_gemm as deep_gemm
-from .utils import _set_var_distributed
-from .utils import get_tensor
-from .utils import per_block_cast_to_fp8
-from fastdeploy.platforms.utils import convert_to_npu_dequant_scale
-from fastdeploy.platforms.utils import xpu_quant_qkv_weight
+
+from .utils import _set_var_distributed, get_tensor, per_block_cast_to_fp8
 
 
 class QKVLinear(nn.Layer):
@@ -282,8 +278,7 @@ class QKVLinear(nn.Layer):
             qkv_weight_scale = paddle.concat(
                 [q_weight_scale, k_weight_scale, v_weight_scale],
                 axis=0).reshape([-1])
-        self.qkv_out_scale.set_value(
-            convert_to_npu_dequant_scale(qkv_weight_scale))
+        self.qkv_out_scale.set_value(qkv_weight_scale)
 
     def load_state_dict_wint8(self, qkv_proj_weight):
         """
@@ -292,49 +287,38 @@ class QKVLinear(nn.Layer):
         Args:
             qkv_proj_weight (Tensor): The weight tensor for QKV projection before quantization.
 
-        Raises:
-            NotImplementedError: If the environment is not compiled with GPU, NPU, or XPU,
-                as INT8 quantization is only supported on these devices.
         """
-        if paddle.is_compiled_with_cuda():
-            if not self.inference_args.moe_config.use_moe:
-                # Transpose Back to RowMajor.
-                qkv_proj_weight = qkv_proj_weight.reshape([-1, self.embed_dim
-                                                           ]).transpose([1, 0])
-                qkv_quanted_weight_tensor, qkv_weight_scale_tensor = weight_quantize(
-                    qkv_proj_weight,
-                    algo="weight_only_int8",
-                    arch=self.inference_args.weight_only_linear_arch,
-                )
-            else:
-                gqa_hidden_size = (
-                    self.inference_args.num_attention_heads // self.nranks +
-                    2 * self.inference_args.num_key_value_heads // self.nranks
-                ) * (self.embed_dim // self.inference_args.num_attention_heads)
-                qkv_proj_weight = qkv_proj_weight.reshape_(
-                    [gqa_hidden_size, self.embed_dim])
-                qkv_proj_weight = paddle.transpose(
-                    qkv_proj_weight,
-                    perm=[1, 0])  # ConvertBack to RowMajor Weight and to CPU.
-                qkv_quanted_weight_tensor, qkv_weight_scale_tensor = weight_quantize(
-                    qkv_proj_weight,
-                    algo="weight_only_int8",
-                    arch=self.inference_args.weight_only_linear_arch,
-                )
-                qkv_quanted_weight_tensor.reshape_([
-                    gqa_hidden_size,
-                    self.embed_dim,
-                ])
-            self.qkv_weight.set_value(qkv_quanted_weight_tensor)
-            self.qkv_weight_scale.set_value(
-                qkv_weight_scale_tensor.astype(paddle.get_default_dtype()))
-        elif paddle.is_compiled_with_xpu():
-            qkv_quanted_weight_tensor, qkv_weight_scale_tensor = xpu_quant_qkv_weight(
-                qkv_proj_weight.cpu().numpy())
-            self.qkv_weight.set_value(qkv_quanted_weight_tensor)
-            self.qkv_weight_scale.set_value(qkv_weight_scale_tensor)
+        if not self.inference_args.moe_config.use_moe:
+            # Transpose Back to RowMajor.
+            qkv_proj_weight = qkv_proj_weight.reshape([-1, self.embed_dim
+                                                       ]).transpose([1, 0])
+            qkv_quanted_weight_tensor, qkv_weight_scale_tensor = weight_quantize(
+                qkv_proj_weight,
+                algo="weight_only_int8",
+                arch=self.inference_args.weight_only_linear_arch,
+            )
         else:
-            raise NotImplementedError("Wint8 only support [GPU,NPU,XPU] now.")
+            gqa_hidden_size = (
+                self.inference_args.num_attention_heads // self.nranks +
+                2 * self.inference_args.num_key_value_heads // self.nranks) * (
+                    self.embed_dim // self.inference_args.num_attention_heads)
+            qkv_proj_weight = qkv_proj_weight.reshape_(
+                [gqa_hidden_size, self.embed_dim])
+            qkv_proj_weight = paddle.transpose(
+                qkv_proj_weight,
+                perm=[1, 0])  # ConvertBack to RowMajor Weight and to CPU.
+            qkv_quanted_weight_tensor, qkv_weight_scale_tensor = weight_quantize(
+                qkv_proj_weight,
+                algo="weight_only_int8",
+                arch=self.inference_args.weight_only_linear_arch,
+            )
+            qkv_quanted_weight_tensor.reshape_([
+                gqa_hidden_size,
+                self.embed_dim,
+            ])
+        self.qkv_weight.set_value(qkv_quanted_weight_tensor)
+        self.qkv_weight_scale.set_value(
+            qkv_weight_scale_tensor.astype(paddle.get_default_dtype()))
 
     def load_state_dict_wint4(self, qkv_proj_weight):
         """
@@ -374,7 +358,7 @@ class QKVLinear(nn.Layer):
                 arch=self.inference_args.weight_only_linear_arch,
             )
             qkv_quanted_weight_tensor.reshape_([
-                gqa_hidden_size,
+                gqa_hidden_size // 2,
                 self.embed_dim,
             ])
         self.qkv_weight.set_value(qkv_quanted_weight_tensor)
@@ -414,10 +398,6 @@ class QKVLinear(nn.Layer):
 
         Args:
             qkv_proj_weight (Tensor): The weight tensor for QKV projection before quantization.
-
-        Raises:
-            NotImplementedError: If the environment is not compiled with GPU, NPU, or XPU,
-                as INT8 quantization is only supported on these devices.
         """
         qkv_quanted_weight_tensor, qkv_weight_scale_tensor = per_block_cast_to_fp8(
             qkv_proj_weight)

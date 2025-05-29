@@ -14,23 +14,16 @@
 # limitations under the License.
 """
 
-# cipher_token=WjI1fQOvhN  # do not edit this line
-import fastdeploy
 import numpy as np
-from paddlenlp.utils.log import logger
-
 import paddle
 from paddle import nn
 from paddle.nn.quant import weight_only_linear, weight_quantize
+from paddlenlp.utils.log import logger
 
-from fastdeploy.platforms.utils import (
-    convert_to_npu_dequant_scale,
-    xpu_quant_weight,
-)
-
+import fastdeploy
 import fastdeploy.model_executor.ops.gpu.deep_gemm as deep_gemm
-from .utils import per_block_cast_to_fp8, _set_var_distributed, get_tensor
-from fastdeploy.platforms import current_platform
+
+from .utils import _set_var_distributed, get_tensor, per_block_cast_to_fp8
 
 
 class FFN1(nn.Layer):
@@ -107,7 +100,8 @@ class FFN1(nn.Layer):
         k = self.embed_dim
         self.ffn1_weight_scale = self.create_parameter(
             shape=[(n + 127) // 128, (k + 127) // 128],
-            attr=paddle.ParamAttr(name=self.layer_name + ".weight_block_scale"),
+            attr=paddle.ParamAttr(name=self.layer_name +
+                                  ".weight_block_scale"),
             dtype="float32",
             is_bias=False,
         )
@@ -123,11 +117,9 @@ class FFN1(nn.Layer):
         Returns:
             None.
         """
-        self.ffn1_weight_shape = (
-            [self.embed_dim, self.dim_feedforward * 2]
-            if self.activation.endswith("glu")
-            else [self.embed_dim, self.dim_feedforward]
-        )
+        self.ffn1_weight_shape = ([self.embed_dim, self.dim_feedforward *
+                                   2] if self.activation.endswith("glu") else
+                                  [self.embed_dim, self.dim_feedforward])
         if trans:
             self.ffn1_weight_shape.reverse()
         if self.weight_dtype == "int4":
@@ -142,19 +134,14 @@ class FFN1(nn.Layer):
         Returns:
             bool, whether the y tensor should be transposed for inference.
         """
-        if current_platform.is_dcu():
-            return False
-        elif current_platform.is_npu():
+        if self.weight_dtype == "int4":
             return True
-        else:  # GPU
-            if self.weight_dtype == "int4":
-                return True
-            if self.weight_dtype == "int8":
-                return True
-            if "float8" in self.weight_dtype:
-                return True
-            # bf16/fp16/fp32 y is not transposed
-            return False
+        if self.weight_dtype == "int8":
+            return True
+        if "float8" in self.weight_dtype:
+            return True
+        # bf16/fp16/fp32 y is not transposed
+        return False
 
     def get_weight_create_dtype(self):
         """
@@ -195,11 +182,9 @@ class FFN1(nn.Layer):
         self.ffn1_bias = None
         if self.with_bias:
             self.ffn1_bias = self.create_parameter(
-                shape=(
-                    [self.dim_feedforward * 2]
-                    if self.activation.endswith("glu")
-                    else [self.dim_feedforward]
-                ),
+                shape=([self.dim_feedforward *
+                        2] if self.activation.endswith("glu") else
+                       [self.dim_feedforward]),
                 attr=paddle.ParamAttr(name=self.bias_name),
                 dtype=self._dtype,
                 is_bias=True,
@@ -214,11 +199,9 @@ class FFN1(nn.Layer):
         Initialize the weight scale.
         """
         self.ffn1_weight_scale = self.create_parameter(
-            shape=(
-                [self.dim_feedforward * 2]
-                if self.activation.endswith("glu")
-                else [self.dim_feedforward]
-            ),
+            shape=([self.dim_feedforward *
+                    2] if self.activation.endswith("glu") else
+                   [self.dim_feedforward]),
             attr=paddle.ParamAttr(name=self.weight_only_scale_name),
             dtype=self._dtype,
             is_bias=False,
@@ -245,11 +228,9 @@ class FFN1(nn.Layer):
             return
 
         weight_scale = self.inference_args.weight_scale_dict.get(
-            self.layer_name + ".weight_quanter"
-        )
+            self.layer_name + ".weight_quanter")
         in_scale = self.inference_args.act_scale_dict.get(
-            self.layer_name + ".activation_quanter"
-        )
+            self.layer_name + ".activation_quanter")
 
         if weight_scale is None or in_scale is None:
             logger.debug(f"{self.layer_name} skip quant")
@@ -257,11 +238,9 @@ class FFN1(nn.Layer):
             return
 
         self.ffn1_out_scale = self.create_parameter(
-            shape=(
-                [self.dim_feedforward * 2]
-                if self.activation.endswith("glu")
-                else [self.dim_feedforward]
-            ),
+            shape=([self.dim_feedforward *
+                    2] if self.activation.endswith("glu") else
+                   [self.dim_feedforward]),
             attr=paddle.ParamAttr(name=self.out_scale_name),
             dtype="float32",
             is_bias=False,
@@ -269,18 +248,15 @@ class FFN1(nn.Layer):
         )
 
         weight_scale_numpy = weight_scale / (127.0 * 127.0 * in_scale)
-        converted_weight_scale = np.zeros(
-            list(weight_scale_numpy.shape), dtype=weight_scale_numpy.dtype
-        )
+        converted_weight_scale = np.zeros(list(weight_scale_numpy.shape),
+                                          dtype=weight_scale_numpy.dtype)
         out_dim = converted_weight_scale.shape[-1]
         if not self.use_fast_ffn:
-            converted_weight_scale[: out_dim // 2] = weight_scale_numpy[::2]
-            converted_weight_scale[out_dim // 2 :] = weight_scale_numpy[1::2]
+            converted_weight_scale[:out_dim // 2] = weight_scale_numpy[::2]
+            converted_weight_scale[out_dim // 2:] = weight_scale_numpy[1::2]
         else:
             converted_weight_scale[:] = weight_scale_numpy[:]
-        self.ffn1_out_scale.set_value(
-            convert_to_npu_dequant_scale(converted_weight_scale).astype("float32")
-        )
+        self.ffn1_out_scale.set_value(converted_weight_scale)
 
     def load_state_dict(self, state_dict):
         """
@@ -291,13 +267,11 @@ class FFN1(nn.Layer):
         """
         # weight
         weight_tensor = get_tensor(state_dict.pop(self.weight_key))
-        converted_weight_tensor = paddle.zeros(
-            shape=list(weight_tensor.shape), dtype=weight_tensor.dtype
-        )
+        converted_weight_tensor = paddle.zeros(shape=list(weight_tensor.shape),
+                                               dtype=weight_tensor.dtype)
         if not self.use_fast_ffn:
             converted_weight_tensor = paddle.concat(
-                [weight_tensor[:, ::2], weight_tensor[:, 1::2]], axis=1
-            )
+                [weight_tensor[:, ::2], weight_tensor[:, 1::2]], axis=1)
         else:
             converted_weight_tensor = weight_tensor
 
@@ -306,35 +280,29 @@ class FFN1(nn.Layer):
             self.ffn1_weight.set_value(converted_weight_tensor)
         else:
             if self.inference_args.weight_block_size[0] != -1:
-                converted_weight_tensor = converted_weight_tensor.transpose([1, 0])
+                converted_weight_tensor = converted_weight_tensor.transpose(
+                    [1, 0])
                 quanted_weight_tensor, weight_block_scale_tensor = (
-                    per_block_cast_to_fp8(converted_weight_tensor)
-                )
+                    per_block_cast_to_fp8(converted_weight_tensor))
                 self.ffn1_weight.copy_(quanted_weight_tensor, False)
                 self.ffn1_weight_scale.set_value(weight_block_scale_tensor)
             elif self.weight_dtype == "int8" and self.act_dtype in [
-                "bfloat16",
-                "float16",
-                "float32",
+                    "bfloat16",
+                    "float16",
+                    "float32",
             ]:  # WINT8
-                if paddle.is_compiled_with_cuda():
-                    quanted_weight_tensor, weight_scale_tensor = weight_quantize(
-                        converted_weight_tensor,
-                        algo="weight_only_int8",
-                        arch=self.inference_args.weight_only_linear_arch,
-                    )
-                elif paddle.is_compiled_with_xpu():
-                    quanted_weight_tensor, weight_scale_tensor = xpu_quant_weight(
-                        converted_weight_tensor.cpu().numpy()
-                    )
+                quanted_weight_tensor, weight_scale_tensor = weight_quantize(
+                    converted_weight_tensor,
+                    algo="weight_only_int8",
+                    arch=self.inference_args.weight_only_linear_arch,
+                )
                 self.ffn1_weight.set_value(quanted_weight_tensor)
                 self.ffn1_weight_scale.set_value(
-                    weight_scale_tensor.astype(paddle.get_default_dtype())
-                )
+                    weight_scale_tensor.astype(paddle.get_default_dtype()))
             elif self.weight_dtype == "int4" and self.act_dtype in [
-                "bfloat16",
-                "float16",
-                "float32",
+                    "bfloat16",
+                    "float16",
+                    "float32",
             ]:  # WINT4
                 quanted_weight_tensor, weight_scale_tensor = weight_quantize(
                     converted_weight_tensor.cpu(),
@@ -345,39 +313,36 @@ class FFN1(nn.Layer):
                 self.ffn1_weight_scale.set_value(weight_scale_tensor)
             elif self.weight_dtype == "int4" and self.act_dtype == "float8_e4m3fn":
                 quanted_weight_tensor, weight_scale_tensor = (
-                    fastdeploy.model_executor.ops.gpu.scaled_gemm_f8_i4_f16_weight_quantize(
+                    fastdeploy.model_executor.ops.gpu.
+                    scaled_gemm_f8_i4_f16_weight_quantize(
                         paddle.cast(converted_weight_tensor, "float32").cpu(),
                         groupsize=-1,
                         scale_dtype="float16",
-                    )
-                )
-                weight_scale_tensor = paddle.view(weight_scale_tensor, self._dtype)
+                    ))
+                weight_scale_tensor = paddle.view(weight_scale_tensor,
+                                                  self._dtype)
                 self.ffn1_weight.set_value(quanted_weight_tensor)
                 self.ffn1_weight_scale.set_value(weight_scale_tensor)
             else:  # bf16/fp16/fp32, A8W8, FP8
                 if self.is_y_transposed():
-                    converted_weight_tensor = converted_weight_tensor.transpose([1, 0])
-                converted_weight_tensor = paddle.cast(
-                    converted_weight_tensor, self.weight_dtype
-                )
-                if (
-                    "float8" in self.weight_dtype
-                ):  # TODO(wangzhe24) FP8 cannot use set_value now
+                    converted_weight_tensor = converted_weight_tensor.transpose(
+                        [1, 0])
+                converted_weight_tensor = paddle.cast(converted_weight_tensor,
+                                                      self.weight_dtype)
+                if ("float8" in self.weight_dtype
+                    ):  # TODO(wangzhe24) FP8 cannot use set_value now
                     self.ffn1_weight.copy_(converted_weight_tensor, False)
                 else:
                     self.ffn1_weight.set_value(converted_weight_tensor)
         # bias
         if self.with_bias:
             bias_tensor = get_tensor(state_dict.pop(self.bias_key)).astype(
-                paddle.get_default_dtype()
-            )
-            converted_bias_tensor = paddle.zeros(
-                shape=list(bias_tensor.shape), dtype=bias_tensor.dtype
-            )
+                paddle.get_default_dtype())
+            converted_bias_tensor = paddle.zeros(shape=list(bias_tensor.shape),
+                                                 dtype=bias_tensor.dtype)
             if not self.use_fast_ffn:
                 converted_bias_tensor = paddle.concat(
-                    [bias_tensor[::2], bias_tensor[1::2]], axis=0
-                )
+                    [bias_tensor[::2], bias_tensor[1::2]], axis=0)
             else:
                 converted_bias_tensor = bias_tensor
             self.ffn1_bias.set_value(converted_bias_tensor)
@@ -400,20 +365,18 @@ class FFN1(nn.Layer):
             return ffn1_out
         if self.inference_args.weight_block_size[0] != -1:
             x, x_scale_tensor = fastdeploy.model_executor.ops.gpu.per_token_quant_padding(
-                x, self.inference_args.weight_block_size[0]
-            )
-            ffn1_out = paddle.empty(
-                (x.shape[0], self.ffn1_weight_shape[0]), dtype=paddle.bfloat16
-            )
+                x, self.inference_args.weight_block_size[0])
+            ffn1_out = paddle.empty((x.shape[0], self.ffn1_weight_shape[0]),
+                                    dtype=paddle.bfloat16)
             deep_gemm.gemm_fp8_fp8_bf16_nt(
                 (x, x_scale_tensor),
                 (self.ffn1_weight, self.ffn1_weight_scale),
                 ffn1_out,
             )
         elif self.inference_args.use_weight_only and self.act_dtype in [
-            "bfloat16",
-            "float16",
-            "float32",
+                "bfloat16",
+                "float16",
+                "float32",
         ]:
             ffn1_out = weight_only_linear(
                 x,
@@ -432,15 +395,9 @@ class FFN1(nn.Layer):
                 zero_points=None,
                 bias=None,
                 out_scale=self.inference_args.weight_scale_dict.get(
-                    self.layer_name + ".weight_quanter"
-                )
-                / (
-                    self.inference_args.act_scale_dict.get(
-                        self.layer_name + ".activation_quanter"
-                    )
-                    * 448
-                    * 448
-                ),
+                    self.layer_name + ".weight_quanter") /
+                (self.inference_args.act_scale_dict.get(
+                    self.layer_name + ".activation_quanter") * 448 * 448),
                 groupsize=-1,
                 out_dtype=self._dtype,
             )
@@ -452,22 +409,14 @@ class FFN1(nn.Layer):
                 transpose_x=False,
                 transpose_y=True,
                 scale=self.inference_args.weight_scale_dict.get(
-                    self.layer_name + ".weight_quanter"
-                )
-                / (
-                    self.inference_args.act_scale_dict.get(
-                        self.layer_name + ".activation_quanter"
-                    )
-                    * 448
-                    * 448
-                ),
+                    self.layer_name + ".weight_quanter") /
+                (self.inference_args.act_scale_dict.get(
+                    self.layer_name + ".activation_quanter") * 448 * 448),
                 output_dtype=self._dtype,
                 activation_type="identity",
             )
-        elif (
-            self.weight_dtype in ["bfloat16", "float16", "float32"]
-            and self.act_dtype == self.weight_dtype
-        ):
+        elif (self.weight_dtype in ["bfloat16", "float16", "float32"]
+              and self.act_dtype == self.weight_dtype):
             ffn1_out = paddle.matmul(x, self.ffn1_weight)
         else:
             raise ValueError(
@@ -584,17 +533,14 @@ class FFN1Split(nn.Layer):
         Returns:
             bool, whether the y tensor should be transposed for inference.
         """
-        if current_platform.is_dcu():
-            return False
-        else:
-            if self.weight_dtype == "int4":
-                return True
-            if self.weight_dtype == "int8":
-                return True
-            if "float8" in self.weight_dtype:
-                return True
-            # bf16/fp16/fp32 y is not transposed
-            return False
+        if self.weight_dtype == "int4":
+            return True
+        if self.weight_dtype == "int8":
+            return True
+        if "float8" in self.weight_dtype:
+            return True
+        # bf16/fp16/fp32 y is not transposed
+        return False
 
     def init_weight(self):
         """
@@ -670,11 +616,10 @@ class FFN1Split(nn.Layer):
             state_dict (dict): A dictionary containing the checkpoint weights and biases.
         """
         gate_weight_tensor = get_tensor(
-            state_dict.pop(self.gate_weight_layer_name)
-        ).cast(self.weight_dtype)
-        up_weight_tensor = get_tensor(state_dict.pop(self.up_weight_layer_name)).cast(
-            self.weight_dtype
-        )
+            state_dict.pop(self.gate_weight_layer_name)).cast(
+                self.weight_dtype)
+        up_weight_tensor = get_tensor(state_dict.pop(
+            self.up_weight_layer_name)).cast(self.weight_dtype)
         if self.is_y_transposed():
             gate_weight_tensor = gate_weight_tensor.transpose([1, 0])
             up_weight_tensor = up_weight_tensor.transpose([1, 0])
@@ -683,9 +628,9 @@ class FFN1Split(nn.Layer):
         self.up_weight.copy_(up_weight_tensor, False)
         if self.with_bias:
             self.gate_bias.set_value(
-                get_tensor(state_dict.pop(self.gate_bias_layer_name))
-            )
-            self.up_bias.set_value(get_tensor(state_dict.pop(self.up_bias_layer_name)))
+                get_tensor(state_dict.pop(self.gate_bias_layer_name)))
+            self.up_bias.set_value(
+                get_tensor(state_dict.pop(self.up_bias_layer_name)))
 
     def forward(self, x):
         """
@@ -710,29 +655,15 @@ class FFN1Split(nn.Layer):
                 bias0=self.gate_bias,
                 bias1=self.up_bias,
                 scale0=self.inference_args.weight_scale_dict.get(
-                    self.gate_layer_name + ".weight_quanter"
-                )
-                / (
-                    self.inference_args.act_scale_dict.get(
-                        self.ffn1_layer_name + ".activation_quanter"
-                    )
-                    * 448
-                    * 448
-                ),
+                    self.gate_layer_name + ".weight_quanter") /
+                (self.inference_args.act_scale_dict.get(
+                    self.ffn1_layer_name + ".activation_quanter") * 448 * 448),
                 scale1=self.inference_args.weight_scale_dict.get(
-                    self.up_layer_name + ".weight_quanter"
-                )
-                / (
-                    self.inference_args.act_scale_dict.get(
-                        self.ffn1_layer_name + ".activation_quanter"
-                    )
-                    * 448
-                    * 448
-                ),
+                    self.up_layer_name + ".weight_quanter") /
+                (self.inference_args.act_scale_dict.get(
+                    self.ffn1_layer_name + ".activation_quanter") * 448 * 448),
                 scale_out=self.inference_args.act_scale_dict.get(
-                    self.ffn2_layer_name + ".activation_quanter"
-                )
-                * 448,
+                    self.ffn2_layer_name + ".activation_quanter") * 448,
                 activation_type=self.activation,
             )
         else:

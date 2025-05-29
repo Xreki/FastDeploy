@@ -14,13 +14,9 @@
 # limitations under the License.
 """
 
-# cipher_token=WjI1fQOvhN  # do not edit this line
 import paddle
 from paddle import nn
-from paddle.framework import (
-    LayerHelper,
-    in_dynamic_or_pir_mode,
-)
+from paddle.framework import LayerHelper, in_dynamic_or_pir_mode
 
 
 def fused_act_bias_wrapper(
@@ -170,10 +166,8 @@ class Activation(nn.Layer):
         elif self._dtype == "float32":
             self._fuse_kernel_compute_dtype = "fp32"
         else:
-            raise ValueError(
-                f"Just support float32, float16 and \
-                    bfloat16 as default dtype, but received {self._dtype}"
-            )
+            raise ValueError(f"Just support float32, float16 and \
+                    bfloat16 as default dtype, but received {self._dtype}")
 
         # fp8 is not support smooth quantization
         if "float8" in inference_args.act_dtype:

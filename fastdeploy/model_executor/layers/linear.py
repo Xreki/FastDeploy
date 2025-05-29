@@ -13,15 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-# cipher_token=WjI1fQOvhN  # do not edit this line
 
 import paddle
 from paddle import nn
 from paddle.nn.quant import weight_quantize
 
 import fastdeploy
-from fastdeploy.platforms import current_platform
-from fastdeploy.platforms.utils import xpu_quant_weight
 
 from .utils import _set_var_distributed, get_tensor, per_block_cast_to_fp8
 
@@ -95,19 +92,14 @@ class RowParallelLinear(nn.Layer):
         Returns:
             bool, whether the y tensor should be transposed for inference.
         """
-        if current_platform.is_dcu():
-            return False
-        elif current_platform.is_npu():
+        if self.weight_dtype == "int4":
             return True
-        else:  # GPU
-            if self.weight_dtype == "int4":
-                return True
-            if self.weight_dtype == "int8":
-                return True
-            if "float8" in self.weight_dtype:
-                return True
-            # bf16/fp16/fp32 y is not transposed
-            return False
+        if self.weight_dtype == "int8":
+            return True
+        if "float8" in self.weight_dtype:
+            return True
+        # bf16/fp16/fp32 y is not transposed
+        return False
 
     def init_weight_shape(self, trans=False):
         """
@@ -373,17 +365,11 @@ class FFN2(RowParallelLinear):
                     "float16",
                     "float32",
             ]:  # WINT8
-                if paddle.is_compiled_with_cuda():
-                    quanted_weight_tensor, weight_scale_tensor = weight_quantize(
-                        weight_tensor,
-                        algo="weight_only_int8",
-                        arch=self.inference_args.weight_only_linear_arch,
-                    )
-                elif paddle.is_compiled_with_xpu():
-                    quanted_weight_tensor, weight_scale_tensor = xpu_quant_weight(
-                        weight_tensor.cpu().numpy())
-                else:
-                    raise ValueError("Not supported platform.")
+                quanted_weight_tensor, weight_scale_tensor = weight_quantize(
+                    weight_tensor,
+                    algo="weight_only_int8",
+                    arch=self.inference_args.weight_only_linear_arch,
+                )
                 self.linear_weight.set_value(quanted_weight_tensor)
                 self.linear_weight_scale.set_value(
                     weight_scale_tensor.astype(paddle.get_default_dtype()))

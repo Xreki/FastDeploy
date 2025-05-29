@@ -14,14 +14,10 @@
 # limitations under the License.
 """
 
-# cipher_token=WjI1fQOvhN  # do not edit this line
-
-import os
+from paddle import nn
 
 from fastdeploy.worker.model_runner import ForwardMeta
 
-import paddle
-from paddle import nn
 
 class Attention(nn.Layer):
     """
@@ -29,13 +25,13 @@ class Attention(nn.Layer):
     """
 
     def __init__(self,
-        num_heads: int,
-        head_dim: int,
-        num_kv_heads: int,
-        layer_id: int,
-        logit_cap: float = 0.0,
-        v_head_dim: int = -1,
-        rope_type: str = "") -> None:
+                 num_heads: int,
+                 head_dim: int,
+                 num_kv_heads: int,
+                 layer_id: int,
+                 logit_cap: float = 0.0,
+                 v_head_dim: int = -1,
+                 rope_type: str = "") -> None:
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim
@@ -50,7 +46,7 @@ class Attention(nn.Layer):
         self.tp_v_head_num = num_heads
         self.k_scale = 1.0
         self.v_scale = 1.0
-        self.scaling = 1.0 / (head_dim ** 0.5)
+        self.scaling = 1.0 / (head_dim**0.5)
 
     def forward(
         self,
@@ -79,4 +75,3 @@ class Attention(nn.Layer):
             save_kv_cache,
             **kwargs,
         )
-        

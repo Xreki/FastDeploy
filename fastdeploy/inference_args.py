@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-# cipher_token=WjI1fQOvhN  # do not edit this line
+
 import copy
 import json
 import os
@@ -60,7 +60,6 @@ class InferenceArgs:
         gqa_use_tensorcore=False,
         use_dynamic_cachekv_quant=False,
         max_position_embeddings=512,
-        use_avx512=False,
         speculate_method=None,
         speculate_max_draft_token_num=1,
         use_moe=False,
@@ -104,7 +103,6 @@ class InferenceArgs:
         use_dynamic_cachekv_quant (bool, optional): Whether to use dynamic caching for kv quantization.
             Default is False.
         max_position_embeddings (int, optional): Maximum position embeddings. Default is 512.
-        use_avx512 (bool, optional): Whether to use AVX512. Default is False.
         Returns:
         None
         """
@@ -121,7 +119,6 @@ class InferenceArgs:
         self.weight_block_size = weight_block_size
         # self.weight_block_size = [-1, -1]
 
-        self.use_avx512 = use_avx512
         self.ffn_hidden_size = ffn_hidden_size
         self.mp_rank = mp_rank
         if use_ep:
@@ -146,7 +143,6 @@ class InferenceArgs:
         self.dim_feedforward = ffn_hidden_size
 
         self.max_position_embeddings = max_position_embeddings
-        self.use_avx512 = use_avx512
         self.model_path = model_path
         self.use_fake_parameter = use_fake_parameter
         self.fp8_type = fp8_type
@@ -323,15 +319,6 @@ class InferenceArgs:
         Raises:
             AssertionError: If the custom quantization type string format is incorrect.
         """
-        if self.use_avx512:
-            if quant_type == "fp16":
-                return "float32", "fp16", "fp16"
-            elif quant_type == "bf16":
-                return "float32", "bf16", "fp16"
-            elif quant_type == "weight_only_int8" or quant_type == "wint8":
-                return "float32", "bf16_int8", "fp16"
-            else:
-                return "float32", "bf16_int8", "fp16"
         cache_type = self.default_type
         if "c8" in quant_type:
             cache_type = "int8"

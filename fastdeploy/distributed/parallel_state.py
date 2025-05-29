@@ -14,7 +14,6 @@
 # limitations under the License.
 """
 
-# cipher_token=WjI1fQOvhN  # do not edit this line
 from paddle.distributed import fleet
 
 

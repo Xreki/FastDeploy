@@ -14,35 +14,26 @@
 # limitations under the License.
 """
 
-# cipher_token=WjI1fQOvhN  # do not edit this line
-
 import json
 import os
 
 import numpy as np
-
 import paddle
 import paddle.distributed as dist
 from paddle.distributed import fleet
-from fastdeploy.model_executor.models.utils import (
-    get_rotary_position_embedding,
-)
-from fastdeploy.model_executor.models.export_model import (
-    build_stream_line_model,
-)
 
 from fastdeploy.model_executor.layers.hydra_head import HydraHead
+from fastdeploy.model_executor.models.export_model import \
+    build_stream_line_model
+from fastdeploy.model_executor.models.utils import \
+    get_rotary_position_embedding
 
 try:
     from fastdeploy.model_executor.ops.gpu import (
-        draft_model_postprocess,
-        draft_model_preprocess,
-        eagle_get_hidden_states,
-        eagle_get_self_hidden_states,
-        hydra_fetch_hidden_states,
-        ngram_match,
-        speculate_update_seq_lens_this_time,
-    )
+        draft_model_postprocess, draft_model_preprocess,
+        eagle_get_hidden_states, eagle_get_self_hidden_states,
+        hydra_fetch_hidden_states, ngram_match,
+        speculate_update_seq_lens_this_time)
 except ImportError:
     pass
 
@@ -106,12 +97,12 @@ class InferenceWithReferenceProposer(Proposer):
     Matching corresponding tokens in input and output as draft tokens.
     """
 
-    def __init__(self, max_draft_tokens, max_ngram_size, max_batch_size, **kwargs):
+    def __init__(self, max_draft_tokens, max_ngram_size, max_batch_size,
+                 **kwargs):
         super().__init__()
         self.max_ngram_size = max_ngram_size
-        self.input_ids_len = paddle.zeros(
-            shape=[max_batch_size, 1], dtype="int64"
-        ).cpu()
+        self.input_ids_len = paddle.zeros(shape=[max_batch_size, 1],
+                                          dtype="int64").cpu()
         self.max_batch_size = max_batch_size
         self.max_draft_tokens = max_draft_tokens
 
@@ -195,15 +186,13 @@ class HydraProposer(Proposer):
 
             if tensor_parallel_degree == 1:
                 state_dict = paddle.load(
-                    os.path.join(hydra_ckpt_path, "hydra.pdparams")
-                )
+                    os.path.join(hydra_ckpt_path, "hydra.pdparams"))
             else:
                 state_dict = paddle.load(
                     os.path.join(
                         hydra_ckpt_path,
                         f"hydra_tp{tensor_parallel_rank:02d}.pdparams",
-                    )
-                )
+                    ))
 
             self.hydra_head.set_state_dict(state_dict)
 
@@ -317,18 +306,17 @@ class ModelProposer(Proposer):
         self.model_config = config
         self.tokenizer = tokenizer
         # init cache_kvs
-        num_layers = self.model_config.get("num_layers", None) or self.model_config.get(
-            "num_hidden_layers", None
-        )
+        num_layers = self.model_config.get("num_layers",
+                                           None) or self.model_config.get(
+                                               "num_hidden_layers", None)
         self.cache_kvs = []
         self.free_list = list(range(args.max_num_blocks))
         self.used_list = [[] for _ in range(self.beam_batch_size)]
-        head_dim = (
-            self.model_config["hidden_size"] // self.model_config["num_attention_heads"]
-        )
+        head_dim = (self.model_config["hidden_size"] //
+                    self.model_config["num_attention_heads"])
         self.pre_ids = paddle.to_tensor(
-            np.zeros((self.beam_batch_size, args.max_dec_len)).astype("int64") - 1
-        )
+            np.zeros((self.beam_batch_size,
+                      args.max_dec_len)).astype("int64") - 1)
         tmp_position_ids = paddle.arange(args.max_seq_len).reshape((1, -1))
         compression_ratio = self.model_config.get("compression_ratio", 1)
         rope_theta = self.model_config.get("rope_theta", 10000.0)
@@ -348,8 +336,7 @@ class ModelProposer(Proposer):
             dtype="int64",
         )
         num_key_value_heads = self.model_config.get(
-            "num_key_value_heads", self.model_config["num_attention_heads"]
-        )
+            "num_key_value_heads", self.model_config["num_attention_heads"])
         if num_key_value_heads is None:
             num_key_value_heads = self.model_config["num_attention_heads"]
         num_key_value_heads = num_key_value_heads // self.nranks
@@ -363,28 +350,20 @@ class ModelProposer(Proposer):
         for i in range(num_layers):
             self.cache_kvs.append(
                 paddle.to_tensor(
-                    np.zeros(
-                        [
-                            args.max_num_blocks,
-                            num_key_value_heads,
-                            args.block_size,
-                            head_dim,
-                        ]
-                    ).astype("float32")
-                ).astype(cache_type)
-            )
+                    np.zeros([
+                        args.max_num_blocks,
+                        num_key_value_heads,
+                        args.block_size,
+                        head_dim,
+                    ]).astype("float32")).astype(cache_type))
             self.cache_kvs.append(
                 paddle.to_tensor(
-                    np.zeros(
-                        [
-                            args.max_num_blocks,
-                            num_key_value_heads,
-                            args.block_size,
-                            head_dim,
-                        ]
-                    ).astype("float32")
-                ).astype(cache_type)
-            )
+                    np.zeros([
+                        args.max_num_blocks,
+                        num_key_value_heads,
+                        args.block_size,
+                        head_dim,
+                    ]).astype("float32")).astype(cache_type))
 
     def insert_query(self, preprocessed_inputs):
         self.model_inputs = {}
@@ -394,39 +373,36 @@ class ModelProposer(Proposer):
 
         max_sec_len = self.args.max_seq_len
         self.model_inputs["block_tables"] = paddle.full_like(
-            base_model_inputs["block_tables"], fill_value=-1, dtype="int32"
-        )
+            base_model_inputs["block_tables"], fill_value=-1, dtype="int32")
         for i in range(real_bs):
             real_len = seq_len[i] + self.args.max_dec_len
             if real_len > max_sec_len:
                 self.free_list = list(range(self.args.max_num_blocks))
                 self.used_list = [[] for _ in range(self.beam_batch_size)]
-                raise ValueError(
-                    f"input_len({seq_len[i]}) + \
-max_dec_len({self.args.max_dec_len}) > max_seq_len({max_sec_len})"
-                )
+                raise ValueError(f"input_len({seq_len[i]}) + \
+max_dec_len({self.args.max_dec_len}) > max_seq_len({max_sec_len})")
             for j in range(
-                (real_len + self.args.block_size - 1) // self.args.block_size
-            ):
+                (real_len + self.args.block_size - 1) // self.args.block_size):
                 used_block_id = self.free_list.pop()
                 self.used_list[i].append(used_block_id)
                 self.model_inputs["block_tables"][i, j] = used_block_id
-        self.model_inputs["input_ids"] = paddle.clone(base_model_inputs["input_ids"])
+        self.model_inputs["input_ids"] = paddle.clone(
+            base_model_inputs["input_ids"])
         self.model_inputs["seq_lens_this_time"] = paddle.clone(
-            base_model_inputs["seq_lens_this_time"]
-        )
+            base_model_inputs["seq_lens_this_time"])
         self.model_inputs["seq_lens_encoder"] = paddle.clone(
-            base_model_inputs["seq_lens_encoder"]
-        )
+            base_model_inputs["seq_lens_encoder"])
         self.model_inputs["seq_lens_decoder"] = paddle.clone(
-            base_model_inputs["seq_lens_decoder"]
-        )
-        self.model_inputs["step_idx"] = paddle.clone(base_model_inputs["step_idx"])
-        self.model_inputs["stop_flags"] = paddle.clone(base_model_inputs["stop_flags"])
-        self.model_inputs["stop_nums"] = paddle.clone(base_model_inputs["stop_nums"])
-        self.model_inputs["not_need_stop"] = paddle.to_tensor(
-            [False], dtype="bool", place="cpu"
-        )
+            base_model_inputs["seq_lens_decoder"])
+        self.model_inputs["step_idx"] = paddle.clone(
+            base_model_inputs["step_idx"])
+        self.model_inputs["stop_flags"] = paddle.clone(
+            base_model_inputs["stop_flags"])
+        self.model_inputs["stop_nums"] = paddle.clone(
+            base_model_inputs["stop_nums"])
+        self.model_inputs["not_need_stop"] = paddle.to_tensor([False],
+                                                              dtype="bool",
+                                                              place="cpu")
         self.model_inputs["pre_ids"] = self.pre_ids
         self.model_inputs["rope_emb"] = self.rope_emb
         self.model_inputs["caches"] = self.cache_kvs
@@ -435,34 +411,33 @@ max_dec_len({self.args.max_dec_len}) > max_seq_len({max_sec_len})"
         self.model_inputs["temperature"] = base_model_inputs["temperature"]
         self.model_inputs["eos_token_id"] = base_model_inputs["eos_token_id"]
         self.model_inputs["penalty_score"] = base_model_inputs["penalty_score"]
-        self.model_inputs["frequency_score"] = base_model_inputs["frequency_score"]
-        self.model_inputs["presence_score"] = base_model_inputs["presence_score"]
+        self.model_inputs["frequency_score"] = base_model_inputs[
+            "frequency_score"]
+        self.model_inputs["presence_score"] = base_model_inputs[
+            "presence_score"]
         self.model_inputs["max_dec_len"] = base_model_inputs["max_dec_len"]
         self.model_inputs["min_dec_len"] = base_model_inputs["min_dec_len"]
         self.model_inputs["bad_tokens"] = base_model_inputs["bad_tokens"]
         self.model_inputs["next_tokens"] = paddle.full(
-            shape=[self.beam_batch_size, 1], fill_value=-1, dtype="int64"
-        )
-        self.model_inputs["base_model_draft_tokens"] = base_model_inputs["draft_tokens"]
+            shape=[self.beam_batch_size, 1], fill_value=-1, dtype="int64")
+        self.model_inputs["base_model_draft_tokens"] = base_model_inputs[
+            "draft_tokens"]
         self.model_inputs["draft_tokens"] = paddle.full(
-            shape=[self.args.batch_size, 2], fill_value=-1, dtype="int64"
-        )
+            shape=[self.args.batch_size, 2], fill_value=-1, dtype="int64")
 
         self.seq_lens_encoder_record = paddle.full(
-            shape=[self.beam_batch_size, 1], fill_value=-1, dtype="int32"
-        )
+            shape=[self.beam_batch_size, 1], fill_value=-1, dtype="int32")
         self.seq_lens_decoder_record = paddle.full(
-            shape=[self.max_batch_size, 1], fill_value=0, dtype="int32"
-        )
+            shape=[self.max_batch_size, 1], fill_value=0, dtype="int32")
 
         self.model_inputs["substep"] = 0
         for i in range(real_bs):
-            self.model_inputs["pre_ids"][i, 0] = self.model_inputs["input_ids"][i, -1]
-            self.seq_lens_encoder_record[i : i + 1] = seq_len[i]
+            self.model_inputs["pre_ids"][
+                i, 0] = self.model_inputs["input_ids"][i, -1]
+            self.seq_lens_encoder_record[i:i + 1] = seq_len[i]
 
         self.model_inputs["batch_drop"] = paddle.full(
-            shape=[self.max_batch_size, 1], fill_value=False, dtype="bool"
-        )
+            shape=[self.max_batch_size, 1], fill_value=False, dtype="bool")
 
     def run_preprocess(self, share_inputs):
         """
@@ -535,17 +510,15 @@ class DraftModelProposer(ModelProposer):
         self.model_inputs["seq_lens_encoder"] += 1
         self.model_inputs["seq_lens_this_time"] += 1
         for i in range(real_bs):
-            self.seq_lens_encoder_record[i : i + 1] += 1
+            self.seq_lens_encoder_record[i:i + 1] += 1
 
     def run_infer(self, share_inputs):
         """ """
         if self.model_inputs["not_need_stop"]:
             with paddle.no_grad():
                 self.model_inputs["substep"] = 0
-                while (
-                    self.model_inputs["substep"] < self.max_draft_tokens
-                    and self.model_inputs["not_need_stop"]
-                ):
+                while (self.model_inputs["substep"] < self.max_draft_tokens
+                       and self.model_inputs["not_need_stop"]):
                     self.model(**self.model_inputs)
                     self.model_inputs["substep"] += 1
 
@@ -562,10 +535,12 @@ class EagleProposer(ModelProposer):
         # seq_len = preprocessed_inputs["seq_len"]
         base_model_inputs = preprocessed_inputs["inputs"]
 
-        self.model_inputs["input_ids"][:, :-1] = base_model_inputs["input_ids"][:, 1:]
+        self.model_inputs["input_ids"][:, :-1] = base_model_inputs[
+            "input_ids"][:, 1:]
         self.last_seq_lens_this_time = paddle.full_like(
-            base_model_inputs["seq_lens_this_time"], fill_value=-1, dtype="int32"
-        )
+            base_model_inputs["seq_lens_this_time"],
+            fill_value=-1,
+            dtype="int32")
 
     def run_infer(self, share_inputs):
         if self.model_inputs["not_need_stop"]:
@@ -584,26 +559,23 @@ class EagleProposer(ModelProposer):
 
         with paddle.no_grad():
             self.model_inputs["substep"] = 0
-            while (
-                self.model_inputs["not_need_stop"]
-                and self.model_inputs["substep"] < self.max_draft_tokens
-            ):
+            while (self.model_inputs["not_need_stop"]
+                   and self.model_inputs["substep"] < self.max_draft_tokens):
                 self.last_seq_lens_this_time[:] = self.model_inputs[
-                    "seq_lens_this_time"
-                ][:]
+                    "seq_lens_this_time"][:]
                 output_hidden_states = self.model(**self.model_inputs)
 
                 self.model_inputs["substep"] += 1
-                if (
-                    self.model_inputs["not_need_stop"]
-                    and self.model_inputs["substep"] < self.actual_draft_token_num
-                ):
-                    self.model_inputs["hidden_states"] = eagle_get_self_hidden_states(
-                        output_hidden_states,
-                        self.last_seq_lens_this_time,
-                        self.model_inputs["seq_lens_this_time"],
-                        self.model_inputs["step_idx"],
-                    )
+                if (self.model_inputs["not_need_stop"]
+                        and self.model_inputs["substep"]
+                        < self.actual_draft_token_num):
+                    self.model_inputs[
+                        "hidden_states"] = eagle_get_self_hidden_states(
+                            output_hidden_states,
+                            self.last_seq_lens_this_time,
+                            self.model_inputs["seq_lens_this_time"],
+                            self.model_inputs["step_idx"],
+                        )
                 else:
                     self.model_inputs["hidden_states"] = None
 
