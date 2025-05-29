@@ -58,7 +58,6 @@ coverage.xml
 .env
 log
 .vscode
-test
 .idea
 
 # PyInstaller
