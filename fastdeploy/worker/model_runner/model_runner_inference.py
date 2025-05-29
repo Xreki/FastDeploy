@@ -230,7 +230,7 @@ class ModelRunner(ModelRunnerBase):
             rot_emb: [2, 1, S, 1, D // 2] or [2, 1, S, 1, D], cos + sin
         """
         bsz, max_model_len = position_ids.shape[:2]
-        inv_freq = rope_theta**(
+        inv_freq = rope_theta ** (
             -paddle.arange(0, head_dim, 2, dtype="float32") / head_dim)
 
         # shape: [B, S, D/2]
