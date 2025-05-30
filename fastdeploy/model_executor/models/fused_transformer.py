@@ -36,7 +36,6 @@ from fastdeploy.inference_args import GenerationPhase
 
 from ..layers.activation import SiluAndMul
 from ..layers.attention.base import Attention
-from ..layers.ffn1 import FFN1Split
 from ..layers.linear import (FFN2, MergedColumnParallelLinear,
                              QKVParallelLinear, RowParallelLinear)
 from ..layers.normalization import LayerNorm, RMSNorm
@@ -172,35 +171,24 @@ class FusedTransformer(nn.Layer):
                                     None),
             ) for i in range(self.num_layers)
         ])
-        if ffn1_concat:
-            self.ffn1_layers = nn.LayerList([
-                MergedColumnParallelLinear(
-                    llm_config=llm_config,
-                    layer_name=
-                    f"{base_model_prefix}.decoder.layers.{i}.linear1",
-                    weight_key=fmt_keys.ffn1_weight_keys[i],
-                    bias_key=fmt_keys.ffn1_bias_keys[i],
-                    activation=act_method,
-                    use_fast_ffn=(False if
-                                  not (self.inference_args.moe_config.use_moe
-                                       and not self.inference_args.moe_config.
-                                       moe_use_ffn_shared_weight_and_bias) else
-                                  True),
-                ) for i in range(self.num_layers if not (
-                    self.inference_args.moe_config.use_moe
-                    and not self.inference_args.moe_config.
-                    moe_use_ffn_shared_weight_and_bias
-                ) else self.inference_args.moe_config.moe_layer_start_index)
-            ])
-        else:
-            self.ffn1_layers = nn.LayerList([
-                FFN1Split(
-                    inference_args=inference_args,
-                    gate_layer_name=
-                    f"{base_model_prefix}.decoder.layers.{i}.gate",
-                    up_layer_name=f"{base_model_prefix}.decoder.layers.{i}.up",
-                ) for i in range(self.num_layers)
-            ])
+
+        self.ffn1_layers = nn.LayerList([
+            MergedColumnParallelLinear(
+                llm_config=llm_config,
+                layer_name=f"{base_model_prefix}.decoder.layers.{i}.linear1",
+                weight_key=fmt_keys.ffn1_weight_keys[i],
+                bias_key=fmt_keys.ffn1_bias_keys[i],
+                activation=act_method,
+                use_fast_ffn=(False
+                              if not (self.inference_args.moe_config.use_moe
+                                      and not self.inference_args.moe_config.
+                                      moe_use_ffn_shared_weight_and_bias) else
+                              True),
+            ) for i in range(self.num_layers if not (
+                self.inference_args.moe_config.use_moe and not self.
+                inference_args.moe_config.moe_use_ffn_shared_weight_and_bias
+            ) else self.inference_args.moe_config.moe_layer_start_index)
+        ])
 
         self.ffn2_layers = nn.LayerList([
             FFN2(
