@@ -186,57 +186,36 @@ class FusedMoE(nn.Layer):
         Initialize the weight scale.
         """
 
-        if self.layer_idx >= self.moe_config.moe_layer_start_index:
-            self.moe_ffn1_weight_scale = self.create_parameter(
-                shape=[self.num_local_experts, self.moe_intermediate_size * 2],
+        assert self.layer_idx >= self.moe_config.moe_layer_start_index
+        self.moe_ffn1_weight_scale = self.create_parameter(
+            shape=[self.num_local_experts, self.moe_intermediate_size * 2],
+            attr=paddle.ParamAttr(
+                name=f"{self.layer_name}.{self.layer_idx}.linear1.weight_scale"
+            ),
+            dtype=self._dtype,
+            is_bias=False,
+        )
+        self.moe_ffn2_weight_scale = self.create_parameter(
+            shape=[self.num_local_experts, self.hidden_size],
+            attr=paddle.ParamAttr(
+                name=f"{self.layer_name}.{self.layer_idx}.linear2.weight_scale"
+            ),
+            dtype=self._dtype,
+            is_bias=False,
+        )
+        if self.moe_quant_type == "w4a8":
+            self.moe_ffn1_in_scale = self.create_parameter(
+                shape=[self.num_local_experts],
                 attr=paddle.ParamAttr(
-                    name=
-                    f"{self.layer_name}.{self.layer_idx}.linear1.weight_scale"
-                ),
-                dtype=self._dtype,
+                    name=f"layers.{self.layer_idx}.linear1.in_scale"),
+                dtype="float32",
                 is_bias=False,
             )
-            self.moe_ffn2_weight_scale = self.create_parameter(
-                shape=[self.num_local_experts, self.hidden_size],
+            self.moe_ffn2_in_scale = self.create_parameter(
+                shape=[self.num_local_experts],
                 attr=paddle.ParamAttr(
-                    name=
-                    f"{self.layer_name}.{self.layer_idx}.linear2.weight_scale"
-                ),
-                dtype=self._dtype,
-                is_bias=False,
-            )
-            if self.moe_quant_type == "w4a8":
-                self.moe_ffn1_in_scale = self.create_parameter(
-                    shape=[self.num_local_experts],
-                    attr=paddle.ParamAttr(
-                        name=f"layers.{self.layer_idx}.linear1.in_scale"),
-                    dtype="float32",
-                    is_bias=False,
-                )
-                self.moe_ffn2_in_scale = self.create_parameter(
-                    shape=[self.num_local_experts],
-                    attr=paddle.ParamAttr(
-                        name=f"layers.{self.layer_idx}.linear2.in_scale"),
-                    dtype="float32",
-                    is_bias=False,
-                )
-        else:
-            self.moe_ffn1_weight_scale = self.create_parameter(
-                shape=[self.moe_intermediate_size * 2],
-                attr=paddle.ParamAttr(
-                    name=
-                    f"{self.layer_name}.{self.layer_idx}.linear1.weight_scale"
-                ),
-                dtype=self._dtype,
-                is_bias=False,
-            )
-            self.moe_ffn2_weight_scale = self.create_parameter(
-                shape=[self.hidden_size],
-                attr=paddle.ParamAttr(
-                    name=
-                    f"{self.layer_name}.{self.layer_idx}.linear2.weight_scale"
-                ),
-                dtype=self._dtype,
+                    name=f"layers.{self.layer_idx}.linear2.in_scale"),
+                dtype="float32",
                 is_bias=False,
             )
 
