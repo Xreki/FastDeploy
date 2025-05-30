@@ -16,13 +16,10 @@
 
 import paddle
 from paddle import nn
-from paddle.nn.quant import weight_quantize
 
-import fastdeploy
 from fastdeploy.platforms import current_platform
 
-from .utils import (_set_var_distributed, divide, get_tensor,
-                    per_block_cast_to_fp8)
+from .utils import _set_var_distributed, divide, get_tensor
 
 
 class LinearBase(nn.Layer):
@@ -601,7 +598,7 @@ class QKVParallelLinear(ColumnParallelLinear):
             self.linear_smooth.set_value(smooth_tensor)
 
 
-class RowParallelLinear(nn.Layer):
+class RowParallelLinear(LinearBase):
     """
     RowParallelLinear Layer
     """
@@ -609,8 +606,12 @@ class RowParallelLinear(nn.Layer):
     def __init__(
         self,
         llm_config,
-        layer_name="",
-        layer_index=0,
+        layer_name: str = "",
+        input_size: int = None,
+        output_size: int = None,
+        weight_key=None,
+        bias_key=None,
+        skip_quant=False,
     ):
         """
         Initialize a linear layer with additional parameters for inference and quantization.
@@ -624,7 +625,13 @@ class RowParallelLinear(nn.Layer):
             layer_index (int): The index of the linear layer in the model
 
         """
-        super().__init__()
+        super().__init__(llm_config=llm_config,
+                         layer_name=layer_name,
+                         input_size=input_size,
+                         output_size=output_size,
+                         weight_key=weight_key,
+                         bias_key=bias_key,
+                         skip_quant=skip_quant)
         self.llm_config = llm_config
         self.skip_quant = False
         self.use_smooth_quant = llm_config.model_config.use_smooth_quant
@@ -636,10 +643,8 @@ class RowParallelLinear(nn.Layer):
         self.num_heads = llm_config.model_config.num_attention_heads // self.nranks
         self.dim_feedforward = llm_config.model_config.ffn_hidden_size // self.nranks
 
-        self.weight_key = llm_config.load_config.weight_keys.out_linear_weight_keys[
-            layer_index]
-        self.bias_key = llm_config.load_config.weight_keys.out_linear_bias_keys[
-            layer_index]
+        self.weight_key = weight_key
+        self.bias_key = bias_key
         self.with_bias = True if self.bias_key is not None else False
 
         self.shift_key = f"{layer_name}.shift_bias"
@@ -660,47 +665,6 @@ class RowParallelLinear(nn.Layer):
             self.quant_method.create_weights(self)
 
         self.init_weight()
-
-    def is_y_transposed(self):
-        """
-        Returns whether the y tensor should be transposed for inference.
-        Args:
-            None.
-
-        Returns:
-            bool, whether the y tensor should be transposed for inference.
-        """
-        if self.weight_dtype == "int4":
-            return True
-        if self.weight_dtype == "int8":
-            return True
-        if "float8" in self.weight_dtype:
-            return True
-        # bf16/fp16/fp32 y is not transposed
-        return False
-
-    def init_weight_shape(self, trans=False):
-        """
-        Initialize the weight shape for the first feedforward network layer.
-
-        Args:
-            trans (bool, optional): Whether to transpose the weight shape.
-                Defaults to False. If True, the shape will be reversed.
-
-        Returns:
-            None.
-        """
-        self.linear_weight_shape = [
-            self.num_heads * self.head_dim,
-            self.embed_dim,
-        ]
-        if trans:
-            self.linear_weight_shape.reverse()
-        if self.use_smooth_quant:
-            self.linear_shift_shape = [self.num_heads * self.head_dim]
-            self.linear_smooth_shape = [self.num_heads * self.head_dim]
-        if self.weight_dtype == "int4":
-            self.linear_weight_shape[0] //= 2
 
     def init_weight(self):
         """
@@ -745,269 +709,3 @@ class RowParallelLinear(nn.Layer):
                 dtype=self._dtype,
                 is_bias=False,
             )
-
-    def get_weight_create_dtype(self):
-        """
-        Get the data type for creating weights based on quantization settings.
-
-        Args:
-            self (object): The instance of the class where this method is defined.
-
-        Returns:
-            str: The data type for creating weights. It depends on the quantization settings:
-                - If `self.skip_quant` is True, returns the original data type `self._dtype`.
-                - If `self.weight_dtype` is "int4", returns "int8" to ensure compatibility or optimization.
-                - Otherwise, returns the specified weight data type `self.weight_dtype`.
-        """
-        if self.skip_quant:
-            return self._dtype
-        if self.weight_dtype == "int4":
-            return "int8"
-        # TODO(wangzhe24) create_parameter not support FP8
-        if "float8" in self.weight_dtype:
-            return self._dtype
-        return self.weight_dtype
-
-    def load_state_dict(self, state_dict):
-        """
-        Load the checkpoint state dictionary into the layer.
-
-        Args:
-            state_dict (dict): A dictionary containing the checkpoint weights and biases.
-        """
-        # weight
-        weight_tensor = get_tensor(state_dict.pop(self.weight_key))
-
-        if self.llm_config.quant_config:
-            self.quant_method.process_loaded_weights(self, weight_tensor)
-        else:
-            self.linear_weight.set_value(weight_tensor)
-
-        # bias
-        if self.with_bias:
-            bias_tensor = paddle.to_tensor(
-                get_tensor(state_dict.pop(self.bias_key)))
-            self.linear_bias.set_value(bias_tensor)
-
-        # smooth quant
-        if self.use_smooth_quant:
-            if self.shift_key in state_dict:
-                shift_tensor = get_tensor(state_dict.pop(
-                    self.shift_key)).astype(paddle.get_default_dtype())
-            else:
-                shift_tensor = paddle.zeros(
-                    shape=[(self.inference_args.num_attention_heads //
-                            self.inference_args.mp_size) *
-                           (self.inference_args.hidden_size //
-                            self.inference_args.num_attention_heads)],
-                    dtype=paddle.get_default_dtype(),
-                )
-            self.linear_shift.set_value(shift_tensor)
-            if self.smooth_key in state_dict:
-                smooth_tensor = get_tensor(state_dict.pop(
-                    self.smooth_key)).astype(paddle.get_default_dtype())
-            else:
-                smooth_tensor = paddle.ones(
-                    shape=[(self.inference_args.num_attention_heads //
-                            self.inference_args.mp_size) *
-                           (self.inference_args.hidden_size //
-                            self.inference_args.num_attention_heads)],
-                    dtype=paddle.get_default_dtype(),
-                )
-            self.linear_smooth.set_value(smooth_tensor)
-
-    def forward(self, x):
-        """
-        Forward function for FFN1Split.
-
-        Args:
-            x (Tensor): Input tensor to the FFN1Split layer.
-
-        Returns:
-            Tensor: Output tensor.
-
-        Raises:
-            NotImplementedError: If the weight dtype is not float8 or act dtype is not equal to weight dtype.
-        """
-        if self.llm_config.quant_config:
-            linear_out = self.quant_method.apply(self, x)
-        else:
-            linear_out = paddle.matmul(x, self.linear_weight)
-
-        return linear_out
-
-
-class FFN2(RowParallelLinear):
-    """
-    FFN2 is a Linear layer with different weight dimensions.
-    """
-
-    def __init__(
-        self,
-        inference_args,
-        layer_name,
-        weight_key,
-        bias_key=None,
-        skip_quant=False,
-        use_smooth_quant=True,
-        shift_key=None,
-        smooth_key=None,
-        llm_config=None,
-        layer_index=0,
-    ):
-        """
-        Initialize a linear layer with additional parameters for inference and quantization.
-
-        Args:
-            inference_args (dict or object): Arguments related to inference, containing
-                attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
-                num_attention_heads, and ffn_hidden_size.
-            layer_name (str): Name of the layer, used for naming internal attributes.
-            with_bias (bool, optional): Whether to include a bias term in the layer.
-                Defaults to True.
-            skip_quant (bool, optional): Whether to skip quantization for this layer.
-                Defaults to False.
-            use_smooth_quant (bool, optional): Whether to use smooth quantization for this
-                layer. Smooth quantization introduces additional parameters to improve
-                quantization accuracy. Defaults to True.
-        """
-
-        super(FFN2, self).__init__(
-            llm_config,
-            layer_name=layer_name,
-            layer_index=layer_index,
-        )
-        self.inference_args = inference_args
-        self.weight_key = weight_key
-        self.bias_key = bias_key
-        self.skip_quant = skip_quant
-        self.use_smooth_quant = use_smooth_quant
-        self.shift_key = shift_key
-        self.smooth_key = smooth_key
-        self.with_bias = True if self.bias_key is not None else False
-
-    def init_weight_block_scale(self):
-        """init_weight_block_scale for fp8"""
-        self.linear_weight_scale = self.create_parameter(
-            shape=[(self.embed_dim + 127) // 128,
-                   (self.dim_feedforward + 127) // 128],
-            attr=paddle.ParamAttr(name=self.layer_name +
-                                  ".weight_block_scale"),
-            dtype="float32",
-            is_bias=False,
-        )
-
-    def init_weight_shape(self, trans=False):
-        """
-        Initialize the weight shape for the first feedforward network layer.
-
-        Args:
-            trans (bool, optional): Whether to transpose the weight shape.
-                Defaults to False. If True, the shape will be reversed.
-
-        Returns:
-            None.
-        """
-        self.linear_weight_shape = [self.dim_feedforward, self.embed_dim]
-        if trans:
-            self.linear_weight_shape.reverse()
-        if self.use_smooth_quant:
-            self.linear_shift_shape = [self.dim_feedforward]
-            self.linear_smooth_shape = [self.dim_feedforward]
-        if self.weight_dtype == "int4":
-            self.linear_weight_shape[0] //= 2
-
-    def load_state_dict(self, state_dict):
-        """
-        Load the checkpoint state dictionary into the layer.
-
-        Args:
-            state_dict (dict): A dictionary containing the checkpoint weights and biases.
-        """
-        # weight
-        weight_tensor = get_tensor(state_dict.pop(self.weight_key))
-        if self.skip_quant:
-            if self.is_y_transposed():
-                weight_tensor = weight_tensor.transpose([1, 0])
-            weight_tensor = weight_tensor.cast(self._dtype)
-            self.linear_weight.set_value(weight_tensor)
-        else:
-            if self.inference_args.weight_block_size[0] != -1:
-                weight_tensor = weight_tensor.transpose([1, 0])
-                quanted_weight_tensor, weight_block_scale_tensor = (
-                    per_block_cast_to_fp8(weight_tensor))
-                self.linear_weight.copy_(quanted_weight_tensor, False)
-                self.linear_weight_scale.set_value(weight_block_scale_tensor)
-            elif self.weight_dtype == "int8" and self.act_dtype in [
-                    "bfloat16",
-                    "float16",
-                    "float32",
-            ]:  # WINT8
-                quanted_weight_tensor, weight_scale_tensor = weight_quantize(
-                    weight_tensor,
-                    algo="weight_only_int8",
-                    arch=self.inference_args.weight_only_linear_arch,
-                )
-                self.linear_weight.set_value(quanted_weight_tensor)
-                self.linear_weight_scale.set_value(
-                    weight_scale_tensor.astype(paddle.get_default_dtype()))
-            elif self.weight_dtype == "int4" and self.act_dtype in [
-                    "bfloat16",
-                    "float16",
-                    "float32",
-            ]:  # WINT4
-                quanted_weight_tensor, weight_scale_tensor = weight_quantize(
-                    weight_tensor.cpu(),
-                    algo="weight_only_int4",
-                    arch=self.inference_args.weight_only_linear_arch,
-                )
-                self.linear_weight.set_value(quanted_weight_tensor)
-                self.linear_weight_scale.set_value(weight_scale_tensor)
-            elif (self.weight_dtype == "int4"
-                  and self.act_dtype == "float8_e4m3fn"):  # W4Afp8
-                quanted_weight_tensor, weight_scale_tensor = (
-                    fastdeploy.model_executor.ops.gpu.
-                    scaled_gemm_f8_i4_f16_weight_quantize(
-                        paddle.cast(weight_tensor, "float32").cpu(),
-                        groupsize=-1,
-                        scale_dtype="float16",
-                    ))
-                weight_scale_tensor = paddle.view(weight_scale_tensor,
-                                                  self._dtype)
-                self.linear_weight.set_value(quanted_weight_tensor)
-                self.linear_weight_scale.set_value(weight_scale_tensor)
-            else:  # bf16/fp16/fp32, A8W8, FP8
-                if self.is_y_transposed():
-                    weight_tensor = weight_tensor.transpose([1, 0])
-                weight_tensor = paddle.cast(weight_tensor, self.weight_dtype)
-                if ("float8" in self.weight_dtype
-                    ):  # TODO(wangzhe24) FP8 cannot use set_value now
-                    self.linear_weight.copy_(weight_tensor, False)
-                else:
-                    self.linear_weight.set_value(weight_tensor)
-
-        # bias
-        if self.with_bias:
-            bias_tensor = get_tensor(state_dict.pop(self.bias_key))
-            self.linear_bias.set_value(bias_tensor)
-
-        # smooth quant
-        if self.use_smooth_quant:
-            if self.shift_key in state_dict:
-                shift_tensor = get_tensor(state_dict.pop(
-                    self.shift_key)).astype(paddle.get_default_dtype())
-            else:
-                shift_tensor = paddle.zeros(
-                    shape=self.linear_shift_shape,
-                    dtype=paddle.get_default_dtype(),
-                )
-            self.linear_shift.set_value(shift_tensor)
-            if self.smooth_key in state_dict:
-                smooth_tensor = get_tensor(state_dict.pop(
-                    self.smooth_key)).astype(paddle.get_default_dtype())
-            else:
-                smooth_tensor = paddle.ones(
-                    shape=self.linear_smooth_shape,
-                    dtype=paddle.get_default_dtype(),
-                )
-            self.linear_smooth.set_value(smooth_tensor)

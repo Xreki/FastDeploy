@@ -13,16 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-
 """ Ernie model configuration"""
+
 import copy
 
+from fastdeploy.config import ErnieBotMoEConfig
+
 from .dfnrope.modeling import DFNRopeVisionTransformerConfig
-from ..configuration import ErnieBotMoEConfig
 
 __all__ = [
     "ErnieBotMoEVLConfig",
 ]
+
 
 class ErnieBotMoEVLConfig(ErnieBotMoEConfig):
     r"""
@@ -135,7 +137,8 @@ class ErnieBotMoEVLConfig(ErnieBotMoEConfig):
     @property
     def multimodel_experts(self) -> bool:
         """是否有多种类型的experts."""
-        return isinstance(self.moe_num_experts, (tuple, list)) and len(self.moe_num_experts) > 1
+        return isinstance(self.moe_num_experts,
+                          (tuple, list)) and len(self.moe_num_experts) > 1
 
     @property
     def use_moe(self) -> bool:
@@ -145,17 +148,18 @@ class ErnieBotMoEVLConfig(ErnieBotMoEConfig):
         Returns:
             bool: True if moe_num_experts > 0, False otherwise
         """
-        return sum(self.moe_num_experts) > 0 if self.multimodel_experts else self.moe_num_experts > 0
+        return sum(
+            self.moe_num_experts
+        ) > 0 if self.multimodel_experts else self.moe_num_experts > 0
 
     def to_dict(self, saving_file=False):
         """to_dict"""
         output = copy.deepcopy(self.__dict__)
         if self.vision_config:
             output["vision_config"] = (
-                self.vision_config.to_dict()
-                if isinstance(self.vision_config, (DFNRopeVisionTransformerConfig))
-                else self.vision_config
-            )
+                self.vision_config.to_dict() if isinstance(
+                    self.vision_config,
+                    (DFNRopeVisionTransformerConfig)) else self.vision_config)
 
         output["model_type"] = self.__class__.model_type
         return output

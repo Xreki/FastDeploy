@@ -124,7 +124,8 @@ class ModelConfig:
                         f"Parameter `{key}` will use default value {value}.")
                 setattr(self, key.lower(), value)
 
-        if  "ErnieForCausalLM" in self.architectures and not hasattr(self, "model_name"):
+        if "ErnieForCausalLM" in self.architectures and not hasattr(
+                self, "model_name"):
             self.model_name = os.getenv("FD_MODEL_NAME")
             assert self.model_name is not None, (
                 "There is no parameter model_name in config.json or "

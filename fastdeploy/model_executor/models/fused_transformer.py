@@ -36,8 +36,8 @@ from fastdeploy.inference_args import GenerationPhase
 
 from ..layers.activation import SiluAndMul
 from ..layers.attention.base import Attention
-from ..layers.linear import (FFN2, MergedColumnParallelLinear,
-                             QKVParallelLinear, RowParallelLinear)
+from ..layers.linear import (MergedColumnParallelLinear, QKVParallelLinear,
+                             RowParallelLinear)
 from ..layers.normalization import LayerNorm, RMSNorm
 from .micro_batch_control import MicroBatchControl
 
@@ -134,7 +134,12 @@ class FusedTransformer(nn.Layer):
                 llm_config=llm_config,
                 layer_name=
                 f"{base_model_prefix}.decoder.layers.{i}.self_attn.out_proj",
-                layer_index=i,
+                input_size=self.num_heads *
+                (llm_config.model_config.hidden_size //
+                 llm_config.model_config.num_attention_heads),
+                output_size=llm_config.model_config.hidden_size,
+                weight_key=fmt_keys.out_linear_weight_keys[i],
+                bias_key=fmt_keys.out_linear_bias_keys[i],
             ) for i in range(self.num_layers)
         ])
         self.attn_layers = nn.LayerList([
@@ -191,16 +196,14 @@ class FusedTransformer(nn.Layer):
         ])
 
         self.ffn2_layers = nn.LayerList([
-            FFN2(
-                inference_args=inference_args,
+            RowParallelLinear(
+                llm_config=llm_config,
                 layer_name=f"{base_model_prefix}.decoder.layers.{i}.linear2",
+                input_size=(llm_config.model_config.ffn_hidden_size //
+                            self.nranks),
+                output_size=llm_config.model_config.hidden_size,
                 weight_key=fmt_keys.ffn2_weight_keys[i],
                 bias_key=fmt_keys.ffn2_bias_keys[i],
-                use_smooth_quant=False,
-                shift_key=None,
-                smooth_key=None,
-                llm_config=llm_config,
-                layer_index=i,
             ) for i in range(self.num_layers if not (
                 self.inference_args.moe_config.use_moe and not self.
                 inference_args.moe_config.moe_use_ffn_shared_weight_and_bias

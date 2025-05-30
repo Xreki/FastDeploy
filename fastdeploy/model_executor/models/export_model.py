@@ -30,12 +30,13 @@ from paddlenlp.transformers.model_utils import load_tp_checkpoint
 from paddlenlp.trl import llm_utils
 from paddlenlp.utils.log import logger
 
-from fastdeploy.config import (AdditionalConfig, DeviceConfig, LLMConfig,
-                               LoadConfig, ModelConfig, ParallelConfig,
-                               SpeculativeConfig)
+from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
+                               LLMConfig, LoadConfig, ModelConfig, MoEConfig,
+                               ParallelConfig, SpeculativeConfig, TmpConfig)
 from fastdeploy.inference_args import GenerationPhase
 
-from .modeling_ernie_bot import ErnieBotForGeneration, ErnieBotFusedModel
+from .ernie import ErnieBotFusedModel
+from .model_base import ModelRegistry
 from .tokenizer import ErnieBotTokenizer
 from .utils import _vocab_size_with_padding, convert_ndarray_dtype
 
@@ -158,7 +159,7 @@ def build_stream_line_model(
         use_beam_search (bool, optional): Whether to use beam search . Defaults is False.
         enf_gen (bool, optional): Whether to use enforce generation. Defaults is False.
     Returns:
-        tuple[dict, ErnieBotTokenizer, ErnieBotForGeneration]:
+        tuple[dict, ErnieBotTokenizer, ErnieForCausalLM]:
         A tuple containing the configuration, tokenizer, and model.
     """
     runtime_timer = RuntimeTimer("build_model")
@@ -175,6 +176,9 @@ def build_stream_line_model(
     device_config = DeviceConfig()
     additional_config = AdditionalConfig()
     load_config = LoadConfig()
+    tmp_config = TmpConfig()
+    moe_config = MoEConfig()
+    decoding_config = DecodingConfig()
 
     tensor_parallel_rank, tensor_parallel_degree = llm_utils.init_dist_env()
     parallel_config.tensor_parallel_rank = tensor_parallel_rank
@@ -197,7 +201,6 @@ def build_stream_line_model(
         )
 
     group_size = config.get("group_size", -1)
-    wint4_smooth = config.get("smooth", False)
     num_key_value_heads = config.get("num_key_value_heads", -1)
     if num_key_value_heads is None:
         num_key_value_heads = -1
@@ -318,79 +321,7 @@ def build_stream_line_model(
             return_numpy=True,
         )
     use_rmsnorm = config.get("use_rmsnorm", False)
-    logger.info(f"{runtime_timer.log()}")
-    runtime_timer.start(f"{stage_flag} stage set parameters time")
 
-    model_config.ffn_hidden_size = ffn_hidden_size
-    llm_config = LLMConfig(
-        model_config=model_config,
-        parallel_config=parallel_config,
-        speculative_config=speculative_config,
-        device_config=device_config,
-        additional_config=additional_config,
-        load_config=load_config,
-    )
-    with context:
-        model = ErnieBotFusedModel(
-            vocab_size=config["vocab_size"],
-            hidden_size=config["hidden_size"],
-            max_len=max_len,
-            block_size=block_size,
-            num_layers=num_layers,
-            num_attention_heads=config["num_attention_heads"],
-            ffn_hidden_size=ffn_hidden_size,
-            activation="swiglu",
-            hidden_dropout_prob=0,
-            # hidden_dropout_prob=config["hidden_dropout_prob"],
-            max_position_embeddings=config["max_position_embeddings"],
-            type_vocab_size=1,
-            dtype=dtype,
-            sequence_parallel=False,
-            use_rope=True,
-            rope_theta=config.get("rope_theta", 10000.0),
-            rope_3d=config.get("rope_3d", False),
-            weight_sharing=False,
-            inv_compression_ratio=1.0 / config.get("compression_ratio", 1.0),
-            export_model_type=export_model_type,  # export model type.
-            wint4_smooth=wint4_smooth,  # Whether to use smooth for wint4.
-            group_size=group_size,
-            model_path=model_path,  # The path of Inference model.
-            use_rmsnorm=use_rmsnorm,
-            msg_queue_id=msg_queue_id,
-            use_fake_parameter=use_fake_parameter,
-            num_key_value_heads=num_key_value_heads,
-            use_stop_seqs=use_stop_seqs,
-            cache_quant_dtype=cache_quant_dtype,
-            has_zero_point=config.get("has_zero_point", False),
-            is_channel_wise=config.get("is_channel_wise", False),
-            use_fast_ffn=config.get("use_fast_ffn", False),
-            speculate_method=speculate_method,
-            speculate_max_draft_token_num=speculate_max_draft_token_num,
-            return_all_hidden_states=return_all_hidden_states,
-            draft_type=draft_type,
-            start_layer_index=start_layer_index,
-            use_moe=use_moe,
-            moe_num_experts=config.get("moe_num_experts", None),
-            moe_intermediate_size=config.get("moe_intermediate_size", None),
-            moe_use_gate_correction_bias=config.get(
-                "moe_use_gate_correction_bias", True),
-            moe_every2=config.get("moe_every2", False),
-            moe_topk=config.get("moe_topk", 8),
-            moe_num_shared_experts=config.get("moe_num_shared_experts", 0),
-            moe_layer_start_index=config.get("moe_layer_start_index", 0),
-            moe_use_ffn_shared_weight_and_bias=config.get(
-                "moe_use_ffn_shared_weight_and_bias", False),
-            moe_group=config.get("moe_group", False),
-            moe_quant_type=moe_quant_type,
-            use_ep=use_ep,
-            ep_just_for_test=ep_just_for_test,
-            generation_phase=generation_phase,
-            use_micro_batch=use_micro_batch,
-            weight_block_size=config.get("weight_block_size", [-1, -1]),
-            scale_dir=scale_dir,
-            output_via_mq=output_via_mq,
-            llm_config=llm_config,
-        )
     if use_beam_search:
         decode_strategy = "beam_search"
     elif speculate_method is not None:
@@ -400,46 +331,83 @@ def build_stream_line_model(
             decode_strategy = "speculate_decoding"
     else:
         decode_strategy = "sampling"
-    configs = {
-        "model_path": model_path,
-        "bos_token_id": tokenizer.bos_token_id,
-        "eos_token_id": tokenizer.eos_token_id,
-        "pad_token_id": tokenizer.pad_token_id,
-        "hidden_size": config["hidden_size"],
-        "num_attention_heads": config["num_attention_heads"],
-        "vocab_size": config["vocab_size"],
-        "ori_vocab_size": ori_vocab_size,
-        "hidden_act": config["hidden_act"],
-        "weight_sharing": config.get("weight_sharing", False),
-        "weight_sharing_add_bias": config.get("weight_sharing_add_bias",
-                                              False),
-        "initializer_range": 0.02,
-        "fused_linear": False,
-        "min_dec_len": min_dec_len,
-        "max_dec_len": max_dec_len,
-        "temperature": temperature,
-        "top_k": top_k,
-        "top_p": top_p,
-        "use_top_k": top_k > 0,
-        "show_topk": show_topk,
-        "use_topp_sampling": True,
-        "inference": False,
-        "export_model_type": export_model_type,
-        "wint4_smooth": wint4_smooth,  # Whether to use smooth for wint4.
-        "group_size": group_size,
-        "use_rmsnorm": use_rmsnorm,
-        "decode_strategy": decode_strategy,
-        # "outputs_op": outputs_op,
-        "cache_quant_dtype": cache_quant_dtype,
-        "use_fake_parameter": use_fake_parameter,
-        "enf_gen": enf_gen,
-        "speculate_max_candidate_len": speculate_max_candidate_len,
-        "speculate_verify_window": speculate_verify_window,
-        "return_all_hidden_states": return_all_hidden_states,
-        "fake_server_p": fake_server_p,
-    }
+
+    logger.info(f"{runtime_timer.log()}")
+    runtime_timer.start(f"{stage_flag} stage set parameters time")
+
+    model_config.ffn_hidden_size = ffn_hidden_size
+    model_config.max_seq_len = max_len
+    model_config.num_layers = num_layers
+    model_config.dtype = dtype
+    model_config.export_model_type = export_model_type
+    parallel_config.block_size = block_size
+
+    model_config.group_size = group_size
+    load_config.model_path = model_path
+    model_config.use_rmsnorm = use_rmsnorm
+    parallel_config.msg_queue_id = msg_queue_id
+    additional_config.use_fake_parameter = use_fake_parameter
+    model_config.num_key_value_heads = num_key_value_heads
+    model_config.use_stop_seqs = use_stop_seqs
+    tmp_config.cache_quant_dtype = cache_quant_dtype
+    tmp_config.has_zero_point = config.get("has_zero_point", False)
+    tmp_config.is_channel_wise = config.get("is_channel_wise", False),
+    speculative_config.speculate_method = speculate_method
+    speculative_config.speculate_max_draft_token_num = speculate_max_draft_token_num
+    model_config.return_all_hidden_states = return_all_hidden_states
+    speculative_config.draft_type = draft_type
+    model_config.start_layer_index = start_layer_index
+    model_config.use_moe = use_moe
+    moe_config.num_experts = config.get("moe_num_experts", None)
+    moe_config.moe_intermediate_size = config.get("moe_intermediate_size",
+                                                  None)
+    moe_config.moe_use_gate_correction_bias = config.get(
+        "moe_use_gate_correction_bias", True)
+    moe_config.moe_every2 = config.get("moe_every2", False)
+    moe_config.moe_topk = config.get("moe_topk", 8)
+    moe_config.moe_num_shared_experts = config.get("moe_num_shared_experts", 0)
+    moe_config.moe_layer_start_index = config.get("moe_layer_start_index", 0)
+    moe_config.moe_use_ffn_shared_weight_and_bias = config.get(
+        "moe_use_ffn_shared_weight_and_bias", False)
+    moe_config.moe_group = config.get("moe_group", False)
+    moe_config.moe_quant_type = moe_quant_type
+    parallel_config.use_ep = use_ep
+    additional_config.ep_just_for_test = ep_just_for_test
+    model_config.generation_phase = generation_phase
+    parallel_config.use_micro_batch = use_micro_batch
+    tmp_config.weight_block_size = config.get("weight_block_size", [-1, -1])
+    load_config.scale_dir = scale_dir
+    model_config.output_via_mq = output_via_mq
+
+    moe_config.use_top_k = (top_k > 0)
+    moe_config.top_k = top_k
+    decoding_config.bos_token_id = tokenizer.bos_token_id
+    decoding_config.pad_token_id = tokenizer.pad_token_id
+    decoding_config.temperature = temperature
+    decoding_config.forced_eos_token_id = tokenizer.eos_token_id
+    model_config.ori_vocab_size = ori_vocab_size
+    decoding_config.max_dec_len = max_dec_len
+    decoding_config.min_dec_len = min_dec_len
+    additional_config.fake_server_p = fake_server_p
+    decoding_config.decode_strategy = decode_strategy
+    speculative_config.speculate_max_candidate_len = speculate_max_candidate_len
+    speculative_config.speculate_verify_window = speculate_verify_window
+
+    llm_config = LLMConfig(
+        model_config=model_config,
+        parallel_config=parallel_config,
+        speculative_config=speculative_config,
+        device_config=device_config,
+        additional_config=additional_config,
+        load_config=load_config,
+        tmp_config=tmp_config,
+        moe_config=moe_config,
+        decoding_config=decoding_config,
+    )
+
     with context:
-        model = ErnieBotForGeneration(model, configs)
+        model_cls = ModelRegistry.get_class(model_config.architectures[0])
+        model = model_cls(llm_config)
 
     model.eval()
 

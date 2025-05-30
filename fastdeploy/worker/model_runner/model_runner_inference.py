@@ -218,7 +218,9 @@ class ModelRunner(ModelRunnerBase):
                         task.get("stop_token_ids"), dtype="int64")
 
     def generate(self):
-        self.model(**self.share_inputs)
+        hiddden_states = self.model(**self.share_inputs)
+        logits = self.model.compute_logits(hiddden_states)
+        self.model.sample(logits, **self.share_inputs)
 
     def clear_parameters(self, pid):
         if "caches" in self.share_inputs:

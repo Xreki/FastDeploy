@@ -18,11 +18,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Optional
 
 import paddle
 from paddlenlp.transformers.configuration_utils import PretrainedConfig
-from paddlenlp.utils.log import logger
 
 from fastdeploy.model_executor.layers.quantization.quant_base import \
     QuantConfigBase
@@ -35,7 +35,6 @@ __all__ = [
 
 ERNIEBOT_PRETRAINED_INIT_CONFIGURATION = {
     "ernie-bot": {
-        "attention_probs_dropout_prob": 0.0,
         "hidden_act": "SwiGLU",
         "hidden_dropout_prob": 0.0,
         "hidden_size": 4096,
@@ -51,15 +50,18 @@ ERNIEBOT_PRETRAINED_INIT_CONFIGURATION = {
         "sequence_parallel": False,
         "use_flash_attention": False,
         "recompute": False,
-        "recompute_granularity": "core_attn",
-        "fuse_attn_qkv": True,
         "fused_linear": False,
-        "scale_qk_coeff": 1.0,
-        "fused_softmax_with_triangular": True,
-        "fused_rotary": False,
-        "fused_softmax_mask": False,
     }
 }
+
+
+class GenerationPhase(Enum):
+    """
+    The generation phase of the model.
+    """
+
+    PREFILL = 1
+    DECODER = 2
 
 
 class ModelConfig(PretrainedConfig):
@@ -80,10 +82,9 @@ class ModelConfig(PretrainedConfig):
         num_key_value_heads: Optional[int] = None,
         hidden_act: str = "SwiGLU",
         hidden_dropout_prob: float = 0.0,
-        attention_probs_dropout_prob: float = 0.0,
         max_position_embeddings: int = 512,
-        max_sequence_length: int = 512,
-        initializer_range: float = 0.01,
+        max_seq_len: int = 512,
+        initializer_range: float = 0.02,
         type_vocab_size: int = 4,
         use_rope=True,
         use_rmsnorm=False,
@@ -91,46 +92,33 @@ class ModelConfig(PretrainedConfig):
         weight_sharing_add_bias=False,
         sequence_parallel=False,
         use_flash_attention=False,
-        use_fast_ln=False,
         use_fast_ffn: bool = False,
         tensor_parallel_output: bool = True,
-        recompute=False,
-        recompute_granularity="core_attn",
-        no_recompute_layers=None,
-        recompute_use_reentrant=False,
-        refined_recompute=dict(),
-        virtual_pp_degree=1,
-        fuse_attn_qkv=True,
         fused_linear=False,
-        use_sparse_flash_attn=True,
-        use_sparse_head_and_loss_fn=False,
-        use_fused_head_and_loss_fn=False,
-        scale_qk_coeff=1.0,
-        fused_softmax_with_triangular=True,
-        fused_rotary=False,
-        fused_softmax_mask=False,
-        fused_mt=False,
         compression_ratio: float = 1.0,
         rope_theta: int = 10000,
+        rope_3d: bool = False,
         ori_vocab_size: int | None = None,
-        cachekv_quant: bool = False,
         smooth: bool = False,
         group_size: int = -1,
         tools_version="4.10.0.dev",
-        only_hidden_states=False,
-        add_tail_layer=False,
-        use_var_len_flash_attn=False,
         system_prompt_version="V1",
         moe_layer_start_index: int | None = None,
-        moe_intermediate_sizes: int | None = None,
         moe_use_gate_correction_bias: bool | None = None,
-        moe_gate_corrrect_bias: bool | None = None,
         num_hidden_layers: int | None = None,
         prefix_name="",
         freeze_embedding=False,
         rope_head_dim=None,
         base_model_prefix=None,
         use_moe=False,
+        ffn_hidden_size: Optional[int] = None,
+        dtype=None,
+        export_model_type: str = "default",
+        use_stop_seqs: bool = False,
+        return_all_hidden_states: bool = False,
+        start_layer_index: int = 0,
+        output_via_mq: bool = True,
+        generation_phase: GenerationPhase = GenerationPhase.PREFILL,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -145,7 +133,6 @@ class ModelConfig(PretrainedConfig):
         self.head_dim = hidden_size // num_attention_heads
         self.hidden_act = hidden_act
         self.hidden_dropout_prob = hidden_dropout_prob
-        self.attention_probs_dropout_prob = attention_probs_dropout_prob
         self.max_position_embeddings = max_position_embeddings
         self.initializer_range = initializer_range
         self.type_vocab_size = type_vocab_size
@@ -154,48 +141,17 @@ class ModelConfig(PretrainedConfig):
         self.weight_sharing = weight_sharing
         self.weight_sharing_add_bias = weight_sharing_add_bias
         self.use_flash_attention = use_flash_attention
-        self.use_fast_ln = use_fast_ln
         self.use_fast_ffn = use_fast_ffn
         self.tensor_parallel_output = tensor_parallel_output
-        self.recompute = recompute
-        self.recompute_granularity = recompute_granularity
-        self.no_recompute_layers = no_recompute_layers
-        self.recompute_use_reentrant = recompute_use_reentrant
-        self.refined_recompute = refined_recompute
-        """
-        `refined_recompute` 内容为一个dict:[op_name, skip_num], 目前只在PP模式下才生效。
-            在PP中会根据`refined_recompute` 填充`self.skip_recompute_ops`。
-            `op_name` 选择范围是："mlp_row_ln", "attention_row_ln", "attention_column_ln",
-                                   "mlp_column_ln", "flash_attn"
-            `skip_num` 表示选择不进行重计算的次数。
-            0表示 0次不重计算，也就是全部都重计算，显存最少。
-            -1表示全部不重计算，显存最多。
-            还可以填 【0，1，。。。，12】中的任意值，进行调整次数。
-            大于等于12。相当于 -1取值
-        """
         self.skip_recompute_ops = dict()
-        self.virtual_pp_degree = virtual_pp_degree
-        self.fuse_attn_qkv = fuse_attn_qkv
         self.fused_linear = fused_linear
-        self.use_sparse_flash_attn = use_sparse_flash_attn
-        self.use_sparse_head_and_loss_fn = use_sparse_head_and_loss_fn
-        self.use_fused_head_and_loss_fn = use_fused_head_and_loss_fn
-        self.scale_qk_coeff = scale_qk_coeff
-        self.fused_softmax_with_triangular = fused_softmax_with_triangular
-        self.fused_mt = fused_mt
         self.compression_ratio = compression_ratio
         self.rope_theta = rope_theta
         self.ori_vocab_size = ori_vocab_size or vocab_size
-        self.fused_rotary = fused_rotary
-        self.fused_softmax_mask = fused_softmax_mask
-        self.cachekv_quant = cachekv_quant
         self.smooth = smooth
         self.group_size = group_size
-        self.max_sequence_length = max_sequence_length
+        self.max_seq_len = max_seq_len
         self.tools_version = tools_version
-        self.only_hidden_states = only_hidden_states
-        self.add_tail_layer = add_tail_layer
-        self.use_var_len_flash_attn = use_var_len_flash_attn
         self.system_prompt_version = system_prompt_version
         self.prefix_name = prefix_name
         self.freeze_embedding = freeze_embedding
@@ -204,22 +160,18 @@ class ModelConfig(PretrainedConfig):
         self.base_model_prefix = base_model_prefix
         if moe_layer_start_index is not None:
             self.moe_layer_start_index = moe_layer_start_index
-        if moe_intermediate_sizes is not None:
-            self.moe_intermediate_sizes = moe_intermediate_sizes
-        if moe_gate_corrrect_bias is not None:
-            self.moe_use_gate_correction_bias = moe_gate_corrrect_bias
         elif moe_use_gate_correction_bias is not None:
             self.moe_use_gate_correction_bias = moe_use_gate_correction_bias
+        self.ffn_hidden_size = ffn_hidden_size
+        self.rope_3d = rope_3d
+        self.export_model_type = export_model_type
+        self.use_stop_seqs = use_stop_seqs
+        self.return_all_hidden_states = return_all_hidden_states
+        self.start_layer_index = start_layer_index
+        self.output_via_mq = output_via_mq
 
-        self.register_unsavable_keys([
-            "refined_recompute",
-            "skip_recompute_ops",
-            "dpo_config",
-            "kto_config",
-            "use_var_len_flash_attn",
-        ])
 
-
+# This class will be removed in future and replaced by MoEConfig
 class ErnieBotMoEConfig(ModelConfig):
     """ErnieBotMoEConfig Class"""
 
@@ -245,12 +197,6 @@ class ErnieBotMoEConfig(ModelConfig):
         moe_all_to_all_dropout: float = 0.0,
         **kwargs,
     ):
-        if use_recompute_moe:
-            logger.warning(
-                "set `use_recompute_moe`=True, disabling `recompute_granularity=full`, change to full_attn."
-            )
-            if kwargs["recompute_granularity"] == "full":
-                kwargs["recompute_granularity"] = "full_attn"
         super().__init__(**kwargs)
 
         # moe
@@ -295,6 +241,37 @@ class ErnieBotMoEConfig(ModelConfig):
 
 
 @dataclass
+class MoEConfig:
+    """
+    Configuration for MoE.
+    """
+
+    use_moe: bool = False
+    num_experts: int = -1
+    use_top_k: bool = True
+    top_k: int = -1
+    moe_intermediate_size: int = -1
+    num_experts_per_rank: int = -1
+    num_experts_start_offset: int = -1
+    activation = "swiglu"
+
+    moe_use_gate_correction_bias = False
+    moe_every2 = (False, )
+    moe_topk = (8, )
+    moe_num_shared_experts = (0, )
+    moe_layer_start_index = 0
+    moe_use_ffn_shared_weight_and_bias = (False, )
+    moe_group = (False, )
+    moe_quant_type = "default"
+    num_max_dispatch_tokens_per_rank = 256
+
+    has_multimodality: bool = False
+    im_patch_id = (
+        100295  # multimodality, TODO(liuyuanle): read from config.json
+    )
+
+
+@dataclass
 class ParallelConfig:
     """Configuration for the distributed execution."""
     block_size = 16,  # The block size for processing.
@@ -314,10 +291,12 @@ class SpeculativeConfig:
     """
     Configuration for speculative decoding.
     """
-    speculate_method = None,  # speculate method
-    speculate_max_draft_token_num = 1,  # the max length of draft tokens for speculate method
-    draft_type = "None",  # draft type
-    is_mtp = False,  # is mtp
+    speculate_method = None  # speculate method
+    speculate_max_draft_token_num = 1  # the max length of draft tokens for speculate method
+    draft_type = "None"  # draft type
+    is_mtp = False  # is mtp
+    speculate_max_candidate_len = 5  # the max length of candidate tokens for speculate method
+    speculate_verify_window = 2  # the max length of verify window for speculate method
 
 
 @dataclass
@@ -333,8 +312,9 @@ class AdditionalConfig:
     Configuration for testing, debugging or others
     """
 
-    use_fake_parameter = False,  # use fake parameter for test
-    ep_just_for_test = True,  # whether to use ep just for test
+    use_fake_parameter = False  # use fake parameter for test
+    ep_just_for_test = True  # whether to use ep just for test
+    fake_server_p = False  # whether to use fake server
 
 
 class WeightKeys:
@@ -371,9 +351,10 @@ class LoadConfig:
     """
     Configuration for loading parameter
     """
-
+    model_path: str = None  # The path to the model file.
     weight_keys: Optional[
-        WeightKeys] = None,  # Keys stored in your model, which is used to retrieve weights from the state dict.
+        WeightKeys] = None  # Keys stored in your model, which is used to retrieve weights from the state dict.
+    scale_dir: str = None  # The directory where the scale file is located.
 
     act_scales = None
 
@@ -451,6 +432,30 @@ class LoadConfig:
 
 
 @dataclass
+class TmpConfig:
+    """
+    TmpConfig will be moved to other config class when refactor work is relatively complete.
+    """
+    cache_quant_dtype: str = "default"
+    has_zero_point: bool = False
+    is_channel_wise: bool = False
+    weight_block_size: int = 16
+
+
+@dataclass
+class DecodingConfig:
+    """
+    Configuration for decoding
+    """
+    max_dec_len = 20
+    min_dec_len = 0
+    decode_strategy = "sampling"
+    bos_token_id = None
+    pad_token_id = None
+    num_return_sequences: int = 1
+
+
+@dataclass
 class LLMConfig:
     """
     The configuration class which contains all fastdeploy-related configuration. This
@@ -469,3 +474,7 @@ class LLMConfig:
                                                 init=True)  # type: ignore
     load_config: LoadConfig = field(default=None, init=True)  # type: ignore
     quant_config: Optional[QuantConfigBase] = None
+    tmp_config: TmpConfig = field(default=None, init=True)
+    moe_config: MoEConfig = field(default=None, init=True)  # type: ignore
+    decoding_config: DecodingConfig = field(default=None,
+                                            init=True)  # type: ignore

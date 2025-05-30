@@ -1223,7 +1223,9 @@ class Predictor:
                             seq_lens_this_time=model_inputs[
                                 "seq_lens_this_time"],
                         )
-                    out = self.model(**model_inputs)
+                    hiddden_states = self.model(**model_inputs)
+                    logits = self.model.compute_logits(hiddden_states)
+                    out = self.model.sample(logits, **model_inputs)
                     if self.show_topk:
                         out_res.append(out)
                     if self.args.enf_gen:
@@ -1242,7 +1244,9 @@ class Predictor:
                             seq_lens_this_time=model_inputs[
                                 "seq_lens_this_time"],
                         )
-                    out = self.model(**model_inputs)
+                    hiddden_states = self.model(**model_inputs)
+                    logits = self.model.compute_logits(hiddden_states)
+                    out = self.model.sample(logits, **model_inputs)
                     if self.args.return_all_hidden_states:
                         model_inputs["all_hidden_states"] = out[0]
                     if self.show_topk:
