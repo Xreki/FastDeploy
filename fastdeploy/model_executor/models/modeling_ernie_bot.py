@@ -769,6 +769,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
                 return_all_hidden_states=self.return_all_hidden_states,
                 base_model_prefix=base_model_prefix,
                 draft_type=draft_type,
+                max_len=max_len,
             )
 
             self.norm = Normalization(
