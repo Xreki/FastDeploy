@@ -186,16 +186,14 @@ class FusedMoE(nn.Layer):
         self.moe_ffn1_weight_scale = self.create_parameter(
             shape=[self.num_local_experts, self.moe_intermediate_size * 2],
             attr=paddle.ParamAttr(
-                name=f"{self.layer_name}.{self.layer_idx}.linear1.weight_scale"
-            ),
+                name=f"{self.layer_name}.linear1.weight_scale"),
             dtype=self._dtype,
             is_bias=False,
         )
         self.moe_ffn2_weight_scale = self.create_parameter(
             shape=[self.num_local_experts, self.hidden_size],
             attr=paddle.ParamAttr(
-                name=f"{self.layer_name}.{self.layer_idx}.linear2.weight_scale"
-            ),
+                name=f"{self.layer_name}.linear2.weight_scale"),
             dtype=self._dtype,
             is_bias=False,
         )
@@ -203,14 +201,14 @@ class FusedMoE(nn.Layer):
             self.moe_ffn1_in_scale = self.create_parameter(
                 shape=[self.num_local_experts],
                 attr=paddle.ParamAttr(
-                    name=f"layers.{self.layer_idx}.linear1.in_scale"),
+                    name=f"{self.layer_name}.linear1.in_scale"),
                 dtype="float32",
                 is_bias=False,
             )
             self.moe_ffn2_in_scale = self.create_parameter(
                 shape=[self.num_local_experts],
                 attr=paddle.ParamAttr(
-                    name=f"layers.{self.layer_idx}.linear2.in_scale"),
+                    name=f"{self.layer_name}.linear2.in_scale"),
                 dtype="float32",
                 is_bias=False,
             )
