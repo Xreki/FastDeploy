@@ -195,6 +195,9 @@ class ModelRunner(ModelRunnerBase):
                 nranks=self.nranks,
                 rank=self.rank,
                 local_test=local_test,
+                vision_model=self.vision_model,
+                resampler_model=self.resampler_model
+
             )
         else:
             from ..models.export_model import build_stream_line_model

@@ -1403,7 +1403,8 @@ class ErnieBotForGeneration(nn.Layer):
 
                 if is_vl:
                     # MoE experts mappings
-                    for expert_idx in list(range(32)) + list(range(64, 96)):
+                    from itertools import chain
+                    for expert_idx in chain(range(16), range(32, 48), range(64, 80), range(96, 112)):
                         for ph in place_holders:
                             # FFN1 (up_gate_proj)
                             ffn1_key = f"{infer_base_name}.moe_layers.{layer_idx}.text_moe_layer.moe_ffn1_weight"
@@ -1421,7 +1422,7 @@ class ErnieBotForGeneration(nn.Layer):
                                 f"ernie.layers.{layer_idx}.mlp.experts.{expert_idx}.down_proj.{ph}"
                             )
                     
-                    for expert_idx in list(range(32, 64)) + list(range(96, 128)):
+                    for expert_idx in chain(range(16, 32), range(48, 64), range(80, 96), range(112, 128)):
                         for ph in place_holders:
                             # FFN1 (up_gate_proj)
                             ffn1_key = f"{infer_base_name}.moe_layers.{layer_idx}.image_moe_layer.moe_ffn1_weight"
