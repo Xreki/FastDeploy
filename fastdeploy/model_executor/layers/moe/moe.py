@@ -59,7 +59,6 @@ class FusedMoE(nn.Layer):
         self.layer_idx = layer_idx
 
         self.weight_only_linear_arch = llm_config.quant_config.weight_only_linear_arch
-
         self.weight_dtype = llm_config.model_config.weight_dtype
 
         self.tp_size = llm_config.parallel_config.mp_size
@@ -68,13 +67,9 @@ class FusedMoE(nn.Layer):
         self.hidden_size = llm_config.model_config.hidden_size
         self.skip_quant = False
         self.moe_config = moe_config
-        self.activation = self.moe_config.activation
-
         self.top_k = self.moe_config.top_k
-
         self.moe_quant_type = self.moe_config.moe_quant_type
         logger.info(f"MoE is running in {self.moe_quant_type} mode")
-
         self.num_experts = self.moe_config.num_experts
         self.num_local_experts = self.num_experts // self.ep_size
 
@@ -291,16 +286,9 @@ class FusedMoE(nn.Layer):
                 self.hidden_size,
                 self.moe_intermediate_size * 2,
             ]
-        if not self.activation.endswith("glu"):
-            self.ffn1_weight_shape = [
-                self.num_local_experts,
-                self.hidden_size,
-                self.moe_intermediate_size,
-            ]
-        self.ffn1_bias_shape = (
-            [self.num_local_experts, self.moe_intermediate_size *
-             2] if self.activation.endswith("glu") else
-            [self.num_local_experts, self.moe_intermediate_size])
+        self.ffn1_bias_shape = [
+            self.num_local_experts, self.moe_intermediate_size * 2
+        ]
         # ffn2 shape
         if self.moe_quant_type == "fp8":
             self.ffn2_weight_shape = [
