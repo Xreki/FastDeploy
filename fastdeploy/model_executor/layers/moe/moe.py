@@ -139,9 +139,7 @@ class FusedMoE(nn.Layer):
                 self.hidden_size // 128,
             ],  # [g, n, k]
             attr=paddle.ParamAttr(
-                name=
-                f"{self.layer_name}.{self.layer_idx}.linear1.weight_block_scale"
-            ),
+                name=f"{self.layer_name}.linear1.weight_block_scale"),
             dtype="float32",
             is_bias=False,
         )
@@ -152,9 +150,7 @@ class FusedMoE(nn.Layer):
                 self.moe_intermediate_size // 128,
             ],  # [g, n, k]
             attr=paddle.ParamAttr(
-                name=
-                f"{self.layer_name}.{self.layer_idx}.linear2.weight_block_scale"
-            ),
+                name=f"{self.layer_name}.linear2.weight_block_scale"),
             dtype="float32",
             is_bias=False,
         )
