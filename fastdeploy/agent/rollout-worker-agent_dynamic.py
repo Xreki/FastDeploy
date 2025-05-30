@@ -67,6 +67,7 @@ def get_local_ip() -> str:
 start_cmd_executed = False
 
 def fault_tolerance(job_id):
+    """fault tolerance for oom error"""
     logging.error("Worker Exited unexpectedly or timed out, start fault tolerance...")
     print("Worker Exited unexpectedly or timed out, start fault tolerance...")
     os.system(kill_cmd)
@@ -179,6 +180,7 @@ def monitor_worker(job_id: str, proc: Popen, model_version: str):
         time.sleep(30)
 
 def health_check() -> bool:
+    """Perform health check on the worker process"""
     try:
         response = requests.get(f"{rollout_worker_host}:{rollout_worker_http_port}/health", timeout=10)
         if response.status_code == 200:
