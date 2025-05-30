@@ -582,7 +582,7 @@ class LLMEngine(object):
             f" --model_name_or_path {str(self.cfg.model_name_or_path)}"
             f" --device_ids {self.cfg.device_ids}"
             f" --engine_worker_queue_port {str(self.cfg.engine_worker_queue_port)}"
-            f" --max_block_num {self.cfg.cache_config.total_block_num}"
+            f" --total_block_num {self.cfg.cache_config.total_block_num}"
             f" --block_size {self.cfg.cache_config.block_size}"
             f" --enc_dec_block_num {self.cfg.cache_config.enc_dec_block_num}"
             f" --eos_tokens_lens {self.data_processor.eos_token_id_len}"
@@ -590,6 +590,7 @@ class LLMEngine(object):
             f" --engine_pid {self.engine_pid}"
             f" --do_profile {self.do_profile}"
             f" --dynamic_load_weight {self.cfg.model_config.dynamic_load_weight}"
+            f" --max_num_batched_tokens {self.cfg.max_num_batched_tokens}"
             f" --kv_cache_ratio {self.cfg.cache_config.kv_cache_ratio} --dtype {self.cfg.cache_config.cache_dtype}"
         )
         worker_append_flag = {

@@ -209,21 +209,22 @@ class CacheConfig:
         self.dec_token_num = self.enc_dec_block_num * self.block_size
         if self.num_gpu_blocks_override is not None:
             self.total_block_num = self.num_gpu_blocks_override
+            self.prefill_kvcache_block_num= int(self.total_block_num * self.kv_cache_ratio)
         else:
             length = num_total_tokens // number_of_tasks
             block_num = (length + self.block_size - 1 + self.enc_dec_block_num) // self.block_size
             self.total_block_num =  block_num * number_of_tasks
+            self.prefill_kvcache_block_num= self.total_block_num
             llm_logger.info(f"Doing profile, the total_block_num:{self.total_block_num}")
-        self.max_block_num = int(self.total_block_num * self.kv_cache_ratio)
 
     def reset(self, num_gpu_blocks):
         """
         reset gpu block number
         """
         self.total_block_num  = num_gpu_blocks
-        self.max_block_num = int(self.total_block_num * self.kv_cache_ratio)
+        self.prefill_kvcache_block_num= int(self.total_block_num * self.kv_cache_ratio)
         llm_logger.info((f"Reset block num, the total_block_num:{self.total_block_num},"
-            f" max_block_num:{self.max_block_num}"))
+            f" prefill_kvcache_block_num:{self.prefill_kvcache_block_num}"))
 
     def print(self):
         """
@@ -347,7 +348,7 @@ class Config:
                 self.max_num_batched_tokens = 2048
             else:
                 self.max_num_batched_tokens = self.max_model_len
-        self.cache_config.postprocess(self.max_model_len, self.max_num_seqs)
+        self.cache_config.postprocess(self.max_num_batched_tokens, self.max_num_seqs)
 
 
     def check(self):

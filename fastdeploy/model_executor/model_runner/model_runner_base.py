@@ -48,7 +48,7 @@ class ModelRunnerBase(ABC):
         self._init_share_inputs(args.max_num_seqs)
 
         self.init_rotary_position_embedding(args.max_model_len)
-        self.num_gpu_blocks = args.max_block_num
+        self.num_gpu_blocks = args.total_block_num
 
 
         self._load_model(config.model_name_or_path, args.dynamic_load_weight)
@@ -176,7 +176,7 @@ class ModelRunnerBase(ABC):
 
         # 初始化free list
         free_list = list(
-            range(self.args.max_block_num - 1, int(self.args.max_block_num * self.args.kv_cache_ratio) - 1, -1)
+            range(self.args.total_block_num - 1, int(self.args.total_block_num * self.args.kv_cache_ratio) - 1, -1)
         )
         self.free_list_len = len(free_list)
         self.share_inputs.update({

@@ -348,7 +348,7 @@ class Worker:
         logger.info(f"current max peak gpu memory: {current_max_peak_gpu_memory} GiB.")
         per_block_memory_used = self.infer_engine._cal_theortical_kvcache() / GiB
         logger.info(f"each kv cache block takes {per_block_memory_used} GiB.")
-        used_cache_gpu_memory = self.args.max_block_num * per_block_memory_used
+        used_cache_gpu_memory = self.args.total_block_num * per_block_memory_used
         logger.info(f"used cache gpu memory: {used_cache_gpu_memory} GiB.")
         model_weights_memory = used_gpu_memory - used_cache_gpu_memory
         paddle_peak_increase = current_max_peak_gpu_memory - before_activation_gpu_memory
@@ -356,7 +356,8 @@ class Worker:
         available_kv_cache_memory = memory_for_current_instance - used_gpu_memory - \
                                     paddle_peak_increase + used_cache_gpu_memory
 
-        num_gpu_blocks = int(available_kv_cache_memory // per_block_memory_used )
+
+        num_gpu_blocks = max(int(available_kv_cache_memory // per_block_memory_used ), self.args.total_block_num)
         profile_time = time.time() - start_time
 
         msg = (f"Memory profiling takes {profile_time:.2f} seconds\n"
@@ -372,6 +373,11 @@ class Worker:
                f"{(paddle_peak_increase):.2f}GiB;"
                " the rest of the memory reserved for KV Cache is "
                f"{(available_kv_cache_memory):.2f}GiB.")
+
+        self.infer_engine.record_profile_msg = {
+            "per_block_memory_used":per_block_memory_used,
+            "paddle_peak_increase": paddle_peak_increase,
+        }
 
         logger.info(msg)
         # Final cleanup
@@ -403,7 +409,7 @@ class Worker:
         mp_num_per_node = self.nranks
 
 
-        self.infer_engine.dummy_input(self.args.max_model_len, self.args.max_num_seqs)
+        self.infer_engine.dummy_input(self.args.max_num_batched_tokens, self.args.max_num_seqs)
         while True:
             if self.nranks > 1:
                 paddle.distributed.barrier()
@@ -422,7 +428,7 @@ def parse_args():
     parser = argparse.ArgumentParser("FastDeploy LLM Inference")
     parser.add_argument("-m", "--model_name_or_path", type=str, default="./output", help="model dir")
     parser.add_argument("-mbs", "--max_num_seqs", type=int, default=34, help="max batch size")
-    parser.add_argument("--max_block_num", type=int, default=2000)
+    parser.add_argument("--total_block_num", type=int, default=2000)
     parser.add_argument("--block_size", type=int, default=64)
     parser.add_argument("--engine_worker_queue_port", type=int, default=9923)
     parser.add_argument("--max_model_len", type=int, default=3072, help="max model len")
@@ -437,6 +443,7 @@ def parse_args():
     parser.add_argument("--dynamic_load_weight", type=int, default=0, help="dynamic load weight or not")
     parser.add_argument("--pad_token_id", type=int, default=-1, help="pad token id")
     parser.add_argument("--eos_tokens_lens", type=int, default=2, help="eos token lens")
+    parser.add_argument("--max_num_batched_tokens", type=int, default=2048, help="max num batched tokens")
     parser.add_argument("--enable_chunked_prefill", action='store_true', help="enable chunked prefill")
     args = parser.parse_args()
     return args

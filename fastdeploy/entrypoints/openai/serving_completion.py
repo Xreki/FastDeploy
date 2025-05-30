@@ -41,7 +41,10 @@ class OpenAIServingCompletion:
         Create a completion for the given prompt.
         """
         created_time = int(time.time())
-        request_id = f"cmpl-{uuid.uuid4()}"
+        if request.user is not None:
+            request_id = f"cmpl-{request.user}-{uuid.uuid4()}"
+        else:
+            request_id = f"cmpl-{uuid.uuid4()}"
         api_server_logger.info(f"initialize request {request_id}")
         request_prompt_ids = None
         request_prompts = None
