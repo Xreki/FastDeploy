@@ -535,6 +535,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         self.num_key_value_heads = num_key_value_heads
         self.cache_quant_dtype = cache_quant_dtype
         self.use_moe = use_moe
+        self.ernie_config = ernie_config
 
         if self.use_rmsnorm:
             self.norm_type = "rmsnorm"
@@ -1309,13 +1310,25 @@ class ErnieBotForGeneration(nn.Layer):
         """Generate mapping between inference and training parameter names with MoE support."""
 
         # Extract configs with defaults
-        configs = self.configs
+        configs = self.ernie.ernie_config
+        is_vl = False
+        if configs["architectures"] == ["ErnieMoEVLForCausalLM"]:
+            is_vl = True
         moe_layer_start_index = configs.get("moe_layer_start_index", 3)
         num_layers = configs.get("num_layers", 54)
+        
+        remove_tail_layer = configs.get("remove_tail_layer")
+        if remove_tail_layer is True:
+            num_layers -= 1
+        elif isinstance(remove_tail_layer, int):
+            num_layers -= remove_tail_layer
+
         moe_use_gate_correction_bias = configs.get(
             "moe_use_gate_correction_bias", True)
         have_bias = configs.get("have_norm_bias", False)
         moe_num_experts = configs.get("moe_num_experts", 64)
+        if isinstance(moe_num_experts, list):
+            moe_num_experts = moe_num_experts[0]
 
         # Prepare placeholders
         place_holders = ["weight"] + (["bias"] if have_bias else [])
@@ -1325,13 +1338,13 @@ class ErnieBotForGeneration(nn.Layer):
 
         # Static mappings (non-layer specific)
         static_mappings = {
-            "gpt.embeddings.word_embeddings.weight":
+            "ernie.embeddings.word_embeddings.weight":
             "ernie.embed_tokens.weight",
-            "gpt.norm.ln_weight": "ernie.norm.weight",
+            "ernie.norm.ln_weight": "ernie.norm.weight",
             "lm_head.out_linear.weight": "lm_head.weight"
         }
         infer_to_train.update(static_mappings)
-        infer_base_name = "gpt.decoder"
+        infer_base_name = "ernie.decoder"
 
         # Helper function to add layer mappings
         def _add_layer_mappings(layer_idx, is_moe_layer=False):
@@ -1369,32 +1382,83 @@ class ErnieBotForGeneration(nn.Layer):
                     infer_to_train[f"{infer_base_name}.ffn2_layers.{layer_idx}.linear_{ph}"] = \
                         f"ernie.layers.{layer_idx}.mlp.down_proj.{ph}"
             else:
-                # MoE specific mappings
-                infer_to_train[f"{infer_base_name}.moe_layers.{layer_idx}.gate_weight"] = \
-                    f"ernie.layers.{layer_idx}.mlp.gate.weight"
+                if is_vl:
+                    moe_types = ["text_moe_layer", "image_moe_layer"]
+                    for moe_type in moe_types:
+                        # MoE specific mappings
+                        infer_to_train[f"{infer_base_name}.moe_layers.{layer_idx}.{moe_type}.gate_weight"] = \
+                            f"ernie.layers.{layer_idx}.mlp.gate.weight" if moe_type == "text_moe_layer" else \
+                            f"ernie.layers.{layer_idx}.mlp.gate.weight_1"
 
-                if moe_use_gate_correction_bias:
-                    infer_to_train[f"{infer_base_name}.moe_layers.{layer_idx}.gate_correction_bias"] = \
-                        f"ernie.layers.{layer_idx}.mlp.moe_statics.e_score_correction_bias"
+                        if moe_use_gate_correction_bias:
+                            infer_to_train[f"{infer_base_name}.moe_layers.{layer_idx}.{moe_type}.gate_correction_bias"] = \
+                                f"ernie.layers.{layer_idx}.mlp.moe_statics.e_score_correction_bias"
+                else:
+                    # MoE specific mappings
+                    infer_to_train[f"{infer_base_name}.moe_layers.{layer_idx}.gate_weight"] = \
+                        f"ernie.layers.{layer_idx}.mlp.gate.weight"
 
-                # MoE experts mappings
-                for expert_idx in range(moe_num_experts):
-                    for ph in place_holders:
-                        # FFN1 (up_gate_proj)
-                        ffn1_key = f"{infer_base_name}.moe_layers.{layer_idx}.moe_ffn1_weight"
-                        if ffn1_key not in infer_to_train:
-                            infer_to_train[ffn1_key] = []
-                        infer_to_train[ffn1_key].append(
-                            f"ernie.layers.{layer_idx}.mlp.experts.{expert_idx}.up_gate_proj.{ph}"
-                        )
+                    if moe_use_gate_correction_bias:
+                        infer_to_train[f"{infer_base_name}.moe_layers.{layer_idx}.gate_correction_bias"] = \
+                            f"ernie.layers.{layer_idx}.mlp.moe_statics.e_score_correction_bias"
 
-                        # FFN2 (down_proj)
-                        ffn2_key = f"{infer_base_name}.moe_layers.{layer_idx}.moe_ffn2_weight"
-                        if ffn2_key not in infer_to_train:
-                            infer_to_train[ffn2_key] = []
-                        infer_to_train[ffn2_key].append(
-                            f"ernie.layers.{layer_idx}.mlp.experts.{expert_idx}.down_proj.{ph}"
-                        )
+                if is_vl:
+                    # MoE experts mappings
+                    for expert_idx in list(range(32)) + list(range(64, 96)):
+                        for ph in place_holders:
+                            # FFN1 (up_gate_proj)
+                            ffn1_key = f"{infer_base_name}.moe_layers.{layer_idx}.text_moe_layer.moe_ffn1_weight"
+                            if ffn1_key not in infer_to_train:
+                                infer_to_train[ffn1_key] = []
+                            infer_to_train[ffn1_key].append(
+                                f"ernie.layers.{layer_idx}.mlp.experts.{expert_idx}.up_gate_proj.{ph}"
+                            )
+
+                            # FFN2 (down_proj)
+                            ffn2_key = f"{infer_base_name}.moe_layers.{layer_idx}.text_moe_layer.moe_ffn2_weight"
+                            if ffn2_key not in infer_to_train:
+                                infer_to_train[ffn2_key] = []
+                            infer_to_train[ffn2_key].append(
+                                f"ernie.layers.{layer_idx}.mlp.experts.{expert_idx}.down_proj.{ph}"
+                            )
+                    
+                    for expert_idx in list(range(32, 64)) + list(range(96, 128)):
+                        for ph in place_holders:
+                            # FFN1 (up_gate_proj)
+                            ffn1_key = f"{infer_base_name}.moe_layers.{layer_idx}.image_moe_layer.moe_ffn1_weight"
+                            if ffn1_key not in infer_to_train:
+                                infer_to_train[ffn1_key] = []
+                            infer_to_train[ffn1_key].append(
+                                f"ernie.layers.{layer_idx}.mlp.experts.{expert_idx}.up_gate_proj.{ph}"
+                            )
+
+                            # FFN2 (down_proj)
+                            ffn2_key = f"{infer_base_name}.moe_layers.{layer_idx}.image_moe_layer.moe_ffn2_weight"
+                            if ffn2_key not in infer_to_train:
+                                infer_to_train[ffn2_key] = []
+                            infer_to_train[ffn2_key].append(
+                                f"ernie.layers.{layer_idx}.mlp.experts.{expert_idx}.down_proj.{ph}"
+                            )
+
+                else:
+                    # MoE experts mappings
+                    for expert_idx in range(moe_num_experts):
+                        for ph in place_holders:
+                            # FFN1 (up_gate_proj)
+                            ffn1_key = f"{infer_base_name}.moe_layers.{layer_idx}.moe_ffn1_weight"
+                            if ffn1_key not in infer_to_train:
+                                infer_to_train[ffn1_key] = []
+                            infer_to_train[ffn1_key].append(
+                                f"ernie.layers.{layer_idx}.mlp.experts.{expert_idx}.up_gate_proj.{ph}"
+                            )
+
+                            # FFN2 (down_proj)
+                            ffn2_key = f"{infer_base_name}.moe_layers.{layer_idx}.moe_ffn2_weight"
+                            if ffn2_key not in infer_to_train:
+                                infer_to_train[ffn2_key] = []
+                            infer_to_train[ffn2_key].append(
+                                f"ernie.layers.{layer_idx}.mlp.experts.{expert_idx}.down_proj.{ph}"
+                            )
 
         # Process non-MoE layers
         for layer_idx in range(moe_layer_start_index):
@@ -1612,7 +1676,7 @@ class ErnieBotForGeneration(nn.Layer):
         min_tokens_to_keep=1,
         **model_kwargs,
     ):
-        """Sample from GPT using beam search and post process the generated sequence.
+        """Sample from Ernie using beam search and post process the generated sequence.
 
         Args:
             eos_token_id (int): The id of the token indicating the end of a sentence.
@@ -1625,7 +1689,7 @@ class ErnieBotForGeneration(nn.Layer):
             temperature (float, optional): The value used to module the logits. Defaults to None.
             min_tokens_to_keep (int, optional): Minimal number of tokens to keep for
                 next step in decoding. Defaults to 1.
-            **model_kwargs: Other arguments for forward pass of GPT model.
+            **model_kwargs: Other arguments for forward pass of Ernie model.
 
         Returns:
             Tensor: The sampled tokens. The shape is [batch_size].
@@ -1633,7 +1697,7 @@ class ErnieBotForGeneration(nn.Layer):
 
         def _forward_(**args):
             """
-            Forward pass of GPT model.
+            Forward pass of Ernie model.
             """
             model_inputs = self.prepare_inputs_for_generation(**args)
             return self.ernie(**model_inputs)
@@ -1897,7 +1961,7 @@ class ErnieBotForGeneration(nn.Layer):
         min_tokens_to_keep=1,
         **model_kwargs,
     ):
-        """Sample from GPT using beam search and post process the generated sequence.
+        """Sample from Ernie using beam search and post process the generated sequence.
 
         Args:
             eos_token_id (int): The id of the token indicating the end of a sentence.
@@ -1909,7 +1973,7 @@ class ErnieBotForGeneration(nn.Layer):
             temperature (float, optional): The value used to module the logits. Defaults to None.
             min_tokens_to_keep (int, optional): Minimal number of tokens to keep for
                 next step in decoding. Defaults to 1.
-            **model_kwargs: Other arguments for forward pass of GPT model.
+            **model_kwargs: Other arguments for forward pass of Ernie model.
 
         Returns:
             Tensor: The sampled tokens. The shape is [batch_size].
@@ -1917,7 +1981,7 @@ class ErnieBotForGeneration(nn.Layer):
 
         def _forward_(**args):
             """
-            Forward pass of GPT model.
+            Forward pass of Ernie model.
             """
             model_inputs = self.prepare_inputs_for_generation(**args)
             return self.ernie(**model_inputs)
@@ -2108,7 +2172,7 @@ class ErnieBotForGeneration(nn.Layer):
         temperature=None,
         **model_kwargs,
     ):
-        """Sample from GPT using beam search and post process the generated sequence.
+        """Sample from Ernie using beam search and post process the generated sequence.
 
         Args:
             eos_token_id (int): The id of the token indicating the end of a sentence.
@@ -2116,7 +2180,7 @@ class ErnieBotForGeneration(nn.Layer):
             frequency_score (dict): A dict containing frequency score of each token.
             presence_score (dict): A dict containing presence score of each token.
             temperature (float, optional): The value used to module the logits. Defaults to None.
-            **model_kwargs: Other arguments for forward pass of GPT model.
+            **model_kwargs: Other arguments for forward pass of Ernie model.
 
         Returns:
             Tensor: BeamHypotheses. The shape is [batch_size * beam_width, max_dec_len].
@@ -2259,13 +2323,13 @@ class ErnieBotForGeneration(nn.Layer):
         top_p,
         **model_kwargs,
     ):
-        """Sample from GPT using beam search and post process the generated sequence.
+        """Sample from Ernie using beam search and post process the generated sequence.
 
         Args:
             eos_token_id (int): The id of the token indicating the end of a sentence.
             top_p (float): If set to float < 1, only the tokens with probabilities greater than or equal to
                 the threshold are kept for generation.
-            **model_kwargs: Other arguments for forward pass of GPT model.
+            **model_kwargs: Other arguments for forward pass of Ernie model.
 
         Returns:
             Tensor: The sampled tokens. The shape is [batch_size].

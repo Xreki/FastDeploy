@@ -89,8 +89,6 @@ class ModelRunner(ModelRunnerBase):
         pass
 
     def _load_model(self, model_name, dynamic_load_weight):
-        if dynamic_load_weight == True:
-            raise Exception("EB45T-VL Not Support Dynamic Load Weight For Now")
 
         tokenizer = ErnieVLTokenizer.from_pretrained(
             self.args.tokenizer,
@@ -176,26 +174,49 @@ class ModelRunner(ModelRunnerBase):
                                         -1)
         self.image_preprocess = image_preprocess
 
-        from ..models.export_model import build_stream_line_model
-        _, _, self.model = build_stream_line_model(
-            self.model_cfg,
-            self.args.llm_model_name_or_path,
-            self.args.dtype,
-            self.args.block_size,
-            max_len=self.args.max_model_len,
-            stage_flag=None,
-            use_fake_parameter=True,
-            pad_vocab=False,
-            tokenizer=tokenizer,
-            output_via_mq=True,
-            export_model_type="W8A16C16",
-            moe_quant_type="weight_only_int8",
-            use_safetensors=self.is_safetensors_model,
-        )
-        self.model.eval()
+        if dynamic_load_weight:
+            from ..models.dynamic_load_model import DynamicLoadModel
+            local_test = False
+            if os.getenv("RUN_MODE", "") == "test":
+                local_test = True
+            self.model = DynamicLoadModel(
+                model_cfg=self.model_cfg,
+                model_name_or_path=self.args.model_name_or_path,
+                dtype=self.args.dtype,
+                block_size=self.args.block_size,
+                max_len=self.args.max_model_len,
+                tokenizer=tokenizer,
+                output_via_mq=True,
+                pad_vocab=False,
+                export_model_type="W8A16C16",
+                moe_quant_type="weight_only_int8",
+                stage_flag=None,
+                load_model_from_ipc=dynamic_load_weight,
+                nranks=self.nranks,
+                rank=self.rank,
+                local_test=local_test,
+            )
+        else:
+            from ..models.export_model import build_stream_line_model
+            _, _, self.model = build_stream_line_model(
+                self.model_cfg,
+                self.args.model_name_or_path,
+                self.args.dtype,
+                self.args.block_size,
+                max_len=self.args.max_model_len,
+                stage_flag=None,
+                use_fake_parameter=True,
+                pad_vocab=False,
+                tokenizer=tokenizer,
+                output_via_mq=True,
+                export_model_type="W8A16C16",
+                moe_quant_type="weight_only_int8",
+                use_safetensors=self.is_safetensors_model,
+            )
+            self.model.eval()
 
-        self.set_state_dict(self.args)
-        print("load model finished")
+            self.set_state_dict(self.args)
+            print("load model finished")
 
     def init_extra_input(self, config, args):
         head_dim = self.model_cfg.hidden_size // self.model_cfg.num_attention_heads
@@ -257,6 +278,21 @@ class ModelRunner(ModelRunnerBase):
         for value in cache_kvs.values():
             del value
         paddle.device.cuda.empty_cache()
+
+    def clear_parameters(self, pid):
+        """ clear_parameters """
+        if "caches" in self.share_inputs:
+            self.model.clear_parameters(pid)
+            del self.share_inputs["caches"]
+            paddle.device.cuda.empty_cache()
+            self.model.log_memory_usage("clear all memory")
+
+    def update_parameters(self, pid):
+        """ update_parameters """
+        if "caches" not in self.share_inputs:
+            self.model.update_parameters(pid)
+            self._init_kvcache()
+            self.model.log_memory_usage("update all memory")
 
     @paddle.no_grad()
     def set_state_dict(self, args):

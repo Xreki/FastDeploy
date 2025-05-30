@@ -145,6 +145,7 @@ def build_stream_line_model(
     output_via_mq: bool = True,
     use_safetensors: bool = False,
     embeddings_column_cut: bool = False,
+    use_empty_parameter: bool = False,
 ):
     """
     Build a fused inference model
@@ -239,8 +240,10 @@ def build_stream_line_model(
 
     use_moe = config.get("moe_layer_start_index", num_layers) < num_layers
 
-    if use_fake_parameter:
+    if use_empty_parameter:
         context = paddle.LazyGuard()
+    elif use_fake_parameter:
+        context = contextlib.nullcontext()
     elif use_safetensors:
         context = paddle.LazyGuard()
         state_dict = load_checkpoint(

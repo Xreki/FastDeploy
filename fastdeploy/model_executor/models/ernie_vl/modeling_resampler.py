@@ -201,6 +201,31 @@ class VariableResolutionResamplerModel(nn.Layer):
                 mark_as_sequence_parallel_parameter(self.mlp.bias)
                 mark_as_sequence_parallel_parameter(self.after_norm.weight)
 
+    def get_name_mappings_to_training(self,):
+        """ get_name_mappings_to_training """
+        infer_to_train = {}
+        resampler_names = [
+            "ernie.resampler_model.spatial_linear.0.weight",
+            "ernie.resampler_model.spatial_linear.0.bias",
+            "ernie.resampler_model.spatial_linear.2.weight",
+            "ernie.resampler_model.spatial_linear.2.bias",
+            "ernie.resampler_model.spatial_linear.3.weight",
+            "ernie.resampler_model.spatial_linear.3.bias",
+            "ernie.resampler_model.temporal_linear.0.weight",
+            "ernie.resampler_model.temporal_linear.0.bias",
+            "ernie.resampler_model.temporal_linear.2.weight",
+            "ernie.resampler_model.temporal_linear.2.bias",
+            "ernie.resampler_model.temporal_linear.3.weight",
+            "ernie.resampler_model.temporal_linear.3.bias",
+            "ernie.resampler_model.mlp.weight",
+            "ernie.resampler_model.mlp.bias",
+            "ernie.resampler_model.after_norm.weight",
+        ]
+        for train_name in resampler_names:
+            infer_to_train[train_name[len("ernie.resampler_model."):]] = train_name
+
+        return infer_to_train
+
     def spatial_conv_reshape(self, x, spatial_conv_size):
         """
         Linear 前的 reshape，为了让 Linear 能模仿 conv 的感受野

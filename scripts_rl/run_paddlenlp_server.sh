@@ -1,9 +1,5 @@
 #!/bin/bash
 
-# source ./fastdeploy/agent/prepare.sh
-source "$FASTDEPLOY_ENV_NAME/bin/activate"
-
-
 # paddlenlp配置
 export FLAGS_set_to_1d=False
 export NVIDIA_TF32_OVERRIDE=0
@@ -22,7 +18,8 @@ export CUDA_VISIBLE_DEVICES=6,7
 export INFERENCE_MSG_QUEUE_ID="778910"
 export FD_LOG_DIR="./log_${INFERENCE_MSG_QUEUE_ID}"
 export FD_MODEL_NAME="paddlenlp_model"
-
+# 本地测试需要
+export RUN_MODE="test"
 
 rm -rf ./log*
 
