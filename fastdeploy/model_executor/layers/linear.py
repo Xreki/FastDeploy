@@ -19,6 +19,7 @@ from paddle import nn
 from paddle.nn.quant import weight_quantize
 
 import fastdeploy
+from fastdeploy.platforms import current_platform
 
 from .utils import (_set_var_distributed, divide, get_tensor,
                     per_block_cast_to_fp8)
@@ -259,6 +260,7 @@ class LinearBase(nn.Layer):
             linear_out = paddle.matmul(x, self.linear_weight)
 
         return linear_out
+
 
 class ReplicatedLinear(LinearBase):
     """
