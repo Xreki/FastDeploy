@@ -55,6 +55,8 @@ for output in outputs:
 * use_warmup(int): 是否在启动时进行warmup，会自动生成极限长度数据进行warmup，默认自动计算KV Cache时会使用
 * engine_worker_queue_port(int): 引擎内部进程间通信使用端口号，默认值8002
 * enable_mm(bool): 启用多模推理，默认值False
+* limit_mm_per_prompt(dict): 限制每个prompt中多模态数据的数量，如：{"image": 1, "video": 1, "audio": 1}
+* mm_processor_kwargs(dict): 多模态处理器参数配置，如：{"spatial_conv_size": 2, "temporal_conv_size": 2, "image_min_pixels": 3136, "video_fps": 2}
 
 > 参数配置说明：
 > 1. 模型服务启动后，会在日志文件log/fastdeploy.log中打印如 `Doing profile, the total_block_num:640` 的日志，其中640即表示自动计算得到的KV Cache block数量，将它乘以block_size(默认值64)，即可得到部署后总共可以在KV Cache中缓存的Token数。
