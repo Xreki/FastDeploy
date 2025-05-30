@@ -14,8 +14,6 @@
 # limitations under the License.
 """
 
-# cipher_token=WjI1fQOvhN  # do not edit this line
-
 import paddle
 from paddle import nn
 from paddle.distributed import fleet
@@ -325,7 +323,6 @@ class FusedMoE(nn.Layer):
         # gate
         self.gate_weight = self.create_parameter(
             shape=self.gate_weight_shape,
-            attr=paddle.ParamAttr(name=self.gate_weight_name),
             dtype="float32",
             is_bias=False,
             default_initializer=paddle.nn.initializer.Constant(0),
@@ -333,7 +330,6 @@ class FusedMoE(nn.Layer):
         if self.moe_config.moe_use_gate_correction_bias:
             self.gate_correction_bias = self.create_parameter(
                 shape=self.gate_correction_bias_shape,
-                attr=paddle.ParamAttr(name=self.gate_correction_bias_name),
                 dtype="float32",
                 is_bias=True,
                 default_initializer=paddle.nn.initializer.Constant(0),
@@ -342,7 +338,6 @@ class FusedMoE(nn.Layer):
         # ffn1
         self.moe_ffn1_weight = self.create_parameter(
             shape=self.ffn1_weight_shape,
-            attr=paddle.ParamAttr(name=self.ffn1_weight_name),
             dtype=self.get_weight_create_dtype(),
             is_bias=False,
             default_initializer=paddle.nn.initializer.Constant(0),
@@ -352,7 +347,6 @@ class FusedMoE(nn.Layer):
         if self.with_moe_ffn1_bias:
             self.moe_ffn1_bias = self.create_parameter(
                 shape=self.ffn1_bias_shape,
-                attr=paddle.ParamAttr(name=self.ffn1_bias_name),
                 dtype=self._dtype,
                 is_bias=True,
             )
@@ -360,7 +354,6 @@ class FusedMoE(nn.Layer):
         # ffn2
         self.moe_ffn2_weight = self.create_parameter(
             shape=self.ffn2_weight_shape,
-            attr=paddle.ParamAttr(name=self.ffn2_weight_name),
             dtype=self.get_weight_create_dtype(),
             is_bias=False,
             default_initializer=paddle.nn.initializer.Constant(0),
@@ -369,7 +362,6 @@ class FusedMoE(nn.Layer):
         if self.with_moe_ffn2_bias:
             self.moe_ffn2_bias = self.create_parameter(
                 shape=self.ffn2_bias_shape,
-                attr=paddle.ParamAttr(name=self.ffn2_bias_name),
                 dtype=self._dtype,
                 is_bias=True,
             )

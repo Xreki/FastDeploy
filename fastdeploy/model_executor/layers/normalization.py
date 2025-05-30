@@ -14,7 +14,6 @@
 # limitations under the License.
 """
 
-# cipher_token=WjI1fQOvhN  # do not edit this line
 import paddle
 from paddle import nn
 from paddle.incubate.nn.functional import fused_layer_norm, fused_rms_norm

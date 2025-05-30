@@ -14,19 +14,11 @@
 # limitations under the License.
 """
 
-# cipher_token=WjI1fQOvhN  # do not edit this line
 import paddle
 from paddle import nn
 from paddle.distributed import fleet
 
-from fastdeploy.platforms import current_platform
-
 from .utils import get_tensor
-
-try:
-    from fastdeploy.model_executor.ops.npu import word_embedding_parallel
-except ImportError:
-    pass
 
 
 class VocabParallelEmbedding(nn.Layer):
@@ -76,42 +68,32 @@ class VocabParallelEmbedding(nn.Layer):
         self.max_position_embeddings = llm_config.model_config.max_position_embeddings
         self.freeze_embedding = llm_config.model_config.freeze_embedding
 
-        if current_platform.is_npu():
-            # npu call custom op to calculate parallel word_embedding
-            self.word_embeddings = self.create_parameter(
-                shape=[num_embeddings, embedding_dim // self.world_size],
-                attr=None,
-                dtype=params_dtype,
-                is_bias=False,
+        if self.use_ep:
+            self.word_embeddings = nn.Embedding(
+                num_embeddings,
+                embedding_dim,
             )
         else:
-            # gpu
-            if self.use_ep:
-                self.word_embeddings = nn.Embedding(
+            if not self.column_cut:
+                self.word_embeddings = fleet.meta_parallel.VocabParallelEmbedding(
                     num_embeddings,
                     embedding_dim,
+                    mp_group=fleet.get_hybrid_communicate_group().
+                    get_model_parallel_group(),
+                    weight_attr=paddle.ParamAttr(
+                        name=self._word_emb_name,
+                        initializer=nn.initializer.Normal(
+                            mean=0.0, std=self.initializer_range),
+                    ),
                 )
             else:
-                if not self.column_cut:
-                    self.word_embeddings = fleet.meta_parallel.VocabParallelEmbedding(
-                        num_embeddings,
-                        embedding_dim,
-                        mp_group=fleet.get_hybrid_communicate_group().
-                        get_model_parallel_group(),
-                        weight_attr=paddle.ParamAttr(
-                            name=self._word_emb_name,
-                            initializer=nn.initializer.Normal(
-                                mean=0.0, std=self.initializer_range),
-                        ),
-                    )
-                else:
-                    # column cut embedding
-                    self.word_embeddings = nn.Embedding(
-                        num_embeddings,
-                        embedding_dim // self.world_size,
-                    )
-                    self.word_embeddings.weight.is_distributed = True
-                    self.word_embeddings.weight.split_axis = 1
+                # column cut embedding
+                self.word_embeddings = nn.Embedding(
+                    num_embeddings,
+                    embedding_dim // self.world_size,
+                )
+                self.word_embeddings.weight.is_distributed = True
+                self.word_embeddings.weight.split_axis = 1
 
         if not self.use_rope:
             self.position_embeddings = nn.Embedding(
@@ -169,13 +151,9 @@ class VocabParallelEmbedding(nn.Layer):
         Args:
             state_dict (dict): A dictionary containing the checkpoint weights and biases.
         """
-        if current_platform.is_npu():
-            self.word_embeddings.set_value(
-                get_tensor(state_dict.pop(self.layer_name + ".weight")))
-        else:
-            self.word_embeddings.weight.set_value(
-                get_tensor(state_dict.pop(self.layer_name + ".weight")).astype(
-                    paddle.get_default_dtype()))
+        self.word_embeddings.weight.set_value(
+            get_tensor(state_dict.pop(self.layer_name + ".weight")).astype(
+                paddle.get_default_dtype()))
 
     def forward(self, ids_remove_padding=None):
         """
@@ -188,34 +166,21 @@ class VocabParallelEmbedding(nn.Layer):
         Returns:
             Tensor: Embedded tensor representation of the input IDs.
         """
-        if current_platform.is_npu():
-            # npu
-            input_embedings = word_embedding_parallel(
-                ids_remove_padding,
-                self.word_embeddings,
-                parallel_type="ColumnParallel",
-                rank=self.mp_rank,
-                nranks=self.world_size,
-                root=0,
-                ring_id=self.ring_id,
-            )
+        if self.use_ep:
+            input_embedings = self.word_embeddings(ids_remove_padding)
         else:
-            # gpu
-            if self.use_ep:
+            if self.column_cut:
                 input_embedings = self.word_embeddings(ids_remove_padding)
+                inputs_embeds_temp = []
+                paddle.distributed.all_gather(
+                    inputs_embeds_temp,
+                    input_embedings,
+                    group=fleet.get_hybrid_communicate_group().
+                    get_model_parallel_group(),
+                    sync_op=True,
+                )
+                input_embedings = paddle.concat(inputs_embeds_temp, -1)
             else:
-                if self.column_cut:
-                    input_embedings = self.word_embeddings(ids_remove_padding)
-                    inputs_embeds_temp = []
-                    paddle.distributed.all_gather(
-                        inputs_embeds_temp,
-                        input_embedings,
-                        group=fleet.get_hybrid_communicate_group().
-                        get_model_parallel_group(),
-                        sync_op=True,
-                    )
-                    input_embedings = paddle.concat(inputs_embeds_temp, -1)
-                else:
-                    input_embedings = self.word_embeddings(ids_remove_padding)
+                input_embedings = self.word_embeddings(ids_remove_padding)
 
         return input_embedings

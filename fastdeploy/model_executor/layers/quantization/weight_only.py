@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import Optional
 
 import paddle
@@ -72,8 +72,14 @@ class WeightOnlyLinearMethod(QuantMethodBase):
 
     def create_weights(self, layer):
         weight_only_scale_name = layer.layer_name + ".weight_only_scale"
+        linear_weight_scale_shape = [layer.embed_dim]
+        if hasattr(layer, "linear_weight_shape"):
+            if isinstance(layer.linear_weight_shape, list):
+                layer_weight_shape = layer.linear_weight_shape
+                linear_weight_scale_shape = layer_weight_shape[:1]
+
         layer.linear_weight_scale = layer.create_parameter(
-            shape=[layer.embed_dim],
+            shape=linear_weight_scale_shape,
             attr=paddle.ParamAttr(name=weight_only_scale_name),
             dtype=layer._dtype,
             is_bias=False,

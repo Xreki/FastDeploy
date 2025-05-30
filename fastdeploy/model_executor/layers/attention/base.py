@@ -14,12 +14,12 @@
 # limitations under the License.
 """
 
-# cipher_token=WjI1fQOvhN  # do not edit this line
 import os
-import fastdeploy
 
 import paddle
 from paddle import nn
+
+import fastdeploy
 
 
 class Attention(nn.Layer):
@@ -86,30 +86,24 @@ class Attention(nn.Layer):
         elif self._dtype == "float32":
             self._fuse_kernel_compute_dtype = "fp32"
         else:
-            raise ValueError(
-                f"Just support float32, float16 and \
-                    bfloat16 as default dtype, but received {self._dtype}"
-            )
+            raise ValueError(f"Just support float32, float16 and \
+                    bfloat16 as default dtype, but received {self._dtype}")
 
         self.cache_scale_dtype = (
-            self._dtype if self.inference_args.use_append_attn else "float32"
-        )
+            self._dtype if self.inference_args.use_append_attn else "float32")
 
         self.qkv_bias = qkv_bias
         if inference_args.weight_dtype == "int8" and inference_args.act_dtype == "int8":
             self.qkv_scale = qkv_scale
             self.linear_shift = linear_shift
             self.linear_smooth = linear_smooth
-        if (
-            inference_args.cachekv_dtype == "int8"
-            or inference_args.cachekv_dtype == "int4"
-            or inference_args.cachekv_dtype == "float8_e4m3fn"
-        ):
+        if (inference_args.cachekv_dtype == "int8"
+                or inference_args.cachekv_dtype == "int4"
+                or inference_args.cachekv_dtype == "float8_e4m3fn"):
             self.set_cachekv_scale()
         # qkv_bias fused with attention only when W8A8
-        if not (
-            inference_args.weight_dtype == "int8" and inference_args.act_dtype == "int8"
-        ):
+        if not (inference_args.weight_dtype == "int8"
+                and inference_args.act_dtype == "int8"):
             self.qkv_bias = None
 
     def set_cachekv_scale(self):
@@ -132,41 +126,33 @@ class Attention(nn.Layer):
                 any values.
         """
         self.cache_k_scale = self.create_parameter(
-            shape=(
-                [self.kv_num_heads * self.head_dim]
-                if self.inference_args.is_channel_wise
-                else [self.kv_num_heads]
-            ),
+            shape=([self.kv_num_heads *
+                    self.head_dim] if self.inference_args.is_channel_wise else
+                   [self.kv_num_heads]),
             attr=paddle.ParamAttr(name=self.cache_k_scale_name),
             dtype=self.cache_scale_dtype,
             is_bias=False,
         )
         self.cache_v_scale = self.create_parameter(
-            shape=(
-                [self.kv_num_heads * self.head_dim]
-                if self.inference_args.is_channel_wise
-                else [self.kv_num_heads]
-            ),
+            shape=([self.kv_num_heads *
+                    self.head_dim] if self.inference_args.is_channel_wise else
+                   [self.kv_num_heads]),
             attr=paddle.ParamAttr(name=self.cache_v_scale_name),
             dtype=self.cache_scale_dtype,
             is_bias=False,
         )
         self.cache_k_out_scale = self.create_parameter(
-            shape=(
-                [self.kv_num_heads * self.head_dim]
-                if self.inference_args.is_channel_wise
-                else [self.kv_num_heads]
-            ),
+            shape=([self.kv_num_heads *
+                    self.head_dim] if self.inference_args.is_channel_wise else
+                   [self.kv_num_heads]),
             attr=None,
             dtype=self.cache_scale_dtype,
             is_bias=False,
         )
         self.cache_v_out_scale = self.create_parameter(
-            shape=(
-                [self.kv_num_heads * self.head_dim]
-                if self.inference_args.is_channel_wise
-                else [self.kv_num_heads]
-            ),
+            shape=([self.kv_num_heads *
+                    self.head_dim] if self.inference_args.is_channel_wise else
+                   [self.kv_num_heads]),
             attr=None,
             dtype=self.cache_scale_dtype,
             is_bias=False,
@@ -174,41 +160,37 @@ class Attention(nn.Layer):
 
         if self.cache_k_scale_name in self.inference_args.cachekv_scale_dict:
             cache_k_scale = paddle.cast(
-                paddle.to_tensor(
-                    self.inference_args.cachekv_scale_dict[self.cache_k_scale_name]
-                ),
+                paddle.to_tensor(self.inference_args.cachekv_scale_dict[
+                    self.cache_k_scale_name]),
                 self.cache_scale_dtype,
             )
             cache_k_out_scale = 1.0 / cache_k_scale
         else:
             if os.getenv("EP_DECODER_PERF_TEST", "False") == "True":
-                cache_k_scale = paddle.zeros(
-                    self.cache_k_scale.shape, self.cache_k_scale.dtype
-                )
-                cache_k_out_scale = paddle.zeros(
-                    self.cache_k_out_scale.shape, self.cache_k_out_scale.dtype
-                )
+                cache_k_scale = paddle.zeros(self.cache_k_scale.shape,
+                                             self.cache_k_scale.dtype)
+                cache_k_out_scale = paddle.zeros(self.cache_k_out_scale.shape,
+                                                 self.cache_k_out_scale.dtype)
             else:
-                raise KeyError(f"{self.cache_k_scale_name} not found in scale dict")
+                raise KeyError(
+                    f"{self.cache_k_scale_name} not found in scale dict")
 
         if self.cache_v_scale_name in self.inference_args.cachekv_scale_dict:
             cache_v_scale = paddle.cast(
-                paddle.to_tensor(
-                    self.inference_args.cachekv_scale_dict[self.cache_v_scale_name]
-                ),
+                paddle.to_tensor(self.inference_args.cachekv_scale_dict[
+                    self.cache_v_scale_name]),
                 self.cache_scale_dtype,
             )
             cache_v_out_scale = 1.0 / cache_v_scale
         else:
             if os.getenv("EP_DECODER_PERF_TEST", "False") == "True":
-                cache_v_scale = paddle.zeros(
-                    self.cache_v_scale.shape, self.cache_v_scale.dtype
-                )
-                cache_v_out_scale = paddle.zeros(
-                    self.cache_v_out_scale.shape, self.cache_v_out_scale.dtype
-                )
+                cache_v_scale = paddle.zeros(self.cache_v_scale.shape,
+                                             self.cache_v_scale.dtype)
+                cache_v_out_scale = paddle.zeros(self.cache_v_out_scale.shape,
+                                                 self.cache_v_out_scale.dtype)
             else:
-                raise KeyError(f"{self.cache_v_scale_name} not found in scale dict")
+                raise KeyError(
+                    f"{self.cache_v_scale_name} not found in scale dict")
 
         self.cache_k_scale.set_value(cache_k_scale)
         self.cache_v_scale.set_value(cache_v_scale)
@@ -217,55 +199,45 @@ class Attention(nn.Layer):
 
         if self.inference_args.has_zero_point:
             self.cache_k_zp = self.create_parameter(
-                shape=(
-                    [self.kv_num_heads * self.head_dim]
-                    if self.inference_args.is_channel_wise
-                    else [self.kv_num_heads]
-                ),
+                shape=([self.kv_num_heads *
+                        self.head_dim] if self.inference_args.is_channel_wise
+                       else [self.kv_num_heads]),
                 attr=paddle.ParamAttr(name=self.cache_k_zp_name),
                 dtype=self.cache_scale_dtype,
                 is_bias=False,
             )
             self.cache_v_zp = self.create_parameter(
-                shape=(
-                    [self.kv_num_heads * self.head_dim]
-                    if self.inference_args.is_channel_wise
-                    else [self.kv_num_heads]
-                ),
+                shape=([self.kv_num_heads *
+                        self.head_dim] if self.inference_args.is_channel_wise
+                       else [self.kv_num_heads]),
                 attr=paddle.ParamAttr(name=self.cache_v_zp_name),
                 dtype=self.cache_scale_dtype,
                 is_bias=False,
             )
             if self.cache_k_zp_name in self.inference_args.cachekv_scale_dict:
                 cache_k_zp = paddle.cast(
-                    paddle.to_tensor(
-                        self.inference_args.cachekv_scale_dict[self.cache_k_zp_name]
-                    ),
+                    paddle.to_tensor(self.inference_args.cachekv_scale_dict[
+                        self.cache_k_zp_name]),
                     self.cache_scale_dtype,
                 )
             else:
                 cache_k_zp = paddle.zeros(
-                    (
-                        [self.kv_num_heads * self.head_dim]
-                        if self.inference_args.is_channel_wise
-                        else [self.kv_num_heads]
-                    ),
+                    ([self.kv_num_heads *
+                      self.head_dim] if self.inference_args.is_channel_wise
+                     else [self.kv_num_heads]),
                     dtype=self.cache_scale_dtype,
                 )
             if self.cache_v_zp_name in self.inference_args.cachekv_scale_dict:
                 cache_v_zp = paddle.cast(
-                    paddle.to_tensor(
-                        self.inference_args.cachekv_scale_dict[self.cache_v_zp_name]
-                    ),
+                    paddle.to_tensor(self.inference_args.cachekv_scale_dict[
+                        self.cache_v_zp_name]),
                     self.cache_scale_dtype,
                 )
             else:
                 cache_v_zp = paddle.zeros(
-                    (
-                        [self.kv_num_heads * self.head_dim]
-                        if self.inference_args.is_channel_wise
-                        else [self.kv_num_heads]
-                    ),
+                    ([self.kv_num_heads *
+                      self.head_dim] if self.inference_args.is_channel_wise
+                     else [self.kv_num_heads]),
                     dtype=self.cache_scale_dtype,
                 )
             self.cache_k_zp.set_value(cache_k_zp)
@@ -379,10 +351,11 @@ class Attention(nn.Layer):
                 kwargs.get("decoder_block_shape_q", 16),
                 kwargs.get("max_partition_size", 32768),
                 kwargs.get("encoder_max_partition_size", 32768),
-                self.inference_args.speculate_max_draft_token_num
-                + 1,  # speculate_max_draft_token_num
+                self.inference_args.speculate_max_draft_token_num +
+                1,  # speculate_max_draft_token_num
                 True,  # causal
-                self.inference_args.speculate_method is not None,  # speculate_decoder
+                self.inference_args.speculate_method
+                is not None,  # speculate_decoder
             )[0]
         else:
             out = paddle.incubate.nn.functional.block_multihead_attention(

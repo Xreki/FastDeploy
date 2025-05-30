@@ -15,107 +15,15 @@
 """
 
 # cipher_token=WjI1fQOvhN  # do not edit this line
-import paddle
 from paddle import nn
-from paddle.framework import (
-    LayerHelper,
-    in_dynamic_or_pir_mode,
-)
+from paddle.incubate.nn.functional import fused_bias_act
+
+from fastdeploy.platforms import current_platform
 
 
-def fused_act_bias_wrapper(
-    x,
-    bias=None,
-    dequant_scales=None,
-    shift=None,
-    smooth=None,
-    act_method="gelu",
-    compute_dtype="default",
-    quant_scale=-1,
-    quant_round_type=0,
-    quant_max_bound=0,
-    quant_min_bound=0,
-):
+class SiluAndMul(nn.Layer):
     """
-    Fused activation with bias and optional dequantization.
-
-    Args:
-        x (Tensor): The input tensor.
-        bias (Tensor, optional): The bias tensor. Default: None.
-        dequant_scales (Tensor, optional): The dequantization scale tensor. Default: None.
-        shift (Tensor, optional): The shift tensor. Default: None.
-        smooth (Tensor, optional): The smooth tensor. Default: None.
-        act_method (str, optional): The activation method. Default: "gelu".
-        compute_dtype (str, optional): The data type for computation. Default: "default".
-        quant_scale (float, optional): The quantization scale. Default: -1.
-        quant_round_type (int, optional): The rounding type for quantization. Default: 0.
-        quant_max_bound (float, optional): The maximum bound for quantization. Default: 0.
-        quant_min_bound (float, optional): The minimum bound for quantization. Default: 0.
-
-    Returns:
-        Tensor: The output tensor after fused activation with bias and optional dequantization.
-
-    """
-    if in_dynamic_or_pir_mode():
-        return paddle._C_ops.fused_bias_act(
-            x,
-            bias,
-            dequant_scales,
-            shift,
-            smooth,
-            act_method,
-            compute_dtype,
-            quant_scale,
-            quant_round_type,
-            quant_max_bound,
-            quant_min_bound,
-        )
-    helper = LayerHelper("fused_bias_act")
-    if x.dtype == "int32":
-        if compute_dtype == "bf16":
-            dtype = "uint16"
-        elif compute_dtype == "fp16":
-            dtype = "float16"
-        elif compute_dtype == "fp32":
-            dtype = "float32"
-        out = helper.create_variable_for_type_inference(dtype=dtype)
-    else:
-        out = helper.create_variable_for_type_inference(dtype=x.dtype)
-
-    inputs = {}
-    inputs["x"] = x
-    if bias is not None:
-        inputs["bias"] = bias
-    if dequant_scales is not None:
-        inputs["dequant_scales"] = dequant_scales
-
-    if shift is not None:
-        inputs["shift"] = shift
-
-    if smooth is not None:
-        inputs["smooth"] = smooth
-
-    attrs = {
-        "act_method": act_method,
-        "compute_dtype": compute_dtype,
-        "quant_scale": quant_scale,
-        "quant_round_type": quant_round_type,
-        "quant_max_bound": quant_max_bound,
-        "quant_min_bound": quant_min_bound,
-    }
-
-    helper.append_op(
-        type="fused_bias_act",
-        inputs=inputs,
-        outputs={"out": out},
-        attrs=attrs,
-    )
-    return out
-
-
-class Activation(nn.Layer):
-    """
-    Activation Layer
+    SiluAndMul Layer
     """
 
     def __init__(
@@ -152,6 +60,11 @@ class Activation(nn.Layer):
         """
         super().__init__()
 
+        if current_platform.is_cuda():
+            self.forward = self.forward_cuda
+        else:
+            raise NotImplementedError
+
         self.bias = bias
         self.act_method = act_method
         self.dequant_scales = dequant_scales
@@ -170,10 +83,8 @@ class Activation(nn.Layer):
         elif self._dtype == "float32":
             self._fuse_kernel_compute_dtype = "fp32"
         else:
-            raise ValueError(
-                f"Just support float32, float16 and \
-                    bfloat16 as default dtype, but received {self._dtype}"
-            )
+            raise ValueError(f"Just support float32, float16 and \
+                    bfloat16 as default dtype, but received {self._dtype}")
 
         # fp8 is not support smooth quantization
         if "float8" in inference_args.act_dtype:
@@ -181,7 +92,7 @@ class Activation(nn.Layer):
             self.shift = None
             self.smooth = None
 
-    def forward(self, x):
+    def forward_cuda(self, x):
         """
         Forward propagation of the custom activation layer.
 
@@ -191,7 +102,7 @@ class Activation(nn.Layer):
         Returns:
             Tensor: Output tensor.
         """
-        return fused_act_bias_wrapper(
+        return fused_bias_act(
             x,
             bias=self.bias,
             act_method=self.act_method,

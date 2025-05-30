@@ -14,11 +14,11 @@
 # limitations under the License.
 """
 
-# cipher_token=WjI1fQOvhN  # do not edit this line
 import paddle
 import paddle.nn.functional as F
 from paddle import nn
 from paddle.distributed import fleet
+
 from .utils import get_tensor
 
 try:
@@ -60,8 +60,7 @@ def parallel_matmul(lm_output, logit_weights, parallel_output):
 
     if world_size > 1:
         input_parallel = paddle.distributed.collective._c_identity(
-            lm_output, group=model_parallel_group
-        )
+            lm_output, group=model_parallel_group)
 
         logits = paddle.matmul(input_parallel, logit_weights, transpose_y=True)
 
@@ -69,8 +68,7 @@ def parallel_matmul(lm_output, logit_weights, parallel_output):
             return logits
 
         return paddle.distributed.collective._c_concat(
-            logits, group=model_parallel_group
-        )
+            logits, group=model_parallel_group)
     else:
         logits = paddle.matmul(lm_output, logit_weights, transpose_y=True)
         return logits
@@ -98,11 +96,9 @@ def parallel_linear(lm_output, logit_weights, parallel_output, bias):
 
     if world_size > 1:
         input_parallel = paddle.distributed.collective._c_identity(
-            lm_output, group=model_parallel_group
-        )
+            lm_output, group=model_parallel_group)
         bias_parallel = paddle.distributed.collective._c_identity(
-            bias, group=model_parallel_group
-        )
+            bias, group=model_parallel_group)
 
         logits = paddle.matmul(input_parallel, logit_weights, transpose_y=True)
         logits += bias_parallel
@@ -111,8 +107,7 @@ def parallel_linear(lm_output, logit_weights, parallel_output, bias):
             return logits
 
         return paddle.distributed.collective._c_concat(
-            logits, group=model_parallel_group
-        )
+            logits, group=model_parallel_group)
     else:
         logits = paddle.matmul(lm_output, logit_weights, transpose_y=True)
         logits += bias
@@ -243,7 +238,8 @@ class LMHead(nn.Layer):
                     self.out_linear = ColumnParallelLinear(
                         input_dim,
                         output_dim,
-                        mp_group=fleet.get_hybrid_communicate_group().get_model_parallel_group(),
+                        mp_group=fleet.get_hybrid_communicate_group().
+                        get_model_parallel_group(),
                         weight_attr=None,
                         has_bias=True,
                         gather_output=need_gather,
@@ -253,14 +249,16 @@ class LMHead(nn.Layer):
                     self.out_linear = RowParallelLinear(
                         input_dim,
                         output_dim,
-                        mp_group=fleet.get_hybrid_communicate_group().get_model_parallel_group(),
+                        mp_group=fleet.get_hybrid_communicate_group().
+                        get_model_parallel_group(),
                         weight_attr=None,
                         has_bias=True,
                         input_is_parallel=False,
                         fuse_matmul_bias=fused_linear,  # False diff更小
                     )
 
-                self.out_linear.weight.name = layer_name + str(mp_rank) + ".w_0"
+                self.out_linear.weight.name = layer_name + str(
+                    mp_rank) + ".w_0"
                 self.out_linear.bias.name = layer_name + str(mp_rank) + ".b_0"
 
         self.activation = activation
@@ -282,25 +280,17 @@ class LMHead(nn.Layer):
             if self.use_ep:
                 self.weight.set_value(
                     get_tensor(state_dict.pop(self.linear_weight_key)).astype(
-                        paddle.get_default_dtype()
-                    )
-                )
+                        paddle.get_default_dtype()))
             else:
                 self.out_linear.weight.set_value(
                     get_tensor(state_dict.pop(self.linear_weight_key)).astype(
-                        paddle.get_default_dtype()
-                    )
-                )
+                        paddle.get_default_dtype()))
 
-                bias = (
-                    get_tensor(state_dict.pop(self.linear_bias_key)).astype(
-                        paddle.get_default_dtype()
-                    )
-                    if self.linear_bias_key is not None
-                    else paddle.zeros(
-                        self.out_linear.bias.shape, dtype=paddle.get_default_dtype()
-                    )
-                )
+                bias = (get_tensor(state_dict.pop(
+                    self.linear_bias_key)).astype(paddle.get_default_dtype())
+                        if self.linear_bias_key is not None else paddle.zeros(
+                            self.out_linear.bias.shape,
+                            dtype=paddle.get_default_dtype()))
                 self.out_linear.bias.set_value(bias)
 
     def forward(self, input):
@@ -315,9 +305,8 @@ class LMHead(nn.Layer):
         """
         logits = input
         if self.sharing_weight is not None and self.sharing_bias is not None:
-            logits = parallel_linear(
-                logits, self.sharing_weight, False, self.sharing_bias
-            )
+            logits = parallel_linear(logits, self.sharing_weight, False,
+                                     self.sharing_bias)
         elif self.sharing_weight is not None:
             logits = parallel_matmul(logits, self.sharing_weight, False)
         else:
@@ -379,18 +368,13 @@ class LMHeadNPU(nn.Layer):
         self.norm_weight_layer_name = self.norm_layer_name + ".weight"
         self.norm_bias_layer_name = self.norm_layer_name + ".bias"
 
-        self.rank = (
-            paddle.distributed.fleet.get_hybrid_communicate_group().get_model_parallel_rank()
-        )
-        self.nranks = (
-            paddle.distributed.fleet.get_hybrid_communicate_group().get_model_parallel_world_size()
-        )
+        self.rank = (paddle.distributed.fleet.get_hybrid_communicate_group().
+                     get_model_parallel_rank())
+        self.nranks = (paddle.distributed.fleet.get_hybrid_communicate_group().
+                       get_model_parallel_world_size())
         self.root = 0
-        self.ring_id = (
-            paddle.distributed.fleet.get_hybrid_communicate_group()
-            .get_model_parallel_group()
-            .id
-        )
+        self.ring_id = (paddle.distributed.fleet.get_hybrid_communicate_group(
+        ).get_model_parallel_group().id)
         self.trans_weight = trans_weight
         self.epsilon = epsilon
         self.have_norm_bias = have_norm_bias
@@ -414,11 +398,8 @@ class LMHeadNPU(nn.Layer):
         self.linear_weight_layer_name = self.linear_layer_name + ".weight"
         self.linear_bias_layer_name = self.linear_layer_name + ".bias"
         self.linear_weight = self.create_parameter(
-            shape=(
-                [output_dim // self.nranks, input_dim]
-                if trans_weight
-                else [input_dim, output_dim // self.nranks]
-            ),
+            shape=([output_dim // self.nranks, input_dim] if trans_weight else
+                   [input_dim, output_dim // self.nranks]),
             attr=None,
             dtype=self._helper.get_default_dtype(),
             is_bias=False,
@@ -454,18 +435,14 @@ class LMHeadNPU(nn.Layer):
         """
 
         self.norm_weight.set_value(
-            get_tensor(state_dict.pop(self.norm_weight_layer_name))
-        )
+            get_tensor(state_dict.pop(self.norm_weight_layer_name)))
         self.linear_weight.set_value(
-            get_tensor(state_dict.pop(self.linear_weight_layer_name))
-        )
+            get_tensor(state_dict.pop(self.linear_weight_layer_name)))
         if self.have_norm_bias:
             self.norm_bias.set_value(
-                get_tensor(state_dict.pop(self.norm_bias_layer_name))
-            )
+                get_tensor(state_dict.pop(self.norm_bias_layer_name)))
             self.linear_bias.set_value(
-                get_tensor(state_dict.pop(self.linear_bias_layer_name))
-            )
+                get_tensor(state_dict.pop(self.linear_bias_layer_name)))
 
     def forward(self, input):
         """
@@ -538,7 +515,8 @@ class LMHeadAVX(nn.Layer):
         elif self.norm_type == "rmsnorm":
             self.norm = FusedRMSNorm(self.hidden_size, epsilon=1e-5)
         else:
-            raise NotImplementedError(f"Unsupported norm type: {self.norm_type}")
+            raise NotImplementedError(
+                f"Unsupported norm type: {self.norm_type}")
         self.linear_layer_name = linear_layer_name
         self.linear_weight_layer_name = self.linear_layer_name + ".weight"
         self.linear_bias_layer_name = self.linear_layer_name + ".bias"
@@ -569,11 +547,13 @@ class LMHeadAVX(nn.Layer):
             state_dict (dict): A dictionary containing the checkpoint weights and biases.
         """
         self.norm.weight.set_value(state_dict.pop(self.norm_weight_layer_name))
-        self.linear_weight.set_value(state_dict.pop(self.linear_weight_layer_name))
+        self.linear_weight.set_value(
+            state_dict.pop(self.linear_weight_layer_name))
         if self.have_norm_bias:
             self.norm.bias.set_value(state_dict.pop(self.norm_bias_layer_name))
         if self.have_ln_bias:
-            self.linear_bias.set_value(state_dict.pop(self.linear_bias_layer_name))
+            self.linear_bias.set_value(
+                state_dict.pop(self.linear_bias_layer_name))
 
     def forward(self, input):
         """

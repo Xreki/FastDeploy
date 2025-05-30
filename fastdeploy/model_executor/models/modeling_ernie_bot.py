@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-# cipher_token=WjI1fQOvhN  # do not edit this line
+
 from __future__ import annotations
 
 import logging
@@ -30,10 +30,9 @@ from paddlenlp.utils.log import logger
 
 from fastdeploy.config import LLMConfig, ModelConfig, WeightKeys
 from fastdeploy.inference_args import GenerationPhase, InferenceArgs
-from fastdeploy.platforms import current_platform
 
 from ..layers.embeddings import VocabParallelEmbedding
-from ..layers.lm_head import LMHead, LMHeadAVX, LMHeadNPU
+from ..layers.lm_head import LMHead
 from ..layers.normalization import RMSNorm
 
 try:
@@ -48,58 +47,20 @@ except ImportError:
                                       LogitsProcessorList,
                                       RepetitionPenaltyLogitsProcessor)
 
-if current_platform.is_cuda() and current_platform.available():
-    try:
-        from fastdeploy.model_executor.ops.gpu import (
-            beam_search_softmax, draft_model_update, extract_text_token_output,
-            get_padding_offset, get_token_penalty_multi_scores,
-            mtp_save_first_token, mtp_save_first_token_dynamic, save_output,
-            save_output_dynamic, set_stop_value_multi_ends,
-            set_stop_value_multi_seqs, set_value_by_flags_and_idx,
-            speculate_clear_accept_nums, speculate_get_output_padding_offset,
-            speculate_get_padding_offset, speculate_get_seq_lens_output,
-            speculate_get_token_penalty_multi_scores,
-            speculate_rebuild_append_padding, speculate_save_output,
-            speculate_save_output_dynamic, speculate_set_stop_value_multi_seqs,
-            speculate_set_value_by_flags_and_idx, speculate_update_v3,
-            speculate_verify, top_p_candidates, update_inputs,
-            update_inputs_beam)
-    except Exception:
-        raise ImportError(
-            "Please install `efficientllm` firstly via 'python3 setup.py install'"
-        )
-elif paddle.is_compiled_with_xpu():
-    from fastdeploy.model_executor.ops.gpu import (
-        get_padding_offset, get_token_penalty_multi_scores, save_output,
-        set_stop_value_multi_ends, set_value_by_flags_and_idx, update_inputs)
-elif paddle.is_compiled_with_custom_device("npu"):
-    # custom ops for inference
-    try:
-        from fastdeploy.model_executor.ops.npu import (
-            atb_broadcast, atb_top_p_sampling, get_token_penalty_multi_scores,
-            mask_logits, remove_padding, save_output, save_output_dynamic)
-        from fastdeploy.model_executor.ops.npu import \
-            set_stop_value_multi_ends_v2 as set_stop_value_multi_ends
-        from fastdeploy.model_executor.ops.npu import \
-            set_value_by_flags_and_idx_v2 as set_value_by_flags_and_idx
-        from fastdeploy.model_executor.ops.npu import update_inputs
-    except Exception:
-        pass
-else:  # CPU
-    from fastdeploy.model_executor.ops.cpu import (
-        get_padding_offset,
-        get_token_penalty_multi_scores,
-        save_output,
-        save_output_dynamic,
-        set_stop_value_multi_ends,
-        set_value_by_flags_and_idx,
-        simd_sort,
-        update_inputs,
-        xft_greedy_search,
-    )
+from fastdeploy.model_executor.ops.gpu import (
+    beam_search_softmax, draft_model_update, extract_text_token_output,
+    get_padding_offset, get_token_penalty_multi_scores, mtp_save_first_token,
+    mtp_save_first_token_dynamic, save_output, save_output_dynamic,
+    set_stop_value_multi_ends, set_stop_value_multi_seqs,
+    set_value_by_flags_and_idx, speculate_clear_accept_nums,
+    speculate_get_output_padding_offset, speculate_get_padding_offset,
+    speculate_get_seq_lens_output, speculate_get_token_penalty_multi_scores,
+    speculate_rebuild_append_padding, speculate_save_output,
+    speculate_save_output_dynamic, speculate_set_stop_value_multi_seqs,
+    speculate_set_value_by_flags_and_idx, speculate_update_v3,
+    speculate_verify, top_p_candidates, update_inputs, update_inputs_beam)
 
 from ..layers.quantization import get_quantization_config
-from .fused_avx_transformer import FusedAvxTransformer
 from .fused_transformer import FusedTransformer
 
 
@@ -270,12 +231,10 @@ class ErnieBotPretrainedModel(PretrainedModel):
                                                moe_layer_start_index, is_mtp):
             final_actions = {}
             use_moe = moe_num_experts > 0
-            if moe_num_experts > 0:
-                base_model_prefix = "ernie"
-            elif is_mtp:
-                base_model_prefix = "gpt.mtp"
+            if is_mtp:
+                base_model_prefix = "ernie.mtp"
             else:
-                base_model_prefix = "gtp"
+                base_model_prefix = "ernie"
             key = (f"{base_model_prefix}.embeddings.word_embeddings" if
                    not use_moe else f"{base_model_prefix}.embed_tokens.weight")
             base_actions = {
@@ -407,7 +366,6 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         has_zero_point=False,
         is_channel_wise=False,
         use_fast_ffn=False,
-        use_avx512=False,
         speculate_method=None,
         speculate_max_draft_token_num=1,
         return_all_hidden_states=False,
@@ -467,7 +425,6 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             use_stop_seqs (bool): Whether to use stop sequences.
             cache_quant_dtype (str): The data type for cached quantization.
             use_fast_ffn (bool): Whether to use a fast feed-forward network.
-            use_avx512 (bool): Whether to use AVX512 instructions.
         """
         super(ErnieBotFusedModel, self).__init__(llm_config)
         self.msg_queue_id = msg_queue_id
@@ -525,11 +482,6 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
                 "If mp_size <= 1, sequence_parallel strategy will be turned off in GPTModelHybrid model."
             )
 
-        if current_platform.is_npu() and (weight_sharing
-                                          or weight_sharing_add_bias):
-            logging.error(
-                "weight_sharing and weight_sharing_add_bias is not supported to set True in NPU model."
-            )
         self.inference_args = InferenceArgs(
             quant_type=export_model_type,
             num_layers=num_layers,
@@ -542,7 +494,6 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             model_path=model_path,
             use_fake_parameter=use_fake_parameter,
             max_position_embeddings=max_position_embeddings,
-            use_avx512=use_avx512,
             has_zero_point=has_zero_point,
             is_channel_wise=is_channel_wise,
             speculate_method=speculate_method,
@@ -570,7 +521,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         fmt_keys = WeightKeys(num_layers)
         is_mtp = draft_type in ["eagle", "mtp"]
         self.is_mtp = is_mtp
-        base_model_prefix = "gpt.mtp" if is_mtp else "gpt"
+        base_model_prefix = "ernie.mtp" if is_mtp else "ernie"
         self.base_model_prefix = base_model_prefix
 
         llm_config.model_config.max_position_embeddings = max_position_embeddings
@@ -582,7 +533,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         llm_config.parallel_config.use_ep = use_ep
         llm_config.parallel_config.ep_size = 1 if use_ep else 1
         llm_config.model_config.rope_head_dim = hidden_size // num_attention_heads
-        llm_config.model_config.prefix_name = "gpt.mtp" if is_mtp else "gpt"
+        llm_config.model_config.prefix_name = "ernie.mtp" if is_mtp else "ernie"
         llm_config.model_config.use_rope = use_rope
         llm_config.parallel_config.column_cut = False
         llm_config.model_config.base_model_prefix = base_model_prefix
@@ -791,66 +742,53 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         llm_config.load_config.act_scales = self.inference_args.act_scale_dict
         llm_config.load_config._post_init(llm_config.model_config)
 
-        if self.inference_args.use_avx512:
-            self.decoder = FusedAvxTransformer(
-                inference_args=self.inference_args,
-                with_ln_bias=True,
-                with_qkv_bias=True,
-                with_out_linear_bias=True,
-                with_ffn_ln_bias=True,
-                with_gate_up_bias=True,
-                with_ffn2_bias=True,
-                activation="silu",
-                norm_type=self.norm_type,
-            )
-        else:
-            self.decoder = FusedTransformer(
-                inference_args=self.inference_args,
-                fmt_keys=fmt_keys,
-                act_method=activation,
-                rope_theta=rope_theta,
-                rope_3d=rope_3d,
-                ffn1_concat=self.ffn1_concat,
-                use_smooth_quant=self.use_smooth_quant,
-                fuse_ffn_act=self.fuse_ffn_act,
-                ring_id=ring_id,
-                return_all_hidden_states=self.return_all_hidden_states,
-                base_model_prefix=base_model_prefix,
-                draft_type=draft_type,
-                llm_config=llm_config,
-            )
+        self.decoder = FusedTransformer(
+            inference_args=self.inference_args,
+            fmt_keys=fmt_keys,
+            act_method=activation,
+            rope_theta=rope_theta,
+            rope_3d=rope_3d,
+            ffn1_concat=self.ffn1_concat,
+            use_smooth_quant=self.use_smooth_quant,
+            fuse_ffn_act=self.fuse_ffn_act,
+            ring_id=ring_id,
+            return_all_hidden_states=self.return_all_hidden_states,
+            base_model_prefix=base_model_prefix,
+            draft_type=draft_type,
+            llm_config=llm_config,
+        )
 
-            self.norm = RMSNorm(
+        self.norm = RMSNorm(
+            llm_config,
+            hidden_size=llm_config.model_config.hidden_size,
+            eps=1e-5,
+            layer_name=f"{base_model_prefix}.decoder.norm",
+        )
+
+        if is_mtp:
+            self.e_norm = RMSNorm(
                 llm_config,
                 hidden_size=llm_config.model_config.hidden_size,
                 eps=1e-5,
-                layer_name=f"{base_model_prefix}.decoder.norm",
+                layer_name=f"{base_model_prefix}.e_norm",
+            )
+            self.h_norm = RMSNorm(
+                llm_config,
+                hidden_size=llm_config.model_config.hidden_size,
+                eps=1e-5,
+                layer_name=f"{base_model_prefix}.h_norm",
             )
 
-            if is_mtp:
-                self.e_norm = RMSNorm(
-                    llm_config,
-                    hidden_size=llm_config.model_config.hidden_size,
-                    eps=1e-5,
-                    layer_name=f"{base_model_prefix}.e_norm",
-                )
-                self.h_norm = RMSNorm(
-                    llm_config,
-                    hidden_size=llm_config.model_config.hidden_size,
-                    eps=1e-5,
-                    layer_name=f"{base_model_prefix}.h_norm",
-                )
+            from paddle.distributed.fleet.meta_parallel import \
+                ColumnParallelLinear
 
-                from paddle.distributed.fleet.meta_parallel import \
-                    ColumnParallelLinear
-
-                self.eh_proj = ColumnParallelLinear(
-                    hidden_size * 2,
-                    hidden_size,
-                    has_bias=True,
-                    gather_output=True,
-                    fuse_matmul_bias=True,
-                )
+            self.eh_proj = ColumnParallelLinear(
+                hidden_size * 2,
+                hidden_size,
+                has_bias=True,
+                gather_output=True,
+                fuse_matmul_bias=True,
+            )
 
     def remove_padding(self, input_ids, seq_lens_this_time):
         """
@@ -937,39 +875,32 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         Returns:
             Tensor: Output tensor of shape `(batch_size, sequence_length, hidden_size)`.
         """
-        if current_platform.is_npu():
-            remove_padding_ids = remove_padding(input_ids, seq_lens_this_time)
-            embedding_output = self.embeddings(
-                ids_remove_padding=remove_padding_ids)
+
+        if self.speculate_method is not None:
+            (
+                ids_remove_padding,
+                padding_offset,
+                cum_offsets,
+                cu_seqlens_q,
+                cu_seqlens_k,
+            ) = self.speculate_remove_padding(input_ids, seq_lens_this_time,
+                                              draft_tokens, seq_lens_encoder)
         else:
-            if self.speculate_method is not None:
-                (
-                    ids_remove_padding,
-                    padding_offset,
-                    cum_offsets,
-                    cu_seqlens_q,
-                    cu_seqlens_k,
-                ) = self.speculate_remove_padding(input_ids,
-                                                  seq_lens_this_time,
-                                                  draft_tokens,
-                                                  seq_lens_encoder)
-            else:
-                (
-                    ids_remove_padding,
-                    padding_offset,
-                    cum_offsets,
-                    cu_seqlens_q,
-                    cu_seqlens_k,
-                ) = self.remove_padding(input_ids, seq_lens_this_time)
-            embedding_output = self.embeddings(
-                ids_remove_padding=ids_remove_padding)
-            if self.is_mtp:
-                embedding_output = paddle.concat([
-                    self.e_norm(embedding_output),
-                    self.h_norm(hidden_states)
-                ],
-                                                 axis=-1)
-                embedding_output = self.eh_proj(embedding_output)
+            (
+                ids_remove_padding,
+                padding_offset,
+                cum_offsets,
+                cu_seqlens_q,
+                cu_seqlens_k,
+            ) = self.remove_padding(input_ids, seq_lens_this_time)
+        embedding_output = self.embeddings(
+            ids_remove_padding=ids_remove_padding)
+        if self.is_mtp:
+            embedding_output = paddle.concat(
+                [self.e_norm(embedding_output),
+                 self.h_norm(hidden_states)],
+                axis=-1)
+            embedding_output = self.eh_proj(embedding_output)
 
         if isinstance(embedding_output, tuple):
             embedding_output = embedding_output[0]
@@ -985,42 +916,30 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
                 embedding_output[image_mask] = image_features.cast(
                     embedding_output.dtype)
 
-        if self.inference_args.use_avx512:
-            output = self.decoder(
-                src=embedding_output,
-                step_idx=step_idx,
-                seq_lens_this_time=seq_lens_this_time,
-                seq_lens_encoder=seq_lens_encoder,
-                seq_lens_decoder=seq_lens_decoder,
-            )
-        else:
-            output = self.decoder(
-                input_ids=input_ids,
-                token_type_ids=token_type_ids,
-                src=embedding_output,
-                caches=caches,
-                rotary_embs=rope_emb,
-                rotary_emb_dims=1,
-                max_input_length=self.max_len,
-                block_size=self.block_size,
-                inv_compression_ratio=self.inv_compression_ratio,
-                cum_offsets=None if current_platform.is_npu() else cum_offsets,
-                cu_seqlens_q=None
-                if current_platform.is_npu() else cu_seqlens_q,
-                cu_seqlens_k=None
-                if current_platform.is_npu() else cu_seqlens_k,
-                padding_offsets=None
-                if current_platform.is_npu() else padding_offset,
-                block_tables=block_tables,
-                seq_lens_this_time=seq_lens_this_time,
-                seq_lens_encoder=seq_lens_encoder,
-                seq_lens_decoder=seq_lens_decoder,
-                attention_mask=attention_mask,  # for NPU
-                beam_cache_offset=beam_cache_offset,
-                draft_tokens=draft_tokens,
-                output_padding_offset=output_padding_offset,
-                return_all_hidden_states=self.return_all_hidden_states,
-            )
+        output = self.decoder(
+            input_ids=input_ids,
+            token_type_ids=token_type_ids,
+            src=embedding_output,
+            caches=caches,
+            rotary_embs=rope_emb,
+            rotary_emb_dims=1,
+            max_input_length=self.max_len,
+            block_size=self.block_size,
+            inv_compression_ratio=self.inv_compression_ratio,
+            cum_offsets=cum_offsets,
+            cu_seqlens_q=cu_seqlens_q,
+            cu_seqlens_k=cu_seqlens_k,
+            padding_offsets=padding_offset,
+            block_tables=block_tables,
+            seq_lens_this_time=seq_lens_this_time,
+            seq_lens_encoder=seq_lens_encoder,
+            seq_lens_decoder=seq_lens_decoder,
+            attention_mask=attention_mask,  # for NPU
+            beam_cache_offset=beam_cache_offset,
+            draft_tokens=draft_tokens,
+            output_padding_offset=output_padding_offset,
+            return_all_hidden_states=self.return_all_hidden_states,
+        )
 
         if isinstance(output, tuple):
             out = output[0]
@@ -1052,8 +971,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
                 score_text,
             )[0].cast(embedding_output.dtype)
 
-        if not current_platform.is_npu():
-            out = self.norm(out)
+        out = self.norm(out)
 
         if self.return_all_hidden_states:
             return out, cum_offsets
@@ -1066,10 +984,10 @@ class ErnieBotForGeneration(nn.Layer):
     ErnieBotForGeneration
     """
 
-    def __init__(self, gpt, configs):
+    def __init__(self, ernie, configs):
         """
         Args:
-            gpt (ErnieBotFusedModel): ErnieBotFusedModel model used for generation.
+            ernie (ErnieBotFusedModel): ErnieBotFusedModel model used for generation.
             configs (dict): Configurations including parameters such as max_dec_len, min_dec_len, decode_strategy,
                 ori_vocab_size, use_topp_sampling, use_top_k, top_k, inference, repetition_penalty, num_beams,
                 num_beam_groups, length_penalty, early_stopping, bos_token_id, pad_token_id, decoder_start_token_id,
@@ -1086,11 +1004,11 @@ class ErnieBotForGeneration(nn.Layer):
             ValueError: If use_cache_kv_int8 is True and use_fake_parameter is True.
         """
         super(ErnieBotForGeneration, self).__init__()
-        self.gpt = gpt
-        self.msg_queue_id = gpt.msg_queue_id
+        self.ernie = ernie
+        self.msg_queue_id = ernie.msg_queue_id
         # extra_parameters using for sharding stage3 to register extra_parameters
-        self.extra_parameters = ([] if current_platform.is_npu() else [
-            get_attr(self.gpt.embeddings.word_embeddings, "weight")
+        self.extra_parameters = ([
+            get_attr(self.ernie.embeddings.word_embeddings, "weight")
         ])
         self.configs = configs
 
@@ -1102,7 +1020,7 @@ class ErnieBotForGeneration(nn.Layer):
             "speculate_max_candidate_len", 5)
         self.speculate_verify_window = self.configs.get(
             "speculate_verify_window", 2)
-        self.use_moe = gpt.use_moe
+        self.use_moe = ernie.use_moe
 
         assert self.decode_strategy in [
             "greedy_search",
@@ -1149,7 +1067,7 @@ class ErnieBotForGeneration(nn.Layer):
                                                   "default")
         if self.cache_quant_dtype == "default":
             self.cache_quant_dtype = paddle.get_default_dtype()
-        self.use_fast_ffn = self.gpt.use_fast_ffn
+        self.use_fast_ffn = self.ernie.use_fast_ffn
 
         # for NPU
         self.hidden_size = self.configs.get("hidden_size", 4096)
@@ -1168,7 +1086,7 @@ class ErnieBotForGeneration(nn.Layer):
         self.return_all_hidden_states = self.configs.get(
             "return_all_hidden_states", False)
 
-        self.base_model_prefix = self.gpt.base_model_prefix
+        self.base_model_prefix = self.ernie.base_model_prefix
 
         if self.use_rmsnorm:
             self.norm_type = "rmsnorm"
@@ -1181,69 +1099,44 @@ class ErnieBotForGeneration(nn.Layer):
             # layernorm use fp32 weight
             self.have_norm_bias = True
             self.is_norm_weight_type_fp32 = True
-        if self.gpt.inference_args.use_avx512:
-            self.lm_head = LMHeadAVX(
-                norm_layer_name=f"{self.base_model_prefix}.decoder.norm",
-                linear_layer_name=
-                f"{self.base_model_prefix}.output_linear.out_linear",
+
+        if self.weight_sharing:
+            sharing_weight = self.ernie.embeddings.word_embeddings.weight
+        else:
+            sharing_weight = None
+        if self.weight_sharing_add_bias:
+            sharing_bias = self.ernie.embeddings.bias
+        else:
+            sharing_bias = None
+
+        lmhead_name = ("server_nlg_mask_lm_trans_fc_" if not self.ernie.is_mtp
+                       else "mtp_server_nlg_mask_lm_trans_fc_")
+        if self.use_moe:
+            self.lm_head = LMHead(
+                layer_name=lmhead_name,
+                linear_weight_key="lm_head.weight",
+                linear_bias_key=None,
                 input_dim=self.hidden_size,
-                output_dim=self.gpt.vocab_size,
-                have_norm_bias=self.have_norm_bias,
-                have_ln_bias=True,
-                alog="int8",
-                hidden_size=self.hidden_size,
-            )
-        elif current_platform.is_npu():
-            self.lm_head = LMHeadNPU(
-                norm_layer_name=f"{self.base_model_prefix}.decoder.norm",
-                linear_layer_name=
-                f"{self.base_model_prefix}.output_linear.out_linear",
-                input_dim=self.hidden_size,
-                output_dim=self.gpt.vocab_size,
-                epsilon=1e-5,
-                norm_type=self.norm_type,
-                have_norm_bias=self.have_norm_bias,
+                output_dim=self.ernie.vocab_size,
+                fused_linear=self.configs["fused_linear"],
+                sharing_weight=sharing_weight,
+                sharing_bias=sharing_bias,
+                use_ep=self.ernie.use_ep,
             )
         else:
-            if self.weight_sharing:
-                sharing_weight = self.gpt.embeddings.word_embeddings.weight
-            else:
-                sharing_weight = None
-            if self.weight_sharing_add_bias:
-                sharing_bias = self.gpt.embeddings.bias
-            else:
-                sharing_bias = None
-
-            lmhead_name = ("server_nlg_mask_lm_trans_fc_"
-                           if not self.gpt.is_mtp else
-                           "mtp_server_nlg_mask_lm_trans_fc_")
-            if self.use_moe:
-                self.lm_head = LMHead(
-                    layer_name=lmhead_name,
-                    linear_weight_key="lm_head.weight",
-                    linear_bias_key=None,
-                    input_dim=self.hidden_size,
-                    output_dim=self.gpt.vocab_size,
-                    fused_linear=self.configs["fused_linear"],
-                    sharing_weight=sharing_weight,
-                    sharing_bias=sharing_bias,
-                    use_ep=self.gpt.use_ep,
-                )
-            else:
-                self.lm_head = LMHead(
-                    layer_name=lmhead_name,
-                    linear_weight_key=
-                    f"{self.base_model_prefix}.output_linear.out_linear.weight",
-                    linear_bias_key=
-                    (f"{self.base_model_prefix}.output_linear.out_linear.bias"
-                     if self.have_norm_bias else None),
-                    input_dim=self.hidden_size,
-                    output_dim=self.gpt.vocab_size,
-                    fused_linear=self.configs["fused_linear"],
-                    sharing_weight=sharing_weight,
-                    sharing_bias=sharing_bias,
-                    use_ep=self.gpt.use_ep,
-                )
+            self.lm_head = LMHead(
+                layer_name=lmhead_name,
+                linear_weight_key=f"{self.base_model_prefix}.output_linear.out_linear.weight",
+                linear_bias_key=(
+                    f"{self.base_model_prefix}.output_linear.out_linear.bias"
+                    if self.have_norm_bias else None),
+                input_dim=self.hidden_size,
+                output_dim=self.ernie.vocab_size,
+                fused_linear=self.configs["fused_linear"],
+                sharing_weight=sharing_weight,
+                sharing_bias=sharing_bias,
+                use_ep=self.ernie.use_ep,
+            )
 
     @paddle.no_grad()
     def set_state_dict(self, state_dict: dict[str,
@@ -1257,18 +1150,18 @@ class ErnieBotForGeneration(nn.Layer):
                 and values are NumPy arrays or PaddlePaddle tensors.
         """
         try:
-            self.gpt.embeddings.load_state_dict(state_dict)
-            self.gpt.decoder.load_state_dict(state_dict)
-            self.gpt.norm.load_state_dict(state_dict)
+            self.ernie.embeddings.load_state_dict(state_dict)
+            self.ernie.decoder.load_state_dict(state_dict)
+            self.ernie.norm.load_state_dict(state_dict)
             self.lm_head.load_state_dict(state_dict)
-            if self.gpt.is_mtp:
-                self.gpt.e_norm.load_state_dict(state_dict)
-                self.gpt.h_norm.load_state_dict(state_dict)
-                self.gpt.eh_proj.weight.set_value(
+            if self.ernie.is_mtp:
+                self.ernie.e_norm.load_state_dict(state_dict)
+                self.ernie.h_norm.load_state_dict(state_dict)
+                self.ernie.eh_proj.weight.set_value(
                     paddle.to_tensor(
                         state_dict[f"{self.base_model_prefix}.eh_proj.weight"])
                 )
-                self.gpt.eh_proj.bias.set_value(
+                self.ernie.eh_proj.bias.set_value(
                     paddle.to_tensor(
                         state_dict[f"{self.base_model_prefix}.eh_proj.bias"]))
         except Exception:
@@ -1356,11 +1249,11 @@ class ErnieBotForGeneration(nn.Layer):
         seq_lens_output = speculate_get_seq_lens_output(
             seq_lens_this_time, seq_lens_encoder, seq_lens_decoder)
         out_token_num = paddle.sum(seq_lens_output)
-        output_cum_offsets_tmp = paddle.cumsum(self.gpt.max_len -
+        output_cum_offsets_tmp = paddle.cumsum(self.ernie.max_len -
                                                seq_lens_output)
         output_padding_offset, output_cum_offsets = speculate_get_output_padding_offset(
             output_cum_offsets_tmp, out_token_num, seq_lens_output,
-            self.gpt.max_len)
+            self.ernie.max_len)
         return output_padding_offset, output_cum_offsets
 
     def get_logits_processor(
@@ -1490,55 +1383,36 @@ class ErnieBotForGeneration(nn.Layer):
         Returns:
             dict: A dictionary containing the prepared input IDs and the updated keyword arguments.
         """
-        if self.gpt.inference_args.use_avx512:
-            input_ids = kwargs["input_ids"]
-            seq_lens_encoder = kwargs["seq_lens_encoder"]
-            seq_lens_decoder = kwargs["seq_lens_decoder"]
-            seq_lens_this_time = kwargs["seq_lens_this_time"]
-            step_idx = kwargs["step_idx"]
-            model_inputs = {
-                "input_ids": input_ids,
-                "attention_mask": None,
-                "rope_emb": None,
-                "caches": None,
-                "seq_lens_this_time": seq_lens_this_time,
-                "seq_lens_encoder": seq_lens_encoder,
-                "seq_lens_decoder": seq_lens_decoder,
-                "block_tables": None,
-                "beam_cache_offset": None,
-                "step_idx": step_idx,
-            }
-        else:
-            # only last token for inputs_ids if cache is defined in kwargs
-            input_ids = kwargs["input_ids"]
-            image_features = kwargs.get("image_features", None)
-            attention_mask = kwargs.get("attention_mask", None)
-            block_tables = kwargs.get("block_tables", None)
-            caches = kwargs.get("caches", None)
-            beam_offset = kwargs.get("beam_offset", None)
-            rope_emb = kwargs["rope_emb"]
-            seq_lens_this_time = kwargs["seq_lens_this_time"]
-            seq_lens_encoder = kwargs["seq_lens_encoder"]
-            seq_lens_decoder = kwargs["seq_lens_decoder"]
-            draft_tokens = kwargs.get("draft_tokens", None)
-            output_padding_offset = kwargs.get("actual_output_padding_offset",
-                                               None)
-            hidden_states = kwargs.get("hidden_states", None)
-            model_inputs = {
-                "input_ids": input_ids,
-                "image_features": image_features,
-                "attention_mask": attention_mask,
-                "rope_emb": rope_emb,
-                "caches": caches,
-                "seq_lens_this_time": seq_lens_this_time,
-                "seq_lens_encoder": seq_lens_encoder,
-                "seq_lens_decoder": seq_lens_decoder,
-                "block_tables": block_tables,
-                "beam_cache_offset": beam_offset,
-                "draft_tokens": draft_tokens,
-                "output_padding_offset": output_padding_offset,
-                "hidden_states": hidden_states,
-            }
+        # only last token for inputs_ids if cache is defined in kwargs
+        input_ids = kwargs["input_ids"]
+        image_features = kwargs.get("image_features", None)
+        attention_mask = kwargs.get("attention_mask", None)
+        block_tables = kwargs.get("block_tables", None)
+        caches = kwargs.get("caches", None)
+        beam_offset = kwargs.get("beam_offset", None)
+        rope_emb = kwargs["rope_emb"]
+        seq_lens_this_time = kwargs["seq_lens_this_time"]
+        seq_lens_encoder = kwargs["seq_lens_encoder"]
+        seq_lens_decoder = kwargs["seq_lens_decoder"]
+        draft_tokens = kwargs.get("draft_tokens", None)
+        output_padding_offset = kwargs.get("actual_output_padding_offset",
+                                           None)
+        hidden_states = kwargs.get("hidden_states", None)
+        model_inputs = {
+            "input_ids": input_ids,
+            "image_features": image_features,
+            "attention_mask": attention_mask,
+            "rope_emb": rope_emb,
+            "caches": caches,
+            "seq_lens_this_time": seq_lens_this_time,
+            "seq_lens_encoder": seq_lens_encoder,
+            "seq_lens_decoder": seq_lens_decoder,
+            "block_tables": block_tables,
+            "beam_cache_offset": beam_offset,
+            "draft_tokens": draft_tokens,
+            "output_padding_offset": output_padding_offset,
+            "hidden_states": hidden_states,
+        }
         return model_inputs
 
     def sample(
@@ -1577,47 +1451,7 @@ class ErnieBotForGeneration(nn.Layer):
             Forward pass of GPT model.
             """
             model_inputs = self.prepare_inputs_for_generation(**args)
-            return self.gpt(**model_inputs)
-
-        def TopPProcess(probs: paddle.Tensor, top_p: float,
-                        min_tokens_to_keep: int):
-            """
-            Filter a distribution of integer ids according to the top_p value.
-
-            Args:
-                probs(paddle.Tensor): Probabilities of the tokens.
-                top_p(float): Keep only top_p tokens with highest probability.
-                min_tokens_to_keep(int): Minimal number of tokens to keep for next step in decoding.
-            Returns:
-                paddle.Tensor: Filtered distribution.
-            """
-            sorted_indices, sorted_probs = simd_sort(probs)
-            cumulative_probs = paddle.cumsum(sorted_probs, axis=-1)
-            # Remove tokens with cumulative probs above the top_p, But keep at
-            # least min_tokens_to_keep tokens
-            sorted_indices_to_remove = cumulative_probs > top_p
-            if min_tokens_to_keep > 1:
-                # Set 'min_tokens_to_keep - 1' because the first token is kept
-                sorted_indices_to_remove[:, :min_tokens_to_keep - 1] = 0
-            sorted_indices_to_remove = paddle.cast(sorted_indices_to_remove,
-                                                   dtype="int64")
-            sorted_indices_to_remove[:,
-                                     1:] = sorted_indices_to_remove[:, :
-                                                                    -1].clone(
-                                                                    )
-            sorted_indices_to_remove[:, 0] = 0
-            # Scatter sorted tensors to original indexing
-            sorted_indices = (sorted_indices + paddle.arange(
-                probs.shape[0], dtype="int64").unsqueeze(-1) * probs.shape[-1])
-            condition = paddle.scatter(
-                sorted_indices_to_remove.flatten(),
-                sorted_indices.flatten(),
-                sorted_indices_to_remove.flatten(),
-            )
-            condition = paddle.cast(condition, "bool").reshape(probs.shape)
-            probs = paddle.where(condition, paddle.full_like(probs, 0.0),
-                                 probs)
-            return probs
+            return self.ernie(**model_inputs)
 
         def _post_process_(
             outputs,
@@ -1646,79 +1480,34 @@ class ErnieBotForGeneration(nn.Layer):
 
             hidden_states = outputs[0] if isinstance(outputs,
                                                      tuple) else outputs
+            logits = self.lm_head(hidden_states)
 
-            if current_platform.is_npu():
-                # NPU uses custom op lm_head, mask_logits for logits calculation
-                logits = self.lm_head(hidden_states)
-                mask_logits(logits, vocab_size=self.ori_vocab_size)
-                logits = paddle.cast(logits, paddle.float32)
+            logits = paddle.cast(logits, paddle.float32)
+            logits[:, self.ori_vocab_size:] = -float("inf")
 
-                # NPU diffs in input parametes of get_token_penalty_multi_scores op.
-                logits = get_token_penalty_multi_scores(
-                    model_kwargs["pre_ids"],
-                    logits,
-                    penalty_score,
-                    frequency_score,
-                    presence_score,
-                    step_idx,
-                    model_kwargs["min_dec_len"],
-                    eos_token_id,
-                )
-                logits = logits / temperature
-            else:
-                logits = self.lm_head(hidden_states)
-
-                logits = paddle.cast(logits, paddle.float32)
-                logits[:, self.ori_vocab_size:] = -float("inf")
-
-                # pre-process distribution
-                logits = get_token_penalty_multi_scores(
-                    model_kwargs["pre_ids"],
-                    logits,
-                    penalty_score,
-                    frequency_score,
-                    presence_score,
-                    temperature,
-                    model_kwargs["bad_tokens"],
-                    step_idx,
-                    model_kwargs["min_dec_len"],
-                    eos_token_id,
-                )
+            # pre-process distribution
+            logits = get_token_penalty_multi_scores(
+                model_kwargs["pre_ids"],
+                logits,
+                penalty_score,
+                frequency_score,
+                presence_score,
+                temperature,
+                model_kwargs["bad_tokens"],
+                step_idx,
+                model_kwargs["min_dec_len"],
+                eos_token_id,
+            )
 
             # sample
             probs = F.softmax(logits)
-            if current_platform.is_npu():
-                # NPU: use custom op atb_top_p_sampling
-                _, next_tokens = atb_top_p_sampling(probs,
-                                                    top_p,
-                                                    random_seed=-1)
-            elif self.gpt.inference_args.use_avx512:
-                # topp sampling
-                if top_p > 0.0 and top_p < 1.0:
-                    min_tokens_to_keep = 1
-                    probs = TopPProcess(probs, top_p, min_tokens_to_keep)
-                    next_tokens = paddle.multinomial(probs)
-                else:
-                    # greedy_search
-                    next_tokens = xft_greedy_search(probs)
-            else:
-                _, next_tokens = paddle.tensor.top_p_sampling(
-                    probs, top_p, seed=-1)  # have random_seed
+            _, next_tokens = paddle.tensor.top_p_sampling(
+                probs, top_p, seed=-1)  # have random_seed
             """ !!! ep not need broadcast, here broadcast just for test !!! """
-            if self.gpt.mp_size > 1 and (
-                (not self.gpt.use_ep or self.gpt.ep_just_for_test) and
+            if self.ernie.mp_size > 1 and (
+                (not self.ernie.use_ep or self.ernie.ep_just_for_test) and
                 (not self.fake_server_p)):
-                if current_platform.is_npu():
-                    # NPU: use custom op atb_broadcast
-                    atb_broadcast(
-                        next_tokens,
-                        rank=self.rank,
-                        nranks=self.nranks,
-                        root=self.root,
-                        ring_id=self.ring_id,
-                    )
-                else:
-                    paddle.distributed.broadcast(next_tokens, 0)
+                paddle.distributed.broadcast(next_tokens, 0)
 
             paddle.assign(
                 paddle.where(
@@ -1735,7 +1524,7 @@ class ErnieBotForGeneration(nn.Layer):
                 model_kwargs["stop_flags"],
             )
 
-            if self.gpt.use_stop_seqs:
+            if self.ernie.use_stop_seqs:
                 set_stop_value_multi_seqs(
                     next_tokens,
                     model_kwargs["pre_ids"],
@@ -1747,23 +1536,14 @@ class ErnieBotForGeneration(nn.Layer):
                     eos_token_id,
                 )
             else:
-                if current_platform.is_npu():
-                    set_stop_value_multi_ends(
-                        next_tokens,
-                        model_kwargs["stop_flags"],
-                        model_kwargs["seq_lens_this_time"],
-                        eos_token_id,
-                        model_kwargs["next_tokens"],
-                    )  # multi ends
-                else:
-                    set_stop_value_multi_ends(
-                        next_tokens,
-                        model_kwargs["stop_flags"],
-                        model_kwargs["seq_lens_this_time"],
-                        eos_token_id,
-                        model_kwargs["next_tokens"],
-                        False,
-                    )  # multi ends
+                set_stop_value_multi_ends(
+                    next_tokens,
+                    model_kwargs["stop_flags"],
+                    model_kwargs["seq_lens_this_time"],
+                    eos_token_id,
+                    model_kwargs["next_tokens"],
+                    False,
+                )  # multi ends
             # update inputs
             with paddle.framework._no_check_dy2st_diff():
                 update_inputs(
@@ -1777,26 +1557,28 @@ class ErnieBotForGeneration(nn.Layer):
                     next_tokens,
                     model_kwargs["is_block_step"],
                 )
-            if self.gpt.output_via_mq:
+            if self.ernie.output_via_mq:
                 if self.msg_queue_id is None:
                     save_output(
                         next_tokens,
                         model_kwargs["not_need_stop"],
-                        self.gpt.mp_rank,
-                        self.gpt.use_ep and (not self.gpt.ep_just_for_test),
+                        self.ernie.mp_rank,
+                        self.ernie.use_ep
+                        and (not self.ernie.ep_just_for_test),
                     )
                 else:
                     save_output_dynamic(
                         next_tokens,
                         model_kwargs["not_need_stop"],
-                        self.gpt.mp_rank,
+                        self.ernie.mp_rank,
                         self.msg_queue_id,
-                        self.gpt.use_ep and (not self.gpt.ep_just_for_test),
+                        self.ernie.use_ep
+                        and (not self.ernie.ep_just_for_test),
                     )
             return next_tokens
 
-        if ((not self.gpt.use_ep) or (self.gpt.ep_just_for_test)
-                or (self.gpt.use_ep and model_kwargs["not_need_stop"])):
+        if ((not self.ernie.use_ep) or (self.ernie.ep_just_for_test)
+                or (self.ernie.use_ep and model_kwargs["not_need_stop"])):
             # encoder
             outputs = _forward_(**model_kwargs)  # [bs, 1, dim_embed]
             # first decoder
@@ -1813,14 +1595,14 @@ class ErnieBotForGeneration(nn.Layer):
         else:
             # fake ep
             fake_input = paddle.empty(
-                shape=[0, self.gpt.inference_args.hidden_size],
+                shape=[0, self.ernie.inference_args.hidden_size],
                 dtype=paddle.get_default_dtype(),
             )
             for i in range(
-                    self.gpt.inference_args.moe_config.moe_layer_start_index,
-                    self.gpt.inference_args.num_layers,
+                    self.ernie.inference_args.moe_config.moe_layer_start_index,
+                    self.ernie.inference_args.num_layers,
             ):
-                self.gpt.decoder.moe_layers[i](fake_input)
+                self.ernie.decoder.moe_layers[i](fake_input)
             next_tokens = None
 
         return next_tokens
@@ -1859,7 +1641,7 @@ class ErnieBotForGeneration(nn.Layer):
             Forward pass of GPT model.
             """
             model_inputs = self.prepare_inputs_for_generation(**args)
-            return self.gpt(**model_inputs)
+            return self.ernie(**model_inputs)
 
         def _post_process_(
             outputs,
@@ -1883,7 +1665,7 @@ class ErnieBotForGeneration(nn.Layer):
                     model_kwargs["seq_lens_encoder"],
                     model_kwargs["seq_lens_decoder"],
                     model_kwargs["actual_output_padding_offset"],
-                    self.gpt.max_len,
+                    self.ernie.max_len,
                 )
             else:
                 hidden_states = outputs[0] if isinstance(outputs,
@@ -1908,7 +1690,7 @@ class ErnieBotForGeneration(nn.Layer):
                 model_kwargs["seq_lens_this_time"],
                 model_kwargs["actual_output_padding_offset"],
                 model_kwargs["output_cum_offsets"],
-                self.gpt.max_len,
+                self.ernie.max_len,
             )
 
             # sample
@@ -1919,7 +1701,7 @@ class ErnieBotForGeneration(nn.Layer):
                 top_p,
                 model_kwargs["actual_output_padding_offset"],
                 self.speculate_max_candidate_len,
-                self.gpt.max_len,
+                self.ernie.max_len,
             )
 
             speculate_verify(
@@ -1941,19 +1723,19 @@ class ErnieBotForGeneration(nn.Layer):
                 actual_candidate_len,
                 model_kwargs["actual_draft_token_num"],
                 top_p,
-                self.gpt.max_len,
+                self.ernie.max_len,
                 self.speculate_verify_window,
                 True,  # enable_topp
             )
 
             # BroadCast
-            if self.gpt.mp_size > 1:
+            if self.ernie.mp_size > 1:
                 paddle.distributed.broadcast(model_kwargs["accept_tokens"], 0)
                 paddle.distributed.broadcast(model_kwargs["accept_num"], 0)
                 paddle.distributed.broadcast(model_kwargs["step_idx"], 0)
                 paddle.distributed.broadcast(model_kwargs["stop_flags"], 0)
 
-            if self.gpt.use_stop_seqs:
+            if self.ernie.use_stop_seqs:
                 speculate_set_stop_value_multi_seqs(
                     model_kwargs["accept_tokens"],
                     model_kwargs["accept_num"],
@@ -1981,8 +1763,8 @@ class ErnieBotForGeneration(nn.Layer):
                 model_kwargs["stop_nums"],
             )
             # Streaming output
-            if not (self.gpt.speculate_method == "mtp"
-                    and self.gpt.generation_phase == GenerationPhase.PREFILL):
+            if not (self.ernie.speculate_method == "mtp" and
+                    self.ernie.generation_phase == GenerationPhase.PREFILL):
                 if self.msg_queue_id is None:
                     speculate_save_output(
                         model_kwargs["accept_tokens"],
@@ -2063,7 +1845,7 @@ class ErnieBotForGeneration(nn.Layer):
 
         def _forward_(**args):
             model_inputs = self.prepare_inputs_for_generation(**args)
-            return self.gpt(**model_inputs)
+            return self.ernie(**model_inputs)
 
         def _post_process_(
             outputs,
@@ -2212,7 +1994,7 @@ class ErnieBotForGeneration(nn.Layer):
 
         def _forward_(**args):
             model_inputs = self.prepare_inputs_for_generation(**args)
-            return self.gpt(**model_inputs)
+            return self.ernie(**model_inputs)
 
         def _post_process_(
             outputs,
@@ -2234,7 +2016,7 @@ class ErnieBotForGeneration(nn.Layer):
                                                                 top_p,
                                                                 seed=-1)
 
-            if self.gpt.mp_size > 1:
+            if self.ernie.mp_size > 1:
                 paddle.distributed.broadcast(inter_next_tokens, 0)
 
             draft_model_update(
@@ -2251,25 +2033,28 @@ class ErnieBotForGeneration(nn.Layer):
                 model_kwargs["max_dec_len"],
                 eos_token_id,
                 model_kwargs["base_model_draft_tokens"],
-                self.gpt.max_len,
+                self.ernie.max_len,
                 model_kwargs["substep"],
             )
-            if (self.gpt.speculate_method in ["mtp", "draft_model", "eagle"]
-                    and self.gpt.generation_phase == GenerationPhase.PREFILL):
+            if (self.ernie.speculate_method in ["mtp", "draft_model", "eagle"]
+                    and self.ernie.generation_phase
+                    == GenerationPhase.PREFILL):
                 if self.msg_queue_id is None:
                     mtp_save_first_token(
                         model_kwargs["base_model_draft_tokens"],
                         model_kwargs["not_need_stop"],
-                        self.gpt.mp_rank,
-                        self.gpt.use_ep and (not self.gpt.ep_just_for_test),
+                        self.ernie.mp_rank,
+                        self.ernie.use_ep
+                        and (not self.ernie.ep_just_for_test),
                     )
                 else:
                     mtp_save_first_token_dynamic(
                         model_kwargs["base_model_draft_tokens"],
                         model_kwargs["not_need_stop"],
-                        self.gpt.mp_rank,
+                        self.ernie.mp_rank,
                         self.msg_queue_id,
-                        self.gpt.use_ep and (not self.gpt.ep_just_for_test),
+                        self.ernie.use_ep
+                        and (not self.ernie.ep_just_for_test),
                     )
             return hidden_states
 
@@ -2389,18 +2174,18 @@ class ErnieBotForGeneration(nn.Layer):
         num_return_sequences = self.num_return_sequences
 
         bos_token_id = (bos_token_id if bos_token_id is not None else getattr(
-            self.gpt, "bos_token_id", None))
+            self.ernie, "bos_token_id", None))
         pad_token_id = (pad_token_id if pad_token_id is not None else getattr(
-            self.gpt, "pad_token_id", None))
+            self.ernie, "pad_token_id", None))
         forced_bos_token_id = (forced_bos_token_id
                                if forced_bos_token_id is not None else getattr(
-                                   self.gpt, "forced_bos_token_id", None))
+                                   self.ernie, "forced_bos_token_id", None))
         forced_eos_token_id = (forced_eos_token_id
                                if forced_eos_token_id is not None else getattr(
-                                   self.gpt, "forced_eos_token_id", None))
+                                   self.ernie, "forced_eos_token_id", None))
         decoder_start_token_id = (
             decoder_start_token_id if decoder_start_token_id is not None else
-            getattr(self.gpt, "decoder_start_token_id", None))
+            getattr(self.ernie, "decoder_start_token_id", None))
         model_kwargs["input_ids"] = input_ids
         model_kwargs["image_features"] = image_features
         model_kwargs["attention_mask"] = attention_mask

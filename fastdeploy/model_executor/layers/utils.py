@@ -14,10 +14,11 @@
 # limitations under the License.
 """
 
+from typing import Tuple
+
 import numpy as np
 import paddle
 from paddle import Tensor
-from typing import Tuple
 from paddle.framework import in_dynamic_mode
 
 
@@ -30,9 +31,8 @@ def per_block_cast_to_fp8(x: Tensor) -> Tuple[Tensor, Tensor]:
 
     assert x.dim() == 2
     m, n = x.shape
-    x_padded = paddle.zeros(
-        (ceil_div(m, 128) * 128, ceil_div(n, 128) * 128), dtype=x.dtype
-    )
+    x_padded = paddle.zeros((ceil_div(m, 128) * 128, ceil_div(n, 128) * 128),
+                            dtype=x.dtype)
     x_padded[:m, :n] = x
     x_view = paddle.view(x_padded, (-1, 128, x_padded.shape[1] // 128, 128))
 
@@ -41,9 +41,8 @@ def per_block_cast_to_fp8(x: Tensor) -> Tuple[Tensor, Tensor]:
     x_amax = paddle.clip(x_amax, min=1e-4)
     x_scaled = (x_view * (448.0 / x_amax)).astype(paddle.float8_e4m3fn)
 
-    return x_scaled.view_as(x_padded)[:m, :n].contiguous(), (
-        paddle.view(x_amax / 448.0, (x_view.shape[0], x_view.shape[2]))
-    )
+    return x_scaled.view_as(x_padded)[:m, :n].contiguous(), (paddle.view(
+        x_amax / 448.0, (x_view.shape[0], x_view.shape[2])))
 
 
 # for distributed tensor model parallel
@@ -89,3 +88,16 @@ def get_tensor(input):
     else:
         # 理论上不会命中这个分支
         return input
+
+
+def ensure_divisibility(numerator, denominator):
+    """Ensure that numerator is divisible by the denominator."""
+    assert numerator % denominator == 0, "{} is not divisible by {}".format(
+        numerator, denominator)
+
+
+def divide(numerator, denominator):
+    """Ensure that numerator is divisible by the denominator and return
+    the division value."""
+    ensure_divisibility(numerator, denominator)
+    return numerator // denominator

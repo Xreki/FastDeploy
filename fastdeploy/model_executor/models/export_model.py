@@ -13,11 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-# cipher_token=WjI1fQOvhN  # do not edit this line
+
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import sys
 
@@ -35,14 +34,10 @@ from fastdeploy.config import (AdditionalConfig, DeviceConfig, LLMConfig,
                                LoadConfig, ModelConfig, ParallelConfig,
                                SpeculativeConfig)
 from fastdeploy.inference_args import GenerationPhase
-from fastdeploy.platforms import current_platform
 
 from .modeling_ernie_bot import ErnieBotForGeneration, ErnieBotFusedModel
-from .token_utils import process_index
 from .tokenizer import ErnieBotTokenizer
-from .utils import (_vocab_size_with_padding, convert_ndarray_dtype,
-                    generate_rank_mapping, get_infer_model_path,
-                    model_convert_fp8)
+from .utils import _vocab_size_with_padding, convert_ndarray_dtype
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 grandparent_dir = os.path.abspath(
@@ -119,7 +114,6 @@ def build_stream_line_model(
     cache_quant_dtype="default",
     use_beam_search: bool = False,
     enf_gen: bool = False,
-    use_avx512: bool = False,
     speculate_method=None,
     speculate_max_draft_token_num: int = 1,
     speculate_max_candidate_len: int = 5,
@@ -163,8 +157,6 @@ def build_stream_line_model(
         cache_quant_dtype (str, optional): Cache quantization data type. Default is "default".
         use_beam_search (bool, optional): Whether to use beam search . Defaults is False.
         enf_gen (bool, optional): Whether to use enforce generation. Defaults is False.
-        use_avx512 (bool, optional): Whether to use AVX-512 instructions for acceleration.\
-             Defaults is False.
     Returns:
         tuple[dict, ErnieBotTokenizer, ErnieBotForGeneration]:
         A tuple containing the configuration, tokenizer, and model.
@@ -372,7 +364,6 @@ def build_stream_line_model(
             has_zero_point=config.get("has_zero_point", False),
             is_channel_wise=config.get("is_channel_wise", False),
             use_fast_ffn=config.get("use_fast_ffn", False),
-            use_avx512=use_avx512,
             speculate_method=speculate_method,
             speculate_max_draft_token_num=speculate_max_draft_token_num,
             return_all_hidden_states=return_all_hidden_states,
@@ -470,366 +461,3 @@ def build_stream_line_model(
     logger.info(f"{runtime_timer.log()}")
 
     return config, tokenizer, model
-
-
-def export_efficientllm_model(args):
-    """Export inference model."""
-    runtime_timer = RuntimeTimer("export_model")
-    if args.export_prefix and args.pre_caches_length < 1:
-        raise ValueError("when export_prefix, `pre_caches_length` must be > 0")
-    if args.use_beam_search and args.block_size != 1:
-        logger.warning(
-            f"Beam Search only support block size 1. Using block_size=1 instead {args.block_size}"
-        )
-        args.block_size = 1
-    args.device = args.device.lower()
-    paddle.set_default_dtype(args.dtype)
-
-    config_path = os.path.join(args.model_name_or_path, "config.json")
-    with open(config_path) as model_config_file:
-        model_config = json.load(model_config_file)
-    # TODO(tangbinhan)：Add NPU/XPU limit.
-    use_avx512 = (
-        True if args.device == "cpu"
-        and not (current_platform.is_cuda() and current_platform.available())
-        else False)
-    if "quant_type" in model_config and not use_avx512:
-
-        if args.export_model_type != model_config["quant_type"]:
-            logger.debug(f"The arg export_model_type {args.export_model_type} \
-                != model_config['quant_type'] {model_config['quant_type']}. \
-                {model_config['quant_type']} will be used.")
-        args.export_model_type = model_config["quant_type"]
-        if "Wfp8Afp8" in model_config["quant_type"]:
-            model_convert_fp8(args.model_name_or_path, "gpu")
-    use_cache_kv_int8 = (True if "C8" in args.export_model_type
-                         or "c8" in args.export_model_type else False)
-    use_cache_kv_int4 = (True if "C4" in args.export_model_type
-                         or "c4" in args.export_model_type else False)
-
-    logger.debug(f"max_seq_len is: {args.max_seq_len}")
-    if use_avx512:
-        logger.debug("export avx512 model")
-
-    config, tokenizer, model = build_stream_line_model(
-        config_path,
-        args.model_name_or_path,
-        args.dtype,
-        block_size=args.block_size,
-        max_len=args.max_seq_len,
-        stage_flag="convert",
-        min_dec_len=args.min_dec_len,
-        max_dec_len=args.max_dec_len,
-        pre_caches_length=args.pre_caches_length,
-        temperature=args.temperature,  # not use
-        top_k=args.top_k,  # not use
-        top_p=args.top_p,  # not use
-        export_model_type=args.export_model_type,
-        use_fake_parameter=args.use_fake_parameter,
-        use_stop_seqs=args.use_stop_seqs,
-        pad_vocab=args.pad_vocab,
-        cache_quant_dtype=args.cache_quant_dtype,
-        use_beam_search=args.use_beam_search,
-        use_avx512=use_avx512,
-        speculate_method="inference_with_reference"
-        if args.speculate_enable else None,
-        speculate_max_draft_token_num=args.speculate_max_draft_tokens,
-        speculate_max_candidate_len=args.speculate_max_candidate_len,
-        speculate_verify_window=args.speculate_verify_window,
-        return_all_hidden_states=args.return_all_hidden_states,
-        moe_quant_type=args.moe_quant_type,
-        use_safetensors=args.use_safetensors,
-    )
-    max_sec_len = args.max_seq_len
-    mp_size = dist.get_world_size()
-
-    caches = []
-    if use_cache_kv_int8:
-        cache_type = "int8" if current_platform.is_npu() else "uint8"
-    else:
-        cache_type = args.dtype
-    num_attention_heads = model_config["num_attention_heads"]
-    num_key_value_heads = model_config.get("num_key_value_heads",
-                                           num_attention_heads)
-    if num_key_value_heads is None:
-        num_key_value_heads = num_attention_heads
-
-    hidden_size = model_config["hidden_size"]
-    head_dim = hidden_size // num_attention_heads
-    if use_cache_kv_int4:
-        cur_head_dim = head_dim // 2
-    else:
-        cur_head_dim = head_dim
-
-    if use_avx512:
-        input_spec = [
-            paddle.static.InputSpec(shape=[None, None],
-                                    dtype="int64",
-                                    name="input_ids"),  # input_ids
-            (paddle.static.InputSpec(
-                shape=[-1, -1], dtype="int64", name="image_features")
-             if args.use_multimodality else None),  # image_features
-            None,  # stop_seqs
-            None,  # stop_seqs_len
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="float32",
-                                    name="temperature"),  # temperature
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="float32",
-                                    name="top_p"),  # top_p
-            paddle.static.InputSpec(shape=[None],
-                                    dtype="int64",
-                                    name="eos_token_id"),  # eos_token_id
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="float32",
-                                    name="penalty_score"),  # penalty_score
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="float32",
-                                    name="frequency_score"),  # frequency_score
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="float32",
-                                    name="presence_score"),  # presence_score
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="int64",
-                                    name="next_tokens"),  # next_tokens
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="bool",
-                                    name="is_block_step"),  # is_block_step
-            paddle.static.InputSpec(
-                shape=[None, 1], dtype="int32",
-                name="seq_lens_this_time"),  # seq_lens_this_time
-            paddle.static.InputSpec(
-                shape=[None, 1], dtype="int32",
-                name="seq_lens_encoder"),  # seq_lens_encoder
-            paddle.static.InputSpec(
-                shape=[None, 1], dtype="int32",
-                name="seq_lens_decoder"),  # seq_lens_decoder
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="int64",
-                                    name="step_idx"),  # step_idx
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="bool",
-                                    name="stop_flags"),  # stop_flags
-            paddle.static.InputSpec(shape=[None, None],
-                                    dtype="int64",
-                                    name="pre_ids"),  # pre_ids
-            None,  # rope_emb
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="int64",
-                                    name="min_dec_len"),  # min_dec_len
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="int64",
-                                    name="max_dec_len"),  # max_dec_len
-            paddle.static.InputSpec(shape=[1, 1],
-                                    dtype="int64",
-                                    name="stop_nums"),  # stop_nums
-            paddle.static.InputSpec(shape=[None],
-                                    dtype="int64",
-                                    name="bad_tokens"),  # bad_tokens
-            paddle.static.InputSpec(shape=[1, 1],
-                                    dtype="bool",
-                                    name="not_need_stop"),  # not_need_stop
-            None,  # block_tables
-            None,  # caches
-        ]
-    else:
-        for i in range(model_config["num_layers"]):
-            caches.append(
-                paddle.static.InputSpec(
-                    shape=[
-                        None,
-                        num_key_value_heads // mp_size,
-                        args.block_size,
-                        cur_head_dim,
-                    ],
-                    dtype=cache_type,
-                    name=f"key_caches_{i}",
-                ))
-            caches.append(
-                paddle.static.InputSpec(
-                    shape=[
-                        None,
-                        num_key_value_heads // mp_size,
-                        args.block_size,
-                        cur_head_dim,
-                    ],
-                    dtype=cache_type,
-                    name=f"value_caches_{i}",
-                ))
-
-        input_spec = [
-            paddle.static.InputSpec(shape=[None, None],
-                                    dtype="int64",
-                                    name="input_ids"),  # input_ids
-            (paddle.static.InputSpec(
-                shape=[-1, -1], dtype="int64", name="image_features")
-             if args.use_multimodality else None),  # image_features
-            (paddle.static.InputSpec(
-                shape=[None, None], dtype="int64", name="stop_seqs")
-             if args.use_stop_seqs else None),  # stop_seqs
-            (paddle.static.InputSpec(
-                shape=[None], dtype="int32", name="stop_seqs_len")
-             if args.use_stop_seqs else None),  # stop_seqs_len
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="float32",
-                                    name="temperature"),  # temperature
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="float32",
-                                    name="top_p"),  # top_p
-            paddle.static.InputSpec(shape=[None],
-                                    dtype="int64",
-                                    name="eos_token_id"),  # eos_token_id
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="float32",
-                                    name="penalty_score"),  # penalty_score
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="float32",
-                                    name="frequency_score"),  # frequency_score
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="float32",
-                                    name="presence_score"),  # presence_score
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="int64",
-                                    name="next_tokens"),  # next_tokens
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="bool",
-                                    name="is_block_step"),  # is_block_step
-            paddle.static.InputSpec(
-                shape=[None, 1], dtype="int32",
-                name="seq_lens_this_time"),  # seq_lens_this_time
-            paddle.static.InputSpec(
-                shape=[None, 1], dtype="int32",
-                name="seq_lens_encoder"),  # seq_lens_encoder
-            paddle.static.InputSpec(
-                shape=[None, 1], dtype="int32",
-                name="seq_lens_decoder"),  # seq_lens_decoder
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="int64",
-                                    name="step_idx"),  # step_idx
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="bool",
-                                    name="stop_flags"),  # stop_flags
-            paddle.static.InputSpec(shape=[None, None],
-                                    dtype="int64",
-                                    name="pre_ids"),  # pre_ids
-            paddle.static.InputSpec(
-                shape=[2, None, max_sec_len, None, None],
-                dtype="float32",
-                name="rope_emb",
-            ),  # rope_emb
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="int64",
-                                    name="min_dec_len"),  # min_dec_len
-            paddle.static.InputSpec(shape=[None, 1],
-                                    dtype="int64",
-                                    name="max_dec_len"),  # max_dec_len
-            paddle.static.InputSpec(shape=[1, 1],
-                                    dtype="int64",
-                                    name="stop_nums"),  # stop_nums
-            paddle.static.InputSpec(shape=[None],
-                                    dtype="int64",
-                                    name="bad_tokens"),  # bad_tokens
-            paddle.static.InputSpec(shape=[1, 1],
-                                    dtype="bool",
-                                    name="not_need_stop"),  # not_need_stop
-            paddle.static.InputSpec(shape=[None, None],
-                                    dtype="int32",
-                                    name="block_tables"),  # block_tables
-            caches,  # caches
-        ]
-    if current_platform.is_npu():
-        input_spec.append(
-            paddle.static.InputSpec(
-                shape=[None, 1, None, None],
-                dtype="float16",
-                name="attention_mask",
-            )),  # attention_mask
-    else:
-        input_spec.append(None)  # npu attention_mask
-
-    if args.export_prefix:
-        input_spec.append([
-            paddle.static.InputSpec(
-                shape=[2, None, None, None, None],
-                dtype=args.dtype,
-                name=f"pre_caches_{i}",
-            ) for i in range(model_config["num_layers"])
-        ])
-
-    if args.use_beam_search:
-        beam_search_input_spec = [
-            paddle.static.InputSpec(shape=[None, None, None],
-                                    dtype="int32",
-                                    name="beam_offset"),
-            paddle.static.InputSpec(shape=[None, None],
-                                    dtype="int32",
-                                    name="beam_cache_ids"),
-            paddle.static.InputSpec(shape=[None, None],
-                                    dtype="float",
-                                    name="cum_score"),
-            paddle.static.InputSpec(shape=[None, None],
-                                    dtype="int32",
-                                    name="beam_hyps"),
-            paddle.static.InputSpec(shape=[None, None],
-                                    dtype="int32",
-                                    name="beam_hyps_score"),
-            paddle.static.InputSpec(shape=[None, None],
-                                    dtype="bool",
-                                    name="beam_finished"),
-            paddle.static.InputSpec(shape=[1, 1],
-                                    dtype="int32",
-                                    name="beam_width"),
-            paddle.static.InputSpec(shape=[1, 1],
-                                    dtype="int32",
-                                    name="beam_group_num"),
-            paddle.static.InputSpec(shape=[None, None],
-                                    dtype="float",
-                                    name="beam_length_penalty"),
-            paddle.static.InputSpec(shape=[None, None],
-                                    dtype="float",
-                                    name="beam_diversity_penalty"),
-        ]
-        input_spec.extend(beam_search_input_spec)
-    else:
-        input_spec.extend(
-            [None, None, None, None, None, None, None, None, None, None])
-
-    if args.speculate_enable:
-        speculate_spec = [
-            paddle.static.InputSpec(shape=[None, None],
-                                    dtype="int64",
-                                    name="draft_tokens"),
-            paddle.static.InputSpec(shape=[None, None],
-                                    dtype="int64",
-                                    name="accept_tokens"),
-            paddle.static.InputSpec(shape=[None],
-                                    dtype="int32",
-                                    name="accept_num"),
-            paddle.static.InputSpec(shape=[None],
-                                    dtype="int32",
-                                    name="actual_draft_token_num"),
-        ]
-        input_spec.extend(speculate_spec)
-
-    runtime_timer.start("convert stage saving model time")
-
-    model = paddle.jit.to_static(model, input_spec=input_spec, full_graph=True)
-    paddle.jit.save(
-        model,
-        get_infer_model_path(args.output_path,
-                             args.model_prefix,
-                             is_export=True),
-        skip_prune_program=True,
-    )
-
-    generate_rank_mapping(args.output_path)
-
-    # 将'version'写入文件
-    if process_index() == 0:
-        tools_version = model_config.get("tools_version", "0.0.0.dev")
-        if tools_version is None:
-            tools_version = "0.0.0.dev"
-        with open(os.path.join(args.version_file), "w") as version_file:
-            version_file.write(tools_version)
-    logger.info(f"{runtime_timer.log()}")
-    return model

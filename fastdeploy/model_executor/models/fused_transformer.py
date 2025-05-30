@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-# cipher_token=WjI1fQOvhN  # do not edit this line
+
 import os
 
 import paddle
@@ -34,12 +34,11 @@ except ImportError:
 
 from fastdeploy.inference_args import GenerationPhase
 
-from ..layers.activation import Activation
+from ..layers.activation import SiluAndMul
 from ..layers.attention.base import Attention
-from ..layers.ffn1 import FFN1, FFN1Split
-from ..layers.linear import FFN2, RowParallelLinear
+from ..layers.linear import (FFN2, MergedColumnParallelLinear,
+                             QKVParallelLinear, RowParallelLinear)
 from ..layers.normalization import LayerNorm, RMSNorm
-from ..layers.qkv_linear import QKVLinear
 from .micro_batch_control import MicroBatchControl
 
 EP_MICRO_BATCH_NUM = 2  # DeepEP can only support
@@ -64,7 +63,7 @@ class FusedTransformer(nn.Layer):
         fuse_ffn_act=False,
         ring_id=-1,
         return_all_hidden_states=False,
-        base_model_prefix="gpt",
+        base_model_prefix="ernie",
         draft_type="",
         llm_config=None,
     ):
@@ -122,8 +121,8 @@ class FusedTransformer(nn.Layer):
         )
 
         self.qkv_linear_layers = nn.LayerList([
-            QKVLinear(
-                inference_args=inference_args,
+            QKVParallelLinear(
+                llm_config=llm_config,
                 layer_name=
                 f"{base_model_prefix}.decoder.layers.{i}.self_attn.qkv_proj",
                 weight_key=fmt_keys.qkv_linear_weight_keys[i],
@@ -172,35 +171,24 @@ class FusedTransformer(nn.Layer):
                                     None),
             ) for i in range(self.num_layers)
         ])
-        if ffn1_concat:
-            self.ffn1_layers = nn.LayerList([
-                FFN1(
-                    inference_args=inference_args,
-                    layer_name=
-                    f"{base_model_prefix}.decoder.layers.{i}.linear1",
-                    weight_key=fmt_keys.ffn1_weight_keys[i],
-                    bias_key=fmt_keys.ffn1_bias_keys[i],
-                    activation=act_method,
-                    use_fast_ffn=(False if
-                                  not (self.inference_args.moe_config.use_moe
-                                       and not self.inference_args.moe_config.
-                                       moe_use_ffn_shared_weight_and_bias) else
-                                  True),
-                ) for i in range(self.num_layers if not (
-                    self.inference_args.moe_config.use_moe
-                    and not self.inference_args.moe_config.
-                    moe_use_ffn_shared_weight_and_bias
-                ) else self.inference_args.moe_config.moe_layer_start_index)
-            ])
-        else:
-            self.ffn1_layers = nn.LayerList([
-                FFN1Split(
-                    inference_args=inference_args,
-                    gate_layer_name=
-                    f"{base_model_prefix}.decoder.layers.{i}.gate",
-                    up_layer_name=f"{base_model_prefix}.decoder.layers.{i}.up",
-                ) for i in range(self.num_layers)
-            ])
+
+        self.ffn1_layers = nn.LayerList([
+            MergedColumnParallelLinear(
+                llm_config=llm_config,
+                layer_name=f"{base_model_prefix}.decoder.layers.{i}.linear1",
+                weight_key=fmt_keys.ffn1_weight_keys[i],
+                bias_key=fmt_keys.ffn1_bias_keys[i],
+                activation=act_method,
+                use_fast_ffn=(False
+                              if not (self.inference_args.moe_config.use_moe
+                                      and not self.inference_args.moe_config.
+                                      moe_use_ffn_shared_weight_and_bias) else
+                              True),
+            ) for i in range(self.num_layers if not (
+                self.inference_args.moe_config.use_moe and not self.
+                inference_args.moe_config.moe_use_ffn_shared_weight_and_bias
+            ) else self.inference_args.moe_config.moe_layer_start_index)
+        ])
 
         self.ffn2_layers = nn.LayerList([
             FFN2(
@@ -220,7 +208,7 @@ class FusedTransformer(nn.Layer):
         ])
         if not self.fuse_ffn_act:
             self.bias_act_layers = nn.LayerList([
-                Activation(
+                SiluAndMul(
                     inference_args=inference_args,
                     bias=getattr(self.ffn1_layers[i], "ffn1_bias", None),
                     act_method=act_method,
