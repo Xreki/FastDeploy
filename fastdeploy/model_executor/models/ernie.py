@@ -973,7 +973,7 @@ class ErnieForCausalLM(ModelForCasualLM):
         """
         super(ErnieForCausalLM, self).__init__(llm_config)
         self.configs = llm_config
-        self.gpt = ErnieBotFusedModel(
+        self.ernie = ErnieBotFusedModel(
             vocab_size=self.configs.model_config.vocab_size,
             hidden_size=self.configs.model_config.hidden_size,
             max_len=self.configs.model_config.max_seq_len,
@@ -1909,7 +1909,7 @@ class ErnieForCausalLM(ModelForCasualLM):
 
     def forward(self, **kwargs):
         model_inputs = self.prepare_inputs_for_generation(**kwargs)
-        hidden_states = self.gpt(**model_inputs)
+        hidden_states = self.ernie(**model_inputs)
         return hidden_states
 
     def sample(
