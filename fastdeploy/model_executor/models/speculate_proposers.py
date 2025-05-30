@@ -23,10 +23,9 @@ import paddle.distributed as dist
 from paddle.distributed import fleet
 
 from fastdeploy.model_executor.layers.hydra_head import HydraHead
+from fastdeploy.model_executor.layers.rotary_embedding import get_rope
 from fastdeploy.model_executor.models.export_model import \
     build_stream_line_model
-from fastdeploy.model_executor.models.utils import \
-    get_rotary_position_embedding
 
 try:
     from fastdeploy.model_executor.ops.gpu import (
@@ -320,11 +319,11 @@ class ModelProposer(Proposer):
         tmp_position_ids = paddle.arange(args.max_seq_len).reshape((1, -1))
         compression_ratio = self.model_config.get("compression_ratio", 1)
         rope_theta = self.model_config.get("rope_theta", 10000.0)
-        self.rope_emb = get_rotary_position_embedding(
-            tmp_position_ids,
-            head_dim=head_dim,
-            compression_ratio=compression_ratio,
-            rope_theta=rope_theta,
+        self.rope_emb = get_rope(
+            rotary_dim=head_dim,
+            base=rope_theta,
+            position_ids=tmp_position_ids,
+            partial_rotary_factor=compression_ratio,
         )
         # （liuzichang）: eliminate rope effect
         # self.rope_emb[0,:,:,:,:] = 1

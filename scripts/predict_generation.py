@@ -34,16 +34,16 @@ from paddlenlp.utils.log import logger
 from tqdm import tqdm
 
 from fastdeploy.inference_args import GenerationPhase
+from fastdeploy.model_executor.layers.rotary_embedding import get_rope
 from fastdeploy.model_executor.models.data_utils import (convert_fc_infer_data,
                                                          convert_to_input_ids,
                                                          get_infer_data_type,
                                                          insert_fc_instruction)
 from fastdeploy.model_executor.models.token_utils import (TokenTimer,
                                                           check_output)
-from fastdeploy.model_executor.models.utils import (
-    get_rotary_position_embedding, infer_save_test_case, load_prefix_weights,
-    load_sharded_checkpoint)
-from fastdeploy.platforms import current_platform
+from fastdeploy.model_executor.models.utils import (infer_save_test_case,
+                                                    load_prefix_weights,
+                                                    load_sharded_checkpoint)
 
 try:
     from fastdeploy.model_executor.ops.gpu import \
@@ -219,7 +219,8 @@ def get_parser(add_input_output_file: bool = True):
         "--outputs_op",
         type=str,
         default="none",
-        help="the type of outputs_op, `none` op will return the decoded_idreturn the decoded_ids",
+        help=
+        "the type of outputs_op, `none` op will return the decoded_idreturn the decoded_ids",
         choices=["none", "save_with_output"],
     )
     parser.add_argument("--predict_model_type", type=str, default="default")
@@ -280,7 +281,8 @@ def get_parser(add_input_output_file: bool = True):
         "--beam_group_num",
         type=int,
         default=1,
-        help="The num of groups in beam search, if beam_group_num > 1, using group beam search decoding strategy",
+        help=
+        "The num of groups in beam search, if beam_group_num > 1, using group beam search decoding strategy",
     )
     parser.add_argument(
         "--beam_length_penalty",
@@ -310,7 +312,8 @@ def get_parser(add_input_output_file: bool = True):
         "--enf_gen_context_cache_dir",
         type=str,
         default="",
-        help="If not set, it will default to a folder with the same name as the input file.",
+        help=
+        "If not set, it will default to a folder with the same name as the input file.",
     )
     parser.add_argument(
         "--lazy_load",
@@ -630,11 +633,11 @@ class Predictor:
             tmp_position_ids = paddle.arange(args.max_seq_len).reshape((1, -1))
             compression_ratio = self.model_config.get("compression_ratio", 1)
             rope_theta = self.model_config.get("rope_theta", 10000.0)
-            self.rope_emb = get_rotary_position_embedding(
-                tmp_position_ids,
-                head_dim=head_dim,
-                compression_ratio=compression_ratio,
-                rope_theta=rope_theta,
+            self.rope_emb = get_rope(
+                rotary_dim=head_dim,
+                base=rope_theta,
+                position_ids=tmp_position_ids,
+                partial_rotary_factor=compression_ratio,
             )
             self.input_ids = paddle.full(
                 shape=[self.beam_batch_size, args.max_seq_len],

@@ -19,6 +19,7 @@ import random
 import numpy as np
 import paddle
 
+from fastdeploy.model_executor.layers.rotary_embedding import get_rope
 from fastdeploy.worker.model_runner.model_runner_base import ModelRunnerBase
 
 
@@ -99,10 +100,11 @@ class ModelRunner(ModelRunnerBase):
 
     def init_rotary_position_embedding(self, max_model_len):
         tmp_position_ids = paddle.arange(max_model_len).reshape((1, -1))
-        self.share_inputs["rope_emb"] = self.get_rotary_position_embedding(
-            tmp_position_ids,
-            self.model_cfg.hidden_size // self.model_cfg.num_attention_heads,
-            self.rope_theta)
+        self.share_inputs["rope_emb"] = get_rope(
+            rotary_dim=self.model_cfg.hidden_size //
+            self.model_cfg.num_attention_heads,
+            position_ids=tmp_position_ids,
+            base=self.rope_theta)
 
     def _init_kvcache(self):
         """
@@ -214,44 +216,6 @@ class ModelRunner(ModelRunnerBase):
                 self.share_inputs["stop_seqs"][:stop_seqs_num, :len(
                     task.get("stop_token_ids")[0])] = np.array(
                         task.get("stop_token_ids"), dtype="int64")
-
-    def get_rotary_position_embedding(self,
-                                      position_ids,
-                                      head_dim,
-                                      rope_theta=160000):
-        """
-        Pre-calculate rotary position embedding for position_ids.
-
-        Args:
-            position_ids: [1, S]
-            head_dim: D
-
-        Returns:
-            rot_emb: [2, 1, S, 1, D // 2] or [2, 1, S, 1, D], cos + sin
-        """
-        bsz, max_model_len = position_ids.shape[:2]
-        inv_freq = rope_theta ** (
-            -paddle.arange(0, head_dim, 2, dtype="float32") / head_dim)
-
-        # shape: [B, S, D/2]
-        # eblite should divide compression_ratio, default 1.0 for eb3.5 or eb4
-        compression_ratio = 1.0
-        compressed_position_ids = position_ids / compression_ratio
-        freqs = paddle.einsum("ij,k->ijk",
-                              compressed_position_ids.cast("float32"),
-                              inv_freq)
-
-        rot_emb = paddle.zeros((2, bsz, max_model_len, 1, head_dim // 2),
-                               dtype="float32")
-        emb = paddle.stack([freqs], axis=-1).reshape(
-            (bsz, max_model_len, head_dim // 2))
-        # shape: [B, S, 1, D]
-        emb = paddle.unsqueeze(emb, 2)
-
-        rot_emb[0] = paddle.cos(emb)
-        rot_emb[1] = paddle.sin(emb)
-
-        return rot_emb
 
     def generate(self):
         self.model(**self.share_inputs)
