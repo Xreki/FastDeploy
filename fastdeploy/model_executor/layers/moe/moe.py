@@ -16,7 +16,6 @@
 
 from dataclasses import dataclass
 
-import paddle
 from paddle import nn
 from paddlenlp.utils.log import logger
 
@@ -75,7 +74,6 @@ class FusedMoE(nn.Layer):
         self.ep_size = llm_config.parallel_config.ep_size
 
         self.hidden_size = llm_config.model_config.hidden_size
-        self.skip_quant = False
         self.moe_config = moe_config
         self.moe_quant_type = self.moe_config.moe_quant_type
         logger.info(f"MoE is running in {self.moe_quant_type} mode")
@@ -90,8 +88,6 @@ class FusedMoE(nn.Layer):
             self.moe_intermediate_size = (
                 self.moe_config.moe_intermediate_size // self.tp_size)
 
-        self.num_experts_start_offset = self.moe_config.num_experts_start_offset
-
         weight_keys = llm_config.load_config.weight_keys
         self.gate_weight_key = weight_keys.moe_gate_weight_keys.format(
             layer_idx)
@@ -103,10 +99,12 @@ class FusedMoE(nn.Layer):
         self.ffn1_bias_key = weight_keys.moe_ffn1_bias_keys
         self.ffn2_bias_key = weight_keys.moe_ffn2_bias_keys
 
-        self.ffn1_expert_weight_scale_key = weight_keys.moe_ffn1_weight_scale_key
-        self.ffn2_expert_weight_scale_key = weight_keys.moe_ffn2_weight_scale_key
-        self.ffn1_expert_in_scale_key = weight_keys.moe_ffn1_expert_in_scale_key
-        self.ffn2_expert_in_scale_key = weight_keys.moe_ffn2_expert_in_scale_key
+        if self.moe_quant_type == "w4a8":
+            # below keys are only used in MoE W4A8!
+            self.ffn1_expert_weight_scale_key = weight_keys.moe_ffn1_weight_scale_key
+            self.ffn2_expert_weight_scale_key = weight_keys.moe_ffn2_weight_scale_key
+            self.ffn1_expert_in_scale_key = weight_keys.moe_ffn1_expert_in_scale_key
+            self.ffn2_expert_in_scale_key = weight_keys.moe_ffn2_expert_in_scale_key
 
         self.compute_method = CutlassFusedMoeMethod()
 
@@ -149,7 +147,6 @@ class FusedMoE(nn.Layer):
         self.gate_weight = self.create_parameter(
             shape=gate_weight_tensor.shape,
             dtype="float32",
-            default_initializer=paddle.nn.initializer.Constant(0),
         )
         self.gate_weight.set_value(gate_weight_tensor)
 
@@ -161,8 +158,6 @@ class FusedMoE(nn.Layer):
             self.gate_correction_bias = self.create_parameter(
                 shape=gate_correction_bias_tensor.shape,
                 dtype="float32",
-                is_bias=True,
-                default_initializer=paddle.nn.initializer.Constant(0),
             )
 
             self.gate_correction_bias.set_value(gate_correction_bias_tensor)
@@ -172,7 +167,7 @@ class FusedMoE(nn.Layer):
         up_gate_proj_weight, down_proj_weight = self.load_gate_state_dict(
             state_dict)
 
-        # other weight with compute_method
+        # other weight is with compute_method
         # different method may have different way to create weights
         self.compute_method.create_weights(self, self.moe_compute_params,
                                            up_gate_proj_weight,
