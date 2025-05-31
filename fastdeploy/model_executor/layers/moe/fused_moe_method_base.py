@@ -11,6 +11,7 @@ class FusedMoEMethodBase(QuantMethodBase):
     """
     All MoE Method should inherit this class.
     and must implement following methods!
+
     """
 
     @abstractmethod
