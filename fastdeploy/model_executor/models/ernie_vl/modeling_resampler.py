@@ -23,6 +23,7 @@ import paddle
 from paddle import nn
 from paddle.autograd import PyLayer
 from paddle.distributed.fleet.utils import recompute
+from fastdeploy.model_executor.layers.utils import _set_var_distributed
 from .dist_utils import (
     all_gather_group,
     reduce_scatter_group,
@@ -191,15 +192,18 @@ class VariableResolutionResamplerModel(nn.Layer):
                 for idx in [2, 3]:
                     mark_as_sequence_parallel_parameter(self.spatial_linear[idx].weight)
                     mark_as_sequence_parallel_parameter(self.spatial_linear[idx].bias)
+                _set_var_distributed(self.spatial_linear[idx].weight, split_axis=0)
+                _set_var_distributed(self.spatial_linear[idx].bias, split_axis=0)
 
                 if self.use_temporal_conv:
                     for idx in [0, 2, 3]:
                         mark_as_sequence_parallel_parameter(self.temporal_linear[idx].weight)
                         mark_as_sequence_parallel_parameter(self.temporal_linear[idx].bias)
-
+    
                 mark_as_sequence_parallel_parameter(self.mlp.weight)
                 mark_as_sequence_parallel_parameter(self.mlp.bias)
                 mark_as_sequence_parallel_parameter(self.after_norm.weight)
+
 
     def get_name_mappings_to_training(self,):
         """ get_name_mappings_to_training """

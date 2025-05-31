@@ -325,7 +325,7 @@ class DynamicLoadModel(nn.Layer):
 
         logger.info("Starting parameter update process...")
 
-        ipc_state_dict_path = f"{self.model_path}/ipc_metas_{self.rank}"
+        ipc_state_dict_path = f"/shared_ipc_meta/ipc_metas_{self.rank}"
         logger.info(f"Loading IPC state dict from: {ipc_state_dict_path}")
 
         convert_start = time.perf_counter()
@@ -340,10 +340,10 @@ class DynamicLoadModel(nn.Layer):
 
         for model in self.models:
             infer_model_state_dict = model.state_dict()
-            for name, param in state_dict.items():
-                if name in infer_model_state_dict:
+            for name, param in infer_model_state_dict.items():  # 遍历当前模型的参数
+                if name in state_dict:  # 在全局 state_dict 中查找匹配项
                     logger.info(f"Updating model parameter: {name}")
-                    update_param = infer_model_state_dict[name]
+                    update_param = state_dict[name]
 
                     if update_param.dtype != param.dtype:
                         raise TypeError(
@@ -354,12 +354,12 @@ class DynamicLoadModel(nn.Layer):
                             f"Shape mismatch for {name}: {param.shape} vs {update_param.shape}"
                         )
 
-                    param._share_buffer_to(update_param)
+                    update_param._share_buffer_to(param)
                 else:
-                    logger.error(f"No matching parameter found for {name}")
+                    logger.error(f"No matching parameter found for {name} in global state_dict")
 
         logger.info(
-            f"Parameter sharing completed in {time.perf_counter()  - share_start:.2f} seconds"
+            f"Parameter sharing completed in {time.perf_counter() - share_start:.2f} seconds"
         )
 
         if self.nranks > 1:
