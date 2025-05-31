@@ -46,6 +46,9 @@ class FusedMoEMethodBase(QuantMethodBase):
 
 
 class CutlassFusedMoeMethod(FusedMoEMethodBase):
+    """
+    Use Cutlass Group Gemm to compute Fused MoE.
+    """
 
     def create_weights(self,
                        layer: nn.Layer,
@@ -61,7 +64,7 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
         assert len(ffn1_tensor) == num_local_experts
         assert len(ffn2_tensor) == num_local_experts
 
-        if moe_quant_type in ["weight_only_int4", "weight_only_int8"]:
+        if moe_quant_type in ["weight_only_int4", "weight_only_int8", "w4a8"]:
 
             added_weight_attrs = ["moe_ffn1_weight", "moe_ffn2_weight"]
             added_scale_attrs = [
@@ -105,7 +108,8 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
                     ))
                 getattr(layer, scale_name).set_value(quanted_weight_scale)
 
-        elif moe_quant_type == "w4a8":
+        else:
+            # not need any process!
             pass
 
     def apply(

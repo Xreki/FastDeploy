@@ -27,6 +27,10 @@ from .cutlass_fused_moe import CutlassFusedMoeMethod
 
 @dataclass
 class UniversalMoEComputeParams:
+    """
+    some params for computing MoE.
+    it is given to different compute methods.
+    """
     global_num_experts: int = -1
     top_k: int = -1
     hidden_size: int = -1
