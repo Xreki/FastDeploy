@@ -35,7 +35,13 @@ class FusedMoEMethodBase(QuantMethodBase):
     """
 
     @abstractmethod
-    def create_weights(self, layer: nn.Layer, moe_compute_params):
+    def create_weights(self,
+                       layer: nn.Layer,
+                       moe_compute_params,
+                       ffn1_tensor,
+                       ffn2_tensor,
+                       ffn1_bias=None,
+                       ffn2_bias=None):
         """
         How to create weights, you should implement this method.
         """
