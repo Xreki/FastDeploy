@@ -30,9 +30,15 @@ from fastdeploy.model_executor.ops.gpu import (moe_expert_dispatch,
 
 
 class FusedMoEMethodBase(QuantMethodBase):
+    """
+    Use Cutlass Group Gemm to compute Fused MoE.
+    """
 
     @abstractmethod
     def create_weights(self, layer: nn.Layer, moe_compute_params):
+        """
+        How to create weights, you should implement this method.
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -42,6 +48,10 @@ class FusedMoEMethodBase(QuantMethodBase):
         moe_compute_params,
         x: paddle.Tensor,
     ) -> paddle.Tensor:
+        """
+        Compute methods, you should implement this method.
+        """
+
         raise NotImplementedError
 
 
