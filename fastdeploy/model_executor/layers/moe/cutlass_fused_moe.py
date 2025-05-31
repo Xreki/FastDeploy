@@ -30,7 +30,7 @@ from .fused_moe_method_base import FusedMoEMethodBase
 class CutlassFusedMoeMethod(FusedMoEMethodBase):
     """
     Use Cutlass Group Gemm to compute Fused MoE.
-    This compute method is the oldest way to compute MoE in Paddle.
+    This method is the oldest way to compute MoE in Paddle.
     """
 
     def create_weights(self,
