@@ -9,7 +9,8 @@ from fastdeploy.model_executor.layers.quantization.quant_base import \
 
 class FusedMoEMethodBase(QuantMethodBase):
     """
-    Use Cutlass Group Gemm to compute Fused MoE.
+    All MoE Method should inherit this class.
+    and must implement following methods!
     """
 
     @abstractmethod
