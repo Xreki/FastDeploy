@@ -39,6 +39,9 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
                        ffn2_tensor,
                        ffn1_bias=None,
                        ffn2_bias=None):
+        """
+        Paddle cutlass create weight process.
+        """
 
         num_local_experts = moe_compute_params.num_local_experts
         moe_quant_type = moe_compute_params.moe_quant_type
@@ -97,6 +100,9 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
         moe_compute_params,
         x: paddle.Tensor,
     ) -> paddle.Tensor:
+        """
+        Paddle Cutlass compute Fused MoE.
+        """
 
         gate_out = paddle.matmul(x.cast("float32"), layer.gate_weight)
 
