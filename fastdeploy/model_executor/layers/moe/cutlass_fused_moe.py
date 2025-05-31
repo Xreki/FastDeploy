@@ -14,51 +14,17 @@
 # limitations under the License.
 """
 
-from abc import abstractmethod
-
 import paddle
 from paddle import nn
 from paddle.distributed import fleet
 from paddle.framework import in_dynamic_or_pir_mode
 from paddle.nn.quant import weight_quantize
 
-from fastdeploy.model_executor.layers.quantization.quant_base import \
-    QuantMethodBase
 from fastdeploy.model_executor.ops.gpu import (moe_expert_dispatch,
                                                moe_expert_ffn,
                                                moe_expert_reduce)
 
-
-class FusedMoEMethodBase(QuantMethodBase):
-    """
-    Use Cutlass Group Gemm to compute Fused MoE.
-    """
-
-    @abstractmethod
-    def create_weights(self,
-                       layer: nn.Layer,
-                       moe_compute_params,
-                       ffn1_tensor,
-                       ffn2_tensor,
-                       ffn1_bias=None,
-                       ffn2_bias=None):
-        """
-        How to create weights, you should implement this method.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def apply(
-        self,
-        layer: nn.Layer,
-        moe_compute_params,
-        x: paddle.Tensor,
-    ) -> paddle.Tensor:
-        """
-        Compute methods, you should implement this method.
-        """
-
-        raise NotImplementedError
+from .fused_moe_method_base import FusedMoEMethodBase
 
 
 class CutlassFusedMoeMethod(FusedMoEMethodBase):
@@ -91,19 +57,16 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
                 weight_name = added_weight_attrs[idx]
                 scale_name = added_scale_attrs[idx]
 
-                weight_tensor_list = []
-                weight_scale_tensor_list = []
+                weight_list = []
+                weight_scale_list = []
                 for i in range(num_local_experts):
-                    quant_weight, scale = weight_quantize(
-                        weight_tensor[i],
-                        algo=moe_quant_type,
-                        arch=80,
-                    )
-                    weight_tensor_list.append(quant_weight)
-                    weight_scale_tensor_list.append(scale)
-                quanted_weight = paddle.stack(weight_tensor_list, axis=0)
-                quanted_weight_scale = paddle.stack(weight_scale_tensor_list,
-                                                    axis=0)
+                    quant_weight, scale = weight_quantize(weight_tensor[i],
+                                                          algo=moe_quant_type,
+                                                          arch=80)
+                    weight_list.append(quant_weight)
+                    weight_scale_list.append(scale)
+                quanted_weight = paddle.stack(weight_list, axis=0)
+                quanted_weight_scale = paddle.stack(weight_scale_list, axis=0)
 
                 setattr(
                     layer, weight_name,
