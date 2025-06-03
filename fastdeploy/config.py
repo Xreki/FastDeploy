@@ -26,6 +26,9 @@ from paddlenlp.transformers.configuration_utils import PretrainedConfig
 
 from fastdeploy.model_executor.layers.quantization.quant_base import \
     QuantConfigBase
+from fastdeploy.utils import get_logger
+
+logger = get_logger()
 
 __all__ = [
     "ERNIEBOT_PRETRAINED_INIT_CONFIGURATION",
@@ -359,6 +362,91 @@ class WeightKeys:
         self.moe_ffn2_expert_in_scale_key = None
 
 
+class GraphOptimizationConfig:
+    """The Top-level graph optimization contral corresponds to different backends.
+    - 0: dyncmic graph
+    - 1: static graph
+    - 2: static graph + cinn compilation backend
+    """
+    graph_opt_level: int = 0
+
+    # CUDA Graph Config
+    """ Whether to use cudagraph.
+    - Fasle: cudagraph is not used.
+    - True: cudagraph is used.
+        It requires that all input buffers have fixed addresses, and all
+        splitting ops write their outputs to input buffers.
+        - With dyncmic graph backend: ...
+        - With static grpah backend: WIP
+    """
+    use_cudagraph: bool = False
+    """Sizes to capture cudagraph.
+    - None (default): capture sizes are inferred from llm config.
+    - list[int]: capture sizes are specified as given."""
+    cudagraph_capture_sizes: Optional[list[int]] = None
+    """ Number of warmup runs for cudagraph. """
+    cudagraph_num_of_warmups: int = 2
+    """Whether to copy input tensors for cudagraph.
+    If the caller can guarantee that the same input buffers
+    are always used, it can set this to False. Otherwise, it should
+    set this to True."""
+    cudagraph_copy_inputs: bool = False
+    """ In static graph, this is an operation list that does not need to be captured by the CUDA graph.
+    CudaGraphBackend will split these operations from the static graph.
+    Example usage:
+        cudagraph_splitting_ops = ["paddle.unified_attention"]
+
+    Note: If want to use subgraph capture functionality in a dynamic graph,
+    can manually split the model into multiple layers and apply the @support_cuda_graph decorator
+    only to the layer where CUDA graph functionality is required.
+    """
+    cudagraph_splitting_ops = Optional[list[str]]
+    """"whether to use a full cuda graph for the entire forward pass rather than
+    splitting certain operations such as attention into subgraphs.
+    Thus this flag cannot be used together with splitting_ops."""
+    full_cuda_graph: bool = False
+
+    max_capture_size: int = field(default=None, init=False)  # type: ignore
+    batch_size_to_captured_size: dict[int,
+                                      int] = field(default=None,
+                                                   init=False)  # type: ignore
+
+    # CINN Config ...
+
+    def init_with_cudagrpah_size(self,
+                                 cudagraph_capture_sizes: list[int]) -> None:
+        """To complete the initialization of config,
+        we need to know the cudagraph sizes"""
+        if self.cudagraph_capture_sizes is None:
+            self.cudagraph_capture_sizes = cudagraph_capture_sizes
+        else:
+            dedup_sizes = list(set(self.cudagraph_capture_sizes))
+            if len(dedup_sizes) < len(self.cudagraph_capture_sizes):
+                logger.info(("cudagraph sizes specified by model runner"
+                             " %s is overridden by config %s"),
+                            cudagraph_capture_sizes, dedup_sizes)
+            self.cudagraph_capture_sizes = dedup_sizes
+
+        # sort to make sure cudagraph capture sizes are in descending order
+        self.cudagraph_capture_sizes.sort(reverse=True)
+        self.max_capture_size = self.cudagraph_capture_sizes[
+            0] if self.cudagraph_capture_sizes else 0
+
+        # pre-compute the mapping from batch size to padded graph size
+        self.batch_size_to_captured_size = [
+            0 for i in range(self.max_capture_size + 1)
+        ]
+        for end, start in zip(self.cudagraph_capture_sizes,
+                              self.cudagraph_capture_sizes[1:] + [0]):
+            for bs in range(start, end):
+                if bs == start:
+                    self.batch_size_to_captured_size[bs] = start
+                else:
+                    self.batch_size_to_captured_size[bs] = end
+        self.batch_size_to_captured_size[
+            self.max_capture_size] = self.max_capture_size
+
+
 @dataclass
 class LoadConfig:
     """
@@ -445,6 +533,26 @@ class LoadConfig:
 
 
 @dataclass
+class LoRAConfig:
+    """ LoRA Config """
+    pass
+
+
+@dataclass
+class SchedulerConfig:
+    """ Scheduler Config """
+    pass
+
+
+@dataclass
+class KVCacheConfig:
+    """ KV Cache Config """
+    block_size: int = 0
+    enc_dec_block_num: int = 2
+    kv_cache_ratio: float = 0.75
+    dtype: str = 'bfloat16'
+
+
 class TmpConfig:
     """
     TmpConfig will be moved to other config class when refactor work is relatively complete.
@@ -487,6 +595,7 @@ class LLMConfig:
                                                 init=True)  # type: ignore
     load_config: LoadConfig = field(default=None, init=True)  # type: ignore
     quant_config: Optional[QuantConfigBase] = None
+    graph_opt_config: Optional[GraphOptimizationConfig] = None
     tmp_config: TmpConfig = field(default=None, init=True)
     moe_config: MoEConfig = field(default=None, init=True)  # type: ignore
     decoding_config: DecodingConfig = field(default=None,
