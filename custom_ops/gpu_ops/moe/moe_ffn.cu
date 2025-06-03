@@ -14,12 +14,12 @@
 
 #pragma once
 #include "cutlass/numeric_conversion.h"
-#include "cutlass_kernels/w4a8_moe/cutlass_extensions/epilogue/epilogue_quant_helper.h"
-#include "cutlass_kernels/w4a8_moe/w4a8_moe_gemm_kernel.h"
-#include "group_swiglu_with_masked.h"
 #include "helper.h"
-#include "moe/fast_hardamard_kernel.h"
 #include "moe/fused_moe_helper.h"
+#include "group_swiglu_with_masked.h"
+#include "cutlass_kernels/w4a8_moe/w4a8_moe_gemm_kernel.h"
+#include "cutlass_kernels/w4a8_moe/cutlass_extensions/epilogue/epilogue_quant_helper.h"
+#include "moe/fast_hardamard_kernel.h"
 
 template <paddle::DataType T>
 void MoeFFNKernel(const paddle::Tensor &permute_input,
