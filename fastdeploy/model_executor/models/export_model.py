@@ -38,7 +38,8 @@ from fastdeploy.inference_args import GenerationPhase
 from .ernie import ErnieBotFusedModel
 from .model_base import ModelRegistry
 from .tokenizer import ErnieBotTokenizer
-from .utils import _vocab_size_with_padding, convert_ndarray_dtype, load_checkpoint
+from .utils import (_vocab_size_with_padding, convert_ndarray_dtype,
+                    load_checkpoint)
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 grandparent_dir = os.path.abspath(
@@ -186,6 +187,11 @@ def build_stream_line_model(
 
     speculative_config.is_mtp = draft_type in ["eagle", "mtp"]
     speculative_config.draft_type = draft_type
+
+    # Note(tangbinhan): used for load_checkpoint
+    model_config.tensor_parallel_rank = parallel_config.tensor_parallel_rank
+    model_config.tensor_parallel_degree = parallel_config.tensor_parallel_degree
+    model_config.is_mtp = speculative_config.is_mtp
 
     additional_config.use_fake_parameter = use_fake_parameter
     additional_config.ep_just_for_test = ep_just_for_test

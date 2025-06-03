@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import os
 from functools import partial
+from typing import Dict, Union
 
 import numpy as np
 import paddle
@@ -27,7 +28,6 @@ from paddle.distributed import fleet
 from paddlenlp.transformers import PretrainedModel, register_base_model
 from paddlenlp.utils.log import logger
 
-from fastdeploy.worker.model_runner import ForwardMeta
 from fastdeploy.config import LLMConfig, ModelConfig, WeightKeys
 from fastdeploy.inference_args import GenerationPhase, InferenceArgs
 from fastdeploy.model_executor.ops.gpu import (
@@ -42,6 +42,7 @@ from fastdeploy.model_executor.ops.gpu import (
     speculate_save_output_dynamic, speculate_set_stop_value_multi_seqs,
     speculate_set_value_by_flags_and_idx, speculate_update_v3,
     speculate_verify, top_p_candidates, update_inputs, update_inputs_beam)
+from fastdeploy.worker.model_runner import ForwardMeta
 
 from ..layers.embeddings import VocabParallelEmbedding
 from ..layers.lm_head import LMHead
@@ -492,7 +493,8 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             moe_topk=moe_topk,
             moe_num_shared_experts=moe_num_shared_experts,
             moe_layer_start_index=moe_layer_start_index,
-            moe_use_ffn_shared_weight_and_bias=moe_use_ffn_shared_weight_and_bias,
+            moe_use_ffn_shared_weight_and_bias=
+            moe_use_ffn_shared_weight_and_bias,
             moe_group=moe_group,
             moe_quant_type=moe_quant_type,
             use_ep=use_ep,
@@ -715,12 +717,12 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         else:
             llm_config.quant_config = None
 
-        if not self.inference_args.cachekv_dtype in ["bfloat16", "float16", "float32"]:
+        if self.inference_args.cachekv_dtype not in [
+                "bfloat16", "float16", "float32"
+        ]:
             quant_cls = get_quantization_config("kvcache")
-            llm_config.kvcache_quant_config = quant_cls.from_config({
-                "cachekv_scale_dict":
-                self.inference_args.cachekv_scale_dict
-            })
+            llm_config.kvcache_quant_config = quant_cls.from_config(
+                {"cachekv_scale_dict": self.inference_args.cachekv_scale_dict})
         else:
             llm_config.kvcache_quant_config = None
 
@@ -959,7 +961,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
                 max_seq_len_index.cast("int32"),
                 mm_token_num_len,
                 seq_lens_this_time,
-                cu_seqlens_q,
+                forward_meta.cu_seqlens_q,
                 score_text,
             )[0].cast(embedding_output.dtype)
 
@@ -1169,8 +1171,8 @@ class ErnieForCausalLM(ModelForCasualLM):
         return "ErnieForCausalLM"
 
     @paddle.no_grad()
-    def set_state_dict(self, state_dict: dict[str,
-                                              np.ndarray | paddle.Tensor]):
+    def set_state_dict(self, state_dict: Dict[str, Union[np.ndarray,
+                                                         paddle.Tensor]]):
         """
         Load model parameters from a given state dictionary.
 
@@ -1385,7 +1387,7 @@ class ErnieForCausalLM(ModelForCasualLM):
             """ !!! ep not need broadcast, here broadcast just for test !!! """
             if self.ernie.mp_size > 1 and (
                 (not self.ernie.use_ep or self.ernie.ep_just_for_test) and
-                    (not self.fake_server_p)):
+                (not self.fake_server_p)):
                 paddle.distributed.broadcast(next_tokens, 0)
 
             paddle.assign(
