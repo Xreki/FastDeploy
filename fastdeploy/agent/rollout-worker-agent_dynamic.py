@@ -48,7 +48,7 @@ rollout_worker_root = os.getenv('ROLLOUT_WORKER_ROOT', "/root/paddlejob/")
 # )
 # job_id -> Process
 update_procs = {}
-
+kill_cmd = "lsof /dev/nvidia* | awk '{print $2}' | xargs -I {} kill -9 {}"
 
 def get_local_ip() -> str:
     """Get local IP address"""
@@ -66,6 +66,12 @@ def get_local_ip() -> str:
 # 全局变量标记start_cmd是否已执行
 start_cmd_executed = False
 
+def fault_tolerance(job_id):
+    """fault tolerance for oom error"""
+    logging.error("Worker Exited unexpectedly or timed out, start fault tolerance...")
+    print("Worker Exited unexpectedly or timed out, start fault tolerance...")
+    os.system(kill_cmd)
+    notice_controller(job_id, "", "stopped", "fault_tolerance_stop")
 
 def update_weight_and_controller(job_id: str, model_path: str, model_version: str) -> None:
     """Update the weights of a model and notify the controller that it has been successfully loaded."""
@@ -76,18 +82,24 @@ def update_weight_and_controller(job_id: str, model_path: str, model_version: st
     retry_interval = 1  # seconds
 
     try:
-        # Call update_model_weight API with 500s timeout (不重试)
+        # Call update_model_weight API with 300s timeout (不重试)
         # eb45 加载较长
         print(f"Starting worker with job_id: {job_id}, model_path: {model_path}, model_version: {model_version}")
+        logging.info(f"Starting worker with job_id: {job_id}, model_path: {model_path}, model_version: {model_version}")
         update_response = requests.get(
             f"{rollout_worker_host}:{rollout_worker_http_port}/update_model_weight",
-            timeout=500
+            timeout=300
         )
 
         if update_response.status_code != 200:
             logging.error(f"Failed to update model weight: {update_response.text}")
             print(f"Failed to update model weight: {update_response.text}, {update_response.status_code}")
             return
+    except requests.exceptions.Timeout as e:
+        logging.error(f"calling update_model_weight timeout: {str(e)}")
+        print(f"calling update_model_weight timeout: {str(e)}")
+        fault_tolerance(job_id)
+        return
     except requests.exceptions.RequestException as e:
         logging.error(f"Error calling update_model_weight: {str(e)}")
         print("Failed to update model weight", str(e))
@@ -141,6 +153,7 @@ def notice_controller(job_id: str, model_version: str, status: str, reason: str)
                 headers=headers,
                 timeout=10
             )
+            logging.info("Successfully notify rollout controller when reload finished")
             print("Successfully notify rollout controller when reload finished")
             return
         except requests.exceptions.RequestException as e:
@@ -166,6 +179,15 @@ def monitor_worker(job_id: str, proc: Popen, model_version: str):
             break
         time.sleep(30)
 
+def health_check() -> bool:
+    """Perform health check on the worker process"""
+    try:
+        response = requests.get(f"{rollout_worker_host}:{rollout_worker_http_port}/health", timeout=10)
+        if response.status_code == 200:
+            return True
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Health check failed: {str(e)}")
+    return False
 
 def background_start(job_id: str, model_path: str, model_version: str) -> None:
     """Start worker by calling downstream HTTP APIs"""
@@ -273,11 +295,18 @@ def background_stop(job_id: str) -> None:
     try:
         # Call clear_load_weight API with 30s timeout (重试3次)
         print(f"Stopping worker with job_id: {job_id}")
+        logging.info(f"Stopping worker with job_id: {job_id}")
         cnt = 0
+        # health check
+        is_health = health_check()
+        if not is_health:
+            fault_tolerance(job_id)
+            return
+        
         while cnt < max_retries:    
             clear_response = requests.get(
                 f"{rollout_worker_host}:{rollout_worker_http_port}/clear_load_weight",
-                timeout=30
+                timeout=300
             )
             
             if clear_response.status_code != 200:
@@ -290,6 +319,11 @@ def background_stop(job_id: str) -> None:
                 notice_controller(job_id, "", "stopped", "normal_stop")
                 return
             cnt += 1
+    except requests.exceptions.Timeout as e:
+        logging.error(f"calling clear_load_weight timeout: {str(e)}")
+        print(f"calling clear_load_weight timeout: {str(e)}")
+        fault_tolerance(job_id)
+        return
     except requests.exceptions.RequestException as e:
         logging.error(f"Error calling clear_load_weight: {str(e)}")
         print("Failed to clear load weight", str(e))
