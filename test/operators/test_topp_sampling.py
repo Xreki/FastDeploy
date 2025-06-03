@@ -14,7 +14,7 @@
 """ UT for topp_sampling """
 import paddle
 import numpy as np
-from efficientllm.ops.gpu import topp_sampling
+from fastdeploy.model_executor.ops.gpu import topp_sampling
 
 paddle.seed(2022)
 

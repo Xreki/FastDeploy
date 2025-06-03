@@ -39,7 +39,7 @@ class Test(unittest.TestCase):
         if cc < 89:
             self.skipTest("per_channel_fp8_fp8_half_gemm_fused only support sm89+")
 
-        from efficientllm.ops.gpu import per_channel_fp8_fp8_half_gemm_fused
+        from fastdeploy.model_executor.ops.gpu import per_channel_fp8_fp8_half_gemm_fused
 
         nks = [[2048, 2048], [2048, 5504], [6144, 2048]]
         nks = nks + [[4096, 4096], [4096, 12800], [6144, 4096]]

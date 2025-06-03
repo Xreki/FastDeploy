@@ -14,8 +14,8 @@
 
 import paddle
 import numpy as np
-from efficientllm.ops.gpu import gemm_dequant
-from efficientllm.ops.gpu import dequant_int8
+from fastdeploy.model_executor.ops.gpu import gemm_dequant
+from fastdeploy.model_executor.ops.gpu import dequant_int8
 from itertools import product
 import unittest
 

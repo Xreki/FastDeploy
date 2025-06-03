@@ -37,7 +37,7 @@ class Test(unittest.TestCase):
             os.environ["ELLM_DYNAMIC_MODE"] = "1"
         else:
             os.environ["ELLM_DYNAMIC_MODE"] = "0"
-        from efficientllm.ops.gpu import dequant_int8
+        from fastdeploy.model_executor.ops.gpu import dequant_int8
 
         input_tensor = paddle.cast(paddle.ones([128, 128]), "int32")
         scale_tensor = paddle.cast(paddle.ones([128]), "float32")

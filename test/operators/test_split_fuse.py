@@ -14,7 +14,7 @@
 
 """ UT for set_stop_value """
 import paddle
-from efficientllm.gpu import get_mm_split_fuse
+from fastdeploy.model_executor.ops.gpu import get_mm_split_fuse
 
 
 input_ids = []
