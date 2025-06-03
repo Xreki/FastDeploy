@@ -53,12 +53,14 @@ void MoeFFNKernel(const paddle::Tensor& permute_input,
 
     const int num_experts = ffn1_weight.dims()[0];
     const int hidden_size = permute_input.dims()[permute_input.dims().size() - 1];
-    int inter_dim = quant_method == "w4a8" ? ffn1_weight.dims()[1] : ffn1_weight.dims()[2];
+
+    assert(ffn1_weight.dims().size() == 3);
+    int inter_dim = ffn1_weight.dims()[1] * ffn1_weight.dims()[2] / hidden_size;
 
     constexpr size_t workspace_size = 1 * 1024 * 1024 * 1024; // for nf4 stream-k
     Allocator* allocator = paddle::GetAllocator(place);
     Allocator::AllocationPtr workspace;
-    if (quant_method == "weight_only_int4") {
+    if (quant_method == "weight_only_int4" || quant_method == "w4a8") {
         inter_dim = inter_dim * 2;
     }
     if (quant_method == "w4a8") {
@@ -101,7 +103,7 @@ void MoeFFNKernel(const paddle::Tensor& permute_input,
     // This is a trick.
     // expanded_active_expert_rows is not needed in variable group gemm.
     // but is needed in accommodating deepep low latency mode
-    const int64_t total_rows = used_in_ep_low_latency ? expanded_active_expert_rows : -1;
+    const int64_t total_rows_in_ll_else_minus1 = used_in_ep_low_latency ? expanded_active_expert_rows : -1;
 
     // When we tune the optimal configuration, we need the actual total_rows.
     const int64_t tune_total_rows = expanded_active_expert_rows;
@@ -116,7 +118,7 @@ void MoeFFNKernel(const paddle::Tensor& permute_input,
             reinterpret_cast<const NvType*>(fc1_expert_biases),
             reinterpret_cast<NvType*>(fc1_out),
             const_cast<int64_t*>(tokens_expert_prefix_sum.data<int64_t>()),
-            total_rows,
+            total_rows_in_ll_else_minus1,
             tune_total_rows,
             inter_size,
             hidden_size,
@@ -134,7 +136,7 @@ void MoeFFNKernel(const paddle::Tensor& permute_input,
             reinterpret_cast<const NvType*>(fc1_expert_biases),
             reinterpret_cast<NvType*>(fc1_out),
             const_cast<int64_t*>(tokens_expert_prefix_sum.data<int64_t>()),
-            total_rows,
+            total_rows_in_ll_else_minus1,
             tune_total_rows,
             inter_size,
             hidden_size,
@@ -154,7 +156,8 @@ void MoeFFNKernel(const paddle::Tensor& permute_input,
             nullptr, // nf4_look_up_table
             reinterpret_cast<NvType *>(fc1_out),
             const_cast<int64_t*>(tokens_expert_prefix_sum.data<int64_t>()),
-            expanded_active_expert_rows,
+            total_rows_in_ll_else_minus1,
+            tune_total_rows,
             inter_size,
             hidden_size,
             reinterpret_cast<char*>(workspace->ptr()),
@@ -169,7 +172,7 @@ void MoeFFNKernel(const paddle::Tensor& permute_input,
             reinterpret_cast<const NvType*>(fc1_expert_biases),
             reinterpret_cast<NvType*>(fc1_out),
             const_cast<int64_t*>(tokens_expert_prefix_sum.data<int64_t>()),
-            total_rows,
+            total_rows_in_ll_else_minus1,
             tune_total_rows,
             inter_size,
             hidden_size,
@@ -195,7 +198,7 @@ void MoeFFNKernel(const paddle::Tensor& permute_input,
                     ->data<data_t>()),
             reinterpret_cast<NvType*>(ffn_out_data),
             const_cast<int64_t*>(tokens_expert_prefix_sum.data<int64_t>()),
-            total_rows,
+            total_rows_in_ll_else_minus1,
             tune_total_rows,
             hidden_size,
             inter_size / 2,
@@ -212,7 +215,7 @@ void MoeFFNKernel(const paddle::Tensor& permute_input,
                     ->data<data_t>()),
             reinterpret_cast<NvType*>(ffn_out_data),
             const_cast<int64_t*>(tokens_expert_prefix_sum.data<int64_t>()),
-            total_rows,
+            total_rows_in_ll_else_minus1,
             tune_total_rows,
             hidden_size,
             inter_size / 2,
@@ -250,7 +253,8 @@ void MoeFFNKernel(const paddle::Tensor& permute_input,
             nullptr, // reinterpret_cast<const int32_t*>(d_nf4_look_up_table), // nf4_look_up_table
             reinterpret_cast<NvType *>(ffn_out_data),
             const_cast<int64_t*>(tokens_expert_prefix_sum.data<int64_t>()),
-            expanded_active_expert_rows,
+            total_rows_in_ll_else_minus1,
+            tune_total_rows,
             hidden_size,
             inter_size / 2,
             reinterpret_cast<char*>(workspace->ptr()),
@@ -264,7 +268,7 @@ void MoeFFNKernel(const paddle::Tensor& permute_input,
             nullptr,
             reinterpret_cast<NvType*>(ffn_out_data),
             const_cast<int64_t*>(tokens_expert_prefix_sum.data<int64_t>()),
-            total_rows,
+            total_rows_in_ll_else_minus1,
             tune_total_rows,
             hidden_size,
             inter_size / 2,

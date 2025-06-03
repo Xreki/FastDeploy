@@ -19,9 +19,9 @@
 import random
 from typing import Tuple
 
-import fastdeploy.model_executor.ops.gpu.deep_gemm as deep_gemm
+import efficientllm.ops.gpu.deep_gemm as deep_gemm
 import paddle
-from fastdeploy.model_executor.ops.gpu.deep_gemm import (
+from efficientllm.ops.gpu.deep_gemm import (
     calc_diff,
     ceil_div,
     get_col_major_tma_aligned_tensor,

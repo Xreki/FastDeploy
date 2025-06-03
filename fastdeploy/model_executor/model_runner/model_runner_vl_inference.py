@@ -201,7 +201,7 @@ class ModelRunner(ModelRunnerBase):
             )
         else:
             from ..models.export_model import build_stream_line_model
-            _, _, self.model = build_stream_line_model(
+            _, _, self.model, _ = build_stream_line_model(
                 self.model_cfg,
                 self.args.model_name_or_path,
                 self.args.dtype,

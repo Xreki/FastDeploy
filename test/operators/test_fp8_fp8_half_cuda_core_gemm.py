@@ -16,7 +16,7 @@
 
 import paddle
 import numpy as np
-from fastdeploy.model_executor.ops.gpu import cutlass_fp8_fp8_half_gemm_fused
+from efficientllm.ops.gpu import cutlass_fp8_fp8_half_gemm_fused
 from itertools import product
 import os
 import unittest

@@ -15,7 +15,7 @@
 """ UT for get_token_penalty """
 import paddle
 import numpy as np
-from fastdeploy.model_executor.ops.gpu import get_token_penalty_once
+from efficientllm.ops.gpu import get_token_penalty_once
 
 paddle.seed(2023)
 

@@ -14,4 +14,4 @@
 # limitations under the License.
 """
 
-from fastdeploy.model_executor.layers.linear import Linear
+from efficientllm.models.layers.linear import Linear

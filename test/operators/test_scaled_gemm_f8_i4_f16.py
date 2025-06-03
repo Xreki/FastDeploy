@@ -17,7 +17,7 @@
 import paddle
 import unittest
 import numpy as np
-from fastdeploy.model_executor.ops.gpu import (
+from efficientllm.ops.gpu import (
     scaled_gemm_f8_i4_f16,
     scaled_gemm_f8_i4_f16_weight_quantize,
 )

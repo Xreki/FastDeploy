@@ -35,10 +35,10 @@ from tqdm import tqdm
 import paddle
 import paddle.distributed as dist
 
-from fastdeploy.model_executor.models.tokenizer import ErnieBotTokenizer
+from efficientllm.models.tokenizer import ErnieBotTokenizer
 from paddle import profiler
 from paddle.distributed import fleet
-from fastdeploy.model_executor.models.utils import (
+from efficientllm.models.utils import (
     get_infer_model_path,
     get_rotary_position_embedding,
     infer_save_test_case,
@@ -46,26 +46,26 @@ from fastdeploy.model_executor.models.utils import (
     load_sharded_checkpoint,
 )
 
-from fastdeploy.platforms import current_platform
+from efficientllm.platform import current_platform
 
 if current_platform.is_cuda() and current_platform.available():
-    from fastdeploy.model_executor.ops.gpu import reset_stop_value, speculate_update_input_ids_cpu
+    from efficientllm.ops.gpu import reset_stop_value, speculate_update_input_ids_cpu
 elif paddle.is_compiled_with_xpu():
     from custom_setup_ops import reset_stop_value
 elif paddle.is_compiled_with_custom_device("npu"):
     from paddle_custom_device.npu import reset_stop_value
 else:  # CPU
-    from fastdeploy.model_executor.ops.cpu import reset_stop_value
+    from efficientllm.ops.cpu import reset_stop_value
 
-from fastdeploy.model_executor.models.data_utils import (
+from efficientllm.models.data_utils import (
     convert_fc_infer_data,
     convert_to_input_ids,
     get_infer_data_type,
     insert_fc_instruction,
 )
-from fastdeploy.model_executor.models.token_utils import TokenTimer, check_output
+from efficientllm.models.token_utils import TokenTimer, check_output
 
-from fastdeploy.model_executor.models.speculate_proposers import (
+from efficientllm.models.speculate_proposers import (
     AutogressiveProposer,
     DraftModelProposer,
     EagleProposer,
@@ -450,10 +450,10 @@ class Predictor:
         if self.beam_width <= 1:
             self.result_queue = mp.Queue()
 
-            from fastdeploy.model_executor.models.utils import MAX_BSZ, MAX_DRAFT_TOKENS
+            from efficientllm.models.utils import MAX_BSZ, MAX_DRAFT_TOKENS
 
             if args.speculate_method is not None:
-                from fastdeploy.model_executor.models.utils import speculate_read_res
+                from efficientllm.models.utils import speculate_read_res
 
                 output_tensor_max_shape = [MAX_BSZ * MAX_DRAFT_TOKENS + MAX_BSZ + 2]
                 self.read_res_process = mp.Process(
@@ -466,7 +466,7 @@ class Predictor:
                     ],
                 )
             else:
-                from fastdeploy.model_executor.models.utils import read_res
+                from efficientllm.models.utils import read_res
 
                 output_tensor_max_shape = [MAX_BSZ + 2, 1]
                 self.read_res_process = mp.Process(
@@ -669,31 +669,31 @@ class Predictor:
             for i in range(model_config["num_layers"]):
                 qkv_weights_lora_A.append(
                     lora_states[
-                        f"ernie.decoder.layers.{i}.self_attn.qkv_proj.lora_A"
+                        f"gpt.decoder.layers.{i}.self_attn.qkv_proj.lora_A"
                     ].transpose((1, 0))
                 )
                 qkv_weights_lora_B.append(
                     lora_states[
-                        f"ernie.decoder.layers.{i}.self_attn.qkv_proj.lora_B"
+                        f"gpt.decoder.layers.{i}.self_attn.qkv_proj.lora_B"
                     ].transpose((1, 0))
                 )
                 linear_weights_lora_A.append(
                     lora_states[
-                        f"ernie.decoder.layers.{i}.self_attn.out_proj.lora_A"
+                        f"gpt.decoder.layers.{i}.self_attn.out_proj.lora_A"
                     ].transpose((1, 0))
                 )
                 linear_weights_lora_B.append(
                     lora_states[
-                        f"ernie.decoder.layers.{i}.self_attn.out_proj.lora_B"
+                        f"gpt.decoder.layers.{i}.self_attn.out_proj.lora_B"
                     ].transpose((1, 0))
                 )
                 ffn1_weights_lora_A.append(
-                    lora_states[f"ernie.decoder.layers.{i}.linear1.lora_A"].transpose(
+                    lora_states[f"gpt.decoder.layers.{i}.linear1.lora_A"].transpose(
                         (1, 0)
                     )
                 )
                 # for ffn1
-                value = lora_states[f"ernie.decoder.layers.{i}.linear1.lora_B"]
+                value = lora_states[f"gpt.decoder.layers.{i}.linear1.lora_B"]
                 convert_value = np.zeros_like(value)
                 out_dim = value.shape[-1]
                 convert_value[:, : out_dim // 2] = value[:, ::2]
@@ -701,12 +701,12 @@ class Predictor:
                 ffn1_weights_lora_B.append(convert_value.transpose((1, 0)))
 
                 ffn2_weights_lora_A.append(
-                    lora_states[f"ernie.decoder.layers.{i}.linear2.lora_A"].transpose(
+                    lora_states[f"gpt.decoder.layers.{i}.linear2.lora_A"].transpose(
                         (1, 0)
                     )
                 )
                 ffn2_weights_lora_B.append(
-                    lora_states[f"ernie.decoder.layers.{i}.linear2.lora_B"].transpose(
+                    lora_states[f"gpt.decoder.layers.{i}.linear2.lora_B"].transpose(
                         (1, 0)
                     )
                 )

@@ -29,13 +29,13 @@ from paddlenlp.trainer import strtobool
 from paddlenlp.utils.log import logger
 
 import paddle
-from fastdeploy.model_executor.models.configuration import ModelConfig
-from fastdeploy.model_executor.models.tokenizer import ErnieBotTokenizer
+from efficientllm.models.configuration import ErnieBotConfig
+from efficientllm.models.tokenizer import ErnieBotTokenizer
 from paddle.distributed import fleet
-from fastdeploy.model_executor.models.utils import (
+from efficientllm.models.utils import (
     UniqueIDGenerator,
 )
-from fastdeploy.model_executor.models.token_utils import TokenTimer, check_output, process_index
+from efficientllm.models.token_utils import TokenTimer, check_output, process_index
 
 
 should_check_python_safety = False
@@ -169,6 +169,13 @@ def setup_args():
         type=strtobool,
         help="use image_features or not(only used in multi modal)",
     )
+    parser.add_argument(
+        "--use_offline_quant",
+        default="False",
+        type=strtobool,
+        help="The inference uses offline-quantized weights, \
+            and the script performs the offline quantization.",
+    )
     args = parser.parse_args()
     return args
 
@@ -244,7 +251,7 @@ if __name__ == "__main__":
     }
     fleet.init(is_collective=True, strategy=strategy)
 
-    from fastdeploy.model_executor.models.export_model import (
+    from efficientllm.models.export_model import (
         export_efficientllm_model,
     )
 
@@ -270,7 +277,7 @@ if __name__ == "__main__":
     except Exception:
         pass
 
-    model_config = ModelConfig.from_pretrained(args.model_name_or_path)
+    model_config = ErnieBotConfig.from_pretrained(args.model_name_or_path)
 
     if enable_auth:
         model_config.product_name = product_name

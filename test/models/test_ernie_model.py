@@ -14,4 +14,4 @@
 # limitations under the License.
 """
 
-from fastdeploy.model_executor.models.modeling_ernie_bot import ErnieBotForGeneration
+from efficientllm.models.modeling_ernie_bot import ErnieBotForGeneration
