@@ -14,6 +14,7 @@
 # limitations under the License.
 """
 from abc import ABC, abstractmethod
+from typing import Dict, Union
 
 import numpy as np
 import paddle
@@ -56,8 +57,8 @@ class ModelForCasualLM(nn.Layer, ABC):
         super(ModelForCasualLM, self).__init__()
 
     @abstractmethod
-    def set_state_dict(self, state_dict: dict[str,
-                                              np.ndarray | paddle.Tensor]):
+    def set_state_dict(self, state_dict: Dict[str, Union[np.ndarray,
+                                                         paddle.Tensor]]):
         """
         Load model parameters from a given state dictionary.
 

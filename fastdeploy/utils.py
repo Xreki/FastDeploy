@@ -16,6 +16,7 @@
 
 import argparse
 import codecs
+import importlib
 import logging
 import os
 import re
@@ -29,7 +30,6 @@ from pathlib import Path
 import requests
 import yaml
 from tqdm import tqdm
-import importlib
 
 
 class EngineError(Exception):
@@ -386,7 +386,8 @@ class FlexibleArgumentParser(argparse.ArgumentParser):
             return dict(items)
 
         return _flatten(d)
-        
+
+
 def resolve_obj_from_strname(strname: str):
     module_name, obj_name = strname.rsplit(".", 1)
     module = importlib.import_module(module_name)

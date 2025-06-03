@@ -15,7 +15,6 @@
 """
 from __future__ import annotations
 
-import json
 import os
 import re
 import signal
@@ -32,18 +31,14 @@ import zmq
 from tqdm import tqdm
 
 from fastdeploy.engine.args_utils import EngineArgs
-from fastdeploy.engine.request import Request
-from fastdeploy.engine.request import RequestOutput
+from fastdeploy.engine.request import Request, RequestOutput
 from fastdeploy.engine.resource_manager import ResourceManager
 from fastdeploy.input.preprocess import InputPreprocessor
-from fastdeploy.inter_communicator import EngineWorkerQueue
-from fastdeploy.inter_communicator import IPCSignal
-from fastdeploy.inter_communicator import ZmqClient
-from fastdeploy.output.token_processor import TokenProcessor
-from fastdeploy.output.token_processor import WarmUpTokenProcessor
-from fastdeploy.utils import console_logger
-from fastdeploy.utils import EngineError
-from fastdeploy.utils import llm_logger
+from fastdeploy.inter_communicator import (EngineWorkerQueue, IPCSignal,
+                                           ZmqClient)
+from fastdeploy.output.token_processor import (TokenProcessor,
+                                               WarmUpTokenProcessor)
+from fastdeploy.utils import EngineError, console_logger, llm_logger
 
 
 class LLMEngine(object):
@@ -89,7 +84,8 @@ class LLMEngine(object):
         self.scheduler = cfg.scheduler_config.scheduler()
 
         self.input_processor = InputPreprocessor(cfg.tokenizer, cfg.enable_mm)
-        self.resource_manager = ResourceManager(cfg.max_num_seqs, cfg.cache_config)
+        self.resource_manager = ResourceManager(cfg.max_num_seqs,
+                                                cfg.cache_config)
 
         self.token_processor = TokenProcessor(
             cfg=self.cfg, cached_generated_tokens=self.scheduler)
@@ -268,7 +264,7 @@ class LLMEngine(object):
                 self.insert_tasks(tasks)
             except Exception as e:
                 err_msg = "Error happend while insert task to engine: {}, {}.".format(
-                        e, str(traceback.format_exc()))
+                    e, str(traceback.format_exc()))
                 llm_logger.error(err_msg)
 
     def _insert_zmq_task_to_scheduler(self):
@@ -297,7 +293,8 @@ class LLMEngine(object):
                                              error_msg=f"{e}")
                 # Since the request is not in scheduler
                 # Send result by zmq directly
-                self.zmq_server.send_multipart(request.request_id, error_result)
+                self.zmq_server.send_multipart(request.request_id,
+                                               error_result)
 
     def add_requests(self, task, sampling_params=None):
         """
@@ -522,7 +519,7 @@ class LLMEngine(object):
             "TRAINER_INSTANCES_NUM": 1,
             "TRAINER_INSTANCES": "0.0.0.0",
             "ENABLE_EFFICIENTLLM_LOAD_MODEL_CONCURRENCY": 0,
-            "LOAD_STATE_DICT_THREAD_NUM": 8,
+            "LOAD_STATE_DICT_THREAD_NUM": len(self.cfg.device_ids.split(',')),
             "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION": "python",
             "FLAGS_use_append_attn": 1,
             "NCCL_ALGO": "Ring",
@@ -545,8 +542,7 @@ class LLMEngine(object):
         uncache_worker_stdout = "" if os.getenv("UNCACHE_WORKER_STDOUT",
                                                 "0") == 1 else "-u"
         pd_cmd = f"{command_prefix} {sys.executable} {uncache_worker_stdout} -m paddle.distributed.launch "
-        py_script = os.path.join(current_dir_path,
-                                 "../worker/worker.py")
+        py_script = os.path.join(current_dir_path, "../worker/worker.py")
         arguments = (
             f" --nnodes {str(self.cfg.nnode)}"
             f" --devices {self.cfg.device_ids} {py_script}"
@@ -738,6 +734,6 @@ class LLMEngine(object):
         self.worker_init_status["finished"] = True
         try:
             self.checking_worker_status_thread.join(timeout=1)
-        except Exception as e:
+        except Exception:
             pass
         return True

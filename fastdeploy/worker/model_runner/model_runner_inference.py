@@ -20,11 +20,12 @@ import numpy as np
 import paddle
 
 from fastdeploy.model_executor.layers.rotary_embedding import get_rope
-from fastdeploy.worker.model_runner.model_runner_base import ModelRunnerBase
-from fastdeploy.worker.model_runner.forward_meta import ForwardMeta
 from fastdeploy.platforms import current_platform
+from fastdeploy.worker.model_runner.model_runner_base import ModelRunnerBase
+
 if current_platform.is_cuda() and current_platform.available():
-    from fastdeploy.model_executor.layers.utils import remove_padding, speculate_remove_padding
+    from fastdeploy.model_executor.layers.utils import (
+        remove_padding, speculate_remove_padding)
 
 
 class ModelRunner(ModelRunnerBase):
@@ -96,7 +97,8 @@ class ModelRunner(ModelRunnerBase):
                 use_stop_seqs=self.model_cfg.ellm_dynamic_use_stop_seqs,
                 use_beam_search=False,
                 speculate_method=None,
-                speculate_max_draft_token_num=self.args.speculate_max_draft_tokens,
+                speculate_max_draft_token_num=self.args.
+                speculate_max_draft_tokens,
                 return_all_hidden_states=False,
                 moe_quant_type="weight_only_int4",
                 use_safetensors=True,
@@ -133,7 +135,8 @@ class ModelRunner(ModelRunnerBase):
             max_num_blocks=max_block_num,
             block_size=self.args.block_size,
             kv_num_head=kv_num_head,
-            head_dim=self.model_cfg.hidden_size // self.model_cfg.num_attention_heads)
+            head_dim=self.model_cfg.hidden_size //
+            self.model_cfg.num_attention_heads)
 
         for i in range(self.model_cfg.num_layers):
             cache_type = self.args.dtype
@@ -215,10 +218,10 @@ class ModelRunner(ModelRunnerBase):
                 self.share_inputs["stop_seqs"][:stop_seqs_num, :len(
                     task.get("stop_token_ids")[0])] = np.array(
                         task.get("stop_token_ids"), dtype="int64")
-    
-    def post_process(self):
+
+    def pre_process(self):
         """
-        post_process
+        pre_process
         """
         from fastdeploy.platforms import current_platform
         if current_platform.is_cuda():
@@ -245,8 +248,7 @@ class ModelRunner(ModelRunnerBase):
                 ) = remove_padding(
                     max_len=self.args.max_model_len,
                     input_ids=self.share_inputs["input_ids"],
-                    seq_lens_this_time=self.share_inputs["seq_lens_this_time"]
-                )
+                    seq_lens_this_time=self.share_inputs["seq_lens_this_time"])
         self.share_inputs["ids_remove_padding"] = ids_remove_padding
         self.share_inputs["padding_offset"] = padding_offset
         self.share_inputs["cum_offsets"] = cum_offsets
@@ -258,7 +260,7 @@ class ModelRunner(ModelRunnerBase):
         self.attn_backend.init_attention_metadata(self.forward_meta)
 
     def generate(self):
-        self.post_process()
+        self.pre_process()
         hiddden_states = self.model(**self.share_inputs)
         logits = self.model.compute_logits(hiddden_states)
         self.model.sample(logits, **self.share_inputs)
