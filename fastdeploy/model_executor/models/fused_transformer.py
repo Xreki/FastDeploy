@@ -35,7 +35,6 @@ except ImportError:
 from fastdeploy.inference_args import GenerationPhase
 
 from ..layers.activation import SiluAndMul
-from ..layers.attention.base import Attention
 from ..layers.linear import (MergedColumnParallelLinear, QKVParallelLinear,
                              RowParallelLinear)
 from ..layers.normalization import LayerNorm, RMSNorm
@@ -123,8 +122,7 @@ class FusedTransformer(nn.Layer):
         self.qkv_linear_layers = nn.LayerList([
             QKVParallelLinear(
                 llm_config=llm_config,
-                layer_name=
-                f"{base_model_prefix}.decoder.layers.{i}.self_attn.qkv_proj",
+                layer_name=f"{base_model_prefix}.decoder.layers.{i}.self_attn.qkv_proj",
                 weight_key=fmt_keys.qkv_linear_weight_keys[i],
                 bias_key=fmt_keys.qkv_linear_bias_keys[i],
             ) for i in range(self.num_layers)
@@ -142,30 +140,55 @@ class FusedTransformer(nn.Layer):
                 bias_key=fmt_keys.out_linear_bias_keys[i],
             ) for i in range(self.num_layers)
         ])
-        self.attn_layers = nn.LayerList([
-            Attention(
-                inference_args=inference_args,
-                layer_name=(
-                    f"ernie.layers.{i}.self_attn"
-                    if self.inference_args.moe_config.use_moe and
-                    self.inference_args.moe_config.moe_layer_start_index > 0
-                    else f"{base_model_prefix}.decoder.layers.{i}.self_attn"),
-                rope_theta=rope_theta,
-                rope_3d=rope_3d,
-                use_neox_rotary_style=use_neox_rotary_style,
-                out_scale=self.act_scales.get(
-                    f"{base_model_prefix}.decoder.layers.{i}.self_attn.out_proj.activation_quanter",
-                    -1,
-                ),
-                qkv_scale=getattr(self.qkv_linear_layers[i], "qkv_out_scale",
-                                  None),
-                qkv_bias=getattr(self.qkv_linear_layers[i], "qkv_bias", None),
-                linear_shift=getattr(self.out_linear_layers[i], "linear_shift",
-                                     None),
-                linear_smooth=getattr(self.out_linear_layers[i],
-                                      "linear_smooth", None),
-            ) for i in range(self.num_layers)
-        ])
+        if not self.use_micro_batch:
+            from fastdeploy.model_executor.layers.attention import Attention
+
+            self.attn_layers = nn.LayerList([
+                Attention(
+                    llm_config=llm_config,
+                    layer_id=i,
+                    qkv_bias=(None if not (inference_args.weight_dtype == "int8" and inference_args.act_dtype == "int8")
+                              else getattr(self.qkv_linear_layers[i], "qkv_bias", None)),
+                    qkv_scale=(getattr(self.qkv_linear_layers[i], "qkv_out_scale", None)
+                               if inference_args.weight_dtype == "int8" and inference_args.act_dtype == "int8"
+                               else None),
+                    layer_name=(
+                        f"ernie.layers.{i}.self_attn"
+                        if self.inference_args.moe_config.use_moe
+                        and self.inference_args.moe_config.moe_layer_start_index > 0
+                        else f"{base_model_prefix}.decoder.layers.{i}.self_attn"
+                    ),
+                )
+                for i in range(self.num_layers)
+            ])
+        else:
+            from ..layers.attention.base import Attention
+            self.attn_layers = nn.LayerList([
+                Attention(
+                    inference_args=inference_args,
+                    layer_name=(
+                        f"ernie.layers.{i}.self_attn"
+                        if self.inference_args.moe_config.use_moe and
+                        self.inference_args.moe_config.moe_layer_start_index > 0
+                        else f"{base_model_prefix}.decoder.layers.{i}.self_attn"),
+                    rope_theta=rope_theta,
+                    rope_3d=rope_3d,
+                    use_neox_rotary_style=use_neox_rotary_style,
+                    out_scale=self.act_scales.get(
+                        f"{base_model_prefix}.decoder.layers.{i}.self_attn.out_proj.activation_quanter",
+                        -1,
+                    ),
+                    qkv_scale=getattr(self.qkv_linear_layers[i], "qkv_out_scale",
+                                      None),
+                    qkv_bias=getattr(
+                        self.qkv_linear_layers[i], "qkv_bias", None),
+                    linear_shift=getattr(self.out_linear_layers[i], "linear_shift",
+                                         None),
+                    linear_smooth=getattr(self.out_linear_layers[i],
+                                          "linear_smooth", None),
+                ) for i in range(self.num_layers)
+            ])
+
         self.ffn_layernorm_layers = nn.LayerList([
             RMSNorm(
                 llm_config,
@@ -240,16 +263,11 @@ class FusedTransformer(nn.Layer):
                         inference_args=inference_args,
                         moe_config=inference_args.moe_config,
                         layer_name=f"moe_layers.{i}",
-                        gate_weight_key=
-                        f"ernie.decoder.moe_layers.{i}.gate_weight",
-                        ffn1_expert_weight_key=
-                        f"ernie.decoder.moe_layers.{i}.moe_ffn1_weight",
-                        ffn2_expert_weight_key=
-                        f"ernie.decoder.moe_layers.{i}.moe_ffn2_weight",
-                        ffn1_bias_key=
-                        f"ernie.decoder.moe_layers.{i}.moe_ffn1_bias",
-                        ffn2_bias_key=
-                        f"ernie.decoder.moe_layers.{i}.moe_ffn2_bias",
+                        gate_weight_key=f"ernie.decoder.moe_layers.{i}.gate_weight",
+                        ffn1_expert_weight_key=f"ernie.decoder.moe_layers.{i}.moe_ffn1_weight",
+                        ffn2_expert_weight_key=f"ernie.decoder.moe_layers.{i}.moe_ffn2_weight",
+                        ffn1_bias_key=f"ernie.decoder.moe_layers.{i}.moe_ffn1_bias",
+                        ffn2_bias_key=f"ernie.decoder.moe_layers.{i}.moe_ffn2_bias",
                         layer_idx=i,
                     ) for i in range(self.num_layers)
                 ])
@@ -298,18 +316,15 @@ class FusedTransformer(nn.Layer):
                         + ".{}.up_gate_proj.weight",
                         ffn2_expert_weight_key=f"ernie.layers.{i}.mlp.experts"
                         + ".{}.down_proj.weight",
-                        ffn1_expert_weight_scale_key=
-                        f"ernie.layers.{i}.mlp.experts" +
+                        ffn1_expert_weight_scale_key=f"ernie.layers.{i}.mlp.experts" +
                         ".{}.up_gate_proj.weight_quanter",
-                        ffn2_expert_weight_scale_key=
-                        f"ernie.layers.{i}.mlp.experts" +
+                        ffn2_expert_weight_scale_key=f"ernie.layers.{i}.mlp.experts" +
                         ".{}.down_proj.weight_quanter",
                         ffn1_expert_in_scale_key=f"ernie.layers.{i}.mlp.experts"
                         + ".{}.up_gate_proj.activation_quanter",
                         ffn2_expert_in_scale_key=f"ernie.layers.{i}.mlp.experts"
                         + ".{}.down_proj.activation_quanter",
-                        gate_correction_bias_key=
-                        f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
+                        gate_correction_bias_key=f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
                         ffn1_bias_key=None,
                         ffn2_bias_key=None,
                         ffn1_shared_weight_key=None,
@@ -494,6 +509,7 @@ class FusedTransformer(nn.Layer):
         moe_layer_start_index,
         padding_offset,
         input_ids,
+        forward_meta,
         rotary_embs=None,
         rotary_emb_dims=0,
         caches=None,
@@ -550,7 +566,7 @@ class FusedTransformer(nn.Layer):
              ffn2_out,
              self.micro_batch_control.micro_batches[micro_batch_id].
              residual_input,
-         )
+        )
         # qkv matmul
         qkv_out = self.qkv_linear_layers[layer_id](ln_out)
 
@@ -558,21 +574,12 @@ class FusedTransformer(nn.Layer):
         args = self.micro_batch_control.micro_batches[micro_batch_id].args
         # breakpoint()
         attn_out = self.attn_layers[layer_id](
-            qkv_out,
-            padding_offset,
-            input_ids,
-            rotary_embs,
-            rotary_emb_dims,
-            caches[2 * layer_id],  # key_cache
-            caches[2 * layer_id + 1],  # value_cache
-            (pre_caches[2 * layer_id]
-             if pre_caches is not None else None),  # pre_key_cache
-            (pre_caches[2 * layer_id + 1]
-             if pre_caches is not None else None),  # pre_value_cache
-            pre_caches_length,
-            attn_mask,
-            kv_signal_data,
-            **args,
+            q=None,
+            k=None,
+            v=None,
+            forward_meta=forward_meta,
+            qkv=qkv_out,
+            kv_signal_data=kv_signal_data,
         )
         # out_linear
         out_linear_out = self.out_linear_layers[layer_id](attn_out)
@@ -678,7 +685,7 @@ class FusedTransformer(nn.Layer):
                     recv_num_tokens_per_expert_list,
                     self.micro_batch_control.micro_batches[micro_batch_id].
                     handle,
-                )
+        )
         # record event
         self.micro_batch_control.micro_batches[
             micro_batch_id].compute_event = (deep_ep.utils.EventOverlap(
@@ -716,6 +723,7 @@ class FusedTransformer(nn.Layer):
         self,
         input_ids,
         src,
+        forward_meta,
         cum_offsets=None,
         padding_offset=None,
         attn_mask=None,
@@ -780,35 +788,39 @@ class FusedTransformer(nn.Layer):
         residual_input = src
 
         if self.inference_args.use_append_attn:
-            kwargs["encoder_block_shape_q"] = 64
-            kwargs["decoder_block_shape_q"] = 16
-            kwargs["max_partition_size"] = 32768
-            kwargs["encoder_max_partition_size"] = 32768
+            if self.use_micro_batch:
+                kwargs["encoder_block_shape_q"] = 64
+                kwargs["decoder_block_shape_q"] = 16
+                kwargs["max_partition_size"] = 32768
+                kwargs["encoder_max_partition_size"] = 32768
 
-            (
-                kwargs["encoder_batch_ids"],
-                kwargs["encoder_tile_ids_per_batch"],
-                kwargs["encoder_num_blocks"],
-                kwargs["kv_batch_ids"],
-                kwargs["kv_tile_ids_per_batch"],
-                kwargs["kv_num_blocks"],
-                kwargs["decoder_batch_ids"],
-                kwargs["decoder_tile_ids_per_batch"],
-                kwargs["decoder_num_blocks"],
-                kwargs["max_len_kv"],
-                set_max_lengths,
-            ) = fastdeploy.model_executor.ops.gpu.get_block_shape_and_split_kv_block(
-                kwargs.get("seq_lens_encoder", None),
-                kwargs.get("seq_lens_decoder", None),
-                kwargs.get("seq_lens_this_time", None),
-                kwargs.get("cum_offsets", None),
-                kwargs.get("encoder_block_shape_q", 64),
-                kwargs.get("decoder_block_shape_q", 16),
-                self.num_heads // self.kv_num_heads,
-                kwargs.get("block_size", 64),
-                self.inference_args.speculate_max_draft_token_num + 1,
-            )
-            if self.use_fa3 == 1 and set_max_lengths[1] > 0:
+                (
+                    kwargs["encoder_batch_ids"],
+                    kwargs["encoder_tile_ids_per_batch"],
+                    kwargs["encoder_num_blocks"],
+                    kwargs["kv_batch_ids"],
+                    kwargs["kv_tile_ids_per_batch"],
+                    kwargs["kv_num_blocks"],
+                    kwargs["decoder_batch_ids"],
+                    kwargs["decoder_tile_ids_per_batch"],
+                    kwargs["decoder_num_blocks"],
+                    kwargs["max_len_kv"],
+                    set_max_lengths,
+                ) = fastdeploy.model_executor.ops.gpu.get_block_shape_and_split_kv_block(
+                    kwargs.get("seq_lens_encoder", None),
+                    kwargs.get("seq_lens_decoder", None),
+                    kwargs.get("seq_lens_this_time", None),
+                    kwargs.get("cum_offsets", None),
+                    kwargs.get("encoder_block_shape_q", 64),
+                    kwargs.get("decoder_block_shape_q", 16),
+                    self.num_heads // self.kv_num_heads,
+                    kwargs.get("block_size", 64),
+                    self.inference_args.speculate_max_draft_token_num + 1,
+                )
+            else:
+                attntion_meta = forward_meta.attn_backend.get_attntion_meta()
+                set_max_lengths = forward_meta.attn_backend.get_attntion_meta().set_max_lengths
+            if self.use_fa3 == 1 and attntion_meta.set_max_lengths[1] > 0:
                 (
                     cu_seqlens_k,
                     pre_cache_batch_ids,
@@ -872,9 +884,14 @@ class FusedTransformer(nn.Layer):
                 padding_offsets = attn_args.get("padding_offsets", None)
                 cum_offsets = attn_args.get("cum_offsets", None)
                 block_tables = attn_args.get("block_tables", None)
-                kv_batch_ids = attn_args.get("kv_batch_ids", None)
-                kv_tile_ids_per_batch = attn_args.get("kv_tile_ids_per_batch",
-                                                      None)
+                if self.use_micro_batch:
+                    kv_batch_ids = attn_args.get("kv_batch_ids", None)
+                    kv_tile_ids_per_batch = attn_args.get("kv_tile_ids_per_batch",
+                                                          None)
+                else:
+
+                    kv_batch_ids = attntion_meta.kv_batch_ids
+                    kv_tile_ids_per_batch = attntion_meta.kv_tile_ids_per_batch
                 kv_num_blocks = attn_args.get("kv_num_blocks", None)
                 max_input_length = attn_args.get("max_input_length", -1)
                 k_quant_scale = getattr(self.attn_layers[i], "cache_k_scale",
@@ -932,23 +949,35 @@ class FusedTransformer(nn.Layer):
                                  causal=True,
                              )[0].reshape([token_num, -1]))
             else:
-                atten_out = self.attn_layers[i](
-                    qkv_out,
-                    padding_offset,
-                    input_ids,
-                    rotary_embs,
-                    rotary_emb_dims,
-                    caches[2 * i],  # key_cache
-                    caches[2 * i + 1],  # value_cache
-                    (pre_caches[2 * i]
-                     if pre_caches is not None else None),  # pre_key_cache
-                    (pre_caches[2 * i + 1]
-                     if pre_caches is not None else None),  # pre_value_cache
-                    pre_caches_length,
-                    attn_mask,
-                    kv_signal_data,
-                    **attn_args,
-                )
+                if self.use_micro_batch:
+
+                    atten_out = self.attn_layers[i](
+                        qkv_out,
+                        padding_offset,
+                        input_ids,
+                        rotary_embs,
+                        rotary_emb_dims,
+                        caches[2 * i],  # key_cache
+                        caches[2 * i + 1],  # value_cache
+                        (pre_caches[2 * i]
+                         if pre_caches is not None else None),  # pre_key_cache
+                        (pre_caches[2 * i + 1]
+                         if pre_caches is not None else None),  # pre_value_cache
+                        pre_caches_length,
+                        attn_mask,
+                        kv_signal_data,
+                        **attn_args,
+                    )
+
+                else:
+                    atten_out = self.attn_layers[i](
+                        q=None,
+                        k=None,
+                        v=None,
+                        forward_meta=forward_meta,
+                        qkv=qkv_out,
+                        kv_signal_data=kv_signal_data,
+                    )
 
             # out_linear
             out_linear_out = self.out_linear_layers[i](atten_out)
@@ -1064,6 +1093,7 @@ class FusedTransformer(nn.Layer):
                         pre_caches_length,
                         attn_mask,
                         kv_signal_data,
+                        forward_meta,
                     )
                 # dispatch and moe
                 for mbid in range(self.micro_batch_control.micro_batch_num):

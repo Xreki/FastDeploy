@@ -20,6 +20,18 @@ import numpy as np
 import paddle
 from paddle import Tensor
 from paddle.framework import in_dynamic_mode
+from fastdeploy.platforms import current_platform
+if current_platform.is_cuda() and current_platform.available():
+    try:
+        from fastdeploy.model_executor.ops.gpu import (
+            get_padding_offset,
+            speculate_get_padding_offset,
+        )
+    except Exception:
+        raise ImportError(
+            f"Verify environment consistency between compilation and FastDeploy installation. "
+            f"And ensure the Paddle version supports FastDeploy's custom operators"
+        )
 
 
 def per_block_cast_to_fp8(x: Tensor) -> Tuple[Tensor, Tensor]:
@@ -101,3 +113,56 @@ def divide(numerator, denominator):
     the division value."""
     ensure_divisibility(numerator, denominator)
     return numerator // denominator
+
+def remove_padding(max_len, input_ids, seq_lens_this_time):
+    """
+    remove_padding
+    """
+    if current_platform.is_cuda():
+        cum_offsets_now = paddle.cumsum(max_len - seq_lens_this_time)
+        token_num = paddle.sum(seq_lens_this_time)
+        (
+            ids_remove_padding,
+            cum_offsets,
+            padding_offset,
+            cu_seqlens_q,
+            cu_seqlens_k,
+        ) = get_padding_offset(input_ids, cum_offsets_now, token_num,
+                                seq_lens_this_time)
+        return (
+            ids_remove_padding,
+            padding_offset,
+            cum_offsets,
+            cu_seqlens_q,
+            cu_seqlens_k,
+        )
+
+def speculate_remove_padding(max_len, input_ids, seq_lens_this_time,
+                                    draft_tokens, seq_lens_encoder):
+    """
+    remove_padding
+    """
+    if current_platform.is_cuda():
+        cum_offsets_now = paddle.cumsum(max_len - seq_lens_this_time)
+        token_num = paddle.sum(seq_lens_this_time)
+        (
+            ids_remove_padding,
+            cum_offsets,
+            padding_offset,
+            cu_seqlens_q,
+            cu_seqlens_k,
+        ) = speculate_get_padding_offset(
+            input_ids,
+            draft_tokens,
+            cum_offsets_now,
+            token_num,
+            seq_lens_this_time,
+            seq_lens_encoder,
+        )
+        return (
+            ids_remove_padding,
+            padding_offset,
+            cum_offsets,
+            cu_seqlens_q,
+            cu_seqlens_k,
+        )

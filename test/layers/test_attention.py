@@ -32,7 +32,6 @@ import paddle
 from fastdeploy.model_executor.layers.attention import PaddleNativeAttnBackend, Attention
 from fastdeploy.model_executor.model_runner import ReqToTokenPool, KVCache, MHATokenToKVPool
 from fastdeploy.model_executor.model_runner.model_runner_minimal_os import MinimalModelRunner
-from fastdeploy import InferenceArgs
 from fastdeploy.model_executor.model_runner import ForwardMeta, ForwardMode
 
 
@@ -322,7 +321,7 @@ class TestNativePaddleAttentionBackend(unittest.TestCase):
         else:
             self._setup_kv_cache(forward_batch, layer, self.seq_len)
 
-        self.backend.init_forward_metadata(forward_batch)
+        self.backend.init_attention_metadata(forward_batch)
 
         if mode == ForwardMode.EXTEND:
             expected_shape = [

@@ -19,6 +19,8 @@ import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
 import paddle
 from fastdeploy.utils import get_logger
+from fastdeploy.model_executor.layers.attention import get_attention_backend
+from fastdeploy.worker.model_runner.forward_meta import ForwardMeta
 
 logger = get_logger("worker", "worker.log")
 
@@ -38,6 +40,7 @@ class ModelRunnerBase(ABC):
     Raises:
         None.
     """
+
     def __init__(self, config, args):
         self.share_inputs = {}
         self.model_cfg = config
@@ -46,13 +49,21 @@ class ModelRunnerBase(ABC):
         self.init_dist_env()
 
         self._init_share_inputs(args.max_num_seqs)
-
         self.init_rotary_position_embedding(args.max_model_len)
         self.num_gpu_blocks = args.max_block_num
-
-
         self._load_model(config.model_name_or_path, args.dynamic_load_weight)
+        self._init_attn_backend()
         self._init_kvcache()
+        self.forward_meta = None
+        self.attn_backend = None
+
+    def _init_attn_backend(self):
+        self.attn_backend_cls = get_attention_backend(
+            self.args.attention_backend)
+
+    def _init_forward_meta(self):
+        self.forward_meta = ForwardMeta.init_forward_mata(self)
+        self.share_inputs["forward_meta"] = self.forward_meta
 
     def _log_memory_usage(self, context: str = "") -> None:
         """Log current GPU memory usage."""
@@ -117,7 +128,7 @@ class ModelRunnerBase(ABC):
             Returns:
                 None.
         """
-    # 统一使用paddle.full创建张量
+        # 统一使用paddle.full创建张量
         self._load_model_init_val()
 
         int64_config = {"dtype": "int64"}

@@ -427,6 +427,29 @@ def parse_args():
     parser.add_argument("--dynamic_load_weight", type=int, default=0, help="dynamic load weight or not")
     parser.add_argument("--pad_token_id", type=int, default=-1, help="pad token id")
     parser.add_argument("--eos_tokens_lens", type=int, default=2, help="eos token lens")
+    parser.add_argument("--enable_chunked_prefill", action='store_true', help="enable chunked prefill")
+    parser.add_argument(
+        "--speculate_method", 
+        default=None,
+            type=str,
+            choices=[
+                "autoregressive",
+                "inference_with_reference",
+                "draft_model",
+                "hydra",
+                "eagle",
+            ],
+    )
+    parser.add_argument(
+        "--attention_backend", 
+        default="APPEND_ATTN",
+            type=str,
+            choices=[
+                "APPEND_ATTN",
+            ],
+    )
+    parser.add_argument("--speculate_max_draft_tokens", type=int, default=1)
+
     args = parser.parse_args()
     return args
 

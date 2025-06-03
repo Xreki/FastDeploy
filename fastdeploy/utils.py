@@ -34,6 +34,7 @@ from logging.handlers import BaseRotatingHandler
 from pathlib import Path
 import argparse
 import yaml
+import importlib
 
 
 class EngineError(Exception):
@@ -374,6 +375,11 @@ class FlexibleArgumentParser(argparse.ArgumentParser):
                     items.append((new_key, v))
             return dict(items)
         return _flatten(d)
+        
+def resolve_obj_from_strname(strname: str):
+    module_name, obj_name = strname.rsplit(".", 1)
+    module = importlib.import_module(module_name)
+    return getattr(module, obj_name)
 
 def check_unified_ckpt(model_dir):
     """

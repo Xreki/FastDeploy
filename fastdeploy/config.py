@@ -491,3 +491,4 @@ class LLMConfig:
     moe_config: MoEConfig = field(default=None, init=True)  # type: ignore
     decoding_config: DecodingConfig = field(default=None,
                                             init=True)  # type: ignore
+    kvcache_quant_config: Optional[QuantConfigBase] = None

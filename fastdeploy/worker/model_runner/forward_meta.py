@@ -26,9 +26,10 @@ import abc
 import paddle
 import numpy as np
 import logging
-
+import paddle
 if TYPE_CHECKING:
     from fastdeploy.model_executor.layers.attention import AttentionBackend, Attention
+    from fastdeploy.worker.model_runner.model_runner_base import ModelRunnerBase
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,8 @@ class ForwardMode(IntEnum):
     # for generation
     DECODE = auto()
 
+    MIXED = auto()
+
     def is_prefill(self):
         """Whether it's a prefill forward"""
         return self == ForwardMode.EXTEND
@@ -49,6 +52,9 @@ class ForwardMode(IntEnum):
     def is_decode(self):
         """Whether it's a decode forward"""
         return self == ForwardMode.DECODE
+    def is_mixed(self):
+        """Whether it's a decode forward"""
+        return self == ForwardMode.MIXED
 
 class ReqToTokenPool:
     """A memory pool that maps a request to its token locations."""
@@ -126,7 +132,6 @@ class KVCache(abc.ABC):
         """
         raise NotImplementedError()
 
-
     @abc.abstractmethod
     def transfer(self, indices, flat_data):
         """Transfer kv_data between devices"""
@@ -141,20 +146,22 @@ class KVCache(abc.ABC):
         """Not used yet"""
         self.layer_transfer_counter = layer_transfer_counter
 
+
 class MHATokenToKVPool(KVCache):
     """Token To Key Value Pool for MultiHeadAttention"""
+
     def __init__(
         self,
-        size: int,
-        page_size: int,
+        max_block_num: int,
+        block_size: int,
         dtype: paddle.dtype,
         head_num: int,
         head_dim: int,
         layer_num: int,
         device: str,
     ):
-        self.size = size
-        self.page_size = page_size
+        self.max_block_num = max_block_num
+        self.block_size = block_size
         self.dtype = dtype
         self.device = device
         if dtype in (paddle.int8, paddle.float8_e4m3fn):
@@ -168,7 +175,6 @@ class MHATokenToKVPool(KVCache):
         self.layer_num = layer_num
         self._create_buffers()
 
-
         k_size, v_size = self.get_kv_size_bytes()
         GB = 1024 * 1024 * 1024
         logger.info(
@@ -180,14 +186,16 @@ class MHATokenToKVPool(KVCache):
         # The padded slot 0 is used for writing dummy outputs from padded tokens.
         self.k_buffer = [
             paddle.zeros(
-                (self.size + self.page_size, self.head_num, self.head_dim),
+                (self.max_block_num, self.head_num,
+                 self.block_size, self.head_dim),
                 dtype=self.store_dtype,
             )
             for _ in range(self.layer_num)
         ]
         self.v_buffer = [
             paddle.zeros(
-                (self.size + self.page_size, self.head_num, self.head_dim),
+                (self.max_block_num, self.head_num,
+                 self.block_size, self.head_dim),
                 dtype=self.store_dtype,
             )
             for _ in range(self.layer_num)
@@ -208,7 +216,6 @@ class MHATokenToKVPool(KVCache):
         for v_cache in self.v_buffer:
             v_size_bytes += np.prod(v_cache.shape) * 4
         return k_size_bytes, v_size_bytes
-
 
     def transfer(self, indices, flat_data):
         # transfer prepared data from host to device
@@ -267,38 +274,50 @@ class MHATokenToKVPool(KVCache):
         self.k_buffer[layer_id][loc] = cache_k
         self.v_buffer[layer_id][loc] = cache_v
 
+
 @dataclass
 class ForwardMeta():
     """
     ForwardMeta is used to store the global meta information of the forward.
     """
-    # The forward mode
-    forward_mode: ForwardMode
-    # The batch size
-    batch_size: int
-    # The input ids
-    input_ids: paddle.Tensor
-    # The indices of requests in the req_to_token_pool
-    req_pool_indices: paddle.Tensor
-    # The sequence length
-    seq_lens: paddle.Tensor
-    # The indices of output tokens in the token_to_kv_pool
-    out_cache_loc: paddle.Tensor
-
-    # The sum of all sequence lengths
-    seq_lens_sum: int
-
-    # Optional seq_lens on cpu
-    seq_lens_cpu: Optional[paddle.Tensor] = None
-
-    # For extend
-    extend_num_tokens: Optional[int] = None
-    extend_seq_lens: Optional[paddle.Tensor] = None
-    extend_prefix_lens: Optional[paddle.Tensor] = None
-    extend_start_loc: Optional[paddle.Tensor] = None
-    extend_prefix_lens_cpu: Optional[List[int]] = None
-    extend_seq_lens_cpu: Optional[List[int]] = None
-
-    req_to_token_pool: ReqToTokenPool = None
-    token_to_kv_pool: KVCache = None
+    input_ids:paddle.Tensor
+    #attention meta
+    forward_mode: ForwardMode = ForwardMode.MIXED
+    ids_remove_padding:paddle.Tensor = None
+    seq_lens_encoder: Optional[paddle.Tensor] = None
+    seq_lens_decoder: Optional[paddle.Tensor] = None
+    seq_lens_this_time: Optional[paddle.Tensor] = None
+    cum_offsets: Optional[paddle.Tensor] = None
+    block_tables: Optional[paddle.Tensor] = None
     attn_backend: 'AttentionBackend' = None
+    rotary_embs:Optional[paddle.Tensor] = None
+    padding_offset:Optional[paddle.Tensor] = None
+    cum_offsets:Optional[paddle.Tensor] = None
+    cu_seqlens_q:Optional[paddle.Tensor] = None
+    cu_seqlens_k:Optional[paddle.Tensor] = None
+    caches:Optional[paddle.Tensor] = None
+    attn_mask:Optional[paddle.Tensor] = None
+    pre_caches_length:int=0
+
+    @classmethod
+    def init_forward_mata(
+        cls,
+        model_runner: "ModelRunnerBase"
+    ):
+        ret = cls(
+            forward_mode=ForwardMode.MIXED,
+            input_ids=model_runner.share_inputs["input_ids"],
+            ids_remove_padding=model_runner.share_inputs["ids_remove_padding"],
+            seq_lens_encoder=model_runner.share_inputs["seq_lens_encoder"],
+            seq_lens_decoder=model_runner.share_inputs["seq_lens_decoder"],
+            seq_lens_this_time=model_runner.share_inputs["seq_lens_this_time"],
+            cum_offsets=model_runner.share_inputs["cum_offsets"],
+            block_tables=model_runner.share_inputs["block_tables"],
+            attn_backend=model_runner.attn_backend,
+            rotary_embs=model_runner.share_inputs["rope_emb"],
+            padding_offset=model_runner.share_inputs["padding_offset"],
+            cu_seqlens_q=model_runner.share_inputs["cu_seqlens_q"],
+            cu_seqlens_k=model_runner.share_inputs["cu_seqlens_k"],
+            caches=model_runner.share_inputs["caches"]
+        )
+        return ret

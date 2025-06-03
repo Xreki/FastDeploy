@@ -1,3 +1,4 @@
+"""
 # Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,17 +12,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
 
-from .attention import Attention
-from .base_attention_backend import AttentionBackend
-from .native_paddle_backend import PaddleNativeAttnBackend
-from .attention_selecter import get_attention_backend
-from .append_attn_backend import AppendAttentionBackend
+from .get_block_shape_and_split_kv_block import get_block_shape_and_split_kv_block
+from .append_attention import append_attention
 
 __all__ = [
-    "Attention",
-    "AttentionBackend",
-    "PaddleNativeAttnBackend",
-    "get_attention_backend",
-    "AppendAttentionBackend",
+    "get_block_shape_and_split_kv_block",
+    "append_attention"
 ]

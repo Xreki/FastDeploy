@@ -15,7 +15,6 @@
 """
 
 from .forward_meta import ForwardMeta, ForwardMode, ReqToTokenPool, KVCache, MHATokenToKVPool
-from .model_runner_minimal_os import MinimalModelRunner
 
 __all__ = [
     "ForwardMeta",
@@ -23,5 +22,4 @@ __all__ = [
     "ReqToTokenPool",
     "KVCache",
     "MHATokenToKVPool",
-    "MinimalModelRunner"
 ]
