@@ -69,13 +69,16 @@ class CudaGraphPiecewiseBackend:
             self.concrete_size_entries[shape] = ConcreteSizeEntry(
                 runtime_bs=shape)
 
+        print("create all batch size entry")
+
     def __call__(self, **kwargs):
         # Get batch size
-        batch_size = kwargs['input_ids'][0]
+        input_ids: paddle.Tensor = kwargs['input_ids']
+        batch_size = input_ids.shape[0]
         entry = self.concrete_size_entries.get(batch_size)
         if entry.runnable is None:
             entry.runnable = self.runnable
-            logger.info(
+            print(
                 f"[CUDA GRAPH] new entry lazy initialize with batch size {batch_size}"
             )
 
@@ -88,7 +91,7 @@ class CudaGraphPiecewiseBackend:
             for n in range(entry.num_finished_warmup):
                 entry.num_finished_warmup += 1
                 entry.runnable(**kwargs)
-                logger.info(
+                print(
                     f"[CUDA GRAPH] warm up for batch size "
                     f"{batch_size}, finished ({n+1}/{entry.num_finished_warmup}) times"
                 )
@@ -106,20 +109,20 @@ class CudaGraphPiecewiseBackend:
             # Capture
             new_grpah.capture_begin()
             output = entry.runnable(**kwargs)
-            entry.cuda_graph.capture_end()
+            new_grpah.capture_end()
 
             # Store output buffer
+            entry.cuda_graph = new_grpah
             entry.output_buffer = paddle.zeros_like(output)
             output._share_buffer_to(entry.output_buffer)
             output._clear
 
             paddle.device.synchronize()
-            logger.info(
+            print(
                 f"[CUDA GRAPH] cuda graph captured for batch size {batch_size}"
             )
 
         # Replay
         entry.cuda_graph.replay()
-        logger.info(
-            f"[CUDA GRAPH] cuda graph replayed for batch size {batch_size}")
+        print(f"[CUDA GRAPH] cuda graph replayed for batch size {batch_size}")
         return entry.output_buffer

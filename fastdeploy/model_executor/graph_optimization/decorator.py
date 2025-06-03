@@ -68,7 +68,7 @@ def support_graph_opt(cls: Optional[_T] = None) -> _T:
         if not self.use_graph_opt:
             return self.forward(**kwargs)
 
-        return self.cuda_graph_backend(**kwargs)
+        return self.graph_opt_backend(**kwargs)
 
     cls.__init__ = __init__
     cls.__call__ = __call__
