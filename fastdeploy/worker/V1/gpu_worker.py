@@ -29,7 +29,7 @@ from fastdeploy.worker.output import ModelRunnerOutput
 from fastdeploy.worker.V1.gpu_model_runner import GPUModelRunner
 from fastdeploy.worker.V1.worker_base import WorkerBase
 
-logger = get_logger()
+logger = get_logger("gpu_worker", "gpu_worker.log")
 
 
 class GpuWorker(WorkerBase):

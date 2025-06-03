@@ -36,7 +36,11 @@ class KVCacheSpec:
         Merge a list of KVCacheSpec objects into a single KVCacheSpec object.
         """
         # check list
-        pass
+        assert all(
+            (spec.block_size == specs[0].block_size
+             and spec.block_memory_used == specs[0].block_memory_used)
+            for spec in specs[1:]), (
+                "All layers in the model must share the same block_size.")
 
         return copy.deepcopy(specs[0])
 

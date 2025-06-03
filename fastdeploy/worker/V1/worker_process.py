@@ -28,7 +28,7 @@ from fastdeploy.inter_communicator import IPCSignal
 from fastdeploy.utils import get_logger
 from fastdeploy.worker.V1.GpuWorker import GpuWorker
 
-logger = get_logger()
+logger = get_logger("worker_process", )
 
 
 class PaddleDisWorkerProc():

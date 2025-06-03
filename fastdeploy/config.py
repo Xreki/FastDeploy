@@ -28,7 +28,7 @@ from fastdeploy.model_executor.layers.quantization.quant_base import \
     QuantConfigBase
 from fastdeploy.utils import get_logger
 
-logger = get_logger()
+logger = get_logger("config", "config.log")
 
 __all__ = [
     "ERNIEBOT_PRETRAINED_INIT_CONFIGURATION",
@@ -551,11 +551,12 @@ class KVCacheConfig:
     enc_dec_block_num: int = 2
     kv_cache_ratio: float = 0.75
     dtype: str = 'bfloat16'
+    kvcache_quant_config: Optional[QuantConfigBase] = None
 
 
 class TmpConfig:
     """
-    TmpConfig will be moved to other config class when refactor work is relatively complete.
+    TODO(yuanrisheng):TmpConfig will be moved to other config class when refactor work is relatively complete.
     """
     cache_quant_dtype: str = "default"
     has_zero_point: bool = False
@@ -600,4 +601,3 @@ class LLMConfig:
     moe_config: MoEConfig = field(default=None, init=True)  # type: ignore
     decoding_config: DecodingConfig = field(default=None,
                                             init=True)  # type: ignore
-    kvcache_quant_config: Optional[QuantConfigBase] = None

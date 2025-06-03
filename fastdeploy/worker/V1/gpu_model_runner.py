@@ -35,7 +35,7 @@ from fastdeploy.utils import get_logger
 from fastdeploy.worker.output import ModelOutputData, ModelRunnerOutput
 from fastdeploy.worker.V1.model_runner_base import ModelRunnerBase
 
-logger = get_logger()
+logger = get_logger("gpu_model_runner", "gpu_model_runner.log")
 
 
 class GPUModelRunner(ModelRunnerBase):
@@ -125,7 +125,7 @@ class GPUModelRunner(ModelRunnerBase):
                     request.get("stop_token_ids")[0])] = np.array(
                         request.get("stop_token_ids"), dtype="int64")
 
-    def _dymmy_prefill_inputs(self, num_total_tokens: int,
+    def _dummy_prefill_inputs(self, num_total_tokens: int,
                               number_of_tasks: int):
         """ Set dummy prefill inputs to share inputs"""
         full_length = num_total_tokens // number_of_tasks
@@ -406,7 +406,7 @@ class GPUModelRunner(ModelRunnerBase):
         """
 
         # 1. Compute real num_tokens
-        self._dymmy_prefill_inputs(self.model_config.max_model_len,
+        self._dummy_prefill_inputs(self.model_config.max_model_len,
                                    self.model_config.max_num_seqs)
         (
             ids_remove_padding,

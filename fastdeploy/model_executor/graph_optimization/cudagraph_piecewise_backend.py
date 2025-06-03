@@ -23,7 +23,8 @@ import paddle.nn.layer
 from fastdeploy.config import LLMConfig
 from fastdeploy.utils import get_logger
 
-logger = get_logger()
+logger = get_logger("cudagrpah_piecewise_backend",
+                    "cudagraph_piecewise_backend.log")
 
 
 @dataclass

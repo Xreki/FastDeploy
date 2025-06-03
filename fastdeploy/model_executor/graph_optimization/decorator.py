@@ -20,7 +20,7 @@ from typing import Callable, Optional, TypeVar
 import paddle.nn.layer
 
 from fastdeploy.config import LLMConfig
-from fastdeploy.model_executor.graph_optimization_backend import \
+from fastdeploy.model_executor.graph_optimization.graph_optimization_backend import \
     GraphOptBackend
 
 _T = TypeVar("_T", bound=type[paddle.nn.Layer])
@@ -53,7 +53,7 @@ def support_graph_opt(cls: Optional[_T] = None) -> _T:
         """ Decorator model.__init__() func """
         origin_init(self, llm_config=llm_config, **kwargs)
         self.use_graph_opt = (
-            not (llm_config.graph_opt_config.level == 0
+            not (llm_config.graph_opt_config.graph_opt_level == 0
                  and not llm_config.graph_opt_config.use_cudagraph))
         if self.use_graph_opt:
             GraphOptWrapper.__init__(self,
