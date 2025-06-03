@@ -19,6 +19,7 @@ import paddle
 import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
 import random
+import os
 
 from paddlenlp.trl import llm_utils
 from paddlenlp.trl.llm_utils import get_rotary_position_embedding
@@ -80,6 +81,9 @@ class ModelRunner(ModelRunnerBase):
         predictor_args.append_attn = True
 
         local_test = False
+        if os.getenv("RUN_MODE", "") == "test":
+            local_test = True
+        
         if dynamic_load_weight:
             from paddlenlp.experimental.transformers.inference_model import InferenceModel
             self.model = InferenceModel(predictor_args, model_args,
@@ -119,7 +123,7 @@ class ModelRunner(ModelRunnerBase):
         分享不拷贝数据
         """
         cache_kvs = {}
-        max_block_num = self.num_gpu_blocks
+        total_block_num = self.num_gpu_blocks
 
         if (
             hasattr(self.model_cfg, "num_key_value_heads")
@@ -136,7 +140,7 @@ class ModelRunner(ModelRunnerBase):
             cache_type = self.args.dtype
             cache_kvs["key_caches_{}".format(i)] = paddle.full(
                 shape=[
-                    max_block_num,
+                    total_block_num,
                     kv_num_head,
                     self.args.block_size,
                     self.model_cfg.hidden_size // self.model_cfg.num_attention_heads,
@@ -146,7 +150,7 @@ class ModelRunner(ModelRunnerBase):
             )
             cache_kvs["value_caches_{}".format(i)] = paddle.full(
                 shape=[
-                    max_block_num,
+                    total_block_num,
                     kv_num_head,
                     self.args.block_size,
                     self.model_cfg.hidden_size // self.model_cfg.num_attention_heads,
@@ -273,9 +277,11 @@ class ModelRunner(ModelRunnerBase):
         """
         fake input to profile
         """
-        full_length = num_total_tokens // number_of_tasks
-        input_length = int(full_length * self.args.kv_cache_ratio)
+        input_length = num_total_tokens // number_of_tasks
         block_num = (input_length + self.args.block_size - 1 + self.args.enc_dec_block_num) // self.args.block_size
+        self.share_inputs["free_list"] = paddle.to_tensor([], dtype="int32")
+        self.share_inputs["free_list_len"][0] = 0
+
 
         for i in range(number_of_tasks):
             idx = i

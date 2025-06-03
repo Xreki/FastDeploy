@@ -267,6 +267,7 @@ class ChatCompletionRequest(BaseModel):
     stream_options: Optional[StreamOptions] = None
     temperature: Optional[float] = None
     top_p: Optional[float] = None
+    user: Optional[str] = None
     metadata: Optional[dict] = None
 
     # doc: begin-chat-completion-sampling-params

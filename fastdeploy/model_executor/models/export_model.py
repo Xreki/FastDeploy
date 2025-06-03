@@ -23,12 +23,22 @@ import sys
 import paddle
 import paddle.distributed as dist
 from paddle.common_ops_import import convert_dtype
-from paddle.distributed import fleet
-from paddlenlp.trainer import RuntimeTimer
-from paddlenlp.transformers.configuration_utils import PretrainedConfig
-from paddlenlp.transformers.model_utils import load_tp_checkpoint
-from paddlenlp.trl import llm_utils
-from paddlenlp.utils.log import logger
+
+from .tokenizer import ErnieBotTokenizer
+from .modeling_ernie_bot import (
+    ErnieBotForGeneration,
+    ErnieBotFusedModel,
+)
+from fastdeploy.inference_args import GenerationPhase
+
+from .utils import (
+    _vocab_size_with_padding,
+    generate_rank_mapping,
+    get_infer_model_path,
+    model_convert_fp8,
+    convert_ndarray_dtype
+)
+from fastdeploy.model_executor.models.utils import load_checkpoint
 
 from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
                                LLMConfig, LoadConfig, ModelConfig, MoEConfig,
@@ -132,6 +142,8 @@ def build_stream_line_model(
     scale_dir: str = "None",
     output_via_mq: bool = True,
     use_safetensors: bool = False,
+    embeddings_column_cut: bool = False,
+    use_empty_parameter: bool = False,
 ):
     """
     Build a fused inference model
@@ -211,6 +223,12 @@ def build_stream_line_model(
     if num_key_value_heads is None:
         num_key_value_heads = -1
 
+    if num_key_value_heads < tensor_parallel_degree:
+        logger.warning(
+            f"key value heads num is {num_key_value_heads}, tensor parallel degree is {tensor_parallel_degree}"
+        )
+        num_key_value_heads = tensor_parallel_degree
+    
     if config.get("ffn_hidden_size", None) is not None:
         ffn_hidden_size = config["ffn_hidden_size"]
     elif config.get("intermediate_size", None) is not None:
@@ -231,9 +249,17 @@ def build_stream_line_model(
     if num_layers is None:
         raise ValueError(f"num_layers<{num_layers}> is invalid")
 
+    remove_tail_layer = config.get("remove_tail_layer")
+    if remove_tail_layer is True:
+        num_layers -= 1
+    elif isinstance(remove_tail_layer, int):
+        num_layers -= remove_tail_layer
+
     use_moe = config.get("moe_layer_start_index", num_layers) < num_layers
 
-    if use_fake_parameter:
+    if use_empty_parameter:
+        context = paddle.LazyGuard()
+    elif use_fake_parameter:
         context = contextlib.nullcontext()
     elif use_safetensors:
         context = paddle.LazyGuard()
@@ -382,6 +408,7 @@ def build_stream_line_model(
     additional_config.ep_just_for_test = ep_just_for_test
     model_config.generation_phase = generation_phase
     parallel_config.use_micro_batch = use_micro_batch
+    parallel_config.lm_head_column_cut = not embeddings_column_cut
     tmp_config.weight_block_size = config.get("weight_block_size", [-1, -1])
     load_config.scale_dir = scale_dir
     model_config.output_via_mq = output_via_mq

@@ -13,25 +13,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-
+import json
 import os
 import random
 
 import numpy as np
 import paddle
 import paddle.distributed.fleet as fleet
+from paddlenlp.transformers.model_utils import load_tp_checkpoint
+from safetensors import safe_open
 
 from fastdeploy.input.mm_processor import DataProcessor
 from fastdeploy.input.mm_processor.tokenizer import ErnieVLTokenizer
-from fastdeploy.model_executor.models.ernie_vl.configuration import \
-    ErnieBotMoEVLConfig
-from fastdeploy.model_executor.models.ernie_vl.dfnrope import \
-    DFNRopeVisionTransformerConfig
-from fastdeploy.model_executor.models.ernie_vl.dfnrope.modeling import \
-    DFNRopeVisionTransformerPretrainedModel
-from fastdeploy.model_executor.models.ernie_vl.modeling_resampler import (
-    ScatterOp, VariableResolutionResamplerModel)
-from fastdeploy.worker.model_runner.model_runner_base import ModelRunnerBase
+from fastdeploy.model_executor.model_runner.model_runner_base import ModelRunnerBase
+from fastdeploy.model_executor.models.ernie_vl.configuration import ErnieBotMoEVLConfig
+from fastdeploy.model_executor.models.ernie_vl.dfnrope import DFNRopeVisionTransformerConfig
+from fastdeploy.model_executor.models.ernie_vl.dfnrope.modeling import DFNRopeVisionTransformerPretrainedModel
+from fastdeploy.model_executor.models.ernie_vl.modeling_resampler import ScatterOp
+from fastdeploy.model_executor.models.ernie_vl.modeling_resampler import VariableResolutionResamplerModel
+from fastdeploy.model_executor.models.modeling_ernie_bot import ErnieBotFusedModel
+from fastdeploy.model_executor.utils import check_safetensors_model
 
 
 class ModelRunner(ModelRunnerBase):
@@ -46,12 +47,17 @@ class ModelRunner(ModelRunnerBase):
         self.tensor_parallel_rank = hcg.get_model_parallel_rank()
         self.mp_src_rank = hcg.get_model_parallel_group_src_rank()
         self.mp_group = hcg.get_model_parallel_group()
+        self.is_safetensors_model = check_safetensors_model(
+            args.model_name_or_path)
 
         model_path = os.path.dirname(args.model_name_or_path)
         args.llm_model_name_or_path = args.model_name_or_path
-        args.tokenizer = model_path
-        args.vision_model_name_or_path = f"{model_path}/DFNRopeVisionTransformer"
-        args.image_preprocessor = model_path
+        if not self.is_safetensors_model:
+            args.tokenizer = args.image_preprocessor = model_path
+        else:
+            args.tokenizer = args.image_preprocessor = args.model_name_or_path
+        args.vision_model_name_or_path = os.path.join(
+            model_path, "DFNRopeVisionTransformer")
 
         self.amp_black = [
             "reduce_sum",
@@ -83,8 +89,6 @@ class ModelRunner(ModelRunnerBase):
         pass
 
     def _load_model(self, model_name, dynamic_load_weight):
-        if dynamic_load_weight:
-            raise Exception("EB45T-VL Not Support Dynamic Load Weight For Now")
 
         tokenizer = ErnieVLTokenizer.from_pretrained(
             self.args.tokenizer,
@@ -102,15 +106,40 @@ class ModelRunner(ModelRunnerBase):
             tensor_parallel_rank=self.tensor_parallel_rank,
             moe_group="dummy",
         )
+        config.is_mtp = False
         self.model_cfg = config
+        if self.is_safetensors_model:
+            meta_json = os.path.join(self.args.model_name_or_path,
+                                     "model.safetensors.index.json")
+            if os.path.exists(meta_json):
+                with open(
+                        os.path.join(self.args.model_name_or_path,
+                                     "model.safetensors.index.json"),
+                        "r") as f:
+                    self.weight_map = json.load(f)["weight_map"]
+            else:
+                self.weight_map = {}
+                with safe_open(os.path.join(self.args.model_name_or_path,
+                                            "model.safetensors"),
+                               framework="np") as f:
+                    keys = f.keys()
+                    for k in keys:
+                        self.weight_map[k] = "model.safetensors"
 
-        vision_config = DFNRopeVisionTransformerConfig.from_pretrained(
-            self.args.vision_model_name_or_path,
-            tensor_parallel_degree=1,
-            tensor_parallel_rank=0,
-            attn_sep=False,
-            dtype="bfloat16",
-        )
+        if self.is_safetensors_model:
+            vision_config = config.vision_config
+            vision_config.tensor_parallel_degree = 1
+            vision_config.tensor_parallel_rank = 0
+            vision_config.attn_sep = False
+            vision_config.dtype = "bfloat16"
+        else:
+            vision_config = DFNRopeVisionTransformerConfig.from_pretrained(
+                self.args.vision_model_name_or_path,
+                tensor_parallel_degree=1,
+                tensor_parallel_rank=0,
+                attn_sep=False,
+                dtype="bfloat16",
+            )
         config.vision_config = vision_config
         config.pixel_hidden_size = config.vision_config.hidden_size
         config.im_patch_id = tokenizer.get_vocab()["<|IMAGE_PLACEHOLDER|>"]
@@ -145,25 +174,52 @@ class ModelRunner(ModelRunnerBase):
                                         -1)
         self.image_preprocess = image_preprocess
 
-        from efficientllm.models.export_model import build_stream_line_model
-        _, _, self.model = build_stream_line_model(
-            self.model_cfg,
-            self.args.model_name_or_path,
-            self.args.dtype,
-            self.args.block_size,
-            max_len=self.args.max_model_len,
-            stage_flag=None,
-            use_fake_parameter=True,
-            pad_vocab=False,
-            tokenizer=tokenizer,
-            output_via_mq=True,
-            export_model_type="W8A16C16",
-            moe_quant_type="weight_only_int8",
-        )
-        self.model.eval()
+        if dynamic_load_weight:
+            from ..models.dynamic_load_model import DynamicLoadModel
+            local_test = False
+            if os.getenv("RUN_MODE", "") == "test":
+                local_test = True
+            self.model = DynamicLoadModel(
+                model_cfg=self.model_cfg,
+                model_name_or_path=self.args.model_name_or_path,
+                dtype=self.args.dtype,
+                block_size=self.args.block_size,
+                max_len=self.args.max_model_len,
+                tokenizer=tokenizer,
+                output_via_mq=True,
+                pad_vocab=False,
+                export_model_type="W8A16C16",
+                moe_quant_type="weight_only_int8",
+                stage_flag=None,
+                load_model_from_ipc=dynamic_load_weight,
+                nranks=self.nranks,
+                rank=self.rank,
+                local_test=local_test,
+                vision_model=self.vision_model,
+                resampler_model=self.resampler_model
 
-        self.set_state_dict(self.args)
-        print("load model finished")
+            )
+        else:
+            from ..models.export_model import build_stream_line_model
+            _, _, self.model = build_stream_line_model(
+                self.model_cfg,
+                self.args.model_name_or_path,
+                self.args.dtype,
+                self.args.block_size,
+                max_len=self.args.max_model_len,
+                stage_flag=None,
+                use_fake_parameter=True,
+                pad_vocab=False,
+                tokenizer=tokenizer,
+                output_via_mq=True,
+                export_model_type="W8A16C16",
+                moe_quant_type="weight_only_int8",
+                use_safetensors=self.is_safetensors_model,
+            )
+            self.model.eval()
+
+            self.set_state_dict(self.args)
+            print("load model finished")
 
     def init_extra_input(self, config, args):
         head_dim = self.model_cfg.hidden_size // self.model_cfg.num_attention_heads
@@ -184,7 +240,7 @@ class ModelRunner(ModelRunnerBase):
         分享不拷贝数据
         """
         cache_kvs = {}
-        max_block_num = self.num_gpu_blocks
+        total_block_num = self.num_gpu_blocks
         num_layers = self.model_cfg.get("num_layers",
                                         None) or self.model_cfg.get(
                                             "num_hidden_layers", None)
@@ -200,7 +256,7 @@ class ModelRunner(ModelRunnerBase):
             cache_type = self.args.dtype
             cache_kvs["key_caches_{}".format(i)] = paddle.full(
                 shape=[
-                    max_block_num,
+                    total_block_num,
                     kv_num_head,
                     self.args.block_size,
                     self.model_cfg.hidden_size //
@@ -211,7 +267,7 @@ class ModelRunner(ModelRunnerBase):
             )
             cache_kvs["value_caches_{}".format(i)] = paddle.full(
                 shape=[
-                    max_block_num,
+                    total_block_num,
                     kv_num_head,
                     self.args.block_size,
                     self.model_cfg.hidden_size //
@@ -226,42 +282,109 @@ class ModelRunner(ModelRunnerBase):
             del value
         paddle.device.cuda.empty_cache()
 
+    def clear_parameters(self, pid):
+        """ clear_parameters """
+        if "caches" in self.share_inputs:
+            self.model.clear_parameters(pid)
+            del self.share_inputs["caches"]
+            paddle.device.cuda.empty_cache()
+            self.model.log_memory_usage("clear all memory")
+
+    def update_parameters(self, pid):
+        """ update_parameters """
+        if "caches" not in self.share_inputs:
+            self.model.update_parameters(pid)
+            self._init_kvcache()
+            self.model.log_memory_usage("update all memory")
+
     @paddle.no_grad()
     def set_state_dict(self, args):
         """set_state_dict"""
-        rank_model_paths = []
-        for root, dirs, files in os.walk(self.args.llm_model_name_or_path):
-            for file in files:
-                if file == f"model_state.tp0{self.tensor_parallel_rank}.pdparams":
-                    rank_model_paths.append(os.path.join(root, file))
-        print(rank_model_paths)
-        state_dict = {}
-        for path in rank_model_paths:
-            loaded_dict = paddle.load(path, return_numpy=True)
-            state_dict.update(loaded_dict)
+        if not self.is_safetensors_model:
+            rank_model_paths = []
+            for root, dirs, files in os.walk(self.args.llm_model_name_or_path):
+                for file in files:
+                    if file == f"model_state.tp0{self.tensor_parallel_rank}.pdparams":
+                        rank_model_paths.append(os.path.join(root, file))
+            print(rank_model_paths)
+            state_dict = {}
+            for path in rank_model_paths:
+                loaded_dict = paddle.load(path, return_numpy=True)
+                state_dict.update(loaded_dict)
 
-        resampler_state = {}
-        for key in list(state_dict.keys()):
-            if "vision" in key:
-                state_dict.pop(key)
-            if key.startswith("ernie.resampler_model."):
-                value = state_dict.pop(key)
-                value = paddle.to_tensor(value).cast("bfloat16")
-                value = value.numpy()
-                resampler_state[key[len("ernie.resampler_model."):]] = value
-        self.model.set_state_dict(state_dict)
-        self.resampler_model.set_state_dict(resampler_state)
+            resampler_state = {}
+            for key in list(state_dict.keys()):
+                if "vision" in key:
+                    state_dict.pop(key)
+                if key.startswith("ernie.resampler_model."):
+                    value = state_dict.pop(key)
+                    value = paddle.to_tensor(value).cast("bfloat16")
+                    value = value.numpy()
+                    resampler_state[
+                        key[len("ernie.resampler_model."):]] = value
+            self.model.set_state_dict(state_dict)
+            self.resampler_model.set_state_dict(resampler_state)
+        else:
+            cls = ErnieBotFusedModel
+            state_dict = load_tp_checkpoint(
+                args.model_name_or_path,
+                cls,
+                self.model_cfg,
+                return_numpy=True,
+            )
+            self.model.set_state_dict(state_dict)
 
     @paddle.no_grad()
     def inject_pp_vision_model(self, args, cfg):
         """
         注入vision model参数
         """
-        vision_model = DFNRopeVisionTransformerPretrainedModel.from_pretrained(
-            args.vision_model_name_or_path, config=cfg.vision_config)
+
+        def set_vision_state_dict(model,
+                                  tensor_parallel_degree=8,
+                                  tensor_parallel_rank=0,
+                                  name=""):
+            model_state_dict = model.state_dict()
+            compat_keys = [name + k for k in model_state_dict.keys()]
+            model_files = set()
+            for k in compat_keys:
+                if k in self.weight_map.keys():
+                    model_files.add(
+                        os.path.join(args.model_name_or_path,
+                                     self.weight_map[k]))
+            state_dict = {}
+            for model_file in model_files:
+                with safe_open(model_file, framework="np") as f:
+                    for k in f.keys():
+                        if k in compat_keys:
+                            new_k = k.replace(name, "")
+                            tensor = f.get_tensor(k)
+                            if name == "ernie.resampler_model." and new_k == "spatial_linear.0.weight":
+                                splited_tensors = np.split(
+                                    tensor, tensor_parallel_degree, axis=0)
+                                state_dict[new_k] = splited_tensors[
+                                    tensor_parallel_rank]
+                            else:
+                                state_dict[new_k] = tensor
+            model.set_state_dict(state_dict)
+
+        if not self.is_safetensors_model:
+            vision_model = DFNRopeVisionTransformerPretrainedModel.from_pretrained(
+                args.vision_model_name_or_path, config=cfg.vision_config)
+        else:
+            vision_model = DFNRopeVisionTransformerPretrainedModel(
+                cfg.vision_config)
         vision_model = paddle.amp.decorate(models=vision_model,
                                            level="O2",
                                            dtype="bfloat16")
+        vision_model.eval()
+        if self.is_safetensors_model:
+            set_vision_state_dict(
+                vision_model,
+                tensor_parallel_degree=self.tensor_parallel_degree,
+                tensor_parallel_rank=self.tensor_parallel_rank,
+                name="vision_model.",
+            )
 
         resampler_model = VariableResolutionResamplerModel(
             cfg.pixel_hidden_size,
@@ -273,8 +396,14 @@ class ModelRunner(ModelRunnerBase):
         resampler_model = paddle.amp.decorate(models=resampler_model,
                                               level="O2",
                                               dtype="bfloat16")
-        vision_model.eval()
         resampler_model.eval()
+        if self.is_safetensors_model:
+            set_vision_state_dict(
+                resampler_model,
+                tensor_parallel_degree=self.tensor_parallel_degree,
+                tensor_parallel_rank=self.tensor_parallel_rank,
+                name="ernie.resampler_model.",
+            )
 
         return vision_model, resampler_model
 
@@ -333,15 +462,15 @@ class ModelRunner(ModelRunnerBase):
         position_ids_3d_real = paddle.concat([position_ids, dec_pos_ids],
                                              axis=1)
 
-        from efficientllm.models.layers.rotary_embedding import get_rope_3d
+        from ..models.utils import get_rotary_position_embedding_3d
 
-        rope_emb = get_rope_3d(
-            rotary_dim=self.model_cfg.hidden_size //
+        rope_emb = get_rotary_position_embedding_3d(
+            position_ids_3d_real,
+            head_dim=self.model_cfg.hidden_size //
             self.model_cfg.num_attention_heads,
-            base=self.model_cfg.rope_theta,
-            position_ids=position_ids_3d_real,
-            paritial_rotary_factor=1.0,
-            max_position=self.args.max_model_len,
+            compression_ratio=1.0,
+            rope_theta=self.model_cfg.rope_theta,
+            seq_len=self.args.max_model_len,
             freq_allocation=self.model_cfg.freq_allocation,
         )
         return rope_emb
@@ -367,8 +496,12 @@ class ModelRunner(ModelRunnerBase):
             }
 
             inputs = self._preprocess(task)
-            self.share_inputs["image_features"] = self.extract_vision_features(
-                inputs)
+            if inputs.get("images") is not None:
+                self.share_inputs[
+                    "image_features"] = self.extract_vision_features(inputs)
+            else:
+                # 兼容没有图片和视频的情况
+                self.share_inputs["image_features"] = None
             print("extract vision features done")
             self.share_inputs["rope_emb"][idx:idx +
                                           1, :] = self.prepare_rope3d(
@@ -405,7 +538,7 @@ class ModelRunner(ModelRunnerBase):
                 idx:idx + 1, :encoder_block_num] = np.array(task.block_tables,
                                                             dtype="int32")
 
-            from efficientllm.ops.gpu import reset_stop_value
+            from ..ops.gpu import reset_stop_value
             reset_stop_value(self.share_inputs["not_need_stop"])
 
     def generate(self):
@@ -456,10 +589,10 @@ class ModelRunner(ModelRunnerBase):
         """
         fake input to profile
         """
-        full_length = num_total_tokens // number_of_tasks
-        input_length = int(full_length * self.args.kv_cache_ratio)
-        block_num = (input_length + self.args.block_size - 1 +
-                     self.args.enc_dec_block_num) // self.args.block_size
+        input_length = num_total_tokens // number_of_tasks
+        block_num = (input_length + self.args.block_size - 1 + self.args.enc_dec_block_num) // self.args.block_size
+        self.share_inputs["free_list"] = paddle.to_tensor([], dtype="int32")
+        self.share_inputs["free_list_len"][0] = 0
 
         for i in range(number_of_tasks):
             idx = i
@@ -490,7 +623,7 @@ class ModelRunner(ModelRunnerBase):
 
     def _preprocess(self, task):
         """process batch"""
-        one = task.multi_modal_inputs
+        one = task.multimodal_inputs
         print(one)
 
         input_ids = one["input_ids"][np.newaxis, :]

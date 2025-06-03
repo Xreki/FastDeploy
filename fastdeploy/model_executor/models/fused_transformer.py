@@ -65,6 +65,7 @@ class FusedTransformer(nn.Layer):
         base_model_prefix="ernie",
         draft_type="",
         llm_config=None,
+        max_len=32768,
     ):
         """
         Initialize the fused transformer model.
@@ -79,6 +80,7 @@ class FusedTransformer(nn.Layer):
             use_neox_rotary_style (bool, optional): Whether to use NeoX rotary position encoding, defaults to False.
             fuse_ffn_act (bool, optional): Whether to fuse FFN and activation layers, defaults to False.
             ring_id (int, optional): Ring ID for multi-process parallel training, defaults to -1.
+            max_len (int): The maximum length of the input sequence.
         """
         super().__init__()
         self.inference_args = inference_args
@@ -90,6 +92,7 @@ class FusedTransformer(nn.Layer):
         else:
             self.use_micro_batch = False
 
+        self.max_len = max_len
         self.num_layers = inference_args.num_layers
         self.act_scales = inference_args.act_scale_dict
         self.fuse_ffn_act = fuse_ffn_act
@@ -792,7 +795,7 @@ class FusedTransformer(nn.Layer):
                 kwargs["encoder_block_shape_q"] = 64
                 kwargs["decoder_block_shape_q"] = 16
                 kwargs["max_partition_size"] = 32768
-                kwargs["encoder_max_partition_size"] = 32768
+                kwargs["encoder_max_partition_size"] = self.max_len
 
                 (
                     kwargs["encoder_batch_ids"],

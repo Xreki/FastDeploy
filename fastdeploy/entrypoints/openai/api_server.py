@@ -259,15 +259,14 @@ async def metrics():
     """
     metrics_text = get_filtered_metrics(
         EXCLUDE_LABELS,
-        extra_register_func=lambda reg: main_process_metrics.register_all(reg)
+        extra_register_func=lambda reg: main_process_metrics.register_all(reg, workers=args.workers)
     )
     return Response(metrics_text, media_type=CONTENT_TYPE_LATEST)
 
 
 def run_main_metrics_server():
     """Metrics server running the main process"""
-    if not is_port_available("0.0.0.0", args.metrics_port):
-        raise Exception(f"The parameter `metrics_port`:{args.metrics_port} is already in use.")
+
     uvicorn.run(
         main_app,
         host="0.0.0.0",
@@ -280,6 +279,8 @@ def main():
     """main函数"""
     if not is_port_available(args.host, args.port):
         raise Exception(f"The parameter `port`:{args.port} is already in use.")
+    if not is_port_available(args.host, args.metrics_port):
+        raise Exception(f"The parameter `metrics_port`:{args.metrics_port} is already in use.")
     load_engine()
     launch_api_server(args)
 

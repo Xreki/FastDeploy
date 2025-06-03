@@ -26,6 +26,23 @@ import struct
 from functools import partial
 
 import numpy as np
+from paddlenlp.transformers import PretrainedTokenizer
+from paddlenlp.transformers.model_utils import _add_variant
+from paddlenlp.transformers.utils import paddlenlp_load
+from paddlenlp.transformers.model_utils import load_tp_checkpoint
+from safetensors import safe_open
+
+
+
+from paddlenlp.utils.env import (
+    PADDLE_WEIGHTS_INDEX_NAME,
+    SAFE_MASTER_WEIGHTS_INDEX_NAME,
+    SAFE_PEFT_WEIGHTS_INDEX_NAME,
+    SAFE_WEIGHTS_INDEX_NAME,
+)
+from paddlenlp.utils.log import logger
+from tqdm import tqdm
+
 import paddle
 import paddle.distributed as dist
 from paddle.common_ops_import import convert_dtype
@@ -1096,7 +1113,6 @@ def model_convert_fp8(model_path, device=None):
         json.dump(weight_scales, weight_scales_file)
 
     paddle.save(params_states, new_path)
-
 
 def get_safe_tensor_file(model_path):
     """

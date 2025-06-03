@@ -165,11 +165,17 @@ class Worker:
         step cuda
         """
         if "ErnieForCausalLM" in self.model_cfg.architectures:
-            from fastdeploy.model_executor.ops.gpu import step_paddle
-            from fastdeploy.worker.model_runner.model_runner_inference import ModelRunner
+            if os.getenv('USE_PIP_EFF_LLM'):
+                from efficientllm.gpu import step_paddle
+            else:
+                from fastdeploy.model_executor.ops.gpu import step_paddle
+            from fastdeploy.model_executor.model_runner.model_runner_inference import ModelRunner
         elif "ErnieMoEVLForCausalLM" in self.model_cfg.architectures:
-            from fastdeploy.model_executor.ops.gpu import step_paddle
-            from fastdeploy.worker.model_runner.model_runner_vl_inference import ModelRunner
+            if os.getenv('USE_PIP_EFF_LLM'):
+                from efficientllm.gpu import step_paddle
+            else:
+                from fastdeploy.model_executor.ops.gpu import step_paddle
+            from fastdeploy.model_executor.model_runner.model_runner_vl_inference import ModelRunner
         else:
             from paddlenlp_ops import step_paddle
             from fastdeploy.worker.model_runner.model_runner_paddlenlp import ModelRunner
@@ -244,10 +250,17 @@ class Worker:
         self.nnode = 1
 
         while True:
+            if self.rank == 0:
+                if self.model_weights_status_signal.value[0] != 0:
+                    self.exist_task_signal.value[0] = 2
+                else:
+                    self.exist_task_signal.value[0] = 0
+
             if self.nranks > 1:
                 paddle.distributed.barrier()
 
-            self.check_model_weights_status()
+            if self.exist_task_signal.value[0] == 2:
+                self.check_model_weights_status()
 
 
             self.insert_step = False
@@ -257,7 +270,7 @@ class Worker:
 
 
             if self.rank % mp_num_per_node == 0:
-                if self.engine_worker_queue.num_tasks() > 0:
+                if self.engine_worker_queue.num_tasks() > 0 and self.infer_engine.prefill_finished():
                     if self.nnode > 1:
                         self.engine_worker_queue.read_finish_flag.set(1)
                     else:
@@ -287,9 +300,6 @@ class Worker:
                 self.infer_engine.share_inputs["not_need_stop"][0] = True
 
             if not self.infer_engine.share_inputs["not_need_stop"]:
-                if self.nranks > 1:
-                    paddle.distributed.barrier()
-
                 time.sleep(0.001)
                 continue
 
@@ -297,8 +307,8 @@ class Worker:
             self.infer_engine.share_inputs["infer_seed"].add_(infer_seed_increment)
             self.infer_engine.share_inputs["infer_seed"][:] %= self.MAX_INFER_SEED
 
+            self.infer_engine.update_chunked_prefill(req_dicts[0].token_chunk_size)
             self.step_cuda()
-
 
     def determine_num_available_blocks(self):
         """Profiles the peak memory usage of the model to determine how many
@@ -338,7 +348,7 @@ class Worker:
         logger.info(f"current max peak gpu memory: {current_max_peak_gpu_memory} GiB.")
         per_block_memory_used = self.infer_engine._cal_theortical_kvcache() / GiB
         logger.info(f"each kv cache block takes {per_block_memory_used} GiB.")
-        used_cache_gpu_memory = self.args.max_block_num * per_block_memory_used
+        used_cache_gpu_memory = self.args.total_block_num * per_block_memory_used
         logger.info(f"used cache gpu memory: {used_cache_gpu_memory} GiB.")
         model_weights_memory = used_gpu_memory - used_cache_gpu_memory
         paddle_peak_increase = current_max_peak_gpu_memory - before_activation_gpu_memory
@@ -346,7 +356,8 @@ class Worker:
         available_kv_cache_memory = memory_for_current_instance - used_gpu_memory - \
                                     paddle_peak_increase + used_cache_gpu_memory
 
-        num_gpu_blocks = int(available_kv_cache_memory // per_block_memory_used )
+
+        num_gpu_blocks = max(int(available_kv_cache_memory // per_block_memory_used ), self.args.total_block_num)
         profile_time = time.time() - start_time
 
         msg = (f"Memory profiling takes {profile_time:.2f} seconds\n"
@@ -362,6 +373,11 @@ class Worker:
                f"{(paddle_peak_increase):.2f}GiB;"
                " the rest of the memory reserved for KV Cache is "
                f"{(available_kv_cache_memory):.2f}GiB.")
+
+        self.infer_engine.record_profile_msg = {
+            "per_block_memory_used":per_block_memory_used,
+            "paddle_peak_increase": paddle_peak_increase,
+        }
 
         logger.info(msg)
         # Final cleanup
@@ -393,7 +409,7 @@ class Worker:
         mp_num_per_node = self.nranks
 
 
-        self.infer_engine.dummy_input(self.args.max_model_len, self.args.max_num_seqs)
+        self.infer_engine.dummy_input(self.args.max_num_batched_tokens, self.args.max_num_seqs)
         while True:
             if self.nranks > 1:
                 paddle.distributed.barrier()
@@ -412,7 +428,7 @@ def parse_args():
     parser = argparse.ArgumentParser("FastDeploy LLM Inference")
     parser.add_argument("-m", "--model_name_or_path", type=str, default="./output", help="model dir")
     parser.add_argument("-mbs", "--max_num_seqs", type=int, default=34, help="max batch size")
-    parser.add_argument("--max_block_num", type=int, default=2000)
+    parser.add_argument("--total_block_num", type=int, default=2000)
     parser.add_argument("--block_size", type=int, default=64)
     parser.add_argument("--engine_worker_queue_port", type=int, default=9923)
     parser.add_argument("--max_model_len", type=int, default=3072, help="max model len")
@@ -450,6 +466,8 @@ def parse_args():
     )
     parser.add_argument("--speculate_max_draft_tokens", type=int, default=1)
 
+    parser.add_argument("--max_num_batched_tokens", type=int, default=2048, help="max num batched tokens")
+    parser.add_argument("--enable_chunked_prefill", action='store_true', help="enable chunked prefill")
     args = parser.parse_args()
     return args
 

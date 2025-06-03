@@ -108,7 +108,8 @@ class ErnieBotMoEVLConfig(ErnieBotMoEConfig):
         **kwargs,
     ):
         super().__init__(**kwargs)
-        self.vision_config = vision_config
+        self.vision_config = DFNRopeVisionTransformerConfig(
+            **vision_config) if vision_config else None
         self.im_patch_id = im_patch_id
         self.pixel_hidden_size = pixel_hidden_size
         self.modality_detach = modality_detach
@@ -157,7 +158,7 @@ class ErnieBotMoEVLConfig(ErnieBotMoEConfig):
         output = copy.deepcopy(self.__dict__)
         if self.vision_config:
             output["vision_config"] = (
-                self.vision_config.to_dict() if isinstance(
+                self.vision_config.to_diff_dict() if isinstance(
                     self.vision_config,
                     (DFNRopeVisionTransformerConfig)) else self.vision_config)
 

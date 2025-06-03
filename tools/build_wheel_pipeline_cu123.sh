@@ -27,7 +27,7 @@ unset PADDLE_CUDA_ARCH_LIST
 # directory config
 DIST_DIR="dist"
 BUILD_DIR="build"
-EGG_DIR="efficientllm.egg-info"
+EGG_DIR="fastdeploy.egg-info"
 
 # custom_ops directory config
 OPS_SRC_DIR="custom_ops"
@@ -60,14 +60,14 @@ function python_version_check() {
 function init() {
     echo -e "${BLUE}[init]${NONE} removing building directory..."
     rm -rf $DIST_DIR $BUILD_DIR $EGG_DIR
-    if [ `${python} -m pip list | grep efficientllm | wc -l` -gt 0  ]; then
-      echo -e "${BLUE}[init]${NONE} uninstalling efficientllm..."
-      ${python} -m pip uninstall -y efficientllm
+    if [ `${python} -m pip list | grep fastdeploy | wc -l` -gt 0  ]; then
+      echo -e "${BLUE}[init]${NONE} uninstalling fastdeploy..."
+      ${python} -m pip uninstall -y fastdeploy
     fi
     ${python} -m pip install setuptools_scm
     echo -e "${BLUE}[init]${NONE} installing requirements..."
     ${python} -m pip install --force-reinstall --pre paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/packages/nightly/cu123/
-    ${python} -m pip install --upgrade --force-reinstall -r requirements/gpu/cu123/requirements.txt --ignore-installed PyYAML
+    ${python} -m pip install --upgrade --force-reinstall -r requirements.txt --ignore-installed PyYAML
     echo -e "${BLUE}[init]${NONE} ${GREEN}init success\n"
 }
 
@@ -82,9 +82,9 @@ function copy_ops(){
     WHEEL_BASE_NAME="efficientllm_base_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
     WHEEL_NAME="efficientllm_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
     echo -e "OPS are for BASE"
-    mkdir -p ../efficientllm/ops/base && cp -r ./${OPS_TMP_DIR_BASE}/${WHEEL_BASE_NAME}/* ../efficientllm/ops/base
+    mkdir -p ../fastdeploy/model_executor/ops/base && cp -r ./${OPS_TMP_DIR_BASE}/${WHEEL_BASE_NAME}/* ../fastdeploy/model_executor/ops/base
     echo -e "OPS are for CUDA"
-    cp -r ./${OPS_TMP_DIR}/${WHEEL_NAME}/* ../efficientllm/ops/gpu
+    cp -r ./${OPS_TMP_DIR}/${WHEEL_NAME}/* ../fastdeploy/model_executor/ops/gpu
     if [ "$WITH_CPU" == "true" ]; then
       WHEEL_CPU_NAME="efficientllm_cpu_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
       echo -e "OPS are for CPU"
@@ -97,7 +97,7 @@ function copy_ops(){
         mv "$file" "${file/_pd_/}"
       done
       cd ../../../../
-      cp -r ${OPS_TMP_DIR_CPU}/${WHEEL_CPU_NAME}/* ../efficientllm/ops/cpu
+      cp -r ${OPS_TMP_DIR_CPU}/${WHEEL_CPU_NAME}/* ../fastdeploy/model_executor/ops/cpu
     fi
     return
 
@@ -136,29 +136,29 @@ function build_and_install_ops() {
 }
 
 function build_and_install() {
-  echo -e "${BLUE}[build]${NONE} building efficientllm wheel..."
+  echo -e "${BLUE}[build]${NONE} building fastdeploy wheel..."
   ${python} setup.py bdist_wheel --python-tag py3
   if [ $? -ne 0 ]; then
-    echo -e "${RED}[FAIL]${NONE} build efficientllm wheel failed !"
+    echo -e "${RED}[FAIL]${NONE} build fastdeploy wheel failed !"
     exit 1
   fi
-  echo -e "${BLUE}[build]${NONE} ${GREEN}build efficientllm wheel success\n"
+  echo -e "${BLUE}[build]${NONE} ${GREEN}build fastdeploy wheel success\n"
 
-  echo -e "${BLUE}[install]${NONE} installing efficientllm..."
+  echo -e "${BLUE}[install]${NONE} installing fastdeploy..."
   cd $DIST_DIR
-  find . -name "efficientllm*.whl" | xargs ${python} -m pip install
+  find . -name "fastdeploy*.whl" | xargs ${python} -m pip install
   if [ $? -ne 0 ]; then
     cd ..
-    echo -e "${RED}[FAIL]${NONE} install efficientllm wheel failed !"
+    echo -e "${RED}[FAIL]${NONE} install fastdeploy wheel failed !"
     exit 1
   fi
-  echo -e "${BLUE}[install]${NONE} ${GREEN}efficientllm install success\n"
+  echo -e "${BLUE}[install]${NONE} ${GREEN}fastdeploy install success\n"
   cd ..
 }
 
 function cleanup() {
   rm -rf $BUILD_DIR $EGG_DIR
-  ${python} -m pip uninstall -y efficientllm
+  ${python} -m pip uninstall -y fastdeploy
 
   rm -rf $OPS_SRC_DIR/$BUILD_DIR $OPS_SRC_DIR/$EGG_DIR
 }
@@ -170,7 +170,7 @@ function abort() {
   cur_dir=`basename "$pwd"`
 
   rm -rf $BUILD_DIR $EGG_DIR $DIST_DIR
-  ${python} -m pip uninstall -y efficientllm
+  ${python} -m pip uninstall -y fastdeploy
 
   rm -rf $OPS_SRC_DIR/$BUILD_DIR $OPS_SRC_DIR/$EGG_DIR
 }
@@ -189,17 +189,17 @@ cleanup
 PADDLE_VERSION=`${python} -c "import paddle; print(paddle.version.full_version)"`
 PADDLE_COMMIT=`${python} -c "import paddle; print(paddle.version.commit)"`
 
-# get EfficientLLM version
-EFFLLM_BRANCH=`git rev-parse --abbrev-ref HEAD`
-EFFLLM_COMMIT=`git rev-parse --short HEAD`
+# get fastdeploy version
+FASTDEPLOY_BRANCH=`git rev-parse --abbrev-ref HEAD`
+FASTDEPLOY_COMMIT=`git rev-parse --short HEAD`
 
 # get Python version
 PYTHON_VERSION=`${python} -c "import platform; print(platform.python_version())"`
 
-echo -e "\n${GREEN}efficientllm wheel compiled and checked success !${NONE}
+echo -e "\n${GREEN}fastdeploy wheel compiled and checked success !${NONE}
         ${BLUE}Python version:${NONE} $PYTHON_VERSION
         ${BLUE}Paddle version:${NONE} $PADDLE_VERSION ($PADDLE_COMMIT)
-        ${BLUE}EfficientLLM branch:${NONE} $EFFLLM_BRANCH ($EFFLLM_COMMIT)\n"
+        ${BLUE}fastdeploy branch:${NONE} $FASTDEPLOY_BRANCH ($FASTDEPLOY_COMMIT)\n"
 
 echo -e "${GREEN}wheel saved under${NONE} ${RED}${BOLD}./dist${NONE}"
 

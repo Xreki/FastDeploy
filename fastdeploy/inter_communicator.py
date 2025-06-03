@@ -101,6 +101,18 @@ class ZmqClient:
         """
         return self.socket.recv_json()
 
+    def send_pyobj(self, data):
+        """
+        Send a Pickle-serializable object over the socket.
+        """
+        self.socket.send_pyobj(data)
+
+    def recv_pyobj(self):
+        """
+        Receive a Pickle-serializable object from the socket.
+        """
+        return self.socket.recv_pyobj()
+
     def send_multipart(self, req_id, data):
         """
         Send a multipart message to the router socket.
@@ -154,10 +166,11 @@ class ZmqClient:
 
         finished_req = []
         req_ids = list(req_dict_copy.keys())
-        for req_id in req_ids:
+        results = get_results_handler(req_ids)
+
+        for req_id, contents in results.items():
             client = req_dict_copy[req_id]
-            results = get_results_handler(req_id)
-            for data in results:
+            for data in contents:
                 if data["finished"]:
                     finished_req.append(data["request_id"])
 
@@ -172,22 +185,38 @@ class ZmqClient:
                 for req_id in finished_req:
                     self.req_dict.pop(req_id, None)
 
-    def receive_once(self, block=False):
+    def receive_json_once(self, block=False):
         """
         Receive a single message from the socket.
         """
         if self.socket is None or self.socket.closed:
-            return None
+            return "zmp socket has closed", None
         try:
             flags = zmq.NOBLOCK if not block else 0
-            return self.socket.recv_json(flags=flags)
+            return None, self.socket.recv_json(flags=flags)
         except zmq.Again:
-            return None
+            return None, None
         except Exception as e:
             self.close()
             llm_logger.warning(f"{e}")
-            return None
+            return str(e), None
 
+    def receive_pyobj_once(self, block=False):
+        """
+        Receive a single message from the socket.
+        """
+        if self.socket is None or self.socket.closed:
+            return "zmp socket has closed", None
+        try:
+            flags = zmq.NOBLOCK if not block else 0
+            return None, self.socket.recv_pyobj(flags=flags)
+        except zmq.Again:
+            return None, None
+        except Exception as e:
+            self.close()
+            llm_logger.warning(f"{e}")
+            return str(e), None
+        
     def _clear_ipc(self, name):
         """
         Remove the IPC file with the given name.

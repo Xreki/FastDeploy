@@ -74,6 +74,7 @@ class ErnieBotTokenizer(PretrainedTokenizer):
             pad_token=pad_token,
             sep_token=sep_token,
             unk_token=unk_token,
+            verbose=False,
             additional_special_tokens=additional_special_tokens,
             **kwargs,
         )

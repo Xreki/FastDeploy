@@ -274,18 +274,18 @@ class MoEConfig:
 @dataclass
 class ParallelConfig:
     """Configuration for the distributed execution."""
-    block_size = 16,  # The block size for processing.
-    sequence_parallel = False,  # Whether to enable sequence parallelism.
-    use_ep = False,  # Whether to enable Expert Parallelism
-    moe_group = False,  # Whether to enable moe group
-    msg_queue_id = None,  # mesage queue id
-    use_micro_batch = False,  # Whether to enable micro batch
-    tensor_parallel_rank = None,  # TP rank ID
-    tensor_parallel_degree = None,  # TP degree
-    mp_size = 1,  # mp size
-    ep_size = 1,  # ep size
-    column_cut = False,  # (bool, optional): The embedding weight distributed on your gpu cards is divided by row or column. Defaults to False means divide by row. When vocab_size can not be divided by world_size but hidden_size can, we can consider split embedding weight by column.
-
+    block_size = 16  # The block size for processing.
+    sequence_parallel = False  # Whether to enable sequence parallelism.
+    use_ep = False  # Whether to enable Expert Parallelism
+    moe_group = False  # Whether to enable moe group
+    msg_queue_id = None  # mesage queue id
+    use_micro_batch = False  # Whether to enable micro batch
+    tensor_parallel_rank = None # TP rank ID
+    tensor_parallel_degree = None  # TP degree
+    mp_size = 1  # mp size
+    ep_size = 1  # ep size
+    column_cut = False  # (bool, optional): The embedding weight distributed on your gpu cards is divided by row or column. Defaults to False means divide by row. When vocab_size can not be divided by world_size but hidden_size can, we can consider split embedding weight by column.
+    lm_head_column_cut = False
 
 @dataclass
 class SpeculativeConfig:

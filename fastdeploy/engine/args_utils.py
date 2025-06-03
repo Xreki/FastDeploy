@@ -117,6 +117,11 @@ class EngineArgs:
     Flag to enable prefix caching.
     """
     engine_worker_queue_port: int = 8002
+    enable_chunked_prefill: bool = False
+    """
+    Flag to enable chunked prefilling.
+    """
+
     """
     Scheduler name to be used
     """
@@ -140,23 +145,23 @@ class EngineArgs:
     """
     Port of redis
     """
-    scheduler_port: int = 6379,
+    scheduler_port: int = 6379
     """
     DB of redis
     """
-    scheduler_db: int = 0,
+    scheduler_db: int = 0
     """
     Password of redis
     """
-    scheduler_password: Optional[str] = None,
+    scheduler_password: Optional[str] = None
     """
     Topic of scheduler
     """
-    scheduler_topic: str = "default",
+    scheduler_topic: str = "default"
     """
     Max write time of redis
     """
-    scheduler_remote_write_time: int = 3,
+    scheduler_remote_write_time: int = 3
 
     def __post_init__(self):
         """
@@ -308,6 +313,12 @@ class EngineArgs:
             default=EngineArgs.enable_prefix_caching,
             help="Flag to enable prefix caching."
         )
+        perf_group.add_argument(
+            "--enable-chunked-prefill",
+            action='store_true',
+            default=EngineArgs.enable_chunked_prefill,
+            help="Flag to enable chunked prefill."
+        )
 
         # Scheduler parameters group
         scheduler_group = parser.add_argument_group("Scheduler")
@@ -368,6 +379,7 @@ class EngineArgs:
             default=EngineArgs.scheduler_remote_write_time,
             help=f"Max write time of redis. Default is {EngineArgs.scheduler_remote_write_time} seconds (global)"
         )
+
         return parser
 
     @classmethod
@@ -424,7 +436,10 @@ class EngineArgs:
         if not model_cfg.is_unified_ckpt and hasattr(model_cfg, 'tensor_parallel_size'):
             self.tensor_parallel_size = model_cfg.tensor_parallel_size
         if self.max_num_batched_tokens is None:
-            self.max_num_batched_tokens = self.max_model_len
+            if self.enable_chunked_prefill:
+                self.max_num_batched_tokens = 2048
+            else:
+                self.max_num_batched_tokens = self.max_model_len
         scheduler_cfg = self.create_scheduler_config()
         return Config(
             model_name_or_path=self.model,
@@ -442,5 +457,6 @@ class EngineArgs:
             pod_ips=self.pod_ips,
             use_warmup=self.use_warmup,
             engine_worker_queue_port=self.engine_worker_queue_port,
-            enable_mm=self.enable_mm
+            enable_mm=self.enable_mm,
+            enable_chunked_prefill=self.enable_chunked_prefill,
         )
