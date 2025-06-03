@@ -35,10 +35,10 @@ from tqdm import tqdm
 import paddle
 import paddle.distributed as dist
 
-from efficientllm.models.tokenizer import ErnieBotTokenizer
+from fastdeploy.model_executor.models.tokenizer import ErnieBotTokenizer
 from paddle import profiler
 from paddle.distributed import fleet
-from efficientllm.models.utils import (
+from fastdeploy.model_executor.models.utils import (
     get_infer_model_path,
     get_rotary_position_embedding,
     infer_save_test_case,
@@ -46,26 +46,26 @@ from efficientllm.models.utils import (
     load_sharded_checkpoint,
 )
 
-from efficientllm.platform import current_platform
+from fastdeploy.platforms import current_platform
 
 if current_platform.is_cuda() and current_platform.available():
-    from efficientllm.ops.gpu import reset_stop_value, speculate_update_input_ids_cpu
+    from fastdeploy.model_executor.ops.gpu import reset_stop_value, speculate_update_input_ids_cpu
 elif paddle.is_compiled_with_xpu():
     from custom_setup_ops import reset_stop_value
 elif paddle.is_compiled_with_custom_device("npu"):
     from paddle_custom_device.npu import reset_stop_value
 else:  # CPU
-    from efficientllm.ops.cpu import reset_stop_value
+    from fastdeploy.model_executor.ops.cpu import reset_stop_value
 
-from efficientllm.models.data_utils import (
+from fastdeploy.model_executor.models.data_utils import (
     convert_fc_infer_data,
     convert_to_input_ids,
     get_infer_data_type,
     insert_fc_instruction,
 )
-from efficientllm.models.token_utils import TokenTimer, check_output
+from fastdeploy.model_executor.models.token_utils import TokenTimer, check_output
 
-from efficientllm.models.speculate_proposers import (
+from fastdeploy.model_executor.models.speculate_proposers import (
     AutogressiveProposer,
     DraftModelProposer,
     EagleProposer,
@@ -450,10 +450,10 @@ class Predictor:
         if self.beam_width <= 1:
             self.result_queue = mp.Queue()
 
-            from efficientllm.models.utils import MAX_BSZ, MAX_DRAFT_TOKENS
+            from fastdeploy.model_executor.models.utils import MAX_BSZ, MAX_DRAFT_TOKENS
 
             if args.speculate_method is not None:
-                from efficientllm.models.utils import speculate_read_res
+                from fastdeploy.model_executor.models.utils import speculate_read_res
 
                 output_tensor_max_shape = [MAX_BSZ * MAX_DRAFT_TOKENS + MAX_BSZ + 2]
                 self.read_res_process = mp.Process(
@@ -466,7 +466,7 @@ class Predictor:
                     ],
                 )
             else:
-                from efficientllm.models.utils import read_res
+                from fastdeploy.model_executor.models.utils import read_res
 
                 output_tensor_max_shape = [MAX_BSZ + 2, 1]
                 self.read_res_process = mp.Process(

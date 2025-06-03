@@ -50,16 +50,16 @@ typename Gemm::Arguments prepar_gemm_args_sm89(void* D, void const* A, void cons
                 {
                     {},                                      // Accumulator
                     {reinterpret_cast<ElementComputeEpilogue const*>(scale_d1), ElementComputeEpilogue(0),
-                        {_0{}, _1{}, _0{}}},
+                        {cute::_0{}, cute::_1{}, cute::_0{}}},
                     {} // Multiplies
                 },
-                {reinterpret_cast<ElementComputeEpilogue const*>(scale_d0), ElementComputeEpilogue(0), {_0{}, _0{}, _0{}}},
+                {reinterpret_cast<ElementComputeEpilogue const*>(scale_d0), ElementComputeEpilogue(0), {cute::_0{}, cute::_0{}, cute::_0{}}},
                 {} // Multiplies
             },                                                                                                          // Accum
-            {reinterpret_cast<ElementOutput const*>(C_bias), ElementOutput(0), {_0{}, _1{}, _0{}}},                 // Bias
+            {reinterpret_cast<ElementOutput const*>(C_bias), ElementOutput(0), {cute::_0{}, cute::_1{}, cute::_0{}}},                 // Bias
             {}                                                                                             // Compute0
         },
-        {reinterpret_cast<ElementOutput*>(D), {n, _1{}, _0{}}}
+        {reinterpret_cast<ElementOutput*>(D), {n, cute::_1{}, cute::_0{}}}
     };
     return args;
 }

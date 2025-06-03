@@ -36,29 +36,29 @@ import paddle
 import paddle.distributed as dist
 from paddle.distributed import fleet
 
-from efficientllm.models.data_utils import (
+from fastdeploy.model_executor.models.data_utils import (
     convert_fc_infer_data,
     convert_to_input_ids,
     get_infer_data_type,
     insert_fc_instruction,
 )
-from efficientllm.platform import current_platform
+from fastdeploy.platforms import current_platform
 
-from efficientllm.models.utils import (
+from fastdeploy.model_executor.models.utils import (
     get_rotary_position_embedding,
     infer_save_test_case,
     load_prefix_weights,
     load_sharded_checkpoint,
 )
-from efficientllm.models.token_utils import TokenTimer, check_output
-from efficientllm.inference_args import GenerationPhase
+from fastdeploy.model_executor.models.token_utils import TokenTimer, check_output
+from fastdeploy.inference_args import GenerationPhase
 
 try:
-    from efficientllm.ops.gpu import speculate_update_input_ids_cpu
+    from fastdeploy.model_executor.ops.gpu import speculate_update_input_ids_cpu
 except ImportError:
     pass
 
-from efficientllm.models.speculate_proposers import (
+from fastdeploy.model_executor.models.speculate_proposers import (
     AutogressiveProposer,
     EagleProposer,
     HydraProposer,
@@ -490,13 +490,13 @@ class Predictor:
             self.use_system = args.use_system
             if not self.use_beam_search:
                 self.result_queue = mp.Queue()
-                from efficientllm.models.utils import MAX_BSZ, MAX_DRAFT_TOKENS
+                from fastdeploy.model_executor.models.utils import MAX_BSZ, MAX_DRAFT_TOKENS
 
                 if self.args.use_ep and (not self.args.ep_just_for_test):
                     self.args.msg_queue_id = self.tp_rank
 
                 if args.speculate_method is not None:
-                    from efficientllm.models.utils import speculate_read_res
+                    from fastdeploy.model_executor.models.utils import speculate_read_res
 
                     output_tensor_max_shape = [MAX_BSZ * MAX_DRAFT_TOKENS + MAX_BSZ + 2]
                     self.read_res_process = mp.Process(
@@ -509,7 +509,7 @@ class Predictor:
                         ],
                     )
                 else:
-                    from efficientllm.models.utils import read_res
+                    from fastdeploy.model_executor.models.utils import read_res
 
                     output_tensor_max_shape = [MAX_BSZ + 2, 1]
                     self.read_res_process = mp.Process(
@@ -581,7 +581,7 @@ class Predictor:
             use_beam_search = True if args.beam_width > 1 else False
             # TODO: 动态图会cuda error 700，后续再修复
 
-            from efficientllm.models.export_model import (
+            from fastdeploy.model_executor.models.export_model import (
                 build_stream_line_model,
             )
 
@@ -1317,11 +1317,11 @@ class Predictor:
         if (
             current_platform.is_cuda() and current_platform.available()
         ) or paddle.is_compiled_with_xpu():
-            from efficientllm.ops.gpu import reset_stop_value
+            from fastdeploy.model_executor.ops.gpu import reset_stop_value
         elif paddle.is_compiled_with_custom_device("npu"):
             from paddle_custom_device.npu import reset_stop_value
         else:  # CPU
-            from efficientllm.ops.cpu import reset_stop_value
+            from fastdeploy.model_executor.ops.cpu import reset_stop_value
         reset_stop_value(inputs["not_need_stop"])
         if self.proposer is not None:
             self.proposer.insert_query(self.inputs_info)

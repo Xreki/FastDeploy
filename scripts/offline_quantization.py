@@ -17,11 +17,11 @@
 import paddle
 import os
 from paddlenlp.trainer import strtobool
-from efficientllm.models.utils import load_checkpoint
-from efficientllm.inference_args import InferenceArgs
+from fastdeploy.model_executor.models.utils import load_checkpoint
+from fastdeploy.inference_args import InferenceArgs
 from paddlenlp.utils.log import logger
-from efficientllm.models.configuration import ErnieBotConfig
-from efficientllm.models.tokenizer import ErnieBotTokenizer
+from fastdeploy.model_executor.models.configuration import ErnieBotConfig
+from fastdeploy.model_executor.models.tokenizer import ErnieBotTokenizer
 from safetensors.numpy import save_file as safe_save_file
 from paddlenlp.utils.env import SAFE_WEIGHTS_INDEX_NAME, SAFE_WEIGHTS_NAME
 
@@ -31,7 +31,7 @@ import json
 from paddlenlp.transformers.model_utils import shard_checkpoint
 
 MODEL_LIB_NAMES = [
-    "efficientllm.models.modeling_ernie_bot",
+    "fastdeploy.model_executor.models.modeling_ernie_bot",
 ]
 
 
@@ -143,7 +143,7 @@ def quanted_tensor(cls, state_dict, config):
     for k, v in state_keys_map.items():
         name_action_mappings[v] = name_action_mappings.pop(k)
     state_dict_to_save = {}
-    from efficientllm.layers.utils import get_tensor
+    from fastdeploy.model_executor.layers.utils import get_tensor
     from tqdm import tqdm
 
     for key in tqdm(state_dict.keys(), desc="process quantized weights  "):

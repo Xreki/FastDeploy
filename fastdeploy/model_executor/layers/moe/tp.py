@@ -16,9 +16,9 @@
 
 import os
 import paddle
-import efficientllm
-import efficientllm.ops.gpu.deep_gemm as deep_gemm
-from efficientllm.layers.moe.moe import MoELayer
+import fastdeploy
+import fastdeploy.model_executor.ops.gpu.deep_gemm as deep_gemm
+from fastdeploy.model_executor.layers.moe.moe import MoELayer
 
 
 class MoeTPDecoerDeepDeepGEMMLayer(MoELayer):
@@ -53,7 +53,7 @@ class MoeTPDecoerDeepDeepGEMMLayer(MoELayer):
             dtype=self._dtype,
         )
 
-        topk_idx, topk_weights = efficientllm.ops.gpu.moe_topk_select(
+        topk_idx, topk_weights = fastdeploy.model_executor.ops.gpu.moe_topk_select(
             gate_out,
             (
                 self.gate_correction_bias
@@ -65,14 +65,14 @@ class MoeTPDecoerDeepDeepGEMMLayer(MoELayer):
             False,
         )
         permute_input, token_nums_per_expert, permute_indices_per_token = (
-            efficientllm.ops.gpu.moe_deepgemm_permute(
+            fastdeploy.model_executor.ops.gpu.moe_deepgemm_permute(
                 x, topk_idx, self.num_local_experts, self.max_batch_size
             )
         )
 
         expected_m = 128
 
-        permute_input_fp8, scale = efficientllm.ops.gpu.masked_per_token_quant(
+        permute_input_fp8, scale = fastdeploy.model_executor.ops.gpu.masked_per_token_quant(
             permute_input, token_nums_per_expert, 128
         )
         deep_gemm.m_grouped_gemm_fp8_fp8_bf16_nt_masked(
@@ -86,11 +86,11 @@ class MoeTPDecoerDeepDeepGEMMLayer(MoELayer):
             expected_m,
         )
 
-        act_out = efficientllm.ops.gpu.group_swiglu_with_masked(
+        act_out = fastdeploy.model_executor.ops.gpu.group_swiglu_with_masked(
             ffn1_out, token_nums_per_expert
         )
 
-        act_out_fp8, scale = efficientllm.ops.gpu.masked_per_token_quant(
+        act_out_fp8, scale = fastdeploy.model_executor.ops.gpu.masked_per_token_quant(
             act_out, token_nums_per_expert, 128
         )
 
@@ -105,7 +105,7 @@ class MoeTPDecoerDeepDeepGEMMLayer(MoELayer):
             expected_m,
         )
 
-        fused_moe_out = efficientllm.ops.gpu.moe_deepgemm_depermute(
+        fused_moe_out = fastdeploy.model_executor.ops.gpu.moe_deepgemm_depermute(
             ffn_out, permute_indices_per_token, topk_idx, topk_weights
         )[0]
 

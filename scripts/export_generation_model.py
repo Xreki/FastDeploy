@@ -29,13 +29,13 @@ from paddlenlp.trainer import strtobool
 from paddlenlp.utils.log import logger
 
 import paddle
-from efficientllm.models.configuration import ErnieBotConfig
-from efficientllm.models.tokenizer import ErnieBotTokenizer
+from fastdeploy.model_executor.models.configuration import ErnieBotConfig
+from fastdeploy.model_executor.models.tokenizer import ErnieBotTokenizer
 from paddle.distributed import fleet
-from efficientllm.models.utils import (
+from fastdeploy.model_executor.models.utils import (
     UniqueIDGenerator,
 )
-from efficientllm.models.token_utils import TokenTimer, check_output, process_index
+from fastdeploy.model_executor.models.token_utils import TokenTimer, check_output, process_index
 
 
 should_check_python_safety = False
@@ -251,7 +251,7 @@ if __name__ == "__main__":
     }
     fleet.init(is_collective=True, strategy=strategy)
 
-    from efficientllm.models.export_model import (
+    from fastdeploy.model_executor.models.export_model import (
         export_efficientllm_model,
     )
 
