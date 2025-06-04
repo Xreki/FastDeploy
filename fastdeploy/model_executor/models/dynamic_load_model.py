@@ -270,6 +270,11 @@ class DynamicLoadModel(nn.Layer):
     def update_parameters(self, pid: int = 0) -> None:
         """Update model parameters from IPC state dictionary."""
         self.log_memory_usage("start update parameters")
+        for model in [self.resampler_model, self.vision_model]:
+            for name, param in model.state_dict().items():
+                logger.info(f"Clearing model parameter: {name}")
+                param._clear_data()
+
 
         paddle.device.cuda.empty_cache()
         if not self.first_load:
@@ -286,25 +291,28 @@ class DynamicLoadModel(nn.Layer):
             print("使用shared_buf_to_local_test")
             state_dict = paddle.load(model_path)
             infer_model_state_dict = self.model.state_dict()
+            resampler_model_state_dict = self.resampler_model.state_dict()
+            vision_model_state_dict = self.vision_model.state_dict()
 
             for name, param in state_dict.items():
                 replace_name = name.replace("gpt.", "ernie.")
-                if replace_name in infer_model_state_dict:
-                    logger.info(f"Updating model parameter: {name}")
-                    update_param = infer_model_state_dict[replace_name]
+                for model_state_dict in [infer_model_state_dict, resampler_model_state_dict, vision_model_state_dict]:
+                    if replace_name in model_state_dict:
+                        logger.info(f"Updating model parameter: {name}")
+                        update_param = model_state_dict[replace_name]
 
-                    if update_param.dtype != param.dtype:
-                        raise TypeError(
-                            f"Type mismatch for {name}: {param.dtype} vs {update_param.dtype}"
-                        )
-                    if update_param.shape != param.shape:
-                        raise ValueError(
-                            f"Shape mismatch for {name}: {param.shape} vs {update_param.shape}"
-                        )
+                        if update_param.dtype != param.dtype:
+                            raise TypeError(
+                                f"Type mismatch for {name}: {param.dtype} vs {update_param.dtype}"
+                            )
+                        if update_param.shape != param.shape:
+                            raise ValueError(
+                                f"Shape mismatch for {name}: {param.shape} vs {update_param.shape}"
+                            )
 
-                    param._share_buffer_to(update_param)
-                else:
-                    logger.error(f"No matching parameter found for {name}")
+                        param._share_buffer_to(update_param)
+                    # else:
+                    #     logger.error(f"No matching parameter found for {name}")
 
             logger.info(
                 f"set_state_dict completed in {time.perf_counter()  - set_start:.2f} seconds"
@@ -439,12 +447,14 @@ class DynamicLoadModel(nn.Layer):
         """
         logger.info("Verifying parameters are cleared...")
         all_update = True
-        for name, param in self.model.state_dict().items():
-            if not param._is_initialized():
-                if erro_log:
-                    logger.error(
-                        f"Parameter {name}-{param} was not properly cleared!")
-                all_update = False
+
+        for model in self.models:
+            for name, param in model.state_dict().items():
+                if not param._is_initialized():
+                    if erro_log:
+                        logger.error(
+                            f"Parameter {name}-{param} was not properly cleared!")
+                    all_update = False
 
         if all_update:
             logger.info("All parameters verified as updated successfully")
