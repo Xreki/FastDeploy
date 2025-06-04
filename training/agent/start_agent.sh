@@ -94,6 +94,12 @@ TOTAL_PORTS=$((NUM_INSTANCES * 3))
 # 获取空闲端口
 ports=`sh get_free_ports.sh $TOTAL_PORTS`
 
+# 如果为空则重试一次
+if [ -z "$ports" ]; then
+  echo "第一次获取端口失败，重试一次..."
+  ports=`sh get_free_ports.sh $TOTAL_PORTS`
+fi
+
 # 启动实例
 for ((i=0; i<$NUM_INSTANCES; i++)); do
     # 生成device_id字符串,每个实例递增
