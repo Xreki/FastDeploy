@@ -25,3 +25,4 @@ setuptools-scm>=8
 prometheus-client
 decord
 moviepy
+aistudio-sdk==0.2.6
