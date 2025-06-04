@@ -88,6 +88,7 @@ if current_platform.is_cuda() and current_platform.available():
             update_inputs,
             update_inputs_beam,
             extract_text_token_output,
+            text_image_index_out,
         )
     except Exception:
         raise ImportError(
@@ -1231,6 +1232,13 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         Returns:
             Tensor: Output tensor of shape `(batch_size, sequence_length, hidden_size)`.
         """
+
+        text_input = None
+        image_input = None
+        text_index = None
+        image_index = None
+        mm_token_num_len = 0
+
         if current_platform.is_npu():
             remove_padding_ids = remove_padding(input_ids, seq_lens_this_time)
             embedding_output = self.embeddings(ids_remove_padding=remove_padding_ids)
@@ -1269,14 +1277,32 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             self.inference_args.moe_config.use_moe
             and self.inference_args.moe_config.has_multimodality
         ):
-            token_type_ids = (
+            image_mask = (
                 ids_remove_padding == self.inference_args.moe_config.im_patch_id
             )
-            image_mask = token_type_ids
+            token_type_ids = image_mask.cast("int32")
+            token_num = embedding_output.shape[0]
+            mm_token_num_len = paddle.count_nonzero(token_type_ids).cast("int32")
+            text_token_num_len = (
+                (token_num - mm_token_num_len)
+                if (token_num - mm_token_num_len) > 0
+                else 1
+            )
             if image_mask.any():
                 embedding_output[image_mask] = image_features.cast(
                     embedding_output.dtype
                 )
+                text_input = paddle.full(
+                    shape=[text_token_num_len, embedding_output.shape[1]],
+                    fill_value=1,
+                    dtype=paddle.get_default_dtype())
+                image_input = paddle.full(
+                    shape=[mm_token_num_len, embedding_output.shape[1]],
+                    fill_value=1,
+                    dtype=paddle.get_default_dtype())
+                text_index = paddle.zeros_like(token_type_ids)
+                image_index = paddle.zeros_like(token_type_ids)
+                text_image_index_out(token_type_ids, text_index, image_index)
 
         if self.inference_args.use_avx512:
             output = self.decoder(
@@ -1290,6 +1316,10 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             output = self.decoder(
                 input_ids=input_ids,
                 token_type_ids=token_type_ids,
+                text_input=text_input,
+                image_input=image_input,
+                text_index=text_index,
+                image_index=image_index,
                 src=embedding_output,
                 caches=caches,
                 rotary_embs=rope_emb,
@@ -1324,9 +1354,8 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             out = out.cast("float32")
             score_text = out
             score_image = None
-            mm_token_num_len = paddle.count_nonzero(token_type_ids).cast("int32")
 
-            if mm_token_num_len > 0:
+            if image_input is not None:
                 token_num = paddle.shape(ids_remove_padding)[0]
                 token_type_ids = token_type_ids.reshape([-1])
                 image_mask_shifted = token_type_ids[:token_num] == 1
