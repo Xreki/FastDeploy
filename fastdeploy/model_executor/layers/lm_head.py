@@ -245,7 +245,7 @@ class LMHead(nn.Layer):
                         output_dim,
                         mp_group=fleet.get_hybrid_communicate_group().get_model_parallel_group(),
                         weight_attr=None,
-                        has_bias=True,
+                        has_bias=True if self.linear_bias_key is not None else False,
                         gather_output=need_gather,
                         fuse_matmul_bias=fused_linear,  # False diff更小
                     )
@@ -255,13 +255,14 @@ class LMHead(nn.Layer):
                         output_dim,
                         mp_group=fleet.get_hybrid_communicate_group().get_model_parallel_group(),
                         weight_attr=None,
-                        has_bias=True,
+                        has_bias=True if self.linear_bias_key is not None else False,
                         input_is_parallel=False,
                         fuse_matmul_bias=fused_linear,  # False diff更小
                     )
 
                 self.out_linear.weight.name = layer_name + str(mp_rank) + ".w_0"
-                self.out_linear.bias.name = layer_name + str(mp_rank) + ".b_0"
+                if self.linear_bias_key is not None:
+                    self.out_linear.bias.name = layer_name + str(mp_rank) + ".b_0"
 
         self.activation = activation
         if self.activation is not None:
@@ -292,16 +293,10 @@ class LMHead(nn.Layer):
                     )
                 )
 
-                bias = (
-                    get_tensor(state_dict.pop(self.linear_bias_key)).astype(
-                        paddle.get_default_dtype()
-                    )
-                    if self.linear_bias_key is not None
-                    else paddle.zeros(
-                        self.out_linear.bias.shape, dtype=paddle.get_default_dtype()
-                    )
-                )
-                self.out_linear.bias.set_value(bias)
+                if self.linear_bias_key is not None:
+                    bias = get_tensor(state_dict.pop(self.linear_bias_key)).astype(
+                            paddle.get_default_dtype())
+                    self.out_linear.bias.set_value(bias)
 
     def forward(self, input):
         """
