@@ -32,21 +32,30 @@ class GlobalScheduler(object):
     """
 
     def __init__(self,
-                 host: str,
-                 port: int,
-                 db: int,
-                 password: Optional[str],
-                 topic: str,
-                 ttl: int,
-                 remote_write_time: int,
-                 wait_response_timeout: float
-                 ):
+        host: str,
+        port: int,
+        db: int,
+        password: Optional[str],
+        topic: str,
+        ttl: int,
+        remote_write_time: int,
+        wait_response_timeout: float,
+        enable_chunked_prefill: bool,
+        max_num_partial_prefills: int,
+        max_long_partial_prefills: int,
+        long_prefill_token_threshold: int,
+    ):
 
         self.topic = topic
         self.ttl = ttl
         self.remote_write_time = remote_write_time
         self.wait_response_timeout = 1.0 if wait_response_timeout < 1.0 else wait_response_timeout
         self.wait_request_timeout = 10
+
+        self.enable_chunked_prefill = enable_chunked_prefill
+        self.max_num_partial_prefills = max_num_partial_prefills
+        self.max_long_partial_prefills = max_long_partial_prefills
+        self.long_prefill_token_threshold = long_prefill_token_threshold
 
         connection_pool = ConnectionPool(
             host=host, port=port, db=db, password=password, max_connections=10)
@@ -164,6 +173,7 @@ class GlobalScheduler(object):
         current_prefill_tokens = 0
         remaining_request = []
         requests: List[Request] = []
+        long_partial_requests, short_partial_requests = 0, 0
         for serialized_request in serialized_requests:
             if len(remaining_request) > 0:
                 remaining_request.append(serialized_request)
@@ -180,9 +190,28 @@ class GlobalScheduler(object):
                 request.size, block_size)
             current_prefill_tokens += request.size
             required_total_blocks += required_input_blocks + reserved_output_blocks
-            if required_total_blocks > available_blocks or current_prefill_tokens > max_num_batched_tokens:
+            if required_total_blocks > available_blocks:
                 remaining_request.append(serialized_request)
                 continue
+
+            if self.enable_chunked_prefill:
+                if request.size > self.long_prefill_token_threshold:
+                    # 长请求
+                    long_partial_requests += 1
+                    if long_partial_requests > self.max_long_partial_prefills:
+                        remaining_request.append(serialized_request)
+                        continue
+                else:
+                    short_partial_requests += 1
+                
+                if short_partial_requests + long_partial_requests > self.max_num_partial_prefills:
+                    remaining_request.append(serialized_request)
+                    continue
+            else:
+                if current_prefill_tokens > max_num_batched_tokens:
+                    remaining_request.append(serialized_request)
+                    continue
+
             requests.append(request.raw)
 
         if len(remaining_request) > 0:

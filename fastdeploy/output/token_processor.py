@@ -170,13 +170,12 @@ class TokenProcessor(object):
                 continue
 
             task = self.resource_manager.tasks_list[i]
-
             if self.cfg.enable_chunked_prefill:
-                if task.get("prefill_token_num", None) is None:
-                    task.set("prefill_token_num", task.token_chunk_size)
-                else:
-                    task.prefill_token_num += task.token_chunk_size
-                if task.prompt_token_ids_len > task.prefill_token_num:
+                if task.get("prefill_chunk_idx", None) is None:
+                    task.set("prefill_chunk_idx", 0)
+                
+                if task.prefill_chunk_idx < len(task.prefill_chunk_info):
+                    task.prefill_chunk_idx += 1
                     continue
 
             task_id = task.request_id
