@@ -202,6 +202,30 @@ std::vector<paddle::DataType> FusedExpertMoeInferDtype(
     return {input_dtype};
 }
 
+/**
+ * @brief Fused Mixture-of-Experts (MoE) Operator
+ * 
+ * This operator combines three key MoE operations into a single optimized kernel:
+ * 1. moe_dispatch   - Routes tokens to top-k experts using gating network
+ * 2. moe_ffn        - Processes tokens through parallel expert FFNs
+ * 3. moe_reduce     - Combines expert outputs with routing weights
+ *
+ * Key Features:
+ * - Supports both dense and quantized  expert weights
+ * - Optimized for GPU execution with fused operations
+ *
+ * Mathematical Formulation:
+ *   output = ∑_i^topk(softmax(gate(x))_i * FFN_i(x)
+ *
+ * Reference Components:
+ *   moe_dispatch: Selects top-k experts per token and generates permutation indices
+ *   moe_ffn:     Applies SwiGLU activation expert networks in parallel
+ *   moe_reduce:  Combines weighted expert outputs and restores original token order
+ *
+ * Performance Notes:
+ * - Recommended hidden_size multiples of 128 for optimal memory alignment
+ * - For best throughput, num_experts should be powers of 2
+ */
 PD_BUILD_STATIC_OP(fused_expert_moe)
     .Inputs({"input",
              "gate_weight",
