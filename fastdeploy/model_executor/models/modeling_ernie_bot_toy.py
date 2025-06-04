@@ -288,7 +288,7 @@ class ErnieBotToyPretrainedModel(PretrainedModel):
         def get_tensor_quantization_mappings(config: ErnieBotConfig):
             final_actions = {}
             if config.is_mtp:
-                base_model_prefix = "gpt.mtp"
+                base_model_prefix = "ernie.mtp"
             else:
                 base_model_prefix = "gtp"
             q_config = get_quantization_type(config)
@@ -511,7 +511,7 @@ class ErnieBotToyPretrainedModel(PretrainedModel):
         def get_tensor_parallel_split_mappings(config):
             final_actions = {}
             if config.is_mtp:
-                base_model_prefix = "gpt.mtp"
+                base_model_prefix = "ernie.mtp"
             else:
                 base_model_prefix = "gtp"
 
@@ -740,7 +740,7 @@ class ErnieBotToyFusedModel(ErnieBotToyPretrainedModel):
         fmt_keys = FMTKeys(num_layers)
         is_mtp = draft_type in ["eagle", "mtp"]
         self.is_mtp = is_mtp
-        base_model_prefix = "gpt.mtp" if is_mtp else "gpt"
+        base_model_prefix = "ernie.mtp" if is_mtp else "ernie"
         self.base_model_prefix = base_model_prefix
 
         fmt_keys.norm_before_qkv_weight_keys = [
@@ -770,7 +770,7 @@ class ErnieBotToyFusedModel(ErnieBotToyPretrainedModel):
         ]
 
         if sharing_model is not None:
-            self.embeddings = sharing_model.gpt.embeddings
+            self.embeddings = sharing_model.ernie.embeddings
         else:
             self.embeddings = Embeddings(
                 layer_name=(f"{base_model_prefix}.embeddings.word_embeddings"),
@@ -786,7 +786,7 @@ class ErnieBotToyFusedModel(ErnieBotToyPretrainedModel):
                 weight_sharing_add_bias=weight_sharing_add_bias,
                 use_rope=use_rope,
                 rope_head_dim=hidden_size // num_attention_heads,
-                prefix_name="gpt.mtp" if is_mtp else "gpt",
+                prefix_name="ernie.mtp" if is_mtp else "ernie",
             )
 
         # get ring_id
@@ -845,7 +845,7 @@ class ErnieBotToyFusedModel(ErnieBotToyPretrainedModel):
             )
 
             if sharing_model is not None:
-                self.norm = sharing_model.gpt.norm
+                self.norm = sharing_model.ernie.norm
             else:
                 self.norm = Normalization(
                     inference_args=self.inference_args,
@@ -1060,10 +1060,10 @@ class ErnieBotToyForGeneration(nn.Layer):
     ErnieBotToyForGeneration
     """
 
-    def __init__(self, gpt, configs):
+    def __init__(self, ernie, configs):
         """
         Args:
-            gpt (ErnieBotFusedModel): ErnieBotFusedModel model used for generation.
+            ernie (ErnieBotFusedModel): ErnieBotFusedModel model used for generation.
             configs (dict): Configurations including parameters such as max_dec_len, min_dec_len, decode_strategy,
                 ori_vocab_size, use_topp_sampling, use_top_k, top_k, inference, repetition_penalty, num_beams,
                 num_beam_groups, length_penalty, early_stopping, bos_token_id, pad_token_id, decoder_start_token_id,
@@ -1080,13 +1080,13 @@ class ErnieBotToyForGeneration(nn.Layer):
             ValueError: If use_cache_kv_int8 is True and use_fake_parameter is True.
         """
         super(ErnieBotToyForGeneration, self).__init__()
-        self.gpt = gpt
-        self.msg_queue_id = gpt.msg_queue_id
+        self.ernie = ernie
+        self.msg_queue_id = ernie.msg_queue_id
         # extra_parameters using for sharding stage3 to register extra_parameters
         self.extra_parameters = (
             []
             if current_platform.is_npu()
-            else [get_attr(self.gpt.embeddings.word_embeddings, "weight")]
+            else [get_attr(self.ernie.embeddings.word_embeddings, "weight")]
         )
         self.configs = configs
 
@@ -1140,7 +1140,7 @@ class ErnieBotToyForGeneration(nn.Layer):
         self.cache_quant_dtype = self.configs.get("cache_quant_dtype", "default")
         if self.cache_quant_dtype == "default":
             self.cache_quant_dtype = paddle.get_default_dtype()
-        self.use_fast_ffn = self.gpt.use_fast_ffn
+        self.use_fast_ffn = self.ernie.use_fast_ffn
 
         # for NPU
         self.hidden_size = self.configs.get("hidden_size", 4096)
@@ -1165,7 +1165,7 @@ class ErnieBotToyForGeneration(nn.Layer):
             "return_all_hidden_states", False
         )
 
-        self.base_model_prefix = self.gpt.base_model_prefix
+        self.base_model_prefix = self.ernie.base_model_prefix
 
         if self.use_rmsnorm:
             self.norm_type = "rmsnorm"
@@ -1178,12 +1178,12 @@ class ErnieBotToyForGeneration(nn.Layer):
             # layernorm use fp32 weight
             self.have_norm_bias = True
             self.is_norm_weight_type_fp32 = True
-        if self.gpt.inference_args.use_avx512:
+        if self.ernie.inference_args.use_avx512:
             self.lm_head = LMHeadAVX(
                 norm_layer_name=f"{self.base_model_prefix}.decoder.norm",
                 linear_layer_name=f"{self.base_model_prefix}.output_linear.out_linear",
                 input_dim=self.hidden_size,
-                output_dim=self.gpt.vocab_size,
+                output_dim=self.ernie.vocab_size,
                 have_norm_bias=self.have_norm_bias,
                 have_ln_bias=True,
                 alog="int8",
@@ -1194,27 +1194,27 @@ class ErnieBotToyForGeneration(nn.Layer):
                 norm_layer_name=f"{self.base_model_prefix}.decoder.norm",
                 linear_layer_name=f"{self.base_model_prefix}.output_linear.out_linear",
                 input_dim=self.hidden_size,
-                output_dim=self.gpt.vocab_size,
+                output_dim=self.ernie.vocab_size,
                 epsilon=1e-5,
                 norm_type=self.norm_type,
                 have_norm_bias=self.have_norm_bias,
             )
         else:
-            if self.gpt.sharing_model is not None:
-                self.lm_head = self.gpt.sharing_model.lm_head
+            if self.ernie.sharing_model is not None:
+                self.lm_head = self.ernie.sharing_model.lm_head
             else:
                 if self.weight_sharing:
-                    sharing_weight = self.gpt.embeddings.word_embeddings.weight
+                    sharing_weight = self.ernie.embeddings.word_embeddings.weight
                 else:
                     sharing_weight = None
                 if self.weight_sharing_add_bias:
-                    sharing_bias = self.gpt.embeddings.bias
+                    sharing_bias = self.ernie.embeddings.bias
                 else:
                     sharing_bias = None
 
                 lmhead_name = (
                     "server_nlg_mask_lm_trans_fc_"
-                    if not self.gpt.is_mtp
+                    if not self.ernie.is_mtp
                     else "mtp_server_nlg_mask_lm_trans_fc_"
                 )
 
@@ -1227,7 +1227,7 @@ class ErnieBotToyForGeneration(nn.Layer):
                         else None
                     ),
                     input_dim=self.hidden_size,
-                    output_dim=self.gpt.vocab_size,
+                    output_dim=self.ernie.vocab_size,
                     fused_linear=self.configs["fused_linear"],
                     sharing_weight=sharing_weight,
                     sharing_bias=sharing_bias,
@@ -1243,19 +1243,19 @@ class ErnieBotToyForGeneration(nn.Layer):
                 A dictionary containing model parameters, where keys are parameter names
                 and values are NumPy arrays or PaddlePaddle tensors.
         """
-        embeddings_weight_name = self.gpt.embeddings.layer_name + ".weight"
+        embeddings_weight_name = self.ernie.embeddings.layer_name + ".weight"
         if embeddings_weight_name not in state_dict.keys():
             state_dict[embeddings_weight_name] = state_dict["lm_head.weight"]
         try:
-            if self.gpt.sharing_model is None:
-                self.gpt.embeddings.load_state_dict(state_dict)
-                self.gpt.norm.load_state_dict(state_dict)
+            if self.ernie.sharing_model is None:
+                self.ernie.embeddings.load_state_dict(state_dict)
+                self.ernie.norm.load_state_dict(state_dict)
                 self.lm_head.load_state_dict(state_dict)
-            self.gpt.decoder.load_state_dict(state_dict)
-            if self.gpt.is_mtp:
-                self.gpt.e_norm.load_state_dict(state_dict)
-                self.gpt.h_norm.load_state_dict(state_dict)
-                self.gpt.eh_proj.load_state_dict(state_dict)
+            self.ernie.decoder.load_state_dict(state_dict)
+            if self.ernie.is_mtp:
+                self.ernie.e_norm.load_state_dict(state_dict)
+                self.ernie.h_norm.load_state_dict(state_dict)
+                self.ernie.eh_proj.load_state_dict(state_dict)
         except Exception as e:
             raise RuntimeError(f"set_state_dict error which is {e}")
             traceback.print_exc()
@@ -1265,7 +1265,7 @@ class ErnieBotToyForGeneration(nn.Layer):
         """
         Load model parameters from a given state dictionary.
         """
-        self.gpt.decoder.update_state_dict(state_dict)
+        self.ernie.decoder.update_state_dict(state_dict)
 
     def prepare_input_ids_for_generation(self, bos_token_id, encoder_output=None):
         """
@@ -1356,9 +1356,9 @@ class ErnieBotToyForGeneration(nn.Layer):
             seq_lens_this_time, seq_lens_encoder, seq_lens_decoder
         )
         out_token_num = paddle.sum(seq_lens_output)
-        output_cum_offsets_tmp = paddle.cumsum(self.gpt.max_len - seq_lens_output)
+        output_cum_offsets_tmp = paddle.cumsum(self.ernie.max_len - seq_lens_output)
         output_padding_offset, output_cum_offsets = speculate_get_output_padding_offset(
-            output_cum_offsets_tmp, out_token_num, seq_lens_output, self.gpt.max_len
+            output_cum_offsets_tmp, out_token_num, seq_lens_output, self.ernie.max_len
         )
         return output_padding_offset, output_cum_offsets
 
@@ -1489,7 +1489,7 @@ class ErnieBotToyForGeneration(nn.Layer):
         Returns:
             dict: A dictionary containing the prepared input IDs and the updated keyword arguments.
         """
-        if self.gpt.inference_args.use_avx512:
+        if self.ernie.inference_args.use_avx512:
             input_ids = kwargs["input_ids"]
             seq_lens_encoder = kwargs["seq_lens_encoder"]
             seq_lens_decoder = kwargs["seq_lens_decoder"]
@@ -1575,7 +1575,7 @@ class ErnieBotToyForGeneration(nn.Layer):
             Forward pass of GPT model.
             """
             model_inputs = self.prepare_inputs_for_generation(**args)
-            return self.gpt(**model_inputs)
+            return self.ernie(**model_inputs)
 
         def TopPProcess(probs: paddle.Tensor, top_p: float, min_tokens_to_keep: int):
             """
@@ -1686,7 +1686,7 @@ class ErnieBotToyForGeneration(nn.Layer):
             if current_platform.is_npu():
                 # NPU: use custom op atb_top_p_sampling
                 _, next_tokens = atb_top_p_sampling(probs, top_p, random_seed=-1)
-            elif self.gpt.inference_args.use_avx512:
+            elif self.ernie.inference_args.use_avx512:
                 # topp sampling
                 if top_p > 0.0 and top_p < 1.0:
                     min_tokens_to_keep = 1
@@ -1701,7 +1701,7 @@ class ErnieBotToyForGeneration(nn.Layer):
                 )  # have random_seed
 
             """ !!! ep not need broadcast, here broadcast just for test !!! """
-            if self.gpt.mp_size > 1 and not self.fake_server_p:
+            if self.ernie.mp_size > 1 and not self.fake_server_p:
                 if current_platform.is_npu():
                     # NPU: use custom op atb_broadcast
                     atb_broadcast(
@@ -1730,7 +1730,7 @@ class ErnieBotToyForGeneration(nn.Layer):
                 model_kwargs["stop_flags"],
             )
 
-            if self.gpt.use_stop_seqs:
+            if self.ernie.use_stop_seqs:
                 set_stop_value_multi_seqs(
                     next_tokens,
                     model_kwargs["pre_ids"],
@@ -1772,19 +1772,19 @@ class ErnieBotToyForGeneration(nn.Layer):
                     next_tokens,
                     model_kwargs["is_block_step"],
                 )
-            if self.gpt.output_via_mq:
+            if self.ernie.output_via_mq:
                 if self.msg_queue_id is None:
                     save_output(
                         next_tokens,
                         model_kwargs["not_need_stop"],
-                        self.gpt.mp_rank,
+                        self.ernie.mp_rank,
                         False,
                     )
                 else:
                     save_output_dynamic(
                         next_tokens,
                         model_kwargs["not_need_stop"],
-                        self.gpt.mp_rank,
+                        self.ernie.mp_rank,
                         self.msg_queue_id,
                         False,
                     )
@@ -1840,7 +1840,7 @@ class ErnieBotToyForGeneration(nn.Layer):
             Forward pass of GPT model.
             """
             model_inputs = self.prepare_inputs_for_generation(**args)
-            return self.gpt(**model_inputs)
+            return self.ernie(**model_inputs)
 
         def _post_process_(
             outputs,
@@ -1864,7 +1864,7 @@ class ErnieBotToyForGeneration(nn.Layer):
                     model_kwargs["seq_lens_encoder"],
                     model_kwargs["seq_lens_decoder"],
                     model_kwargs["actual_output_padding_offset"],
-                    self.gpt.max_len,
+                    self.ernie.max_len,
                 )
             else:
                 hidden_states = outputs[0] if isinstance(outputs, tuple) else outputs
@@ -1888,7 +1888,7 @@ class ErnieBotToyForGeneration(nn.Layer):
                 model_kwargs["seq_lens_this_time"],
                 model_kwargs["actual_output_padding_offset"],
                 model_kwargs["output_cum_offsets"],
-                self.gpt.max_len,
+                self.ernie.max_len,
             )
 
             # sample
@@ -1899,7 +1899,7 @@ class ErnieBotToyForGeneration(nn.Layer):
                 top_p,
                 model_kwargs["actual_output_padding_offset"],
                 self.speculate_max_candidate_len,
-                self.gpt.max_len,
+                self.ernie.max_len,
             )
 
             speculate_verify(
@@ -1922,19 +1922,19 @@ class ErnieBotToyForGeneration(nn.Layer):
                 actual_candidate_len,
                 model_kwargs["actual_draft_token_num"],
                 top_p,
-                self.gpt.max_len,
+                self.ernie.max_len,
                 self.speculate_verify_window,
                 True,  # enable_topp
             )
 
             # BroadCast
-            if self.gpt.mp_size > 1:
+            if self.ernie.mp_size > 1:
                 paddle.distributed.broadcast(model_kwargs["accept_tokens"], 0)
                 paddle.distributed.broadcast(model_kwargs["accept_num"], 0)
                 paddle.distributed.broadcast(model_kwargs["step_idx"], 0)
                 paddle.distributed.broadcast(model_kwargs["stop_flags"], 0)
 
-            if self.gpt.use_stop_seqs:
+            if self.ernie.use_stop_seqs:
                 speculate_set_stop_value_multi_seqs(
                     model_kwargs["accept_tokens"],
                     model_kwargs["accept_num"],
@@ -1963,8 +1963,8 @@ class ErnieBotToyForGeneration(nn.Layer):
             )
             # Streaming output
             if not (
-                self.gpt.speculate_method == "mtp"
-                and self.gpt.generation_phase == GenerationPhase.PREFILL
+                self.ernie.speculate_method == "mtp"
+                and self.ernie.generation_phase == GenerationPhase.PREFILL
             ):
                 if self.msg_queue_id is None:
                     speculate_save_output(
@@ -2048,7 +2048,7 @@ class ErnieBotToyForGeneration(nn.Layer):
 
         def _forward_(**args):
             model_inputs = self.prepare_inputs_for_generation(**args)
-            return self.gpt(**model_inputs)
+            return self.ernie(**model_inputs)
 
         def _post_process_(
             outputs,
@@ -2198,7 +2198,7 @@ class ErnieBotToyForGeneration(nn.Layer):
 
         def _forward_(**args):
             model_inputs = self.prepare_inputs_for_generation(**args)
-            return self.gpt(**model_inputs)
+            return self.ernie(**model_inputs)
 
         def _post_process_(
             outputs,
@@ -2217,7 +2217,7 @@ class ErnieBotToyForGeneration(nn.Layer):
 
             _, inter_next_tokens = paddle.tensor.top_p_sampling(probs, top_p, seed=-1)
 
-            if self.gpt.mp_size > 1:
+            if self.ernie.mp_size > 1:
                 paddle.distributed.broadcast(inter_next_tokens, 0)
 
             draft_model_update(
@@ -2234,25 +2234,25 @@ class ErnieBotToyForGeneration(nn.Layer):
                 model_kwargs["max_dec_len"],
                 eos_token_id,
                 model_kwargs["base_model_draft_tokens"],
-                self.gpt.max_len,
+                self.ernie.max_len,
                 model_kwargs["substep"],
             )
             if (
-                self.gpt.speculate_method in ["mtp", "draft_model", "eagle"]
-                and self.gpt.generation_phase == GenerationPhase.PREFILL
+                self.ernie.speculate_method in ["mtp", "draft_model", "eagle"]
+                and self.ernie.generation_phase == GenerationPhase.PREFILL
             ):
                 if self.msg_queue_id is None:
                     mtp_save_first_token(
                         model_kwargs["base_model_draft_tokens"],
                         model_kwargs["not_need_stop"],
-                        self.gpt.mp_rank,
+                        self.ernie.mp_rank,
                         False,
                     )
                 else:
                     mtp_save_first_token_dynamic(
                         model_kwargs["base_model_draft_tokens"],
                         model_kwargs["not_need_stop"],
-                        self.gpt.mp_rank,
+                        self.ernie.mp_rank,
                         self.msg_queue_id,
                         False,
                     )
@@ -2376,27 +2376,27 @@ class ErnieBotToyForGeneration(nn.Layer):
         bos_token_id = (
             bos_token_id
             if bos_token_id is not None
-            else getattr(self.gpt, "bos_token_id", None)
+            else getattr(self.ernie, "bos_token_id", None)
         )
         pad_token_id = (
             pad_token_id
             if pad_token_id is not None
-            else getattr(self.gpt, "pad_token_id", None)
+            else getattr(self.ernie, "pad_token_id", None)
         )
         forced_bos_token_id = (
             forced_bos_token_id
             if forced_bos_token_id is not None
-            else getattr(self.gpt, "forced_bos_token_id", None)
+            else getattr(self.ernie, "forced_bos_token_id", None)
         )
         forced_eos_token_id = (
             forced_eos_token_id
             if forced_eos_token_id is not None
-            else getattr(self.gpt, "forced_eos_token_id", None)
+            else getattr(self.ernie, "forced_eos_token_id", None)
         )
         decoder_start_token_id = (
             decoder_start_token_id
             if decoder_start_token_id is not None
-            else getattr(self.gpt, "decoder_start_token_id", None)
+            else getattr(self.ernie, "decoder_start_token_id", None)
         )
         model_kwargs["input_ids"] = input_ids
         model_kwargs["image_features"] = image_features

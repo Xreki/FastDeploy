@@ -152,6 +152,8 @@ def build_stream_line_model(
     return_state_dicts: bool = False,
     sharing_model=None,
     sharing_state_dicts=None,
+    use_empty_parameter: bool = False,
+    embeddings_column_cut: bool = False,
 ):
     """
     Build a fused inference model
@@ -233,6 +235,13 @@ def build_stream_line_model(
     num_key_value_heads = config.get("num_key_value_heads", -1)
     if num_key_value_heads is None:
         num_key_value_heads = -1
+    
+    # RL need, some model num_key_value_heads less tensor_parallel_degree, need copy
+    if num_key_value_heads < tensor_parallel_degree:
+        logger.warning(
+            f"key value heads num is {num_key_value_heads}, tensor parallel degree is {tensor_parallel_degree}"
+        )
+        num_key_value_heads = tensor_parallel_degree
 
     if config.get("ffn_hidden_size", None) is not None:
         ffn_hidden_size = config["ffn_hidden_size"]
@@ -257,6 +266,12 @@ def build_stream_line_model(
         )
     if num_layers is None:
         raise ValueError(f"num_layers<{num_layers}> is invalid")
+    
+    remove_tail_layer = config.get("remove_tail_layer")
+    if remove_tail_layer is True:
+        num_layers -= 1
+    elif isinstance(remove_tail_layer, int):
+        num_layers -= remove_tail_layer
 
     use_moe = config.get(
         "moe_layer_start_index", num_layers
@@ -273,7 +288,9 @@ def build_stream_line_model(
         ErnieBotBaseModel = ErnieBotFusedModel
         ErnieBotGenModel = ErnieBotForGeneration
     if not sharing_state_dicts:
-        if use_fake_parameter:
+        if use_empty_parameter:
+            context = paddle.LazyGuard()
+        elif use_fake_parameter:
             context = contextlib.nullcontext()
         elif use_safetensors:
             context = paddle.LazyGuard()
@@ -508,6 +525,7 @@ def build_stream_line_model(
             max_batch_size=max_batch_size,
             use_offline_quant=use_offline_quant,
             sharing_model=sharing_model,
+            embeddings_column_cut=embeddings_column_cut,
         )
     if use_beam_search:
         decode_strategy = "beam_search"
