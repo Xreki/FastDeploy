@@ -96,7 +96,7 @@ def init_child_logger(log_file: str):
 def update_weight_and_controller(job_id: str, model_path: str, model_version: str) -> None:
     """Update the weights of a model and notify the controller that it has been successfully loaded."""
     if model_path == "":
-        model_path = "/"
+        model_path = "./"
     init_child_logger(f'rollout-worker-agent_child_{device_use_id}.log')
 
     try:
