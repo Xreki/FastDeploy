@@ -64,6 +64,7 @@ __global__ void speculate_free_and_dispatch_block(
             in_need_block_list_len = 0;
         }
         int *block_table_now = block_tables + tid * block_num_per_seq;
+        int max_possible_block_idx = (seq_lens_decoder[tid] + max_draft_tokens + 1 ) / block_size;
         if (stop_flags[tid] && !is_block_step[tid]) {
             // 回收block块
             first_token_ids[tid] = -1;
@@ -89,7 +90,7 @@ __global__ void speculate_free_and_dispatch_block(
                 encoder_block_lens[tid] = 0;
                 used_list_len[tid] = 0;
             }
-        } else if (seq_lens_this_time[tid] != 0 &&
+        } else if (seq_lens_this_time[tid] != 0 && max_possible_block_idx < block_num_per_seq &&
                    block_table_now[(seq_lens_decoder[tid] + max_draft_tokens +
                                     1) /
                                    block_size] == -1) {

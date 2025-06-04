@@ -307,7 +307,7 @@ class Worker:
             self.infer_engine.share_inputs["infer_seed"].add_(infer_seed_increment)
             self.infer_engine.share_inputs["infer_seed"][:] %= self.MAX_INFER_SEED
 
-            self.infer_engine.update_chunked_prefill(req_dicts[0].token_chunk_size)
+            self.infer_engine.update_chunked_prefill(req_dicts)
             self.step_cuda()
 
     def determine_num_available_blocks(self):

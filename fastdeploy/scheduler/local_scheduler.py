@@ -31,15 +31,26 @@ class LocalScheduler(object):
     """
 
     def __init__(self,
-                 max_size: int,
-                 ttl: int,
-                 wait_response_timeout: float):
+            max_size: int,
+            ttl: int,
+            wait_response_timeout: float,
+            enable_chunked_prefill: bool,
+            max_num_partial_prefills: int,
+            max_long_partial_prefills: int,
+            long_prefill_token_threshold: int,
+        ):
         self.max_size = max_size
         self.ttl = ttl
         self.mutex = threading.Lock()
         self.ids_read_cursor = 0
         self.ids: List[str] = list()
 
+        self.partial_chunked_tokens: List[int] = list()
+        self.enable_chunked_prefill = enable_chunked_prefill
+        self.max_num_partial_prefills = max_num_partial_prefills
+        self.max_long_partial_prefills = max_long_partial_prefills
+        self.long_prefill_token_threshold = long_prefill_token_threshold
+        
         self.requests: Dict[str, ScheduledRequest] = dict()
         self.responses: Dict[str, List[ScheduledResponse]] = dict()
 
@@ -151,14 +162,31 @@ class LocalScheduler(object):
             required_total_blocks = 0
             current_prefill_tokens = 0
             requests: List[Request] = []
+            long_partial_requests, short_partial_requests = 0, 0
             for request_id in batch_ids:
                 request = self.requests[request_id]
                 required_input_blocks = self.calc_required_blocks(
                     request.size, block_size)
                 current_prefill_tokens += request.size
                 required_total_blocks += required_input_blocks + reserved_output_blocks
-                if required_total_blocks > available_blocks or current_prefill_tokens > max_num_batched_tokens:
+                if required_total_blocks > available_blocks:
                     break
+
+                if self.enable_chunked_prefill:
+                    if request.size > self.long_prefill_token_threshold:
+                        # 长请求
+                        long_partial_requests += 1
+                        if long_partial_requests > self.max_long_partial_prefills:
+                            break
+                    else:
+                        short_partial_requests += 1
+                    
+                    if short_partial_requests + long_partial_requests > self.max_num_partial_prefills:
+                        break
+                else:
+                    if current_prefill_tokens > max_num_batched_tokens:
+                        break
+
                 requests.append(request.raw)
             self.ids_read_cursor += len(requests)
 

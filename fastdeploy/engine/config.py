@@ -274,6 +274,9 @@ class Config:
         engine_worker_queue_port: int = 8002,
         enable_mm: bool = False,
         enable_chunked_prefill: bool = False,
+        max_num_partial_prefills: int = 1,
+        max_long_partial_prefills: int = 1,
+        long_prefill_token_threshold: int = 0,
     ):
         """
         Initialize the Config class.
@@ -294,6 +297,9 @@ class Config:
             speculative_config (Optional[Dict[str, Any]]): Speculative execution configuration. Default is None.
             use_warmup (bool): Flag to use warmup. Default is False.
             enable_chunked_prefill (bool): Flag to enable chunked prefill. Default is False.
+            max_num_partial_prefills (int): Maximum number of partial prefills. Default is 1.
+            max_long_partial_prefills (int): Maximum number of long partial prefills. Default is 1.
+            long_prefill_token_threshold (int): Token threshold for long partial prefill. Default is 0.
         """
         self.model_config = model_config
         self.cache_config = cache_config
@@ -311,6 +317,9 @@ class Config:
         self.speculative_config = speculative_config
         self.use_warmup = use_warmup
         self.enable_chunked_prefill = enable_chunked_prefill
+        self.max_num_partial_prefills = max_num_partial_prefills
+        self.max_long_partial_prefills = max_long_partial_prefills
+        self.long_prefill_token_threshold = long_prefill_token_threshold
 
         # TODO
         self.max_prefill_batch = 3
@@ -348,6 +357,10 @@ class Config:
                 self.max_num_batched_tokens = 2048
             else:
                 self.max_num_batched_tokens = self.max_model_len
+        
+        if self.long_prefill_token_threshold == 0:
+            self.long_prefill_token_threshold = int(self.max_model_len * 0.04)
+
         self.cache_config.postprocess(self.max_num_batched_tokens, self.max_num_seqs)
 
 
@@ -366,6 +379,22 @@ class Config:
         assert (self.nnode >= 1), f"nnode: {self.nnode} should no less than 1"
         assert (self.max_model_len >= 16), f"max_model_len: {self.max_model_len} should be larger than 16"
         assert (self.max_num_seqs >= 1), f"max_num_seqs: {self.max_num_seqs} should be larger than 1"
+
+        assert (self.max_num_batched_tokens >= self.max_num_seqs), f"max_num_batched_tokens: {self.max_num_batched_tokens} should be larger than or equal to max_num_seqs: {self.max_num_seqs}"
+        assert (self.max_num_batched_tokens <= self.max_model_len * self.max_num_seqs), f"max_num_batched_tokens: {self.max_num_batched_tokens} should be larger" \
+                f"than or equal to max_num_seqs: {self.max_num_seqs} * max_model_len: {self.max_model_len}"
+        assert (self.max_num_partial_prefills >= 1), f"max_num_partial_prefills: {self.max_num_partial_prefills} should be larger than or equal to 1"
+
+        assert (self.max_long_partial_prefills >= 1), f"max_long_partial_prefills: {self.max_long_partial_prefills} should be larger than or equal to 1"
+        assert (self.max_long_partial_prefills <= self.max_num_partial_prefills), f"max_long_partial_prefills: {self.max_long_partial_prefills} should " \
+                f"be less than or equal to max_num_partial_prefills: {self.max_num_partial_prefills}"
+
+        if not self.enable_chunked_prefill:
+            assert (self.max_num_batched_tokens >= self.max_model_len), f"max_num_batched_tokens: {self.max_num_batched_tokens} should be larger than or equal to max_model_len: {self.max_model_len}"
+
+        if self.max_num_partial_prefills > 1:
+            assert (self.enable_chunked_prefill is True), f"Chunked prefill must be enabled to set max_num_partial_prefills > 1"
+            assert (self.long_prefill_token_threshold < self.max_model_len), f"long_prefill_token_threshold: {self.long_prefill_token_threshold} should be less than max_model_len: {self.max_model_len}"
 
         self.scheduler_config.check()
 

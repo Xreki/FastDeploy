@@ -212,6 +212,8 @@ elif paddle.is_compiled_with_cuda():
         "gpu_ops/per_token_quant_fp8.cu",
         "gpu_ops/extract_text_token_output.cu",
         "gpu_ops/update_split_fuse_input.cu",
+        "gpu_ops/text_image_index_out.cu",
+        "gpu_ops/text_image_gather_scatter.cu"
     ]
 
     # pd_disaggregation
@@ -245,7 +247,10 @@ elif paddle.is_compiled_with_cuda():
 
         # Remove existing directory if it exists
         if os.path.exists(dst_dir):
-            shutil.rmtree(dst_dir)
+            if os.path.islink(dst_dir):
+                os.unlink(dst_dir)
+            else:
+                shutil.rmtree(dst_dir)
         print(f"Copying {src_dir} to {dst_dir}")
 
         # Copy the directory

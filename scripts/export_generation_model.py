@@ -29,7 +29,7 @@ from paddlenlp.trainer import strtobool
 from paddlenlp.utils.log import logger
 
 import paddle
-from fastdeploy.model_executor.models.configuration import ModelConfig
+from fastdeploy.model_executor.models.configuration import ErnieBotConfig
 from fastdeploy.model_executor.models.tokenizer import ErnieBotTokenizer
 from paddle.distributed import fleet
 from fastdeploy.model_executor.models.utils import (
@@ -169,6 +169,13 @@ def setup_args():
         type=strtobool,
         help="use image_features or not(only used in multi modal)",
     )
+    parser.add_argument(
+        "--use_offline_quant",
+        default="False",
+        type=strtobool,
+        help="The inference uses offline-quantized weights, \
+            and the script performs the offline quantization.",
+    )
     args = parser.parse_args()
     return args
 
@@ -270,7 +277,7 @@ if __name__ == "__main__":
     except Exception:
         pass
 
-    model_config = ModelConfig.from_pretrained(args.model_name_or_path)
+    model_config = ErnieBotConfig.from_pretrained(args.model_name_or_path)
 
     if enable_auth:
         model_config.product_name = product_name

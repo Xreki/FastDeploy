@@ -21,6 +21,7 @@ import contextlib
 import json
 import os
 import sys
+import threading
 
 from paddlenlp.trainer import RuntimeTimer
 from paddlenlp.utils.log import logger
@@ -29,6 +30,7 @@ import paddle
 import paddle.distributed as dist
 from paddle.distributed import fleet
 from paddle.common_ops_import import convert_dtype
+from fastdeploy.model_executor.models.utils import convert_ndarray_dtype
 
 from .tokenizer import ErnieBotTokenizer
 from .modeling_ernie_bot import (
@@ -42,14 +44,13 @@ from .utils import (
     generate_rank_mapping,
     get_infer_model_path,
     model_convert_fp8,
-    convert_ndarray_dtype
 )
 from fastdeploy.model_executor.models.utils import load_checkpoint
 
 from .token_utils import process_index
 
 from paddlenlp.transformers.configuration_utils import PretrainedConfig
-from .configuration import ModelConfig
+from fastdeploy.model_executor.models.configuration import ErnieBotConfig
 from paddlenlp.trl import llm_utils
 from fastdeploy.platforms import current_platform
 
@@ -144,8 +145,13 @@ def build_stream_line_model(
     scale_dir: str = "None",
     output_via_mq: bool = True,
     use_safetensors: bool = False,
-    embeddings_column_cut: bool = False,
-    use_empty_parameter: bool = False,
+    enable_redundant_experts: bool = False,
+    redundant_experts_num: int = 0,
+    max_batch_size: int = 128,
+    use_offline_quant: bool = False,
+    return_state_dicts: bool = False,
+    sharing_model=None,
+    sharing_state_dicts=None,
 ):
     """
     Build a fused inference model
@@ -186,15 +192,36 @@ def build_stream_line_model(
         tokenizer = ErnieBotTokenizer.from_pretrained(model_path)
 
     config, _ = PretrainedConfig.get_config_dict(model_path)
-    ernie_config = ModelConfig.from_dict(config)
+    ernie_config = ErnieBotConfig.from_dict(config)
     tensor_parallel_rank, tensor_parallel_degree = llm_utils.init_dist_env()
     ernie_config.tensor_parallel_rank = tensor_parallel_rank
     ernie_config.tensor_parallel_degree = tensor_parallel_degree
     ernie_config.is_mtp = draft_type in ["eagle", "mtp"]
+    ernie_config.use_ep = use_ep
+    ernie_config.use_offline_quant = use_offline_quant
+    ernie_config.moe_quant_type = moe_quant_type
+    if use_ep:
+        if isinstance(ernie_config.moe_num_experts, list):
+            ernie_config.has_multimodality = True
+            ernie_config.num_experts = ernie_config.moe_num_experts[0]
+        else:
+            ernie_config.num_experts = ernie_config.moe_num_experts
+        ernie_config.num_experts_per_rank = (
+            ernie_config.num_experts // ernie_config.tensor_parallel_degree
+        )
+        ernie_config.num_experts_start_offset = (
+            ernie_config.num_experts_per_rank * ernie_config.tensor_parallel_rank
+        )
+
     # use the length of tokenizer as the origin vocab size
     ori_vocab_size = len(tokenizer)
+    moe_intermediate_size = (config.get("moe_intermediate_size", None),)
+    if isinstance(moe_intermediate_size, list) or isinstance(
+        moe_intermediate_size, tuple
+    ):
+        moe_intermediate_size = moe_intermediate_size[0]
 
-    if pad_vocab:
+    if not use_ep and pad_vocab:
         config["vocab_size"] = _vocab_size_with_padding(
             config.get("vocab_size", tokenizer.vocab_size),
             config.pop("vocab_size_divisible_unit", 128),
@@ -207,12 +234,6 @@ def build_stream_line_model(
     if num_key_value_heads is None:
         num_key_value_heads = -1
 
-    if num_key_value_heads < tensor_parallel_degree:
-        logger.warning(
-            f"key value heads num is {num_key_value_heads}, tensor parallel degree is {tensor_parallel_degree}"
-        )
-        num_key_value_heads = tensor_parallel_degree
-    
     if config.get("ffn_hidden_size", None) is not None:
         ffn_hidden_size = config["ffn_hidden_size"]
     elif config.get("intermediate_size", None) is not None:
@@ -228,115 +249,199 @@ def build_stream_line_model(
                 (int(2 * ffn_hidden_size / 3) + multiple_of - 1) // multiple_of
             )
 
-    num_layers = config.get("num_layers", None) or config.get("num_hidden_layers", None)
+    if draft_type in ["mtp", "eagle"]:
+        num_layers = 1
+    else:
+        num_layers = config.get("num_layers", None) or config.get(
+            "num_hidden_layers", None
+        )
     if num_layers is None:
         raise ValueError(f"num_layers<{num_layers}> is invalid")
 
-    remove_tail_layer = config.get("remove_tail_layer")
-    if remove_tail_layer is True:
-        num_layers -= 1
-    elif isinstance(remove_tail_layer, int):
-        num_layers -= remove_tail_layer
+    use_moe = config.get(
+        "moe_layer_start_index", num_layers
+    ) < num_layers or draft_type in ["mtp", "eagle"]
+    if "ErnieBotLMHeadModel" in ernie_config.architectures:
+        from .modeling_ernie_bot_toy import (
+            ErnieBotToyForGeneration,
+            ErnieBotToyFusedModel,
+        )
 
-    use_moe = config.get("moe_layer_start_index", num_layers) < num_layers
-
-    if use_empty_parameter:
-        context = paddle.LazyGuard()
-    elif use_fake_parameter:
-        context = contextlib.nullcontext()
-    elif use_safetensors:
-        context = paddle.LazyGuard()
-        state_dict = load_checkpoint(
-            model_path, ErnieBotFusedModel, ernie_config, return_numpy=True)
-    elif use_moe:
-        tensor_parallel_degree = dist.get_world_size()
-        if tensor_parallel_degree > 1:
-            hcg = fleet.get_hybrid_communicate_group()
-            mp_id = hcg.get_model_parallel_rank()
-            # 统计文件子目录数量
-            subdir_count = 0
-            for entry in os.listdir(model_path):
-                if "pp" in entry:
-                    full_path = os.path.join(model_path, entry)
-                    if os.path.isdir(full_path):
-                        subdir_count += 1
-
-            pp_num = subdir_count
-            rank_model_paths = [
-                os.path.join(model_path, f"pp{i}/model_state.tp0{mp_id}.pdparams")
-                for i in range(pp_num)
-            ]
-
-        context = paddle.LazyGuard()
-        if not use_ep:
-            logger.info(f"start to loading weight: {rank_model_paths}")
-            state_dicts = [
-                paddle.load(path, return_numpy=True) for path in rank_model_paths
-            ]
-
-        else:
-            # for EP loading state_dicts
-            import glob
-
-            state_dicts = []
-            files = glob.glob(model_path + "/merged_tp1_state_split/*")
-            for file_name in files:
-                try:
-                    state_dicts += [
-                        {file_name.split("/")[-1]: file_name}
-                    ]  # save {layer_name: weight_file_name}
-                except Exception:
-                    pass
-
-        new_state_dict = {}
-        for state_dict in state_dicts:
-            for key, value in state_dict.items():
-                new_state_dict[key] = value
-
-        state_dict = new_state_dict
-    elif config.get("quant_type", None) is not None:
-        # TODO(@wangbojun) currently, we use paddle.load for ptq model.
-        tensor_parallel_degree = dist.get_world_size()
-        if tensor_parallel_degree > 1:
-            hcg = fleet.get_hybrid_communicate_group()
-            mp_id = hcg.get_model_parallel_rank()
-            rank_model_path = os.path.join(
-                model_path, f"model_state.tp0{mp_id}.pdparams"
-            )
-            if not os.path.exists(rank_model_path):
-                full_model_path = os.path.join(model_path, "model_state.pdparams")
-                if not os.path.exists(full_model_path):
-                    raise ValueError(
-                        f"can not find <model_state.tp0{mp_id}.pdparams> "
-                        + f"and model_state.pdparams under dir<{model_path}>"
-                    )
-                raise ValueError(
-                    "please run `split_weights.py` to gen weights for multi-gpu inference."
-                )
-            model_state_path = rank_model_path
-            if num_key_value_heads > 0:
-                assert (
-                    num_key_value_heads % tensor_parallel_degree == 0
-                ), "num_key_value_heads must be an integer multiple of tensor_parallel_degree"
-        else:
-            model_state_path = os.path.join(model_path, "model_state.pdparams")
-        context = paddle.LazyGuard()
-        logger.info(f"start to loading weight: {model_state_path}")
-        if os.path.exists(model_state_path):
-            state_dict = paddle.load(model_state_path, return_numpy=True)
+        ErnieBotBaseModel = ErnieBotToyFusedModel
+        ErnieBotGenModel = ErnieBotToyForGeneration
     else:
+        ErnieBotBaseModel = ErnieBotFusedModel
+        ErnieBotGenModel = ErnieBotForGeneration
+    if not sharing_state_dicts:
+        if use_fake_parameter:
+            context = contextlib.nullcontext()
+        elif use_safetensors:
+            context = paddle.LazyGuard()
+            state_dict = load_checkpoint(model_path, ErnieBotBaseModel, ernie_config)
+        elif use_moe:
+            tensor_parallel_degree = dist.get_world_size()
+            if tensor_parallel_degree > 1:
+                hcg = fleet.get_hybrid_communicate_group()
+                mp_id = hcg.get_model_parallel_rank()
+                # 统计文件子目录数量
+                subdir_count = 0
+                for entry in os.listdir(model_path):
+                    if "pp" in entry:
+                        full_path = os.path.join(model_path, entry)
+                        if os.path.isdir(full_path):
+                            subdir_count += 1
+
+                pp_num = subdir_count
+                rank_model_paths = [
+                    os.path.join(model_path, f"pp{i}/model_state.tp0{mp_id}.pdparams")
+                    for i in range(pp_num)
+                ]
+
+            context = paddle.LazyGuard()
+            if not use_ep:
+                logger.info(f"start to loading weight: {rank_model_paths}")
+                state_dicts = [None for _ in rank_model_paths]
+
+                # state_dicts = [
+                #     paddle.load(path, return_numpy=True) for path in rank_model_paths
+                # ]
+                def load_ckpt(i):
+                    state_dicts[i] = paddle.load(rank_model_paths[i], return_numpy=True)
+
+                threads = []
+                for i in range(len(rank_model_paths)):
+                    thread = threading.Thread(target=load_ckpt, args=(i,))
+                    threads.append(thread)
+                    thread.start()
+
+                for t in threads:
+                    t.join()
+
+                logger.info("Loading finished")
+
+            else:
+                # for EP loading state_dicts
+                import glob
+
+                state_dicts = []
+                files = glob.glob(model_path + "/merged_tp1_state_split/*")
+                for file_name in files:
+                    try:
+                        state_dicts += [
+                            {file_name.split("/")[-1]: file_name}
+                        ]  # save {layer_name: weight_file_name}
+                    except Exception:
+                        pass
+
+            need_reset_moe_intermediate_size = False
+            if not use_ep:
+                logger.info(f"moe_intermediate_size is: {moe_intermediate_size}")
+                need_reset_moe_intermediate_size = (
+                    (not use_ep)
+                    and (moe_quant_type == "fp8")
+                    and (moe_intermediate_size // 8 % 128 != 0)
+                )
+                ori_up_size = moe_intermediate_size // 8 * 2
+                ori_down_size = ori_up_size // 2
+                if need_reset_moe_intermediate_size:
+                    moe_intermediate_size = (
+                        128 - moe_intermediate_size // 8 % 128
+                    ) * 8 + moe_intermediate_size
+                    logger.info(
+                        f"moe_intermediate_size reset to {moe_intermediate_size}!"
+                    )
+                    up_size = moe_intermediate_size // 8 * 2
+                    down_size = up_size // 2
+            new_state_dict = {}
+
+            def padding(key, value):
+                import numpy as np
+
+                # logger.info(f"deal {key}")
+                if ("experts" in key) and ("up_gate_proj" in key):
+                    # logger.info("up_gate_proj")
+                    v_new = np.zeros(shape=[value.shape[0], up_size], dtype=value.dtype)
+                    v_new[:, :ori_down_size] = value[:, :ori_down_size]
+                    v_new[:, down_size : (down_size + ori_down_size)] = value[
+                        :, ori_down_size:
+                    ]
+                elif ("experts" in key) and ("down_proj" in key):
+                    # logger.info("down_proj")
+                    v_new = np.zeros(
+                        shape=[down_size, value.shape[1]], dtype=value.dtype
+                    )
+                    v_new[:ori_down_size, :] = value
+                else:
+                    v_new = value
+                new_state_dict[key] = v_new
+                if ("experts" in key) and ("up_gate_proj" in key or "down_proj" in key):
+                    pass
+                    # logger.info(f"padding {key}: {value.shape}->{v_new.shape}")
+
+            threads = []
+            for state_dict in state_dicts:
+                for key, value in state_dict.items():
+                    if need_reset_moe_intermediate_size:
+                        thread = threading.Thread(target=padding, args=(key, value))
+                        threads.append(thread)
+                        thread.start()
+                    else:
+                        new_state_dict[key] = value
+
+            for t in threads:
+                t.join()
+            logger.info("Finish padding")
+            state_dict = new_state_dict
+        elif config.get("quant_type", None) is not None:
+            # TODO(@wangbojun) currently, we use paddle.load for ptq model.
+            tensor_parallel_degree = dist.get_world_size()
+            if tensor_parallel_degree > 1:
+                hcg = fleet.get_hybrid_communicate_group()
+                mp_id = hcg.get_model_parallel_rank()
+                rank_model_path = os.path.join(
+                    model_path, f"model_state.tp0{mp_id}.pdparams"
+                )
+                if not os.path.exists(rank_model_path):
+                    full_model_path = os.path.join(model_path, "model_state.pdparams")
+                    if not os.path.exists(full_model_path):
+                        raise ValueError(
+                            f"can not find <model_state.tp0{mp_id}.pdparams> "
+                            + f"and model_state.pdparams under dir<{model_path}>"
+                        )
+                    raise ValueError(
+                        "please run `split_weights.py` to gen weights for multi-gpu inference."
+                    )
+                if not os.path.exists(rank_model_path):
+                    full_model_path = os.path.join(model_path, "model_state.pdparams")
+                    if not os.path.exists(full_model_path):
+                        raise ValueError(
+                            f"can not find <model_state.tp0{mp_id}.pdparams> "
+                            + f"and model_state.pdparams under dir<{model_path}>"
+                        )
+                    raise ValueError(
+                        "please run `split_weights.py` to gen weights for multi-gpu inference."
+                    )
+                model_state_path = rank_model_path
+                if num_key_value_heads > 0:
+                    assert (
+                        num_key_value_heads % tensor_parallel_degree == 0
+                    ), "num_key_value_heads must be an integer multiple of tensor_parallel_degree"
+            else:
+                model_state_path = os.path.join(model_path, "model_state.pdparams")
+            context = paddle.LazyGuard()
+            logger.info(f"start to loading weight: {model_state_path}")
+            if os.path.exists(model_state_path):
+                state_dict = paddle.load(model_state_path, return_numpy=True)
+    else:
+        state_dict = sharing_state_dicts
         context = paddle.LazyGuard()
-        state_dict = load_tp_checkpoint(
-                model_path,
-                ErnieBotFusedModel,
-                ernie_config,
-                return_numpy=True,
-            )
+
     use_rmsnorm = config.get("use_rmsnorm", False)
     logger.info(f"{runtime_timer.log()}")
     runtime_timer.start(f"{stage_flag} stage set parameters time")
+
     with context:
-        model = ErnieBotFusedModel(
+        model = ErnieBotBaseModel(
             vocab_size=config["vocab_size"],
             hidden_size=config["hidden_size"],
             max_len=max_len,
@@ -368,7 +473,7 @@ def build_stream_line_model(
             cache_quant_dtype=cache_quant_dtype,
             has_zero_point=config.get("has_zero_point", False),
             is_channel_wise=config.get("is_channel_wise", False),
-            use_fast_ffn=config.get("use_fast_ffn", False),
+            use_fast_ffn=ernie_config.use_fast_ffn,
             use_avx512=use_avx512,
             speculate_method=speculate_method,
             speculate_max_draft_token_num=speculate_max_draft_token_num,
@@ -376,19 +481,19 @@ def build_stream_line_model(
             draft_type=draft_type,
             start_layer_index=start_layer_index,
             use_moe=use_moe,
-            moe_num_experts=config.get("moe_num_experts", None),
-            moe_intermediate_size=config.get("moe_intermediate_size", None),
+            moe_num_experts=ernie_config.get("moe_num_experts", None),
+            moe_intermediate_size=ernie_config.get("moe_intermediate_size", None),
             moe_use_gate_correction_bias=config.get(
-                "moe_use_gate_correction_bias", True
+                "moe_use_gate_correction_bias", False
             ),
             moe_every2=config.get("moe_every2", False),
             moe_topk=config.get("moe_topk", 8),
             moe_num_shared_experts=config.get("moe_num_shared_experts", 0),
-            moe_layer_start_index=config.get("moe_layer_start_index", 0),
+            moe_layer_start_index=ernie_config.get("moe_layer_start_index", 0),
             moe_use_ffn_shared_weight_and_bias=config.get(
                 "moe_use_ffn_shared_weight_and_bias", False
             ),
-            moe_group=config.get("moe_group_experts", False),
+            moe_group=config.get("moe_group", False),
             moe_quant_type=moe_quant_type,
             use_ep=use_ep,
             ep_just_for_test=ep_just_for_test,
@@ -398,7 +503,11 @@ def build_stream_line_model(
             scale_dir=scale_dir,
             output_via_mq=output_via_mq,
             ernie_config=ernie_config,
-            embeddings_column_cut=embeddings_column_cut,
+            enable_redundant_experts=enable_redundant_experts,
+            redundant_experts_num=redundant_experts_num,
+            max_batch_size=max_batch_size,
+            use_offline_quant=use_offline_quant,
+            sharing_model=sharing_model,
         )
     if use_beam_search:
         decode_strategy = "beam_search"
@@ -445,10 +554,9 @@ def build_stream_line_model(
         "speculate_verify_window": speculate_verify_window,
         "return_all_hidden_states": return_all_hidden_states,
         "fake_server_p": fake_server_p,
-        "lm_head_column_cut": not embeddings_column_cut,
     }
     with context:
-        model = ErnieBotForGeneration(model, configs)
+        model = ErnieBotGenModel(model, configs)
 
     model.eval()
 
@@ -465,11 +573,17 @@ def build_stream_line_model(
     paddle.device.cuda.empty_cache()
     assert state_dict is not None
     model.set_state_dict(state_dict)
-    if generation_phase == GenerationPhase.DECODER:
+    if use_ep and generation_phase == GenerationPhase.DECODER:
+        logger.info("Reloading model...")
         reconstruct_memory(model)
     logger.info(f"{runtime_timer.log()}")
 
-    return config, tokenizer, model
+    if sharing_state_dicts is not None:
+        for k in list(sharing_state_dicts):
+            sharing_state_dicts.pop(k)
+
+    possible_state_dict = state_dict if return_state_dicts else None
+    return config, tokenizer, model, possible_state_dict
 
 
 def export_efficientllm_model(args):
@@ -521,7 +635,7 @@ def export_efficientllm_model(args):
     if use_avx512:
         logger.debug("export avx512 model")
 
-    config, tokenizer, model = build_stream_line_model(
+    config, tokenizer, model, _ = build_stream_line_model(
         config_path,
         args.model_name_or_path,
         args.dtype,
@@ -548,6 +662,7 @@ def export_efficientllm_model(args):
         return_all_hidden_states=args.return_all_hidden_states,
         moe_quant_type=args.moe_quant_type,
         use_safetensors=args.use_safetensors,
+        use_offline_quant=args.use_offline_quant,
     )
     max_sec_len = args.max_seq_len
     mp_size = dist.get_world_size()

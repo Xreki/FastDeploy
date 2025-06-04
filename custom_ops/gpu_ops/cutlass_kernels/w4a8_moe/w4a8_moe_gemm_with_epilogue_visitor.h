@@ -130,6 +130,7 @@ struct MoeW4A8GemmWithEpilogueVisitorInterleavedNf4 {
     int64_t batch_stride_B;
 
     int64_t* total_rows_before_expert;
+    int64_t total_rows;
     int64_t gemm_n;
     int64_t gemm_k;
 
@@ -159,6 +160,7 @@ struct MoeW4A8GemmWithEpilogueVisitorInterleavedNf4 {
               TensorRefC ref_C_,
               TensorRefC ref_D_,
               int64_t* total_rows_before_expert,
+              int64_t total_rows,
               int64_t gemm_n,
               int64_t gemm_k,
               int64_t batch_stride_A_,
@@ -181,6 +183,7 @@ struct MoeW4A8GemmWithEpilogueVisitorInterleavedNf4 {
           ref_C(ref_C_),
           ref_D(ref_D_),
           total_rows_before_expert(total_rows_before_expert),
+          total_rows(total_rows),
           gemm_n(gemm_n),
           gemm_k(gemm_k),
           batch_stride_A(batch_stride_A_),
@@ -248,6 +251,7 @@ struct MoeW4A8GemmWithEpilogueVisitorInterleavedNf4 {
     Params(Arguments const& args, int device_sms, int sm_occupancy, void* workspace = nullptr, int tile_count=0)
         : ParamsBase(args, device_sms, sm_occupancy),
           problem_visitor(args.total_rows_before_expert,
+                          args.total_rows,
                           args.gemm_n,
                           args.gemm_k,
                           args.problem_count,
@@ -427,10 +431,13 @@ struct MoeW4A8GemmWithEpilogueVisitorInterleavedNf4 {
 
         // Load element pointers. Exchange pointers and strides if working on
         // the transpose
-        const int64_t rows_to_jump =
-            problem_idx == 0
-                ? 0
-                : params.problem_visitor.last_row_for_problem[problem_idx - 1];
+        int64_t rows_to_jump = 0;
+        if (params.problem_visitor.total_rows < 0) {
+          rows_to_jump = problem_idx == 0 ? 0 : params.problem_visitor.last_row_for_problem[problem_idx - 1];
+        } else {
+          rows_to_jump = problem_idx * (params.problem_visitor.total_rows / params.problem_visitor.problem_count);
+        }
+
         ElementA* ptr_A =
             reinterpret_cast<ElementA*>(params.ptr_A) + rows_to_jump * gemm_k;
         typename LayoutA::LongIndex ldm_A = gemm_k;

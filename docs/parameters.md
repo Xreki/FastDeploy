@@ -22,7 +22,10 @@
 | max_cached_request_num |   int   |             等待队列中缓存任务的上限             |    否    |     128     |
 |       use_warmup       |   bool   |                   是否进行预热                   |    否    |    False    |
 |  enable_prefix_caching  |   bool   |                 是否开启前缀缓存                 |    否    |    False    |
-
+|  enable_chunked_prefill  |   bool   |            是否开启chunked_prefill       |    否    |    False    |
+|  max_num_partial_prefills  |   int   |        开启chunked_prefill后，prefill阶段最大请求条数       |    否    |    1    |
+|  max_long_partial_prefills  |   int   |        开启chunked_prefill后，prefill阶段长请求的最大数量       |    否    |    1    |
+|  long_prefill_token_threshold  |   int   |        开启chunked_prefill后，token数大于该值的请求被认为是长请求       |    否    |    max_model_len的4%    |
 
 
 ## 请求参数

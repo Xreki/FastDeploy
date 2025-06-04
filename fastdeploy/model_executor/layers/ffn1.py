@@ -85,6 +85,7 @@ class FFN1(nn.Layer):
         self.bias_name = self.layer_name + ".bias"
         self.weight_only_scale_name = self.layer_name + ".weight_only_scale"
         self.out_scale_name = self.layer_name + ".out_scale"
+        self.use_offline_quant = inference_args.use_offline_quant
 
         self._dtype = self._helper.get_default_dtype()
 
@@ -282,6 +283,22 @@ class FFN1(nn.Layer):
             convert_to_npu_dequant_scale(converted_weight_scale).astype("float32")
         )
 
+    def load_offline_quant_state_dict(self, quant_weight, quant_scale=None):
+        """
+        Load offline the checkpoint state dictionary into the layer.
+        """
+        if quant_scale is None:
+            if "float8" in self.weight_dtype:
+                self.ffn1_weight.copy_(quant_weight, False)
+            else:
+                self.ffn1_weight.set_value(quant_weight)
+        else:
+            if self.inference_args.weight_block_size[0] != -1:
+                self.ffn1_weight.copy_(quant_weight.view(paddle.float8_e4m3fn), False)
+            else:
+                self.ffn1_weight.set_value(quant_weight)
+            self.ffn1_weight_scale.set_value(quant_scale)
+
     def load_state_dict(self, state_dict):
         """
         Load the checkpoint state dictionary into the layer.
@@ -290,82 +307,94 @@ class FFN1(nn.Layer):
             state_dict (dict): A dictionary containing the checkpoint weights and biases.
         """
         # weight
-        weight_tensor = get_tensor(state_dict.pop(self.weight_key))
-        converted_weight_tensor = paddle.zeros(
-            shape=list(weight_tensor.shape), dtype=weight_tensor.dtype
-        )
-        if not self.use_fast_ffn:
-            converted_weight_tensor = paddle.concat(
-                [weight_tensor[:, ::2], weight_tensor[:, 1::2]], axis=1
+        if self.use_offline_quant:
+            self.load_offline_quant_state_dict(
+                quant_weight=get_tensor(
+                    state_dict.pop(self.weight_key + ".quant_weight")
+                ),
+                quant_scale=get_tensor(
+                    state_dict.pop(self.weight_key + ".quant_scale")
+                ),
             )
         else:
-            converted_weight_tensor = weight_tensor
-
-        # set weight
-        if self.skip_quant:
-            self.ffn1_weight.set_value(converted_weight_tensor)
-        else:
-            if self.inference_args.weight_block_size[0] != -1:
-                converted_weight_tensor = converted_weight_tensor.transpose([1, 0])
-                quanted_weight_tensor, weight_block_scale_tensor = (
-                    per_block_cast_to_fp8(converted_weight_tensor)
+            weight_tensor = get_tensor(state_dict.pop(self.weight_key))
+            converted_weight_tensor = paddle.zeros(
+                shape=list(weight_tensor.shape), dtype=weight_tensor.dtype
+            )
+            if not self.use_fast_ffn:
+                converted_weight_tensor = paddle.concat(
+                    [weight_tensor[:, ::2], weight_tensor[:, 1::2]], axis=1
                 )
-                self.ffn1_weight.copy_(quanted_weight_tensor, False)
-                self.ffn1_weight_scale.set_value(weight_block_scale_tensor)
-            elif self.weight_dtype == "int8" and self.act_dtype in [
-                "bfloat16",
-                "float16",
-                "float32",
-            ]:  # WINT8
-                if paddle.is_compiled_with_cuda():
+            else:
+                converted_weight_tensor = weight_tensor
+
+            # set weight
+            if self.skip_quant:
+                self.ffn1_weight.set_value(converted_weight_tensor)
+            else:
+                if self.inference_args.weight_block_size[0] != -1:
+                    converted_weight_tensor = converted_weight_tensor.transpose([1, 0])
+                    quanted_weight_tensor, weight_block_scale_tensor = (
+                        per_block_cast_to_fp8(converted_weight_tensor)
+                    )
+                    self.ffn1_weight.copy_(quanted_weight_tensor, False)
+                    self.ffn1_weight_scale.set_value(weight_block_scale_tensor)
+                elif self.weight_dtype == "int8" and self.act_dtype in [
+                    "bfloat16",
+                    "float16",
+                    "float32",
+                ]:  # WINT8
+                    if paddle.is_compiled_with_cuda():
+                        quanted_weight_tensor, weight_scale_tensor = weight_quantize(
+                            converted_weight_tensor,
+                            algo="weight_only_int8",
+                            arch=self.inference_args.weight_only_linear_arch,
+                        )
+                    elif paddle.is_compiled_with_xpu():
+                        quanted_weight_tensor, weight_scale_tensor = xpu_quant_weight(
+                            converted_weight_tensor.cpu().numpy()
+                        )
+                    self.ffn1_weight.set_value(quanted_weight_tensor)
+                    self.ffn1_weight_scale.set_value(
+                        weight_scale_tensor.astype(paddle.get_default_dtype())
+                    )
+                elif self.weight_dtype == "int4" and self.act_dtype in [
+                    "bfloat16",
+                    "float16",
+                    "float32",
+                ]:  # WINT4
                     quanted_weight_tensor, weight_scale_tensor = weight_quantize(
-                        converted_weight_tensor,
-                        algo="weight_only_int8",
+                        converted_weight_tensor.cpu(),
+                        algo="weight_only_int4",
                         arch=self.inference_args.weight_only_linear_arch,
                     )
-                elif paddle.is_compiled_with_xpu():
-                    quanted_weight_tensor, weight_scale_tensor = xpu_quant_weight(
-                        converted_weight_tensor.cpu().numpy()
+                    self.ffn1_weight.set_value(quanted_weight_tensor)
+                    self.ffn1_weight_scale.set_value(weight_scale_tensor)
+                elif self.weight_dtype == "int4" and self.act_dtype == "float8_e4m3fn":
+                    quanted_weight_tensor, weight_scale_tensor = (
+                        fastdeploy.model_executor.ops.gpu.scaled_gemm_f8_i4_f16_weight_quantize(
+                            paddle.cast(converted_weight_tensor, "float32").cpu(),
+                            groupsize=-1,
+                            scale_dtype="float16",
+                        )
                     )
-                self.ffn1_weight.set_value(quanted_weight_tensor)
-                self.ffn1_weight_scale.set_value(
-                    weight_scale_tensor.astype(paddle.get_default_dtype())
-                )
-            elif self.weight_dtype == "int4" and self.act_dtype in [
-                "bfloat16",
-                "float16",
-                "float32",
-            ]:  # WINT4
-                quanted_weight_tensor, weight_scale_tensor = weight_quantize(
-                    converted_weight_tensor.cpu(),
-                    algo="weight_only_int4",
-                    arch=self.inference_args.weight_only_linear_arch,
-                )
-                self.ffn1_weight.set_value(quanted_weight_tensor)
-                self.ffn1_weight_scale.set_value(weight_scale_tensor)
-            elif self.weight_dtype == "int4" and self.act_dtype == "float8_e4m3fn":
-                quanted_weight_tensor, weight_scale_tensor = (
-                    fastdeploy.model_executor.ops.gpu.scaled_gemm_f8_i4_f16_weight_quantize(
-                        paddle.cast(converted_weight_tensor, "float32").cpu(),
-                        groupsize=-1,
-                        scale_dtype="float16",
+                    weight_scale_tensor = paddle.view(weight_scale_tensor, self._dtype)
+                    self.ffn1_weight.set_value(quanted_weight_tensor)
+                    self.ffn1_weight_scale.set_value(weight_scale_tensor)
+                else:  # bf16/fp16/fp32, A8W8, FP8
+                    if self.is_y_transposed():
+                        converted_weight_tensor = converted_weight_tensor.transpose(
+                            [1, 0]
+                        )
+                    converted_weight_tensor = paddle.cast(
+                        converted_weight_tensor, self.weight_dtype
                     )
-                )
-                weight_scale_tensor = paddle.view(weight_scale_tensor, self._dtype)
-                self.ffn1_weight.set_value(quanted_weight_tensor)
-                self.ffn1_weight_scale.set_value(weight_scale_tensor)
-            else:  # bf16/fp16/fp32, A8W8, FP8
-                if self.is_y_transposed():
-                    converted_weight_tensor = converted_weight_tensor.transpose([1, 0])
-                converted_weight_tensor = paddle.cast(
-                    converted_weight_tensor, self.weight_dtype
-                )
-                if (
-                    "float8" in self.weight_dtype
-                ):  # TODO(wangzhe24) FP8 cannot use set_value now
-                    self.ffn1_weight.copy_(converted_weight_tensor, False)
-                else:
-                    self.ffn1_weight.set_value(converted_weight_tensor)
+                    if (
+                        "float8" in self.weight_dtype
+                    ):  # TODO(wangzhe24) FP8 cannot use set_value now
+                        self.ffn1_weight.copy_(converted_weight_tensor, False)
+                    else:
+                        self.ffn1_weight.set_value(converted_weight_tensor)
         # bias
         if self.with_bias:
             bias_tensor = get_tensor(state_dict.pop(self.bias_key)).astype(

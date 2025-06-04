@@ -193,7 +193,7 @@ class DynamicLoadModel(nn.Layer):
         """Build the EfficientLLM model architecture."""
         from .export_model import build_stream_line_model
 
-        _, _, model = build_stream_line_model(
+        _, _, model, _ = build_stream_line_model(
             self.model_cfg,
             self.model_path,
             self.dtype,
