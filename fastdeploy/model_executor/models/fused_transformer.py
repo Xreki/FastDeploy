@@ -116,7 +116,10 @@ class FusedTransformer(nn.Layer):
             llm_config,
             hidden_size=llm_config.model_config.hidden_size,
             eps=epsilon,
-            layer_name=f"{base_model_prefix}.decoder.layers.0.norm1",
+            prefix=llm_config.load_config.get_weight_key_by_layer_name(
+            f"{base_model_prefix}.decoder.layers.0.norm1").rpartition('.')[0],
+            quant_scale=llm_config.load_config.get_quant_scale_by_layer_name(
+            f"{base_model_prefix}.decoder.layers.0.norm1")
         )
 
         self.qkv_linear_layers = nn.LayerList([
@@ -130,14 +133,12 @@ class FusedTransformer(nn.Layer):
         self.out_linear_layers = nn.LayerList([
             RowParallelLinear(
                 llm_config=llm_config,
-                layer_name=
-                f"{base_model_prefix}.decoder.layers.{i}.self_attn.out_proj",
+                layer_name=fmt_keys.out_linear_weight_keys[i].rpartition('.')[0],
+                with_bias=fmt_keys.out_linear_bias_keys[i] is not None,
                 input_size=self.num_heads *
                 (llm_config.model_config.hidden_size //
                  llm_config.model_config.num_attention_heads),
                 output_size=llm_config.model_config.hidden_size,
-                weight_key=fmt_keys.out_linear_weight_keys[i],
-                bias_key=fmt_keys.out_linear_bias_keys[i],
             ) for i in range(self.num_layers)
         ])
         if not self.use_micro_batch:
@@ -194,7 +195,10 @@ class FusedTransformer(nn.Layer):
                 llm_config,
                 hidden_size=llm_config.model_config.hidden_size,
                 eps=epsilon,
-                layer_name=f"{base_model_prefix}.decoder.layers.{i}.norm2",
+                prefix=llm_config.load_config.get_weight_key_by_layer_name(
+                f"{base_model_prefix}.decoder.layers.{i}.norm2").rpartition('.')[0],
+                quant_scale=llm_config.load_config.get_quant_scale_by_layer_name(
+                f"{base_model_prefix}.decoder.layers.{i}.norm2"),
                 linear_bias=getattr(self.out_linear_layers[i], "linear_bias",
                                     None),
             ) for i in range(self.num_layers)
@@ -203,9 +207,8 @@ class FusedTransformer(nn.Layer):
         self.ffn1_layers = nn.LayerList([
             MergedColumnParallelLinear(
                 llm_config=llm_config,
-                layer_name=f"{base_model_prefix}.decoder.layers.{i}.linear1",
-                weight_key=fmt_keys.ffn1_weight_keys[i],
-                bias_key=fmt_keys.ffn1_bias_keys[i],
+                prefix=fmt_keys.ffn1_weight_keys[i].rpartition('.')[0],
+                with_bias=fmt_keys.ffn1_bias_keys[i] is not None,
                 activation=act_method,
                 use_fast_ffn=(False
                               if not (self.inference_args.moe_config.use_moe
@@ -221,12 +224,11 @@ class FusedTransformer(nn.Layer):
         self.ffn2_layers = nn.LayerList([
             RowParallelLinear(
                 llm_config=llm_config,
-                layer_name=f"{base_model_prefix}.decoder.layers.{i}.linear2",
+                prefix=fmt_keys.ffn2_weight_keys[i].rpartition('.')[0],
+                with_bias=fmt_keys.ffn2_bias_keys[i] is not None,
                 input_size=(llm_config.model_config.ffn_hidden_size //
                             self.nranks),
                 output_size=llm_config.model_config.hidden_size,
-                weight_key=fmt_keys.ffn2_weight_keys[i],
-                bias_key=fmt_keys.ffn2_bias_keys[i],
             ) for i in range(self.num_layers if not (
                 self.inference_args.moe_config.use_moe and not self.
                 inference_args.moe_config.moe_use_ffn_shared_weight_and_bias
@@ -384,7 +386,10 @@ class FusedTransformer(nn.Layer):
                 llm_config,
                 hidden_size=llm_config.model_config.hidden_size,
                 eps=epsilon,
-                layer_name=f"{base_model_prefix}.decoder.layers.{i + 1}.norm1",
+                prefix=llm_config.load_config.get_weight_key_by_layer_name(
+                f"{base_model_prefix}.decoder.layers.{i + 1}.norm1").rpartition('.')[0],
+                quant_scale=llm_config.load_config.get_quant_scale_by_layer_name(
+                f"{base_model_prefix}.decoder.layers.{i + 1}.norm1"),
                 linear_bias=(getattr(self.ffn2_layers[i], "linear_bias", None)
                              if not inference_args.moe_config.use_moe else
                              None),
@@ -393,7 +398,7 @@ class FusedTransformer(nn.Layer):
 
         self.last_layernorm = LayerNorm(
             llm_config,
-            layer_name="last_layernorm",
+            prefix="",
             hidden_size=llm_config.model_config.hidden_size,
             eps=epsilon,
             linear_bias=(getattr(self.ffn2_layers[self.num_layers -
@@ -507,7 +512,6 @@ class FusedTransformer(nn.Layer):
         micro_batch_id,
         layer_id,
         moe_layer_start_index,
-        padding_offset,
         input_ids,
         forward_meta,
         rotary_embs=None,
@@ -525,8 +529,6 @@ class FusedTransformer(nn.Layer):
             micro_batch_id (int): The index of micro-batch.
             layer_id (int): The index of layer in fused transformer block.
             moe_layer_start_index (int): The index of first moe layer.
-            padding_offset (Tensor): The offset to be added to the sequence length when computing
-                the attention mask. Shape: [batch_size, 1].
             input_ids (Tensor, optional): The input ids of the batch. Used for computing the
                 attention mask. Default: None. Shape: [batch_size, max_sequence_length].
             rotary_embs (Tensor optional): The RoPE embs for the rotary computation.
@@ -725,7 +727,6 @@ class FusedTransformer(nn.Layer):
         src,
         forward_meta,
         cum_offsets=None,
-        padding_offset=None,
         attn_mask=None,
         caches=None,
         pre_caches=None,
@@ -1084,7 +1085,6 @@ class FusedTransformer(nn.Layer):
                         mbid,
                         i,
                         self.inference_args.moe_config.moe_layer_start_index,
-                        padding_offset,
                         input_ids,
                         rotary_embs,
                         rotary_emb_dims,

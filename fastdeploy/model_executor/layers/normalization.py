@@ -31,8 +31,9 @@ class RMSNorm(nn.Layer):
         llm_config,
         hidden_size,
         eps=1e-5,
-        layer_name="",
+        prefix="",
         linear_bias=None,
+        quant_scale=None,
     ):
         """
         Initializes the normalization layer.
@@ -52,17 +53,17 @@ class RMSNorm(nn.Layer):
         """
         super().__init__()
         self.llm_config = llm_config
-        self.layer_name = layer_name
+        self.prefix = prefix
         self.hidden_size = hidden_size
-        self.weight_key = llm_config.load_config.get_weight_key_by_layer_name(
-            layer_name)
+        if len(prefix) == 0:
+            self.weight_key = None
+        else:
+            self.weight_key = f"{prefix}.weight"
         self.with_weight = self.weight_key is not None
-        self.weight_name = self.layer_name + ".weight"
         self.eps = eps
         self.norm_func = fused_rms_norm
         self.linear_bias = linear_bias
-        self.quant_scale = llm_config.load_config.get_quant_scale_by_layer_name(
-            layer_name)
+        self.quant_scale = quant_scale
         self._dtype = self._helper.get_default_dtype()
         self._norm_weight_dtype = self._dtype
 
@@ -76,7 +77,6 @@ class RMSNorm(nn.Layer):
         self.ln_weight = None
         if self.with_weight:
             self.ln_weight = self.create_parameter(
-                attr=paddle.ParamAttr(name=self.weight_name),
                 shape=[self.hidden_size],
                 default_initializer=nn.initializer.Constant(value=1.0),
                 dtype=self._norm_weight_dtype,
@@ -140,10 +140,12 @@ class LayerNorm(nn.Layer):
     def __init__(
         self,
         llm_config,
-        layer_name,
         hidden_size,
         eps=1e-5,
+        prefix="",
         linear_bias=None,
+        quant_scale=None,
+        with_bias=False,
     ):
         """
         Initializes the normalization layer.
@@ -152,7 +154,7 @@ class LayerNorm(nn.Layer):
             llm_config (LLMConfig): Arguments related to inference, containing
                 attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
-            layer_name (str): Unique name of the layer, used for naming internal attributes,
+            prefix (str): Unique name of the layer, used for naming internal attributes,
                 you can give it any name you like.
             hidden_size (int) : size of hidden state.
             eps:(float, optional): Small value added to the variance to avoid division by zero. Defaults to 1e-5.
@@ -162,14 +164,15 @@ class LayerNorm(nn.Layer):
         """
         super().__init__()
         self.llm_config = llm_config
+        self.prefix = prefix
         self.hidden_size = hidden_size
-        self.weight_key = llm_config.load_config.get_weight_key_by_layer_name(
-            layer_name)
-        self.layer_name = layer_name
+        if len(prefix) == 0:
+            self.weight_key = None
+        else:
+            self.weight_key = f"{prefix}.weight"
         self.with_weight = self.weight_key is not None
-        self.with_bias = False
-        self.weight_name = self.layer_name + ".weight"
-        self.bias_name = self.layer_name + ".bias"
+        self.bias_key = f"{prefix}.bias"
+        self.with_bias = with_bias
         self.eps = eps
 
         self.norm_func = fused_layer_norm
@@ -187,7 +190,6 @@ class LayerNorm(nn.Layer):
         self.ln_weight = None
         if self.with_weight:
             self.ln_weight = self.create_parameter(
-                attr=paddle.ParamAttr(name=self.weight_name),
                 shape=[self.hidden_size],
                 default_initializer=nn.initializer.Constant(value=1.0),
                 dtype=self._norm_weight_dtype,
@@ -195,7 +197,6 @@ class LayerNorm(nn.Layer):
         self.ln_bias = None
         if self.with_bias:
             self.ln_bias = self.create_parameter(
-                attr=paddle.ParamAttr(name=self.bias_name),
                 shape=[self.hidden_size],
                 is_bias=True,
                 dtype=self._norm_weight_dtype,

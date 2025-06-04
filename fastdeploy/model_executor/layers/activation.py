@@ -66,6 +66,8 @@ class SiluAndMul(nn.Layer):
             raise NotImplementedError
 
         self.bias = bias
+        if act_method == "silu":
+            act_method = "swiglu"
         self.act_method = act_method
         self.dequant_scales = dequant_scales
         self.shift = shift

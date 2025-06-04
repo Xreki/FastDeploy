@@ -74,6 +74,7 @@ class ParallelLMHead(nn.Layer):
         num_embeddings,
         embedding_dim,
         prefix="",
+        with_bias=False,
         tie_word_embeddings=None,
     ):
         """
@@ -91,12 +92,11 @@ class ParallelLMHead(nn.Layer):
         """
         super(ParallelLMHead, self).__init__()
         self.use_moe = llm_config.model_config.use_moe
-        if self.use_moe:
-            self.linear_weight_key = prefix + ".weight"
-            self.linear_bias_key = None
+        self.linear_weight_key = prefix + ".weight"
+        if with_bias:
+            self.linear_bias_key = prefix + ".bias"
         else:
-            self.linear_weight_key = prefix + ".output_linear.out_linear.weight"
-            self.linear_bias_key = prefix + ".output_linear.out_linear.bias"
+            self.linear_bias_key = None
         self.use_ep = llm_config.parallel_config.use_ep
         self.column_cut = True
         self.fused_linear = True
@@ -112,7 +112,6 @@ class ParallelLMHead(nn.Layer):
             if self.use_ep:
                 self.weight = self.create_parameter(
                     shape=[embedding_dim, num_embeddings],
-                    attr=None,
                     dtype=paddle.get_default_dtype(),
                     is_bias=False,
                 )
@@ -140,10 +139,6 @@ class ParallelLMHead(nn.Layer):
                         input_is_parallel=False,
                         fuse_matmul_bias=self.fused_linear,  # False diff更小
                     )
-
-                self.out_linear.weight.name = prefix + str(mp_rank) + ".w_0"
-
-                self.out_linear.bias.name = prefix + str(mp_rank) + ".b_0"
 
     def load_state_dict(self, state_dict):
         """

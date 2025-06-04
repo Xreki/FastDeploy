@@ -606,6 +606,7 @@ def read_res(
     msg_queue_id=None,
     use_ep=False,
     ep_just_for_test=False,
+    tokenizer=None,
 ):
     """Read result from queue."""
     if msg_queue_id is None:
@@ -625,7 +626,9 @@ def read_res(
         else:  # CPU
             from fastdeploy.model_executor.ops.cpu import get_output_dynamic
 
-    tokenizer = ErnieBotTokenizer.from_pretrained(model_name_or_path)
+    if tokenizer is None:
+        tokenizer = ErnieBotTokenizer.from_pretrained(model_name_or_path)
+
     paddle.device.set_device("cpu")
     paddle.disable_static()
     output_tensor = paddle.full(output_tensor_max_shape,
