@@ -33,7 +33,7 @@ from fastdeploy.config import LLMConfig, ModelConfig, WeightKeys
 from fastdeploy.inference_args import GenerationPhase, InferenceArgs
 
 from ..layers.embeddings import VocabParallelEmbedding
-from ..layers.lm_head import LMHead
+from ..layers.lm_head import ParallelLMHead
 from ..layers.normalization import RMSNorm
 from ..layers.activation import SiluAndMul
 from ..layers.attention.base import Attention
@@ -947,15 +947,12 @@ class Qwen2ForCausalLM(ModelForCasualLM):
             self.have_norm_bias = True
             self.is_norm_weight_type_fp32 = True
 
-        lmhead_name = ("server_nlg_mask_lm_trans_fc_" if not self.qwen2.is_mtp
-                       else "mtp_server_nlg_mask_lm_trans_fc_")
-        self.lm_head = LMHead(
-            layer_name=lmhead_name,
-            linear_weight_key="lm_head.weight",
-            linear_bias_key=None,
-            input_dim=self.hidden_size,
-            output_dim=self.qwen2.vocab_size,
-            fused_linear=self.configs.model_config.fused_linear,
+        self.lm_head = ParallelLMHead(
+            llm_config=llm_config,
+            embedding_dim=self.hidden_size,
+            num_embeddings=self.qwen2.vocab_size,
+            tie_word_embeddings=None,
+            prefix="lm_head",
         )
 
     @classmethod

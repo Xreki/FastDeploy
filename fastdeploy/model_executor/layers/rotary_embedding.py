@@ -16,6 +16,8 @@
 
 from typing import Any, Optional
 
+import os
+import math
 import paddle
 
 
@@ -75,66 +77,52 @@ def get_rope(
     partial_rotary_factor=1,
     rope_scaling: Optional[dict[str, Any]] = None,
 ):
-    rotary_emb_layer = ErnieRotaryEmbedding(rotary_dim, base,
-                                            partial_rotary_factor,
-                                            rope_scaling)
-    rotary_emb = rotary_emb_layer(position_ids)
-    return rotary_emb
+    if int(os.getenv("TEST_QWEN", "1")) == 1:
+        head_dim = rotary_dim
+        rope_theta = base
+        bsz, max_seq_len = position_ids.shape[:2]
+        rot_emb = paddle.zeros((2, bsz, max_seq_len, 1, head_dim), dtype="float32")
+        inv_freq = rope_theta ** (-paddle.arange(0, head_dim, 2, dtype="float32") / head_dim)
 
-# def get_rope(
-#     head_dim: int,
-#     rope_theta: 10000.0,
-#     position_ids, 
-#     partial_rotary_factor=1,
-#     rope_scaling: dict = None):
-#     """
-#     Pre-calculate rotary position embedding for position_ids.
+        if rope_scaling is not None:
+            rope_type = rope_scaling.get("rope_type", None)
+            if rope_type is not None and rope_type == "llama3":
+                factor = rope_scaling.get("factor", 8.0)
+                low_freq_factor = rope_scaling.get("low_freq_factor", 1.0)
+                high_freq_factor = rope_scaling.get("high_freq_factor", 4.0)
+                original_max_position_embeddings = rope_scaling.get("original_max_position_embeddings", 8192)
 
-#     Args:
-#         position_ids: [1, S]
-#         head_dim: D
+                low_freq_wavelen = original_max_position_embeddings / low_freq_factor
+                high_freq_wavelen = original_max_position_embeddings / high_freq_factor
+                new_freqs = []
+                for freq in inv_freq:
+                    wavelen = 2 * math.pi / freq
+                    if wavelen < high_freq_wavelen:
+                        new_freqs.append(freq)
+                    elif wavelen > low_freq_wavelen:
+                        new_freqs.append(freq / factor)
+                    else:
+                        assert low_freq_wavelen != high_freq_wavelen
+                        smooth = (original_max_position_embeddings / wavelen - low_freq_factor) / (
+                            high_freq_factor - low_freq_factor
+                        )
+                        new_freqs.append((1 - smooth) * freq / factor + smooth * freq)
+                inv_freq = paddle.to_tensor(new_freqs, dtype=inv_freq.dtype)
 
-#     Returns:
-#         rot_emb: [2, 1, S, 1, D], cos + sin
-#     """
-#     bsz, max_seq_len = position_ids.shape[:2]
-#     rot_emb = paddle.zeros((2, bsz, max_seq_len, 1, head_dim), dtype="float32")
-#     inv_freq = rope_theta ** (-paddle.arange(0, head_dim, 2, dtype="float32") / head_dim)
+        # shape: [B, S, D/2]
+        freqs = paddle.einsum("ij,k->ijk", position_ids.cast("float32"), inv_freq)
+        # shape: [B, S, 1, D]
+        emb = paddle.concat([freqs, freqs], axis=-1).reshape((bsz, max_seq_len, 1, head_dim))
 
-#     if rope_scaling is not None:
-#         rope_type = rope_scaling.get("rope_type", None)
-#         if rope_type is not None and rope_type == "llama3":
-#             factor = rope_scaling.get("factor", 8.0)
-#             low_freq_factor = rope_scaling.get("low_freq_factor", 1.0)
-#             high_freq_factor = rope_scaling.get("high_freq_factor", 4.0)
-#             original_max_position_embeddings = rope_scaling.get("original_max_position_embeddings", 8192)
-
-#             low_freq_wavelen = original_max_position_embeddings / low_freq_factor
-#             high_freq_wavelen = original_max_position_embeddings / high_freq_factor
-#             new_freqs = []
-#             for freq in inv_freq:
-#                 wavelen = 2 * math.pi / freq
-#                 if wavelen < high_freq_wavelen:
-#                     new_freqs.append(freq)
-#                 elif wavelen > low_freq_wavelen:
-#                     new_freqs.append(freq / factor)
-#                 else:
-#                     assert low_freq_wavelen != high_freq_wavelen
-#                     smooth = (original_max_position_embeddings / wavelen - low_freq_factor) / (
-#                         high_freq_factor - low_freq_factor
-#                     )
-#                     new_freqs.append((1 - smooth) * freq / factor + smooth * freq)
-#             inv_freq = paddle.to_tensor(new_freqs, dtype=inv_freq.dtype)
-
-#     # shape: [B, S, D/2]
-#     freqs = paddle.einsum("ij,k->ijk", position_ids.cast("float32"), inv_freq)
-#     # shape: [B, S, 1, D]
-#     emb = paddle.concat([freqs, freqs], axis=-1).reshape((bsz, max_seq_len, 1, head_dim))
-
-#     rot_emb[0] = paddle.cos(emb)
-#     rot_emb[1] = paddle.sin(emb)
-#     return rot_emb
-
+        rot_emb[0] = paddle.cos(emb)
+        rot_emb[1] = paddle.sin(emb)
+        return rot_emb
+    else:
+        rotary_emb_layer = ErnieRotaryEmbedding(rotary_dim, base,
+                                                partial_rotary_factor,
+                                                rope_scaling)
+        rotary_emb = rotary_emb_layer(position_ids)
+        return rotary_emb
 
 class ErnieVlRotaryEmbedding3D:
 

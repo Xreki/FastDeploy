@@ -49,7 +49,7 @@ python -m paddle.distributed.launch \
         --gpus ${devices} \
         predict_generation.py \
         --model_name_or_path ${model_path} \
-        --input_file "../data/query-answers-list.jsonl" \
+        --input_file "./data/query-answers-list.jsonl" \
         --output_file ./predict_out.json \
         --predict_model_type "WINT8" \
         --dtype bfloat16 \
