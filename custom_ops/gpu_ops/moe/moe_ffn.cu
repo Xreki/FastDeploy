@@ -299,7 +299,6 @@ std::vector<paddle::DataType> MoeExpertFFNInferDtype(
     const paddle::optional<paddle::DataType> &ffn1_scale_dtype,
     const paddle::optional<paddle::DataType> &ffn2_scale_dtype,
     const paddle::optional<paddle::DataType> &ffn2_in_scale_dtype,
-    const paddle::optional<paddle::DataType> &expert_idx_per_token_dtype,
     const std::string &quant_method, const bool used_in_ep_low_latency) {
   if (quant_method == "w4a8") {
     return {ffn1_scale_dtype.get()};
