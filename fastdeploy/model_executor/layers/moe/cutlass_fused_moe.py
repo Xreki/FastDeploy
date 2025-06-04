@@ -39,7 +39,11 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
                        ffn1_tensor,
                        ffn2_tensor,
                        ffn1_bias=None,
-                       ffn2_bias=None):
+                       ffn2_bias=None,
+                       moe_ffn1_weight_scale=None,
+                       moe_ffn2_weight_scale=None,
+                       moe_ffn1_in_scale=None,
+                       moe_ffn2_in_scale=None):
         """
         Paddle cutlass create weight process.
         """
@@ -50,12 +54,36 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
         assert len(ffn1_tensor) == num_local_experts
         assert len(ffn2_tensor) == num_local_experts
 
-        if moe_quant_type in ["weight_only_int4", "weight_only_int8", "w4a8"]:
+        added_weight_attrs = ["moe_ffn1_weight", "moe_ffn2_weight"]
+        added_scale_attrs = ["moe_ffn1_weight_scale", "moe_ffn2_weight_scale"]
 
-            added_weight_attrs = ["moe_ffn1_weight", "moe_ffn2_weight"]
-            added_scale_attrs = [
-                "moe_ffn1_weight_scale", "moe_ffn2_weight_scale"
+        if moe_quant_type == "w4a8":
+            moe_ffn1_in_scale = paddle.concat(moe_ffn1_in_scale)
+            moe_ffn2_in_scale = paddle.concat(moe_ffn2_in_scale)
+            moe_ffn1_in_scale = 1 / moe_ffn1_in_scale
+            moe_ffn2_in_scale = 1 / moe_ffn2_in_scale
+            moe_ffn1_weight_scale = paddle.stack(moe_ffn1_weight_scale, axis=0)
+            moe_ffn2_weight_scale = paddle.stack(moe_ffn2_weight_scale, axis=0)
+
+            moe_ffn1_weight_scale = moe_ffn1_weight_scale / (127 * 112)
+            moe_ffn2_weight_scale = moe_ffn2_weight_scale / (127 * 112)
+            moe_ffn1_weight_scale = moe_ffn1_weight_scale / moe_ffn1_in_scale[:,
+                                                                              None]
+            moe_ffn2_weight_scale = moe_ffn2_weight_scale / moe_ffn2_in_scale[:,
+                                                                              None]
+            moe_ffn1_weight_scale = moe_ffn1_weight_scale.cast("bfloat16")
+            moe_ffn2_weight_scale = moe_ffn2_weight_scale.cast("bfloat16")
+
+            assert ffn1_tensor[0].shape == [
+                1, moe_compute_params.hidden_size,
+                moe_compute_params.moe_intermediate_size * 2
             ]
+            assert ffn2_tensor[0].shape == [
+                1, moe_compute_params.moe_intermediate_size,
+                moe_compute_params.hidden_size
+            ]
+
+        if moe_quant_type in ["weight_only_int4", "weight_only_int8", "w4a8"]:
 
             for idx, weight_tensor in enumerate([ffn1_tensor, ffn2_tensor]):
                 weight_name = added_weight_attrs[idx]
@@ -64,14 +92,14 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
                 weight_list = []
                 weight_scale_list = []
                 for i in range(num_local_experts):
-                    quant_weight, scale = weight_quantize(weight_tensor[i],
+                    quant_weight, scale = weight_quantize(weight_tensor[i][0],
                                                           algo=moe_quant_type,
                                                           arch=80)
                     weight_list.append(quant_weight)
-                    weight_scale_list.append(scale)
+                    if moe_quant_type != "w4a8":
+                        # scale holds no memoty,in w4a8, do not manipulate it.
+                        weight_scale_list.append(scale)
                 quanted_weight = paddle.stack(weight_list, axis=0)
-                quanted_weight_scale = paddle.stack(weight_scale_list, axis=0)
-
                 setattr(
                     layer, weight_name,
                     layer.create_parameter(
@@ -81,19 +109,42 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
                     ))
                 getattr(layer, weight_name).set_value(quanted_weight)
 
-                setattr(
-                    layer, scale_name,
-                    layer.create_parameter(
-                        shape=quanted_weight_scale.shape,
-                        attr=paddle.ParamAttr(
-                            name=f"{layer.layer_name}.{scale_name}"),
-                        dtype=quanted_weight_scale.dtype,
-                    ))
-                getattr(layer, scale_name).set_value(quanted_weight_scale)
+                # this scale only useful for wint8/4.
+                if moe_quant_type != "w4a8":
+                    quanted_weight_scale = paddle.stack(weight_scale_list,
+                                                        axis=0)
+                    setattr(
+                        layer, scale_name,
+                        layer.create_parameter(
+                            shape=quanted_weight_scale.shape,
+                            attr=paddle.ParamAttr(
+                                name=f"{layer.layer_name}.{scale_name}"),
+                            dtype=quanted_weight_scale.dtype,
+                        ))
+                    getattr(layer, scale_name).set_value(quanted_weight_scale)
 
-        else:
-            # not need any process!
-            pass
+        if moe_quant_type == "w4a8":
+            assert moe_ffn1_weight_scale is not None
+            assert moe_ffn2_weight_scale is not None
+            assert moe_ffn1_in_scale is not None
+            assert moe_ffn2_in_scale is not None
+            added_w4a8_attrs = [
+                "moe_ffn1_weight_scale", "moe_ffn2_weight_scale",
+                "moe_ffn1_in_scale", "moe_ffn2_in_scale"
+            ]
+            for idx, weight_tensor in enumerate([
+                    moe_ffn1_weight_scale, moe_ffn2_weight_scale,
+                    moe_ffn1_in_scale, moe_ffn2_in_scale
+            ]):
+                name = added_w4a8_attrs[idx]
+                setattr(
+                    layer, name,
+                    layer.create_parameter(
+                        shape=weight_tensor.shape,
+                        dtype=weight_tensor.dtype,
+                        default_initializer=paddle.nn.initializer.Constant(0),
+                    ))
+                getattr(layer, name).set_value(weight_tensor)
 
     def apply(
         self,
@@ -113,14 +164,23 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
             permute_indices_per_token,
             topk_weights,
             topk_idx,
+            expert_idx_per_token,
         ) = moe_expert_dispatch(
             x,
             gate_out,
             layer.gate_correction_bias,
+            layer.moe_ffn1_in_scale,  # if set, permute_input will be int8_t
             moe_compute_params.top_k,
             False,
             topk_only_mode=False,
         )
+
+        if moe_compute_params.moe_quant_type != "w4a8":
+            # only w4a8 need expert_idx_per_token
+            # Other need not this tensor.
+            expert_idx_per_token = None
+        else:
+            expert_idx_per_token = expert_idx_per_token.cast("int64")
 
         ffn_out = moe_expert_ffn(
             permute_input,
@@ -134,7 +194,7 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
              if hasattr(layer, "moe_ffn2_weight_scale") else None),
             (layer.moe_ffn2_in_scale
              if hasattr(layer, "moe_ffn2_in_scale") else None),
-            None,  # expert_idx_per_token
+            expert_idx_per_token,
             moe_compute_params.moe_quant_type,
             False,  # used_in_ep_low_latency
         )
