@@ -32,7 +32,6 @@ void MoeFFNKernel(const paddle::Tensor &permute_input,
                   const paddle::optional<paddle::Tensor> &ffn2_in_scale,
                   const paddle::optional<paddle::Tensor> &expert_idx_per_token,
                   const std::string &quant_method, paddle::Tensor ffn_out,
-                  paddle::Tensor swiglu_out_tensor,
                   bool used_in_ep_low_latency) {
   using namespace phi;
   typedef PDTraits<T> traits_;
@@ -165,9 +164,6 @@ void MoeFFNKernel(const paddle::Tensor &permute_input,
   }
   auto act_out = act_out_tensor.data<data_t>();
 
-  cudaMemcpy(swiglu_out_tensor.data<data_t>(), act_out,
-             2 * act_out_tensor.numel(), cudaMemcpyDeviceToDevice);
-
   if (quant_method == "weight_only_int8") {
     int8_moe_gemm_runner.moe_gemm(
         reinterpret_cast<const NvType *>(act_out),
@@ -245,22 +241,18 @@ paddle::Tensor MoeExpertFFNFunc(
       quant_method == "w4a8" ? ffn1_scale.get().dtype() : permute_input.dtype();
   auto ffn_out = paddle::empty_like(permute_input, t_type);
 
-  auto swiglu_out_tensor =
-      paddle::zeros({ffn_out.shape()[0], ffn1_scale.get().shape()[1] / 2},
-                    ffn_out.dtype(), paddle::GPUPlace());
-
   switch (t_type) {
   case paddle::DataType::BFLOAT16:
     MoeFFNKernel<paddle::DataType::BFLOAT16>(
         permute_input, tokens_expert_prefix_sum, ffn1_weight, ffn2_weight,
         ffn1_bias, ffn1_scale, ffn2_scale, ffn2_in_scale, expert_idx_per_token,
-        quant_method, ffn_out, swiglu_out_tensor, used_in_ep_low_latency);
+        quant_method, ffn_out, used_in_ep_low_latency);
     break;
   case paddle::DataType::FLOAT16:
     MoeFFNKernel<paddle::DataType::FLOAT16>(
         permute_input, tokens_expert_prefix_sum, ffn1_weight, ffn2_weight,
         ffn1_bias, ffn1_scale, ffn2_scale, ffn2_in_scale, expert_idx_per_token,
-        quant_method, ffn_out, swiglu_out_tensor, used_in_ep_low_latency);
+        quant_method, ffn_out, used_in_ep_low_latency);
     break;
   default:
     PD_THROW("Unsupported data type for MoeExpertFFN");

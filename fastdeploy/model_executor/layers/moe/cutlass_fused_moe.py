@@ -33,17 +33,19 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
     This method is the oldest way to compute MoE in Paddle.
     """
 
-    def create_weights(self,
-                       layer: nn.Layer,
-                       moe_compute_params,
-                       ffn1_tensor,
-                       ffn2_tensor,
-                       ffn1_bias=None,
-                       ffn2_bias=None,
-                       moe_ffn1_weight_scale=None,
-                       moe_ffn2_weight_scale=None,
-                       moe_ffn1_in_scale=None,
-                       moe_ffn2_in_scale=None):
+    def create_weights(
+            self,
+            layer: nn.Layer,
+            moe_compute_params,
+            ffn1_tensor,
+            ffn2_tensor,
+            ffn1_bias=None,
+            ffn2_bias=None,
+            # belows are only used in w4a8.
+            moe_ffn1_weight_scale=None,
+            moe_ffn2_weight_scale=None,
+            moe_ffn1_in_scale=None,
+            moe_ffn2_in_scale=None):
         """
         Paddle cutlass create weight process.
         """
@@ -53,6 +55,14 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
 
         assert len(ffn1_tensor) == num_local_experts
         assert len(ffn2_tensor) == num_local_experts
+        assert ffn1_tensor[0].shape == [
+            moe_compute_params.hidden_size,
+            moe_compute_params.moe_intermediate_size * 2
+        ]
+        assert ffn2_tensor[0].shape == [
+            moe_compute_params.moe_intermediate_size,
+            moe_compute_params.hidden_size
+        ]
 
         added_weight_attrs = ["moe_ffn1_weight", "moe_ffn2_weight"]
         added_scale_attrs = ["moe_ffn1_weight_scale", "moe_ffn2_weight_scale"]
@@ -71,17 +81,10 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
                                                                               None]
             moe_ffn2_weight_scale = moe_ffn2_weight_scale / moe_ffn2_in_scale[:,
                                                                               None]
-            moe_ffn1_weight_scale = moe_ffn1_weight_scale.cast("bfloat16")
-            moe_ffn2_weight_scale = moe_ffn2_weight_scale.cast("bfloat16")
-
-            assert ffn1_tensor[0].shape == [
-                1, moe_compute_params.hidden_size,
-                moe_compute_params.moe_intermediate_size * 2
-            ]
-            assert ffn2_tensor[0].shape == [
-                1, moe_compute_params.moe_intermediate_size,
-                moe_compute_params.hidden_size
-            ]
+            moe_ffn1_weight_scale = moe_ffn1_weight_scale.cast(
+                paddle.get_default_dtype())
+            moe_ffn2_weight_scale = moe_ffn2_weight_scale.cast(
+                paddle.get_default_dtype())
 
         if moe_quant_type in ["weight_only_int4", "weight_only_int8", "w4a8"]:
 
@@ -92,12 +95,12 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
                 weight_list = []
                 weight_scale_list = []
                 for i in range(num_local_experts):
-                    quant_weight, scale = weight_quantize(weight_tensor[i][0],
+                    quant_weight, scale = weight_quantize(weight_tensor[i],
                                                           algo=moe_quant_type,
                                                           arch=80)
                     weight_list.append(quant_weight)
                     if moe_quant_type != "w4a8":
-                        # scale holds no memoty,in w4a8, do not manipulate it.
+                        # scale holds no memoty in w4a8, don't touch it!
                         weight_scale_list.append(scale)
                 quanted_weight = paddle.stack(weight_list, axis=0)
                 setattr(
@@ -177,7 +180,7 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
 
         if moe_compute_params.moe_quant_type != "w4a8":
             # only w4a8 need expert_idx_per_token
-            # Other need not this tensor.
+            # Other need not this tensor, so we make it None.
             expert_idx_per_token = None
         else:
             expert_idx_per_token = expert_idx_per_token.cast("int64")
