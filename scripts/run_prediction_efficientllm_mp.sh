@@ -25,9 +25,7 @@ export PYTHONPATH=$(dirname $(pwd)):$PYTHONPATH
 export FLAGS_enable_pir_api=0
 export FLAGS_use_append_attn=1
 
-export ELLM_DYNAMIC_MODE=0
-
-export devices=0
+export devices=0,1,2,3,4,5,6,7
 export CUDA_VISIBLE_DEVICES=${devices}
 
 # export FLAGS_enable_blaslt_global_search=1
@@ -35,7 +33,7 @@ export CUDA_VISIBLE_DEVICES=${devices}
 
 # export FLAGS_use_cutlass_device_best_config_path=/path/to/cutlass_device_best_config.json
 
-model_path=${1:-"/root/paddlejob/workspace/env_run/output/Qwen2-7B-Instruct"}
+model_path=${1:-"/path/to/model"}
 
 
 for name in `env | grep -E 'PADDLE|ENDPOINT' | awk -F'=' '{print $1}'`; do
@@ -49,8 +47,9 @@ self_ip=`hostname -i`
 
 python -m paddle.distributed.launch \
         --gpus ${devices} \
-        scripts/predict_generation.py \
+        predict_generation.py \
         --model_name_or_path ${model_path} \
+        --input_file "../data/query-answers-list.jsonl" \
         --output_file ./predict_out.json \
         --predict_model_type "WINT8" \
         --dtype bfloat16 \
@@ -60,4 +59,4 @@ python -m paddle.distributed.launch \
         --top_p 0 \
         --moe_quant_type "weight_only_int4" \
         --use_ep "False" \
-        --use_safetensors "True"
+        --use_safetensors "False"

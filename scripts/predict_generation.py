@@ -414,7 +414,6 @@ class Predictor:
         self.num_output_tokens = 0
         self.use_beam_search = False
         self.show_topk = args.show_topk
-        self.tokenizer = tokenizer
         if args is None:
             self.tokenizer = tokenizer
             self.tokenizer.padding_side = "left"
@@ -637,8 +636,8 @@ class Predictor:
             compression_ratio = self.model_config.get("compression_ratio", 1)
             rope_theta = self.model_config.get("rope_theta", 10000.0)
             self.rope_emb = get_rope(
-                head_dim=head_dim,
-                rope_theta=rope_theta,
+                rotary_dim=head_dim,
+                base=rope_theta,
                 position_ids=tmp_position_ids,
                 partial_rotary_factor=compression_ratio,
             )
@@ -826,11 +825,6 @@ class Predictor:
             system_prompt_version=system_prompt_version,
         )
 
-        input_ids = [[151644,   8948,    198,   2610,    525,    264,  10950,  17847,
-           13, 151645, 151644,    872,    198,  68990,  35727,  50285,
-        64689, 104208, 105930,   5267, 151645, 151644,  77091,    198]]
-        num_input_tokens = 24
-
         if (os.getenv("EP_DECODER_PERF_TEST", "False") == "True"
                 or os.getenv("EP_PREFILL_PERF_TEST", "False") == "True"):
             test_len = 4383
@@ -859,7 +853,6 @@ class Predictor:
         inputs = {}
         seq_len = self.pad_batch_data(input_ids)
         seq_lens = [0] * self.beam_batch_size
-        
         inputs["input_ids"] = self.input_ids
         bs = len(dials)
         self.bsz = bs
@@ -908,30 +901,8 @@ class Predictor:
                 real_len = seq_len[i] + self.args.max_dec_len
                 if real_len > max_sec_len:
                     raise ValueError(f"input_len({seq_len[i]}) + \
-                        max_dec_len({self.args.max_dec_len}) > max_seq_len({max_sec_len})"
-                                     )
-                # free_list = list(range(self.max_block_nums))
-                # for i in range(self.config.batch_size):
-                #     for j in range(
-                #         (self.seq_lens[i] + self.config.max_length + self.config.block_size - 1) // self.config.block_size
-                #     ):
-                #         used_block_id = free_list.pop()
-                #         self.model_inputs["block_tables"][i, j] = used_block_id
-
-                # print(self.model_inputs["block_tables"])
-                # raise ValueError
-
-
-                # tmp = (real_len + self.args.block_size - 1) // self.args.block_size
-                # print("real_len\n", real_len)
-                # print("bs\n", bs)
-                # print("tmp\n", tmp)
-                # print("free_list\n", self.free_list)
-                # raise ValueError
-
-                tmp = 17
-                    
-                for j in range(tmp):
+                        max_dec_len({self.args.max_dec_len}) > max_seq_len({max_sec_len})")
+                for j in range((real_len + self.args.block_size - 1) // self.args.block_size): 
                     used_block_id = self.free_list.pop()
                     self.used_list[i].append(used_block_id)
                     inputs["block_tables"][i, j] = used_block_id
@@ -943,10 +914,9 @@ class Predictor:
         inputs["top_p"] = get_full_array(self.args.top_p)
         inputs["temperature"] = get_full_array(self.args.temperature)
 
-        # print(self.tokenizer)
-        # print(self.tokenizer.eos_token_id)
         inputs["eos_token_id"] = np.array(
-            [self.tokenizer.eos_token_id]).astype("int64")
+            [self.tokenizer.eos_token_id,
+             self.tokenizer.cls_token_id]).astype("int64")
 
         inputs["penalty_score"] = get_full_array(self.args.penalty_score)
         inputs["frequency_score"] = get_full_array(self.args.frequency_score)
@@ -1440,13 +1410,7 @@ def main():
 
     from paddlenlp.transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        args.model_name_or_path,
-        padding_side="left",
-        use_fast=False
-    )
-
-    predictor = Predictor(args, tokenizer=tokenizer)
+    predictor = Predictor(args)
     # inference
     infer_dials: list[list[dict]] = []
     if args.input_file is None or not os.path.exists(args.input_file):
