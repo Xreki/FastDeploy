@@ -19,18 +19,44 @@ from __future__ import annotations
 import logging
 import os
 from functools import partial
-from typing import Dict, Union
 
 import numpy as np
 import paddle
 import paddle.nn.functional as F
+from paddle import nn
 from paddle.distributed import fleet
 from paddlenlp.transformers import PretrainedModel, register_base_model
 from paddlenlp.utils.log import logger
+from paddle.incubate.nn.functional import blha_get_max_len
 
 from fastdeploy.config import LLMConfig, ModelConfig, WeightKeys
 from fastdeploy.inference_args import GenerationPhase, InferenceArgs
+
+from ..layers.embeddings import VocabParallelEmbedding
+from ..layers.lm_head import LMHead
+from ..layers.normalization import RMSNorm
+from ..layers.activation import SiluAndMul
+from ..layers.attention.base import Attention
+from ..layers.linear import (MergedColumnParallelLinear,
+                             QKVParallelLinear, RowParallelLinear)
+from ..layers.normalization import LayerNorm, RMSNorm
+from .model_base import ModelForCasualLM
+
+
+try:
+    from paddlenlp.transformers.generation_utils import (
+        ForcedBOSTokenLogitsProcessor, ForcedEOSTokenLogitsProcessor,
+        HammingDiversityLogitsProcessor, LogitsProcessorList,
+        RepetitionPenaltyLogitsProcessor)
+except ImportError:
+    from paddlenlp.generation import (ForcedBOSTokenLogitsProcessor,
+                                      ForcedEOSTokenLogitsProcessor,
+                                      HammingDiversityLogitsProcessor,
+                                      LogitsProcessorList,
+                                      RepetitionPenaltyLogitsProcessor)
+
 from fastdeploy.model_executor.ops.gpu import (
+    get_block_shape_and_split_kv_block, rebuild_padding,
     beam_search_softmax, draft_model_update, extract_text_token_output,
     get_padding_offset, get_token_penalty_multi_scores, mtp_save_first_token,
     mtp_save_first_token_dynamic, save_output, save_output_dynamic,
@@ -42,282 +68,222 @@ from fastdeploy.model_executor.ops.gpu import (
     speculate_save_output_dynamic, speculate_set_stop_value_multi_seqs,
     speculate_set_value_by_flags_and_idx, speculate_update_v3,
     speculate_verify, top_p_candidates, update_inputs, update_inputs_beam)
-from fastdeploy.worker.model_runner import ForwardMeta
 
-from ..layers.embeddings import VocabParallelEmbedding
-from ..layers.lm_head import ParallelLMHead
-from ..layers.normalization import RMSNorm
 from ..layers.quantization import get_quantization_config
 from .fused_transformer import FusedTransformer
-from .model_base import ModelForCasualLM
 
-
-def get_attr(layer, name):
+class Qwen2MLP(nn.Layer):
     """
-    get_attr
     """
-    if getattr(layer, name, None) is not None:
-        return getattr(layer, name, None)
-    else:
-        return get_attr(layer._layer, name)
-
-
-class ErnieBotPretrainedModel(PretrainedModel):
-    """
-    ErnieBotPretrainedModel
-    """
-
-    config_class = LLMConfig
-
-    def _init_weight(self, layer):
-        """
-        _init_weight
-        """
-        return None
-
-    @classmethod
-    def _get_tensor_parallel_mappings(cls, config: ModelConfig, is_split=True):
-        """
-        get_tensor_parallel_mappings
-        """
-        logger.info("erine bot inference model _get_tensor_parallel_mappings")
-
-        from paddlenlp.transformers.conversion_utils import split_or_merge_func
-
-        fn = split_or_merge_func(
-            is_split=is_split,
-            tensor_parallel_degree=config.tensor_parallel_degree,
-            tensor_parallel_rank=config.tensor_parallel_rank,
-            num_attention_heads=config.num_attention_heads,
+    def __init__(
+        self,
+        llm_config: LLMConfig,
+        inference_args: InferenceArgs,
+        prefix: str = "",
+    ) -> None:
+        super().__init__()
+        self.nranks = llm_config.parallel_config.mp_size
+        self.gate_up_proj = MergedColumnParallelLinear(
+            llm_config=llm_config,
+            prefix=f"{prefix}.linear1",
+            with_bias=False,
+            activation=llm_config.model_config.hidden_act,
+            use_fast_ffn=True,
+        )
+        
+        self.down_proj = RowParallelLinear(
+            llm_config=llm_config,
+            prefix=f"{prefix}.down_proj",
+            input_size=(llm_config.model_config.ffn_hidden_size //
+                        self.nranks),
+            output_size=llm_config.model_config.hidden_size,
+            with_bias=False,
+        )
+        
+        self.act_fn = SiluAndMul(
+            inference_args=inference_args,
+            bias=getattr(self.gate_up_proj, "linear_bias", None),
+            act_method=llm_config.model_config.hidden_act,
         )
 
-        def gqa_qkv_split_func(
-            weight,
-            tensor_parallel_degree,
-            tensor_parallel_rank,
-            num_attention_heads,
-            num_key_value_heads,
-            head_dim,
-        ):
+    def load_state_dict(self, state_dict):
+        """
+        """
+        self.gate_up_proj.load_state_dict(state_dict)
+        self.down_proj.load_state_dict(state_dict)
 
-            def get_shape(tensor):
-                return (tensor.get_shape()
-                        if hasattr(tensor, "get_shape") else tensor.shape)
+    def forward(self, x):
+        """
+        """
+        gate_up_out = self.gate_up_proj(x)
+        act_out = self.act_fn(gate_up_out)
+        down_out = self.down_proj(act_out)
+        return down_out
 
-            def slice_tensor(tensor, start, end):
-                shape = get_shape(tensor)
-                if len(shape) == 1:
-                    return tensor[start:end]
-                else:
-                    return tensor[..., start:end]
+class Qwen2Attention(nn.Layer):
+    """
+    """
+    def __init__(self,
+                 llm_config: LLMConfig,
+                 inference_args: InferenceArgs,
+                 generation_phase: GenerationPhase = GenerationPhase.DECODER,
+                 prefix: str = "") -> None:
+        super().__init__()
+        self.nranks = inference_args.mp_size
+        self.num_heads = inference_args.num_attention_heads // self.nranks
 
-            q_end = num_attention_heads * head_dim
-            k_end = q_end + num_key_value_heads * head_dim
-            v_end = k_end + num_key_value_heads * head_dim
+        self.qkv_proj = QKVParallelLinear(
+                llm_config=llm_config,
+                prefix=f"{prefix}.qkv_proj",
+                with_bias=True
+            )
 
-            q = slice_tensor(weight, 0, q_end)
-            k = slice_tensor(weight, q_end, k_end)
-            v = slice_tensor(weight, k_end, v_end)
+        self.o_proj = RowParallelLinear(
+                llm_config=llm_config,
+                prefix=f"{prefix}.o_proj",
+                input_size=self.num_heads *
+                (llm_config.model_config.hidden_size //
+                 llm_config.model_config.num_attention_heads),
+                output_size=llm_config.model_config.hidden_size,
+            )
 
-            def split_tensor(tensor, degree):
-                shape = get_shape(tensor)
-                size = shape[-1]
-                block_size = size // degree
-                if hasattr(tensor, "get_shape"):
-                    return [
-                        slice_tensor(tensor, i * block_size,
-                                     (i + 1) * block_size)
-                        for i in range(degree)
-                    ]
-                else:
-                    return np.split(tensor, degree, axis=-1)
+        self.attn = Attention(
+                inference_args=inference_args,
+                prefix=prefix,
+                rope_theta=llm_config.model_config.rope_theta,
+                out_scale=-1,
+                qkv_scale=None,
+                use_neox_rotary_style=True,
+                qkv_bias=getattr(self.qkv_proj, "qkv_bias", None),
+                linear_shift=getattr(self.o_proj, "linear_shift", None),
+                linear_smooth=getattr(self.o_proj, "linear_smooth", None),
+            )
 
-            q_list = split_tensor(q, tensor_parallel_degree)
-            k_list = split_tensor(k, tensor_parallel_degree)
-            v_list = split_tensor(v, tensor_parallel_degree)
+    def load_state_dict(self, state_dict):
+        """
+        """
+        self.qkv_proj.load_state_dict(state_dict)
+        self.o_proj.load_state_dict(state_dict)
 
-            if tensor_parallel_rank is None:
-                return [
-                    np.concatenate([q_i, k_i, v_i], axis=-1)
-                    for q_i, k_i, v_i in zip(q_list, k_list, v_list)
-                ]
-            else:
-                return np.concatenate(
-                    [
-                        q_list[tensor_parallel_rank],
-                        k_list[tensor_parallel_rank],
-                        v_list[tensor_parallel_rank],
-                    ],
-                    axis=-1,
-                )
+    def forward(
+        self,
+        hidden_states: paddle.Tensor,
+        input_ids: paddle.Tensor,
+        rotary_embs: paddle.Tensor,
+        rotary_emb_dims: paddle.Tensor,
+        key_cache: paddle.Tensor,
+        value_cache: paddle.Tensor,
+        **attn_args
+    ):
+        """
+        """
+        qkv_out = self.qkv_proj(hidden_states)
 
-        def gqa_qkv_merge_func(weight_list, num_attention_heads,
-                               num_key_value_heads, head_dim):
-            tensor_parallel_degree = len(weight_list)
-            num_attention_heads = num_attention_heads // tensor_parallel_degree
-            num_key_value_heads = num_key_value_heads // tensor_parallel_degree
+        atten_out = self.attn(
+            qkv=qkv_out,
+            input_ids=input_ids,
+            rotary_embs=rotary_embs,
+            rotary_emb_dims=rotary_emb_dims,
+            key_cache=key_cache,
+            value_cache=value_cache,
+            pre_key_cache=None,
+            pre_value_cache=None,
+            pre_caches_length=0,
+            attn_mask=None,
+            kv_signal_data=None,
+            **attn_args,
+        )
 
-            is_paddle_tensor = not isinstance(weight_list[0], np.ndarray)
+        output = self.o_proj(atten_out)
+        return output
 
-            def get_shape(tensor):
-                return (tensor.get_shape()
-                        if hasattr(tensor, "get_shape") else tensor.shape)
 
-            def slice_tensor(tensor, start, end):
-                if len(get_shape(tensor)) == 1:
-                    return tensor[start:end]
-                else:
-                    return tensor[..., start:end]
+class Qwen2DecoderLayer(nn.Layer):
+    """
+    """
+    def __init__(
+        self,
+        llm_config: LLMConfig,
+        inference_args: InferenceArgs,
+        prefix: str = "",
+    ) -> None:
+        super().__init__()
+        self.self_attn = Qwen2Attention(
+            llm_config=llm_config,
+            inference_args=inference_args,
+            prefix=f"{prefix}.self_attn",
+        )
 
-            q_list, k_list, v_list = [], [], []
+        self.mlp = Qwen2MLP(
+            llm_config=llm_config,
+            inference_args=inference_args,
+            prefix=f"{prefix}.mlp",
+        )
 
-            for weight in weight_list:
-                q_end = num_attention_heads * head_dim
-                k_end = q_end + num_key_value_heads * head_dim
-                v_end = k_end + num_key_value_heads * head_dim
+        self.input_layernorm = RMSNorm(
+            llm_config,
+            hidden_size=llm_config.model_config.hidden_size,
+            eps=1e-6,
+            prefix=f"{prefix}.input_layernorm",
+        )
 
-                q = slice_tensor(weight, 0, q_end)
-                k = slice_tensor(weight, q_end, k_end)
-                v = slice_tensor(weight, k_end, v_end)
+        self.post_attention_layernorm = RMSNorm(
+            llm_config,
+            hidden_size=llm_config.model_config.hidden_size,
+            eps=1e-6,
+            prefix=f"{prefix}.post_attention_layernorm",
+        )
 
-                q_list.append(q)
-                k_list.append(k)
-                v_list.append(v)
+    def load_state_dict(self, state_dict):
+        """
+        """
+        self.self_attn.load_state_dict(state_dict)
+        self.mlp.load_state_dict(state_dict)
+        self.input_layernorm.load_state_dict(state_dict)
+        self.post_attention_layernorm.load_state_dict(state_dict)
 
-            merged = q_list + k_list + v_list
-
-            if is_paddle_tensor:
-                tensor = paddle.concat(merged, axis=-1)
-                if tensor.place.is_gpu_place():
-                    tensor = tensor._copy_to(paddle.CUDAPinnedPlace(), False)
-                return tensor
-            else:
-                return np.concatenate(merged, axis=-1)
-
-        if (config.num_key_value_heads is not None
-                and config.num_key_value_heads != config.num_attention_heads):
-            if is_split:
-                qkv_fn = partial(
-                    gqa_qkv_split_func,
-                    tensor_parallel_degree=config.tensor_parallel_degree,
-                    tensor_parallel_rank=config.tensor_parallel_rank,
-                    num_attention_heads=config.num_attention_heads,
-                    num_key_value_heads=config.num_key_value_heads,
-                    head_dim=config.hidden_size // config.num_attention_heads,
-                )
-            else:
-                qkv_fn = partial(
-                    gqa_qkv_merge_func,
-                    num_attention_heads=config.num_attention_heads,
-                    num_key_value_heads=config.num_key_value_heads,
-                    head_dim=config.hidden_size // config.num_attention_heads,
-                )
+    def forward(
+        self,
+        hidden_states: paddle.Tensor,
+        residual: paddle.Tensor,
+        input_ids: paddle.Tensor,
+        rotary_embs: paddle.Tensor,
+        rotary_emb_dims: paddle.Tensor,
+        key_cache: paddle.Tensor,
+        value_cache: paddle.Tensor,
+        **attn_args
+    ):
+        """
+        """
+        # Self Attention
+        if residual is None:
+            residual = hidden_states
+            hidden_states = self.input_layernorm(hidden_states)
         else:
-            qkv_fn = partial(fn, is_column=True)
+            hidden_states, residual = self.input_layernorm(
+                hidden_states, residual)
 
-        def get_tensor_parallel_split_mappings(num_layers, moe_num_experts,
-                                               moe_layer_start_index, is_mtp):
-            final_actions = {}
-            use_moe = moe_num_experts > 0
-            if is_mtp:
-                base_model_prefix = "ernie.mtp"
-            else:
-                base_model_prefix = "ernie"
-            key = (f"{base_model_prefix}.embeddings.word_embeddings" if
-                   not use_moe else f"{base_model_prefix}.embed_tokens.weight")
-            base_actions = {
-                "lm_head.weight": partial(fn, is_column=True),
-                # "eh_proj.weight": partial(fn, is_column=True),
-                key: partial(fn, is_column=False),
-            }
-            if use_moe and moe_layer_start_index > 0:
-                base_actions[
-                    f"{base_model_prefix}.layers.0.self_attn.qkv_proj.weight"] = qkv_fn
-                base_actions[
-                    f"{base_model_prefix}.layers.0.self_attn.o_proj.weight"] = partial(
-                        fn, is_column=False)
-                base_actions[
-                    f"{base_model_prefix}.layers.0.mlp.up_gate_proj.weight"] = partial(
-                        fn, is_column=True, is_naive_2fuse=True)
-                base_actions[
-                    f"{base_model_prefix}.layers.0.mlp.down_proj.weight"] = (
-                        partial(fn, is_column=False))
-
-                for expert_idx in range(moe_num_experts):
-                    base_actions[
-                        f"{base_model_prefix}.layers.{moe_layer_start_index}"
-                        f".mlp.experts.{expert_idx}.up_gate_proj.weight"] = partial(
-                            fn, is_column=True, is_naive_2fuse=True)
-                    base_actions[
-                        f"{base_model_prefix}.layers.{moe_layer_start_index}"
-                        f".mlp.experts.{expert_idx}.down_proj.weight"] = partial(
-                            fn, is_column=False)
-            else:
-                # (tangbinhan:todo) Splitting of non-MoE weights
-                base_actions[
-                    "decoder.layers.0.self_attn.qkv_proj.weight"] = partial(
-                        fn, is_column=True)
-                base_actions[
-                    "decoder.layers.0.self_attn.qkv_proj.bias"] = partial(
-                        fn, is_column=True)
-                base_actions[
-                    "decoder.layers.0.self_attn.out_proj.weight"] = partial(
-                        fn, is_column=False)
-
-                base_actions[
-                    "decoder.layers.0.self_attn.out_proj.bias"] = partial(
-                        fn, is_column=False)
-
-                base_actions[
-                    "decoder.layers.0.self_attn.linear1.weight"] = partial(
-                        fn, is_column=True, is_naive_2fuse=True)
-                base_actions[
-                    "decoder.layers.0.self_attn.linear1.bias"] = partial(
-                        fn, is_column=True, is_naive_2fuse=True)
-
-                base_actions[
-                    "decoder.layers.0.self_attn.linear2.weight"] = partial(
-                        fn, is_column=False)
-                base_actions[
-                    "decoder.layers.0.self_attn.linear2.bias"] = partial(
-                        fn, is_column=False)
-
-            for key, action in base_actions.items():
-                if (f"{base_model_prefix}.layers.0.mlp.up_gate_proj.weight"
-                        in key
-                        or f"{base_model_prefix}.layers.0.mlp.down_proj.weight"
-                        in key):
-                    for i in range(moe_layer_start_index):
-                        final_actions[key.replace("layers.0.",
-                                                  f"layers.{i}.")] = action
-                elif f"layers.{moe_layer_start_index}.mlp.experts." in key:
-                    for i in range(moe_layer_start_index, num_layers):
-                        final_actions[key.replace(
-                            f"layers.{moe_layer_start_index}.",
-                            f"layers.{i}.")] = action
-                elif f"{base_model_prefix}.layers.0." in key:
-                    for i in range(num_layers):
-                        final_actions[key.replace("layers.0.",
-                                                  f"layers.{i}.")] = action
-                final_actions[key] = action
-            return final_actions
-
-        mappings = get_tensor_parallel_split_mappings(
-            config.num_layers,
-            config.moe_num_experts,
-            config.moe_layer_start_index,
-            config.is_mtp,
+        hidden_states = self.self_attn(
+            hidden_states=hidden_states,
+            input_ids=input_ids,
+            rotary_embs=rotary_embs,
+            rotary_emb_dims=rotary_emb_dims,
+            key_cache=key_cache,
+            value_cache=value_cache,
+            **attn_args
         )
 
-        return mappings
+        # Fully Connected
+        hidden_states, residual = self.post_attention_layernorm(
+            hidden_states, residual)
+
+        hidden_states = self.mlp(hidden_states)
+        return hidden_states, residual
 
 
-@register_base_model
-class ErnieBotFusedModel(ErnieBotPretrainedModel):
+class Qwen2Model(nn.Layer):
     """
-    ErnieBotFusedModel
     """
-
     def __init__(
         self,
         vocab_size=51200,
@@ -413,7 +379,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             cache_quant_dtype (str): The data type for cached quantization.
             use_fast_ffn (bool): Whether to use a fast feed-forward network.
         """
-        super(ErnieBotFusedModel, self).__init__(llm_config)
+        super().__init__()
         self.msg_queue_id = msg_queue_id
         self.initializer_range = initializer_range
         self.hidden_size = hidden_size
@@ -504,11 +470,8 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             scale_dir=scale_dir,
         )
 
-        fmt_keys = WeightKeys(num_layers)
         is_mtp = draft_type in ["eagle", "mtp"]
         self.is_mtp = is_mtp
-        base_model_prefix = "ernie.mtp" if is_mtp else "ernie"
-        self.base_model_prefix = base_model_prefix
 
         llm_config.model_config.max_position_embeddings = max_position_embeddings
         llm_config.model_config.initializer_range = self.initializer_range
@@ -519,113 +482,20 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         llm_config.parallel_config.use_ep = use_ep
         llm_config.parallel_config.ep_size = 1 if use_ep else 1
         llm_config.model_config.rope_head_dim = hidden_size // num_attention_heads
-        llm_config.model_config.prefix_name = "ernie.mtp" if is_mtp else "ernie"
+        llm_config.model_config.prefix_name = "qwen2.mtp" if is_mtp else "qwen2"
         llm_config.model_config.use_rope = use_rope
         llm_config.parallel_config.column_cut = False
-        llm_config.model_config.base_model_prefix = base_model_prefix
         llm_config.model_config.use_moe = use_moe
 
-        if use_moe and moe_layer_start_index > 0:
-            fmt_keys.norm_before_qkv_weight_keys = [
-                f"ernie.layers.{i}.input_layernorm.weight"
-                for i in range(num_layers)
-            ]
-            fmt_keys.norm_before_qkv_bias_keys = [
-                None for i in range(num_layers)
-            ]
-            fmt_keys.qkv_linear_weight_keys = [
-                f"ernie.layers.{i}.self_attn.qkv_proj.weight"
-                for i in range(num_layers)
-            ]
-            fmt_keys.qkv_linear_bias_keys = [None for i in range(num_layers)]
-            fmt_keys.out_linear_weight_keys = [
-                f"ernie.layers.{i}.self_attn.o_proj.weight"
-                for i in range(num_layers)
-            ]
-            fmt_keys.out_linear_bias_keys = [None for i in range(num_layers)]
-
-            fmt_keys.ffn_layernorm_weight_keys = [
-                f"ernie.layers.{i}.post_attention_layernorm.weight"
-                for i in range(num_layers)
-            ]
-            fmt_keys.ffn_layernorm_bias_keys = [
-                None for i in range(num_layers)
-            ]
-            fmt_keys.ffn1_weight_keys = [
-                f"ernie.layers.{i}.mlp.up_gate_proj.weight"
-                for i in range(num_layers)
-            ]
-            fmt_keys.ffn1_bias_keys = [None for i in range(num_layers)]
-            fmt_keys.ffn2_weight_keys = [
-                f"ernie.layers.{i}.mlp.down_proj.weight"
-                for i in range(num_layers)
-            ]
-            fmt_keys.ffn2_bias_keys = [None for i in range(num_layers)]
-
-            # MoE keys
-            fmt_keys.moe_gate_weight_keys = "ernie.layers.{}.mlp.gate.weight"
-            fmt_keys.moe_gate_correction_bias_keys = "ernie.layers.{}.mlp.moe_statics.e_score_correction_bias"
-            fmt_keys.moe_ffn1_weight_keys = "ernie.layers.{}.mlp.experts.{}.up_gate_proj.weight"
-            fmt_keys.moe_ffn2_weight_keys = "ernie.layers.{}.mlp.experts.{}.down_proj.weight"
-
-        else:
-            fmt_keys.norm_before_qkv_weight_keys = [
-                f"{base_model_prefix}.decoder.layers.{i}.norm1.weight"
-                for i in range(num_layers)
-            ]
-            fmt_keys.norm_before_qkv_bias_keys = [
-                f"{base_model_prefix}.decoder.layers.{i}.norm1.bias"
-                for i in range(num_layers)
-            ]
-            fmt_keys.qkv_linear_weight_keys = [
-                f"{base_model_prefix}.decoder.layers.{i}.self_attn.qkv_proj.weight"
-                for i in range(num_layers)
-            ]
-            fmt_keys.qkv_linear_bias_keys = [
-                f"{base_model_prefix}.decoder.layers.{i}.self_attn.qkv_proj.bias"
-                for i in range(num_layers)
-            ]
-            fmt_keys.out_linear_weight_keys = [
-                f"{base_model_prefix}.decoder.layers.{i}.self_attn.out_proj.weight"
-                for i in range(num_layers)
-            ]
-            fmt_keys.out_linear_bias_keys = [
-                f"{base_model_prefix}.decoder.layers.{i}.self_attn.out_proj.bias"
-                for i in range(num_layers)
-            ]
-
-            fmt_keys.ffn_layernorm_weight_keys = [
-                f"{base_model_prefix}.decoder.layers.{i}.norm2.weight"
-                for i in range(num_layers)
-            ]
-            fmt_keys.ffn_layernorm_bias_keys = [
-                f"{base_model_prefix}.decoder.layers.{i}.norm2.bias"
-                for i in range(num_layers)
-            ]
-            fmt_keys.ffn1_weight_keys = [
-                f"{base_model_prefix}.decoder.layers.{i}.linear1.weight"
-                for i in range(num_layers)
-            ]
-            fmt_keys.ffn1_bias_keys = [
-                f"{base_model_prefix}.decoder.layers.{i}.linear1.bias"
-                for i in range(num_layers)
-            ]
-            fmt_keys.ffn2_weight_keys = [
-                f"{base_model_prefix}.decoder.layers.{i}.linear2.weight"
-                for i in range(num_layers)
-            ]
-            fmt_keys.ffn2_bias_keys = [
-                f"{base_model_prefix}.decoder.layers.{i}.linear2.bias"
-                for i in range(num_layers)
-            ]
+        self.llm_config = llm_config
 
         self.embeddings = VocabParallelEmbedding(
             llm_config=llm_config,
             num_embeddings=vocab_size,
             embedding_dim=hidden_size,
             params_dtype=paddle.get_default_dtype,
-            prefix=(f"{base_model_prefix}.embeddings.word_embeddings"
-                        if not use_moe else "ernie.embed_tokens"),
+            prefix=(f"{llm_config.model_config.prefix_name}.embeddings.word_embeddings"
+                        if not use_moe else f"{llm_config.model_config.prefix_name}.embed_tokens"),
         )
 
         # get ring_id
@@ -667,7 +537,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             quant_cls = get_quantization_config("block_wise")
             llm_config.quant_config = quant_cls.from_config(
                 {"weight_block_size": self.inference_args.weight_block_size})
-        elif self.weight_dtype == "int4" and self.act_dtype in [
+        elif self.inference_args.weight_dtype == "int4" and self.inference_args.act_dtype in [
                 "bfloat16",
                 "float16",
                 "float32",
@@ -716,7 +586,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
 
         else:
             llm_config.quant_config = None
-
+        
         if self.inference_args.cachekv_dtype not in [
                 "bfloat16", "float16", "float32"
         ]:
@@ -734,12 +604,9 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         # we will remove act_dtype later
         llm_config.model_config.act_dtype = self.inference_args.act_dtype
         llm_config.parallel_config.mp_size = mp_size
-        llm_config.load_config.weight_keys = fmt_keys
         llm_config.quant_config.quant_round_type = self.inference_args.quant_round_type
         llm_config.quant_config.quant_max_bound = self.inference_args.quant_max_bound
         llm_config.quant_config.quant_min_bound = self.inference_args.quant_min_bound
-        llm_config.load_config.act_scales = self.inference_args.act_scale_dict
-        llm_config.load_config._post_init(llm_config.model_config)
         # cachekv
         if llm_config.kvcache_quant_config is not None:
             llm_config.kvcache_quant_config.cache_quant_type_str = \
@@ -751,53 +618,36 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             llm_config.kvcache_quant_config.is_channel_wise = self.inference_args.is_channel_wise
             llm_config.kvcache_quant_config.use_dynamic_cachekv_quant = self.inference_args.use_dynamic_cachekv_quant
 
-        self.decoder = FusedTransformer(
-            inference_args=self.inference_args,
-            fmt_keys=fmt_keys,
-            act_method=activation,
-            rope_theta=rope_theta,
-            rope_3d=rope_3d,
-            ffn1_concat=self.ffn1_concat,
-            use_smooth_quant=self.use_smooth_quant,
-            fuse_ffn_act=self.fuse_ffn_act,
-            ring_id=ring_id,
-            return_all_hidden_states=self.return_all_hidden_states,
-            base_model_prefix=base_model_prefix,
-            draft_type=draft_type,
+        self.embeddings = VocabParallelEmbedding(
             llm_config=llm_config,
+            num_embeddings=vocab_size,
+            embedding_dim=hidden_size,
+            params_dtype=paddle.get_default_dtype,
+            prefix=(f"{llm_config.model_config.prefix_name}.embed_tokens"),
+        )
+
+        self.layers = [
+            Qwen2DecoderLayer(
+                llm_config=llm_config,
+                inference_args=self.inference_args,
+                prefix=f"{llm_config.model_config.prefix_name}.layers.{i}"
+            )
+            for i in range(num_layers)
+        ]
+
+        self.last_layernorm = LayerNorm(
+            llm_config,
+            prefix="",
+            hidden_size=llm_config.model_config.hidden_size,
+            eps=1e-6
         )
 
         self.norm = RMSNorm(
             llm_config,
             hidden_size=llm_config.model_config.hidden_size,
             eps=1e-5,
-            layer_name=f"{base_model_prefix}.decoder.norm",
+            prefix=f"{llm_config.model_config.prefix_name}.norm",
         )
-
-        if is_mtp:
-            self.e_norm = RMSNorm(
-                llm_config,
-                hidden_size=llm_config.model_config.hidden_size,
-                eps=1e-5,
-                layer_name=f"{base_model_prefix}.e_norm",
-            )
-            self.h_norm = RMSNorm(
-                llm_config,
-                hidden_size=llm_config.model_config.hidden_size,
-                eps=1e-5,
-                layer_name=f"{base_model_prefix}.h_norm",
-            )
-
-            from paddle.distributed.fleet.meta_parallel import \
-                ColumnParallelLinear
-
-            self.eh_proj = ColumnParallelLinear(
-                hidden_size * 2,
-                hidden_size,
-                has_bias=True,
-                gather_output=True,
-                fuse_matmul_bias=True,
-            )
 
     def remove_padding(self, input_ids, seq_lens_this_time):
         """
@@ -808,52 +658,38 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         (
             ids_remove_padding,
             cum_offsets,
-            padding_offset,
+            padding_offsets,
             cu_seqlens_q,
             cu_seqlens_k,
         ) = get_padding_offset(input_ids, cum_offsets_now, token_num,
                                seq_lens_this_time)
         return (
             ids_remove_padding,
-            padding_offset,
+            padding_offsets,
             cum_offsets,
             cu_seqlens_q,
             cu_seqlens_k,
         )
 
-    def speculate_remove_padding(self, input_ids, seq_lens_this_time,
-                                 draft_tokens, seq_lens_encoder):
+    def load_state_dict(self, state_dict: dict[str,
+                                              np.ndarray | paddle.Tensor]):
         """
-        remove_padding
+        Load model parameters from a given state dictionary.
+
+        Args:
+            state_dict (dict[str, np.ndarray | paddle.Tensor]):
+                A dictionary containing model parameters, where keys are parameter names
+                and values are NumPy arrays or PaddlePaddle tensors.
         """
-        cum_offsets_now = paddle.cumsum(self.max_len - seq_lens_this_time)
-        token_num = paddle.sum(seq_lens_this_time)
-        (
-            ids_remove_padding,
-            cum_offsets,
-            padding_offset,
-            cu_seqlens_q,
-            cu_seqlens_k,
-        ) = speculate_get_padding_offset(
-            input_ids,
-            draft_tokens,
-            cum_offsets_now,
-            token_num,
-            seq_lens_this_time,
-            seq_lens_encoder,
-        )
-        return (
-            ids_remove_padding,
-            padding_offset,
-            cum_offsets,
-            cu_seqlens_q,
-            cu_seqlens_k,
-        )
+        self.embeddings.load_state_dict(state_dict)
+        self.norm.load_state_dict(state_dict)
+        for i in range(self.num_layers):
+            self.layers[i].load_state_dict(state_dict)
+
 
     def forward(
         self,
         input_ids,
-        forward_meta: ForwardMeta,
         token_type_ids=None,
         image_features=None,
         attention_mask=None,  # for NPU
@@ -867,115 +703,111 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         draft_tokens=None,
         output_padding_offset=None,
         step_idx=None,
-        hidden_states=None,
+        mtp_hidden_states=None,
     ):
         """
-            Args:
-            input_ids (Tensor, optional): Input sequence of shape `(batch_size, sequence_length)`. Defaults to None.
-            attention_mask (Tensor, optional): Mask to avoid performing attention on padding tokens. Defaults to None.
-            rope_emb (Tensor, optional): Rotary positional embeddings. Defaults to None.
-            caches (List[Tensor], optional): List of cached decoder states. Defaults to None.
-            seq_lens_this_time (Tensor, optional): Sequence lengths of this time step. Defaults to None.
-            seq_lens_encoder (Tensor, optional): Sequence lengths of encoder. Defaults to None.
-            seq_lens_decoder (Tensor, optional): Sequence lengths of decoder. Defaults to None.
-            block_tables (Tensor, optional): Block table for compression. Defaults to None.
-            beam_cache_offset (int, optional): Beam cache offset. Defaults to None.
-            step_idx (int, optional): Step index. Defaults to None.
-
-        Returns:
-            Tensor: Output tensor of shape `(batch_size, sequence_length, hidden_size)`.
         """
+        kwargs = {}
+        kwargs["input_ids"] = input_ids
+        kwargs["token_type_ids"] = token_type_ids
+        kwargs["image_features"] = image_features
+        kwargs["attention_mask"] = attention_mask
+        kwargs["rotary_embs"] = rope_emb
+        kwargs["rotary_emb_dims"] = 1
+        kwargs["caches"] = caches
+        kwargs["seq_lens_this_time"] = seq_lens_this_time
+        kwargs["seq_lens_encoder"] = seq_lens_encoder
+        kwargs["seq_lens_decoder"] = seq_lens_decoder
+        kwargs["block_tables"] = block_tables
+        kwargs["beam_cache_offset"] = beam_cache_offset
+        kwargs["draft_tokens"] = draft_tokens
+        kwargs["output_padding_offset"] = output_padding_offset
+        kwargs["step_idx"] = step_idx
+        kwargs["max_input_length"] = self.max_len
+
+        (
+            ids_remove_padding,
+            padding_offsets,
+            cum_offsets,
+            cu_seqlens_q,
+            cu_seqlens_k,
+        ) = self.remove_padding(input_ids, seq_lens_this_time)
+
+        kwargs["padding_offsets"] = padding_offsets
+        kwargs["cum_offsets"] = cum_offsets
+        kwargs["cu_seqlens_q"] = cu_seqlens_q
+        kwargs["cu_seqlens_k"] = cu_seqlens_k
 
         embedding_output = self.embeddings(
-            ids_remove_padding=forward_meta.ids_remove_padding)
-        if self.is_mtp:
-            embedding_output = paddle.concat(
-                [self.e_norm(embedding_output),
-                 self.h_norm(hidden_states)],
-                axis=-1)
-            embedding_output = self.eh_proj(embedding_output)
+            ids_remove_padding=ids_remove_padding)
 
         if isinstance(embedding_output, tuple):
-            embedding_output = embedding_output[0]
+            kwargs["hidden_states"] = embedding_output[0]
         else:
-            embedding_output = embedding_output
+            kwargs["hidden_states"] = embedding_output
 
-        if (self.inference_args.moe_config.use_moe
-                and self.inference_args.moe_config.has_multimodality):
-            token_type_ids = (forward_meta.ids_remove_padding ==
-                              self.inference_args.moe_config.im_patch_id)
-            image_mask = token_type_ids
-            if image_mask.any():
-                embedding_output[image_mask] = image_features.cast(
-                    embedding_output.dtype)
+        kwargs["encoder_block_shape_q"] = 64
+        kwargs["decoder_block_shape_q"] = 16
+        kwargs["max_partition_size"] = 32768
+        kwargs["encoder_max_partition_size"] = 32768
 
-        output = self.decoder(
-            input_ids=input_ids,
-            token_type_ids=token_type_ids,
-            src=embedding_output,
-            caches=caches,
-            rotary_embs=forward_meta.rotary_embs,
-            rotary_emb_dims=1,
-            max_input_length=self.max_len,
-            block_size=self.block_size,
-            inv_compression_ratio=self.inv_compression_ratio,
-            cum_offsets=forward_meta.cum_offsets,
-            cu_seqlens_q=forward_meta.cu_seqlens_q,
-            cu_seqlens_k=forward_meta.cu_seqlens_k,
-            padding_offsets=forward_meta.padding_offset,
-            block_tables=forward_meta.block_tables,
-            seq_lens_this_time=forward_meta.seq_lens_this_time,
-            seq_lens_encoder=forward_meta.seq_lens_encoder,
-            seq_lens_decoder=forward_meta.seq_lens_decoder,
-            attention_mask=attention_mask,  # for NPU
-            beam_cache_offset=beam_cache_offset,
-            draft_tokens=draft_tokens,
-            output_padding_offset=output_padding_offset,
-            return_all_hidden_states=self.return_all_hidden_states,
-            forward_meta=forward_meta,
+        (
+            kwargs["encoder_batch_ids"],
+            kwargs["encoder_tile_ids_per_batch"],
+            kwargs["encoder_num_blocks"],
+            kwargs["kv_batch_ids"],
+            kwargs["kv_tile_ids_per_batch"],
+            kwargs["kv_num_blocks"],
+            kwargs["decoder_batch_ids"],
+            kwargs["decoder_tile_ids_per_batch"],
+            kwargs["decoder_num_blocks"],
+            kwargs["max_len_kv"],
+            set_max_lengths,
+        ) = get_block_shape_and_split_kv_block(
+            kwargs.get("seq_lens_encoder", None),
+            kwargs.get("seq_lens_decoder", None),
+            kwargs.get("seq_lens_this_time", None),
+            kwargs.get("cum_offsets", None),
+            kwargs.get("encoder_block_shape_q", 64),
+            kwargs.get("decoder_block_shape_q", 16),
+            self.llm_config.model_config.num_attention_heads // self.llm_config.model_config.num_key_value_heads,
+            kwargs.get("block_size", 64),
+            self.inference_args.speculate_max_draft_token_num + 1,
+        )
+        kwargs["set_max_lengths"] = set_max_lengths
+        kwargs["residual"] = None
+
+        for i in range(self.num_layers):
+            kwargs["key_cache"] = kwargs["caches"][2 * i]
+            kwargs["value_cache"] = kwargs["caches"][2 * i + 1]
+
+            kwargs["hidden_states"], kwargs["residual"] = self.layers[i](**kwargs)
+
+        kwargs["hidden_states"], _ = self.last_layernorm(kwargs["hidden_states"], kwargs["residual"])
+
+        kwargs["hidden_states"] = rebuild_padding(
+            kwargs.get("hidden_states", None),
+            kwargs.get("cum_offsets", None),
+            kwargs.get("seq_lens_this_time", None),
+            kwargs.get("seq_lens_decoder", None),
+            kwargs.get("seq_lens_encoder", None),
+            kwargs.get("output_padding_offset", None),
+            kwargs.get("max_input_length", -1),
         )
 
-        if isinstance(output, tuple):
-            out = output[0]
+        if isinstance(kwargs["hidden_states"][0], tuple):
+            out = kwargs["hidden_states"][0]
         else:
-            out = output
-
-        if (self.inference_args.moe_config.use_moe
-                and self.inference_args.moe_config.has_multimodality):
-            out = out.cast("float32")
-            score_text = out
-
-            mm_token_num_len = paddle.count_nonzero(token_type_ids).cast(
-                "int32")
-
-            if mm_token_num_len > 0:
-                token_num = paddle.shape(forward_meta.ids_remove_padding)[0]
-                token_type_ids = token_type_ids.reshape([-1])
-                text_pos_shifted = token_type_ids[:token_num] == 0
-                score_text = out[text_pos_shifted.reshape([-1])]
-
-            max_seq_len, max_seq_len_index = paddle.topk(
-                seq_lens_this_time.squeeze(-1), k=1)
-            out = extract_text_token_output(
-                max_seq_len,
-                max_seq_len_index.cast("int32"),
-                mm_token_num_len,
-                seq_lens_this_time,
-                forward_meta.cu_seqlens_q,
-                score_text,
-            )[0].cast(embedding_output.dtype)
+            out = kwargs["hidden_states"]
 
         out = self.norm(out)
 
-        if self.return_all_hidden_states:
-            return out, forward_meta.cum_offsets
-        else:
-            return out
+        return out
 
 
-class ErnieForCausalLM(ModelForCasualLM):
+class Qwen2ForCausalLM(ModelForCasualLM):
     """
-    ErnieForCausalLM
+    Qwen2ForCausalLM
     """
 
     def __init__(self, llm_config):
@@ -989,9 +821,9 @@ class ErnieForCausalLM(ModelForCasualLM):
             ValueError: If norm_type is not 'layernorm' or 'rmsnorm'.
             ValueError: If use_cache_kv_int8 is True and use_fake_parameter is True.
         """
-        super(ErnieForCausalLM, self).__init__(llm_config)
+        super(Qwen2ForCausalLM, self).__init__(llm_config)
         self.configs = llm_config
-        self.ernie = ErnieBotFusedModel(
+        self.qwen2 = Qwen2Model(
             vocab_size=self.configs.model_config.vocab_size,
             hidden_size=self.configs.model_config.hidden_size,
             max_len=self.configs.model_config.max_seq_len,
@@ -1046,8 +878,7 @@ class ErnieForCausalLM(ModelForCasualLM):
             moe_num_shared_experts,
             moe_layer_start_index=self.configs.moe_config.
             moe_layer_start_index,
-            moe_use_ffn_shared_weight_and_bias=self.configs.moe_config.
-            moe_use_ffn_shared_weight_and_bias,
+            moe_use_ffn_shared_weight_and_bias=self.configs.moe_config.moe_use_ffn_shared_weight_and_bias,
             moe_group=self.configs.moe_config.moe_group,
             moe_quant_type=self.configs.moe_config.moe_quant_type,
             use_ep=self.configs.parallel_config.use_ep,
@@ -1060,23 +891,14 @@ class ErnieForCausalLM(ModelForCasualLM):
             llm_config=self.configs,
         )
 
-        self.msg_queue_id = self.ernie.msg_queue_id
+        self.msg_queue_id = self.qwen2.msg_queue_id
         self.max_length = self.configs.decoding_config.max_dec_len
         self.min_length = self.configs.decoding_config.min_dec_len
         self.fake_server_p = self.configs.additional_config.fake_server_p
         self.decode_strategy = self.configs.decoding_config.decode_strategy
         self.speculate_max_candidate_len = self.configs.speculative_config.speculate_max_candidate_len
         self.speculate_verify_window = self.configs.speculative_config.speculate_verify_window
-        self.use_moe = self.ernie.use_moe
-
-        assert self.decode_strategy in [
-            "greedy_search",
-            "sampling",
-            "beam_search",
-            "speculate_decoding",
-            "draft_model_sampling",
-        ], f"`decode_strategy` must be one of 'greedy_search', 'sampling', \
-            'speculate_decoding' or 'beam_search' but received {self.decode_strategy}."
+        self.use_moe = self.qwen2.use_moe
 
         self.ori_vocab_size = self.configs.model_config.ori_vocab_size
 
@@ -1097,7 +919,7 @@ class ErnieForCausalLM(ModelForCasualLM):
         self.cache_quant_dtype = self.configs.tmp_config.cache_quant_dtype
         if self.cache_quant_dtype == "default":
             self.cache_quant_dtype = paddle.get_default_dtype()
-        self.use_fast_ffn = self.ernie.use_fast_ffn
+        self.use_fast_ffn = self.qwen2.use_fast_ffn
 
         # for NPU
         self.hidden_size = self.configs.model_config.hidden_size
@@ -1113,8 +935,6 @@ class ErnieForCausalLM(ModelForCasualLM):
 
         self.return_all_hidden_states = self.configs.model_config.return_all_hidden_states
 
-        self.base_model_prefix = self.ernie.base_model_prefix
-
         if self.use_rmsnorm:
             self.norm_type = "rmsnorm"
             # rmsnorm use fp16/bf16 weight
@@ -1127,40 +947,25 @@ class ErnieForCausalLM(ModelForCasualLM):
             self.have_norm_bias = True
             self.is_norm_weight_type_fp32 = True
 
-        if self.weight_sharing:
-            tie_word_embeddings = self.ernie.embeddings.word_embeddings.weight
-        else:
-            tie_word_embeddings = None
-
-        layer_prefix = None
-        if self.use_moe:
-            layer_prefix = "lm_head"
-        else:
-            layer_prefix = f"{self.base_model_prefix}"
-        if self.use_moe:
-            self.lm_head = ParallelLMHead(
-                llm_config=llm_config,
-                embedding_dim=self.hidden_size,
-                num_embeddings=self.ernie.vocab_size,
-                tie_word_embeddings=tie_word_embeddings,
-                prefix=layer_prefix,
-            )
-        else:
-            self.lm_head = ParallelLMHead(
-                llm_config=llm_config,
-                embedding_dim=self.hidden_size,
-                num_embeddings=self.ernie.vocab_size,
-                tie_word_embeddings=tie_word_embeddings,
-                prefix=layer_prefix,
-            )
+        lmhead_name = ("server_nlg_mask_lm_trans_fc_" if not self.qwen2.is_mtp
+                       else "mtp_server_nlg_mask_lm_trans_fc_")
+        self.lm_head = LMHead(
+            layer_name=lmhead_name,
+            linear_weight_key="lm_head.weight",
+            linear_bias_key=None,
+            input_dim=self.hidden_size,
+            output_dim=self.qwen2.vocab_size,
+            fused_linear=self.configs.model_config.fused_linear,
+        )
 
     @classmethod
     def name(self):
-        return "ErnieForCausalLM"
+        """
+        """
+        return "Qwen2ForCausalLM"
 
     @paddle.no_grad()
-    def set_state_dict(self, state_dict: Dict[str, Union[np.ndarray,
-                                                         paddle.Tensor]]):
+    def set_state_dict(self, state_dict):
         """
         Load model parameters from a given state dictionary.
 
@@ -1169,23 +974,8 @@ class ErnieForCausalLM(ModelForCasualLM):
                 A dictionary containing model parameters, where keys are parameter names
                 and values are NumPy arrays or PaddlePaddle tensors.
         """
-        try:
-            self.ernie.embeddings.load_state_dict(state_dict)
-            self.ernie.decoder.load_state_dict(state_dict)
-            self.ernie.norm.load_state_dict(state_dict)
-            self.lm_head.load_state_dict(state_dict)
-            if self.ernie.is_mtp:
-                self.ernie.e_norm.load_state_dict(state_dict)
-                self.ernie.h_norm.load_state_dict(state_dict)
-                self.ernie.eh_proj.weight.set_value(
-                    paddle.to_tensor(
-                        state_dict[f"{self.base_model_prefix}.eh_proj.weight"])
-                )
-                self.ernie.eh_proj.bias.set_value(
-                    paddle.to_tensor(
-                        state_dict[f"{self.base_model_prefix}.eh_proj.bias"]))
-        except Exception:
-            raise RuntimeError("set_state_dict error!!!")
+        self.qwen2.load_state_dict(state_dict)
+        self.lm_head.load_state_dict(state_dict)
 
     def get_output_padding_offset(self, seq_lens_this_time, seq_lens_encoder,
                                   seq_lens_decoder):
@@ -1196,18 +986,18 @@ class ErnieForCausalLM(ModelForCasualLM):
         seq_lens_output = speculate_get_seq_lens_output(
             seq_lens_this_time, seq_lens_encoder, seq_lens_decoder)
         out_token_num = paddle.sum(seq_lens_output)
-        output_cum_offsets_tmp = paddle.cumsum(self.ernie.max_len -
+        output_cum_offsets_tmp = paddle.cumsum(self.qwen2.max_len -
                                                seq_lens_output)
         output_padding_offset, output_cum_offsets = speculate_get_output_padding_offset(
             output_cum_offsets_tmp, out_token_num, seq_lens_output,
-            self.ernie.max_len)
+            self.qwen2.max_len)
         return output_padding_offset, output_cum_offsets
 
     def expand_inputs_for_generation(self,
                                      input_ids,
                                      expand_size,
                                      attention_mask=None,
-                                     **model_kwargs):
+                                     **kwargs):
         """
         Expand input IDs for generation.
 
@@ -1218,7 +1008,7 @@ class ErnieForCausalLM(ModelForCasualLM):
             input_ids (Tensor): Input IDs to be expanded.
             expand_size (int): Size of expansion.
             attention_mask (Tensor, optional): Attention mask to be updated. Defaults to None.
-            **model_kwargs: Additional keyword arguments containing tensors with the same shape as `input_ids`.
+            **kwargs: Additional keyword arguments containing tensors with the same shape as `input_ids`.
 
         Returns:
             tuple: A tuple containing the expanded input IDs and the updated keyword arguments.
@@ -1231,35 +1021,35 @@ class ErnieForCausalLM(ModelForCasualLM):
         input_ids = paddle.gather(input_ids, index)
 
         if attention_mask is not None:
-            model_kwargs["attention_mask"] = paddle.gather(
+            kwargs["attention_mask"] = paddle.gather(
                 attention_mask, index)
 
-        if ("token_type_ids" in model_kwargs
-                and model_kwargs["token_type_ids"] is not None):
-            token_type_ids = model_kwargs["token_type_ids"]
-            model_kwargs["token_type_ids"] = paddle.gather(
+        if ("token_type_ids" in kwargs
+                and kwargs["token_type_ids"] is not None):
+            token_type_ids = kwargs["token_type_ids"]
+            kwargs["token_type_ids"] = paddle.gather(
                 token_type_ids, index)
 
-        if "position_ids" in model_kwargs and model_kwargs[
+        if "position_ids" in kwargs and kwargs[
                 "position_ids"] is not None:
-            position_ids = model_kwargs["position_ids"]
-            model_kwargs["position_ids"] = paddle.gather(position_ids, index)
+            position_ids = kwargs["position_ids"]
+            kwargs["position_ids"] = paddle.gather(position_ids, index)
 
-        if "seq_len" in model_kwargs and model_kwargs["seq_len"] is not None:
-            seq_len = model_kwargs["seq_len"]
-            model_kwargs["seq_len"] = paddle.gather(seq_len, index)
+        if "seq_len" in kwargs and kwargs["seq_len"] is not None:
+            seq_len = kwargs["seq_len"]
+            kwargs["seq_len"] = paddle.gather(seq_len, index)
 
-        if ("encoder_output" in model_kwargs
-                and model_kwargs["encoder_output"] is not None):
-            encoder_output = model_kwargs["encoder_output"]
-            model_kwargs["encoder_output"] = paddle.gather(
+        if ("encoder_output" in kwargs
+                and kwargs["encoder_output"] is not None):
+            encoder_output = kwargs["encoder_output"]
+            kwargs["encoder_output"] = paddle.gather(
                 encoder_output, index)
 
-        if "role_ids" in model_kwargs and model_kwargs["role_ids"] is not None:
-            role_ids = model_kwargs["role_ids"]
-            model_kwargs["role_ids"] = paddle.gather(role_ids, index)
+        if "role_ids" in kwargs and kwargs["role_ids"] is not None:
+            role_ids = kwargs["role_ids"]
+            kwargs["role_ids"] = paddle.gather(role_ids, index)
 
-        return input_ids, model_kwargs
+        return input_ids, kwargs
 
     def prepare_inputs_for_generation(self, **kwargs):
         """
@@ -1287,8 +1077,8 @@ class ErnieForCausalLM(ModelForCasualLM):
         draft_tokens = kwargs.get("draft_tokens", None)
         output_padding_offset = kwargs.get("actual_output_padding_offset",
                                            None)
-        hidden_states = kwargs.get("hidden_states", None)
-        forward_meta = kwargs["forward_meta"]
+        # hidden_states = kwargs.get("hidden_states", None)
+        # forward_meta = kwargs["forward_meta"]
         model_inputs = {
             "input_ids": input_ids,
             "image_features": image_features,
@@ -1302,32 +1092,32 @@ class ErnieForCausalLM(ModelForCasualLM):
             "beam_cache_offset": beam_offset,
             "draft_tokens": draft_tokens,
             "output_padding_offset": output_padding_offset,
-            "hidden_states": hidden_states,
-            "forward_meta": forward_meta,
+            "mtp_hidden_states": None,
+            # "forward_meta": forward_meta,
         }
         return model_inputs
 
     def sampling(
         self,
         logits,
-        **model_kwargs,
+        **kwargs,
     ):
         """Sample from GPT using beam search and post process the generated sequence.
 
         Args:
             logits (Tensor): The id of the token indicating the end of a sentence.
-            **model_kwargs: Other arguments for forward pass of GPT model.
+            **kwargs: Other arguments for forward pass of GPT model.
 
         Returns:
             Tensor: The sampled tokens. The shape is [batch_size].
         """
-        temperature = model_kwargs["temperature"]
+        temperature = kwargs["temperature"]
         top_k = self.top_k
-        top_p = model_kwargs["top_p"]
-        eos_token_id = model_kwargs["eos_token_id"]
-        penalty_score = model_kwargs["penalty_score"]
-        frequency_score = model_kwargs["frequency_score"]
-        presence_score = model_kwargs["presence_score"]
+        top_p = kwargs["top_p"]
+        eos_token_id = kwargs["eos_token_id"]
+        penalty_score = kwargs["penalty_score"]
+        frequency_score = kwargs["frequency_score"]
+        presence_score = kwargs["presence_score"]
 
         def _post_process_(
             logits,
@@ -1337,34 +1127,34 @@ class ErnieForCausalLM(ModelForCasualLM):
             frequency_score,
             presence_score,
             temperature,
-            model_kwargs,
+            kwargs,
         ):
             """
             Post process the generated sequence.
             """
-            step_idx = model_kwargs["step_idx"]
+            step_idx = kwargs["step_idx"]
 
             set_value_by_flags_and_idx(
-                model_kwargs["pre_ids"],
-                model_kwargs["input_ids"],
-                model_kwargs["seq_lens_this_time"],
-                model_kwargs["seq_lens_encoder"],
-                model_kwargs["seq_lens_decoder"],
+                kwargs["pre_ids"],
+                kwargs["input_ids"],
+                kwargs["seq_lens_this_time"],
+                kwargs["seq_lens_encoder"],
+                kwargs["seq_lens_decoder"],
                 step_idx,
-                model_kwargs["stop_flags"],
+                kwargs["stop_flags"],
             )
 
             # pre-process distribution
             logits = get_token_penalty_multi_scores(
-                model_kwargs["pre_ids"],
+                kwargs["pre_ids"],
                 logits,
                 penalty_score,
                 frequency_score,
                 presence_score,
                 temperature,
-                model_kwargs["bad_tokens"],
+                kwargs["bad_tokens"],
                 step_idx,
-                model_kwargs["min_dec_len"],
+                kwargs["min_dec_len"],
                 eos_token_id,
             )
 
@@ -1373,81 +1163,81 @@ class ErnieForCausalLM(ModelForCasualLM):
             _, next_tokens = paddle.tensor.top_p_sampling(
                 probs, top_p, seed=-1)  # have random_seed
             """ !!! ep not need broadcast, here broadcast just for test !!! """
-            if self.ernie.mp_size > 1 and (
-                (not self.ernie.use_ep or self.ernie.ep_just_for_test) and
+            if self.qwen2.mp_size > 1 and (
+                (not self.qwen2.use_ep or self.qwen2.ep_just_for_test) and
                 (not self.fake_server_p)):
                 paddle.distributed.broadcast(next_tokens, 0)
 
             paddle.assign(
                 paddle.where(
-                    model_kwargs["stop_flags"],
-                    model_kwargs["step_idx"],
-                    model_kwargs["step_idx"] + 1,
+                    kwargs["stop_flags"],
+                    kwargs["step_idx"],
+                    kwargs["step_idx"] + 1,
                 ),
-                model_kwargs["step_idx"],
+                kwargs["step_idx"],
             )
-            length_cond = paddle.greater_equal(model_kwargs["step_idx"],
-                                               model_kwargs["max_dec_len"])
+            length_cond = paddle.greater_equal(kwargs["step_idx"],
+                                               kwargs["max_dec_len"])
             paddle.assign(
-                paddle.logical_or(model_kwargs["stop_flags"], length_cond),
-                model_kwargs["stop_flags"],
+                paddle.logical_or(kwargs["stop_flags"], length_cond),
+                kwargs["stop_flags"],
             )
 
-            if self.ernie.use_stop_seqs:
+            if self.qwen2.use_stop_seqs:
                 set_stop_value_multi_seqs(
                     next_tokens,
-                    model_kwargs["pre_ids"],
+                    kwargs["pre_ids"],
                     step_idx,
-                    model_kwargs["stop_flags"],
-                    model_kwargs["seq_lens_this_time"],
-                    model_kwargs["stop_seqs"],
-                    model_kwargs["stop_seqs_len"],
+                    kwargs["stop_flags"],
+                    kwargs["seq_lens_this_time"],
+                    kwargs["stop_seqs"],
+                    kwargs["stop_seqs_len"],
                     eos_token_id,
                 )
             else:
                 set_stop_value_multi_ends(
                     next_tokens,
-                    model_kwargs["stop_flags"],
-                    model_kwargs["seq_lens_this_time"],
+                    kwargs["stop_flags"],
+                    kwargs["seq_lens_this_time"],
                     eos_token_id,
-                    model_kwargs["next_tokens"],
+                    kwargs["next_tokens"],
                     False,
                 )  # multi ends
             # update inputs
             with paddle.framework._no_check_dy2st_diff():
                 update_inputs(
-                    model_kwargs["stop_flags"],
-                    model_kwargs["not_need_stop"],
-                    model_kwargs["seq_lens_this_time"],
-                    model_kwargs["seq_lens_encoder"],
-                    model_kwargs["seq_lens_decoder"],
-                    model_kwargs["input_ids"],
-                    model_kwargs["stop_nums"],
+                    kwargs["stop_flags"],
+                    kwargs["not_need_stop"],
+                    kwargs["seq_lens_this_time"],
+                    kwargs["seq_lens_encoder"],
+                    kwargs["seq_lens_decoder"],
+                    kwargs["input_ids"],
+                    kwargs["stop_nums"],
                     next_tokens,
-                    model_kwargs["is_block_step"],
+                    kwargs["is_block_step"],
                 )
-            if self.ernie.output_via_mq:
+            if self.qwen2.output_via_mq:
                 if self.msg_queue_id is None:
                     save_output(
                         next_tokens,
-                        model_kwargs["not_need_stop"],
-                        self.ernie.mp_rank,
-                        self.ernie.use_ep
-                        and (not self.ernie.ep_just_for_test),
+                        kwargs["not_need_stop"],
+                        self.qwen2.mp_rank,
+                        self.qwen2.use_ep
+                        and (not self.qwen2.ep_just_for_test),
                     )
                 else:
                     save_output_dynamic(
                         next_tokens,
-                        model_kwargs["not_need_stop"],
-                        self.ernie.mp_rank,
+                        kwargs["not_need_stop"],
+                        self.qwen2.mp_rank,
                         self.msg_queue_id,
-                        self.ernie.use_ep
-                        and (not self.ernie.ep_just_for_test),
+                        self.qwen2.use_ep
+                        and (not self.qwen2.ep_just_for_test),
                     )
             return next_tokens
 
-        if ((not self.ernie.use_ep) or (self.ernie.ep_just_for_test)
-                or (self.ernie.use_ep and model_kwargs["not_need_stop"])):
+        if ((not self.qwen2.use_ep) or (self.qwen2.ep_just_for_test)
+                or (self.qwen2.use_ep and kwargs["not_need_stop"])):
             # first decoder
             next_tokens = _post_process_(
                 logits,
@@ -1457,19 +1247,19 @@ class ErnieForCausalLM(ModelForCasualLM):
                 frequency_score,
                 presence_score,
                 temperature,
-                model_kwargs,
+                kwargs,
             )
         else:
             # fake ep
             fake_input = paddle.empty(
-                shape=[0, self.ernie.inference_args.hidden_size],
+                shape=[0, self.qwen2.inference_args.hidden_size],
                 dtype=paddle.get_default_dtype(),
             )
             for i in range(
-                    self.ernie.inference_args.moe_config.moe_layer_start_index,
-                    self.ernie.inference_args.num_layers,
+                    self.qwen2.inference_args.moe_config.moe_layer_start_index,
+                    self.qwen2.inference_args.num_layers,
             ):
-                self.ernie.decoder.moe_layers[i](fake_input)
+                self.qwen2.decoder.moe_layers[i](fake_input)
             next_tokens = None
 
         return next_tokens
@@ -1477,7 +1267,7 @@ class ErnieForCausalLM(ModelForCasualLM):
     def speculate_decoding(
         self,
         outputs,  # hidden_states
-        **model_kwargs,
+        **kwargs,
     ):
         """Sample from GPT using beam search and post process the generated sequence.
 
@@ -1491,17 +1281,17 @@ class ErnieForCausalLM(ModelForCasualLM):
             temperature (float, optional): The value used to module the logits. Defaults to None.
             min_tokens_to_keep (int, optional): Minimal number of tokens to keep for
                 next step in decoding. Defaults to 1.
-            **model_kwargs: Other arguments for forward pass of GPT model.
+            **kwargs: Other arguments for forward pass of GPT model.
 
         Returns:
             Tensor: The sampled tokens. The shape is [batch_size].
         """
-        temperature = model_kwargs["temperature"]
-        top_p = model_kwargs["top_p"]
-        eos_token_id = model_kwargs["eos_token_id"]
-        penalty_score = model_kwargs["penalty_score"]
-        frequency_score = model_kwargs["frequency_score"]
-        presence_score = model_kwargs["presence_score"]
+        temperature = kwargs["temperature"]
+        top_p = kwargs["top_p"]
+        eos_token_id = kwargs["eos_token_id"]
+        penalty_score = kwargs["penalty_score"]
+        frequency_score = kwargs["frequency_score"]
+        presence_score = kwargs["presence_score"]
 
         def _post_process_(
             outputs,
@@ -1510,7 +1300,7 @@ class ErnieForCausalLM(ModelForCasualLM):
             frequency_score,
             presence_score,
             temperature,
-            model_kwargs,
+            kwargs,
         ):
             """
             Post process the generated sequence.
@@ -1522,10 +1312,10 @@ class ErnieForCausalLM(ModelForCasualLM):
                 hidden_states = speculate_rebuild_append_padding(
                     all_hidden_states,
                     cum_offsets,
-                    model_kwargs["seq_lens_encoder"],
-                    model_kwargs["seq_lens_decoder"],
-                    model_kwargs["actual_output_padding_offset"],
-                    self.ernie.max_len,
+                    kwargs["seq_lens_encoder"],
+                    kwargs["seq_lens_decoder"],
+                    kwargs["actual_output_padding_offset"],
+                    self.qwen2.max_len,
                 )
             else:
                 hidden_states = outputs[0] if isinstance(outputs,
@@ -1536,20 +1326,20 @@ class ErnieForCausalLM(ModelForCasualLM):
             logits[:, self.ori_vocab_size:] = -float("inf")
 
             speculate_get_token_penalty_multi_scores(
-                model_kwargs["pre_ids"],
+                kwargs["pre_ids"],
                 logits,
                 penalty_score,
                 frequency_score,
                 presence_score,
                 temperature,
-                model_kwargs["bad_tokens"],
-                model_kwargs["step_idx"],
-                model_kwargs["min_dec_len"],
+                kwargs["bad_tokens"],
+                kwargs["step_idx"],
+                kwargs["min_dec_len"],
                 eos_token_id,
-                model_kwargs["seq_lens_this_time"],
-                model_kwargs["actual_output_padding_offset"],
-                model_kwargs["output_cum_offsets"],
-                self.ernie.max_len,
+                kwargs["seq_lens_this_time"],
+                kwargs["actual_output_padding_offset"],
+                kwargs["output_cum_offsets"],
+                self.qwen2.max_len,
             )
 
             # sample
@@ -1558,111 +1348,111 @@ class ErnieForCausalLM(ModelForCasualLM):
             verify_scores, verify_tokens, actual_candidate_len = top_p_candidates(
                 probs,
                 top_p,
-                model_kwargs["actual_output_padding_offset"],
+                kwargs["actual_output_padding_offset"],
                 self.speculate_max_candidate_len,
-                self.ernie.max_len,
+                self.qwen2.max_len,
             )
 
             speculate_verify(
-                model_kwargs["accept_tokens"],
-                model_kwargs["accept_num"],
-                model_kwargs["step_idx"],
-                model_kwargs["stop_flags"],
-                model_kwargs["seq_lens_encoder"],
-                model_kwargs["seq_lens_decoder"],
-                model_kwargs[
+                kwargs["accept_tokens"],
+                kwargs["accept_num"],
+                kwargs["step_idx"],
+                kwargs["stop_flags"],
+                kwargs["seq_lens_encoder"],
+                kwargs["seq_lens_decoder"],
+                kwargs[
                     "draft_tokens"],  # Both input and output, need to write the last 1 token accepted to position 0.
-                model_kwargs["seq_lens_this_time"],
+                kwargs["seq_lens_this_time"],
                 verify_tokens,
                 verify_scores,
-                model_kwargs["max_dec_len"],
+                kwargs["max_dec_len"],
                 eos_token_id,
-                model_kwargs["is_block_step"],
-                model_kwargs["output_cum_offsets"],
+                kwargs["is_block_step"],
+                kwargs["output_cum_offsets"],
                 actual_candidate_len,
-                model_kwargs["actual_draft_token_num"],
+                kwargs["actual_draft_token_num"],
                 top_p,
-                self.ernie.max_len,
+                self.qwen2.max_len,
                 self.speculate_verify_window,
                 True,  # enable_topp
             )
 
             # BroadCast
-            if self.ernie.mp_size > 1:
-                paddle.distributed.broadcast(model_kwargs["accept_tokens"], 0)
-                paddle.distributed.broadcast(model_kwargs["accept_num"], 0)
-                paddle.distributed.broadcast(model_kwargs["step_idx"], 0)
-                paddle.distributed.broadcast(model_kwargs["stop_flags"], 0)
+            if self.qwen2.mp_size > 1:
+                paddle.distributed.broadcast(kwargs["accept_tokens"], 0)
+                paddle.distributed.broadcast(kwargs["accept_num"], 0)
+                paddle.distributed.broadcast(kwargs["step_idx"], 0)
+                paddle.distributed.broadcast(kwargs["stop_flags"], 0)
 
-            if self.ernie.use_stop_seqs:
+            if self.qwen2.use_stop_seqs:
                 speculate_set_stop_value_multi_seqs(
-                    model_kwargs["accept_tokens"],
-                    model_kwargs["accept_num"],
-                    model_kwargs["pre_ids"],
-                    model_kwargs["step_idx"],
-                    model_kwargs["stop_flags"],
-                    model_kwargs["seq_lens_this_time"],
-                    model_kwargs["stop_seqs"],
-                    model_kwargs["stop_seqs_len"],
+                    kwargs["accept_tokens"],
+                    kwargs["accept_num"],
+                    kwargs["pre_ids"],
+                    kwargs["step_idx"],
+                    kwargs["stop_flags"],
+                    kwargs["seq_lens_this_time"],
+                    kwargs["stop_seqs"],
+                    kwargs["stop_seqs_len"],
                     eos_token_id,
                 )
 
             # Update
             speculate_update_v3(
-                model_kwargs["seq_lens_encoder"],
-                model_kwargs["seq_lens_decoder"],
-                model_kwargs["not_need_stop"],
-                model_kwargs["draft_tokens"],
-                model_kwargs["actual_draft_token_num"],
-                model_kwargs["accept_tokens"],
-                model_kwargs["accept_num"],
-                model_kwargs["stop_flags"],
-                model_kwargs["seq_lens_this_time"],
-                model_kwargs["is_block_step"],
-                model_kwargs["stop_nums"],
+                kwargs["seq_lens_encoder"],
+                kwargs["seq_lens_decoder"],
+                kwargs["not_need_stop"],
+                kwargs["draft_tokens"],
+                kwargs["actual_draft_token_num"],
+                kwargs["accept_tokens"],
+                kwargs["accept_num"],
+                kwargs["stop_flags"],
+                kwargs["seq_lens_this_time"],
+                kwargs["is_block_step"],
+                kwargs["stop_nums"],
             )
             # Streaming output
-            if not (self.ernie.speculate_method == "mtp" and
-                    self.ernie.generation_phase == GenerationPhase.PREFILL):
+            if not (self.qwen2.speculate_method == "mtp" and
+                    self.qwen2.generation_phase == GenerationPhase.PREFILL):
                 if self.msg_queue_id is None:
                     speculate_save_output(
-                        model_kwargs["accept_tokens"],
-                        model_kwargs["accept_num"],
-                        model_kwargs["not_need_stop"],
+                        kwargs["accept_tokens"],
+                        kwargs["accept_num"],
+                        kwargs["not_need_stop"],
                         self.rank,
                     )
                 else:
                     speculate_save_output_dynamic(
-                        model_kwargs["accept_tokens"],
-                        model_kwargs["accept_num"],
-                        model_kwargs["not_need_stop"],
+                        kwargs["accept_tokens"],
+                        kwargs["accept_num"],
+                        kwargs["not_need_stop"],
                         self.rank,
                         self.msg_queue_id,
                     )
 
             # If seq_lens_decoder is 0 (means stop), accept_num should be set to 0
-            speculate_clear_accept_nums(model_kwargs["accept_num"],
-                                        model_kwargs["seq_lens_decoder"])
+            speculate_clear_accept_nums(kwargs["accept_num"],
+                                        kwargs["seq_lens_decoder"])
 
             # Update pre_ids through accept tokens
             speculate_set_value_by_flags_and_idx(
-                model_kwargs["pre_ids"],
-                model_kwargs["accept_tokens"],
-                model_kwargs["accept_num"],
-                model_kwargs["stop_flags"],
-                model_kwargs["seq_lens_this_time"],
-                model_kwargs["seq_lens_encoder"],
-                model_kwargs["seq_lens_decoder"],
-                model_kwargs["step_idx"],
+                kwargs["pre_ids"],
+                kwargs["accept_tokens"],
+                kwargs["accept_num"],
+                kwargs["stop_flags"],
+                kwargs["seq_lens_this_time"],
+                kwargs["seq_lens_encoder"],
+                kwargs["seq_lens_decoder"],
+                kwargs["step_idx"],
             )
 
         output_padding_offset, output_cum_offsets = self.get_output_padding_offset(
-            model_kwargs["seq_lens_this_time"],
-            model_kwargs["seq_lens_encoder"],
-            model_kwargs["seq_lens_decoder"],
+            kwargs["seq_lens_this_time"],
+            kwargs["seq_lens_encoder"],
+            kwargs["seq_lens_decoder"],
         )
-        model_kwargs["actual_output_padding_offset"] = output_padding_offset
-        model_kwargs["output_cum_offsets"] = output_cum_offsets
+        kwargs["actual_output_padding_offset"] = output_padding_offset
+        kwargs["output_cum_offsets"] = output_cum_offsets
 
         # first decoder
         _post_process_(
@@ -1672,7 +1462,7 @@ class ErnieForCausalLM(ModelForCasualLM):
             frequency_score,
             presence_score,
             temperature,
-            model_kwargs,
+            kwargs,
         )
 
         return outputs
@@ -1680,7 +1470,7 @@ class ErnieForCausalLM(ModelForCasualLM):
     def beam_search(
         self,
         outputs,  # hidden_states
-        **model_kwargs,
+        **kwargs,
     ):
         """Sample from GPT using beam search and post process the generated sequence.
 
@@ -1690,16 +1480,16 @@ class ErnieForCausalLM(ModelForCasualLM):
             frequency_score (dict): A dict containing frequency score of each token.
             presence_score (dict): A dict containing presence score of each token.
             temperature (float, optional): The value used to module the logits. Defaults to None.
-            **model_kwargs: Other arguments for forward pass of GPT model.
+            **kwargs: Other arguments for forward pass of GPT model.
 
         Returns:
             Tensor: BeamHypotheses. The shape is [batch_size * beam_width, max_dec_len].
         """
-        temperature = model_kwargs["temperature"]
-        eos_token_id = model_kwargs["eos_token_id"]
-        penalty_score = model_kwargs["penalty_score"]
-        frequency_score = model_kwargs["frequency_score"]
-        presence_score = model_kwargs["presence_score"]
+        temperature = kwargs["temperature"]
+        eos_token_id = kwargs["eos_token_id"]
+        penalty_score = kwargs["penalty_score"]
+        frequency_score = kwargs["frequency_score"]
+        presence_score = kwargs["presence_score"]
 
         def _post_process_(
             outputs,
@@ -1707,69 +1497,69 @@ class ErnieForCausalLM(ModelForCasualLM):
             frequency_score,
             presence_score,
             temperature,
-            **model_kwargs,
+            **kwargs,
         ):
-            step_idx = model_kwargs["step_idx"]
+            step_idx = kwargs["step_idx"]
 
             set_value_by_flags_and_idx(
-                model_kwargs["pre_ids"],
-                model_kwargs["input_ids"],
-                model_kwargs["seq_lens_this_time"],
-                model_kwargs["seq_lens_encoder"],
-                model_kwargs["seq_lens_decoder"],
+                kwargs["pre_ids"],
+                kwargs["input_ids"],
+                kwargs["seq_lens_this_time"],
+                kwargs["seq_lens_encoder"],
+                kwargs["seq_lens_decoder"],
                 step_idx,
-                model_kwargs["stop_flags"],
+                kwargs["stop_flags"],
             )
             logits = outputs[0] if isinstance(outputs, tuple) else outputs
             logits = self.lm_head(logits)
 
             logits = paddle.cast(logits, paddle.float32)
             update_inputs_beam(
-                model_kwargs["beam_width"].cpu(),
-                model_kwargs["seq_lens_this_time"],
-                model_kwargs["seq_lens_encoder"],
-                model_kwargs["input_ids"],
+                kwargs["beam_width"].cpu(),
+                kwargs["seq_lens_this_time"],
+                kwargs["seq_lens_encoder"],
+                kwargs["input_ids"],
                 logits,
             )
 
             logits[:, self.ori_vocab_size:] = -float("inf")
             # pre-process distribution
             logits = get_token_penalty_multi_scores(
-                model_kwargs["pre_ids"],
+                kwargs["pre_ids"],
                 logits,
                 penalty_score,
                 frequency_score,
                 presence_score,
                 temperature,
-                model_kwargs["bad_tokens"],
+                kwargs["bad_tokens"],
                 step_idx,
-                model_kwargs["min_dec_len"],
+                kwargs["min_dec_len"],
                 eos_token_id,
             )
 
             tmp_seq = paddle.where(
-                model_kwargs["seq_lens_decoder"] == 0,
-                model_kwargs["seq_lens_encoder"] - 1,
-                model_kwargs["seq_lens_decoder"],
+                kwargs["seq_lens_decoder"] == 0,
+                kwargs["seq_lens_encoder"] - 1,
+                kwargs["seq_lens_decoder"],
             )
 
             next_tokens, parent_ids = beam_search_softmax(
                 logits=logits,
                 seq_lens=tmp_seq.astype("int32"),
-                stop_flags=model_kwargs["stop_flags"],
+                stop_flags=kwargs["stop_flags"],
                 end_ids=eos_token_id.astype("int32"),
                 step_ids=step_idx.astype("int32"),
-                max_dec_lens=model_kwargs["max_dec_len"].astype("int32"),
-                block_tables=model_kwargs["block_tables"],
-                cum_scores=model_kwargs["cum_score"],
-                beam_cache_ids=model_kwargs["beam_cache_ids"],
-                beam_hyps=model_kwargs["beam_hyps"],
-                beam_hyps_score=model_kwargs["beam_hyps_score"],
-                beam_finished=model_kwargs["beam_finished"],
-                beam_width=model_kwargs["beam_width"],
-                beam_group_num=model_kwargs["beam_group_num"],
-                length_penalty=model_kwargs["beam_length_penalty"],
-                diversity_penalty=model_kwargs["beam_diversity_penalty"],
+                max_dec_lens=kwargs["max_dec_len"].astype("int32"),
+                block_tables=kwargs["block_tables"],
+                cum_scores=kwargs["cum_score"],
+                beam_cache_ids=kwargs["beam_cache_ids"],
+                beam_hyps=kwargs["beam_hyps"],
+                beam_hyps_score=kwargs["beam_hyps_score"],
+                beam_finished=kwargs["beam_finished"],
+                beam_width=kwargs["beam_width"],
+                beam_group_num=kwargs["beam_group_num"],
+                length_penalty=kwargs["beam_length_penalty"],
+                diversity_penalty=kwargs["beam_diversity_penalty"],
                 fuse_softmax=True,
                 early_stop=False,
             )
@@ -1778,39 +1568,39 @@ class ErnieForCausalLM(ModelForCasualLM):
 
             paddle.assign(
                 paddle.where(
-                    model_kwargs["beam_finished"],
-                    model_kwargs["step_idx"],
-                    model_kwargs["step_idx"] + 1,
+                    kwargs["beam_finished"],
+                    kwargs["step_idx"],
+                    kwargs["step_idx"] + 1,
                 ),
-                model_kwargs["step_idx"],
+                kwargs["step_idx"],
             )
-            length_cond = paddle.greater_equal(model_kwargs["step_idx"],
-                                               model_kwargs["max_dec_len"])
+            length_cond = paddle.greater_equal(kwargs["step_idx"],
+                                               kwargs["max_dec_len"])
             paddle.assign(
-                paddle.logical_or(model_kwargs["beam_finished"], length_cond),
-                model_kwargs["beam_finished"],
+                paddle.logical_or(kwargs["beam_finished"], length_cond),
+                kwargs["beam_finished"],
             )
 
             set_stop_value_multi_ends(
                 next_tokens,
-                model_kwargs["beam_finished"],
-                model_kwargs["seq_lens_this_time"],
+                kwargs["beam_finished"],
+                kwargs["seq_lens_this_time"],
                 eos_token_id,
-                model_kwargs["next_tokens"],
+                kwargs["next_tokens"],
                 True,
             )  # multi ends
 
             # update inputs
             update_inputs(
-                model_kwargs["beam_finished"],
-                model_kwargs["not_need_stop"],
-                model_kwargs["seq_lens_this_time"],
-                model_kwargs["seq_lens_encoder"],
-                model_kwargs["seq_lens_decoder"],
-                model_kwargs["input_ids"],
-                model_kwargs["stop_nums"],
+                kwargs["beam_finished"],
+                kwargs["not_need_stop"],
+                kwargs["seq_lens_this_time"],
+                kwargs["seq_lens_encoder"],
+                kwargs["seq_lens_decoder"],
+                kwargs["input_ids"],
+                kwargs["stop_nums"],
                 next_tokens,
-                model_kwargs["is_block_step"],
+                kwargs["is_block_step"],
             )
 
         _post_process_(
@@ -1819,15 +1609,15 @@ class ErnieForCausalLM(ModelForCasualLM):
             frequency_score,
             presence_score,
             temperature,
-            **model_kwargs,
+            **kwargs,
         )
 
-        return model_kwargs["beam_hyps"]
+        return kwargs["beam_hyps"]
 
     def draft_model_sampling(
         self,
         logits,
-        **model_kwargs,
+        **kwargs,
     ):
         """Sample from GPT using beam search and post process the generated sequence.
 
@@ -1835,18 +1625,18 @@ class ErnieForCausalLM(ModelForCasualLM):
             eos_token_id (int): The id of the token indicating the end of a sentence.
             top_p (float): If set to float < 1, only the tokens with probabilities greater than or equal to
                 the threshold are kept for generation.
-            **model_kwargs: Other arguments for forward pass of GPT model.
+            **kwargs: Other arguments for forward pass of GPT model.
 
         Returns:
             Tensor: The sampled tokens. The shape is [batch_size].
         """
-        top_p = model_kwargs["top_p"]
-        eos_token_id = model_kwargs["eos_token_id"]
+        top_p = kwargs["top_p"]
+        eos_token_id = kwargs["eos_token_id"]
 
         def _post_process_(
             logits,
             top_p,
-            model_kwargs,
+            kwargs,
         ):
             probs = F.softmax(logits)
 
@@ -1854,70 +1644,74 @@ class ErnieForCausalLM(ModelForCasualLM):
                                                                 top_p,
                                                                 seed=-1)
 
-            if self.ernie.mp_size > 1:
+            if self.qwen2.mp_size > 1:
                 paddle.distributed.broadcast(inter_next_tokens, 0)
 
             draft_model_update(
                 inter_next_tokens,
-                model_kwargs["draft_tokens"],
-                model_kwargs["pre_ids"],
-                model_kwargs["seq_lens_this_time"],
-                model_kwargs["seq_lens_encoder"],
-                model_kwargs["seq_lens_decoder"],
-                model_kwargs["step_idx"],
-                model_kwargs["output_cum_offsets"],
-                model_kwargs["stop_flags"],
-                model_kwargs["not_need_stop"],
-                model_kwargs["max_dec_len"],
+                kwargs["draft_tokens"],
+                kwargs["pre_ids"],
+                kwargs["seq_lens_this_time"],
+                kwargs["seq_lens_encoder"],
+                kwargs["seq_lens_decoder"],
+                kwargs["step_idx"],
+                kwargs["output_cum_offsets"],
+                kwargs["stop_flags"],
+                kwargs["not_need_stop"],
+                kwargs["max_dec_len"],
                 eos_token_id,
-                model_kwargs["base_model_draft_tokens"],
-                self.ernie.max_len,
-                model_kwargs["substep"],
+                kwargs["base_model_draft_tokens"],
+                self.qwen2.max_len,
+                kwargs["substep"],
             )
-            if (self.ernie.speculate_method in ["mtp", "draft_model", "eagle"]
-                    and self.ernie.generation_phase
+            if (self.qwen2.speculate_method in ["mtp", "draft_model", "eagle"]
+                    and self.qwen2.generation_phase
                     == GenerationPhase.PREFILL):
                 if self.msg_queue_id is None:
                     mtp_save_first_token(
-                        model_kwargs["base_model_draft_tokens"],
-                        model_kwargs["not_need_stop"],
-                        self.ernie.mp_rank,
-                        self.ernie.use_ep
-                        and (not self.ernie.ep_just_for_test),
+                        kwargs["base_model_draft_tokens"],
+                        kwargs["not_need_stop"],
+                        self.qwen2.mp_rank,
+                        self.qwen2.use_ep
+                        and (not self.qwen2.ep_just_for_test),
                     )
                 else:
                     mtp_save_first_token_dynamic(
-                        model_kwargs["base_model_draft_tokens"],
-                        model_kwargs["not_need_stop"],
-                        self.ernie.mp_rank,
+                        kwargs["base_model_draft_tokens"],
+                        kwargs["not_need_stop"],
+                        self.qwen2.mp_rank,
                         self.msg_queue_id,
-                        self.ernie.use_ep
-                        and (not self.ernie.ep_just_for_test),
+                        self.qwen2.use_ep
+                        and (not self.qwen2.ep_just_for_test),
                     )
             return hidden_states
 
         output_padding_offset, output_cum_offsets = self.get_output_padding_offset(
-            model_kwargs["seq_lens_this_time"],
-            model_kwargs["seq_lens_encoder"],
-            model_kwargs["seq_lens_decoder"],
+            kwargs["seq_lens_this_time"],
+            kwargs["seq_lens_encoder"],
+            kwargs["seq_lens_decoder"],
         )
-        model_kwargs["actual_output_padding_offset"] = output_padding_offset
-        model_kwargs["output_cum_offsets"] = output_cum_offsets
+        kwargs["actual_output_padding_offset"] = output_padding_offset
+        kwargs["output_cum_offsets"] = output_cum_offsets
 
         # first decoder
-        hidden_states = _post_process_(logits, top_p, model_kwargs)
+        hidden_states = _post_process_(logits, top_p, kwargs)
 
         return hidden_states
 
     def compute_logits(self, hidden_states):
+        """
+        """
         logits = self.lm_head(hidden_states)
         logits = paddle.cast(logits, paddle.float32)
         logits[:, self.ori_vocab_size:] = -float("inf")
         return logits
 
     def forward(self, **kwargs):
+        """
+        """
         model_inputs = self.prepare_inputs_for_generation(**kwargs)
-        hidden_states = self.ernie(**model_inputs)
+        hidden_states = self.qwen2(**model_inputs)
         return hidden_states
 
     def sample(

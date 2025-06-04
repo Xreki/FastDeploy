@@ -64,8 +64,8 @@ class W8A8LinearMethod(QuantMethodBase):
 
     def create_weights(self, layer):
         weight_scale = self.quant_config.weight_scale_dict.get(
-            layer.layer_name + ".weight_quanter")
-        in_scale = self.quant_config.act_scale_dict.get(layer.layer_name +
+            layer.prefix + ".weight_quanter")
+        in_scale = self.quant_config.act_scale_dict.get(layer.prefix +
                                                         ".activation_quanter")
         self.skip_quant = False
         if weight_scale is None or in_scale is None:
@@ -78,7 +78,6 @@ class W8A8LinearMethod(QuantMethodBase):
             (max_range * max_range * in_scale)).astype("float32")
         layer.linear_out_scale = layer.create_parameter(
             shape=[layer.embed_dim],
-            attr=paddle.ParamAttr(name=layer.out_scale_name),
             dtype="float32",
             is_bias=False,
             default_initializer=paddle.nn.initializer.Constant(0),
@@ -88,7 +87,7 @@ class W8A8LinearMethod(QuantMethodBase):
 
     def process_loaded_weights(self, layer, weights) -> None:
         if self.skip_quant:
-            logger.debug(f"{layer.layer_name} skip quant")
+            logger.debug(f"{layer.prefix} skip quant")
             weight_tensor = weights.cast(layer._dtype)
             layer.linear_weight.set_value(weight_tensor)
         else:

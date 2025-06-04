@@ -30,7 +30,7 @@ class Attention(nn.Layer):
     def __init__(
         self,
         inference_args,
-        layer_name,
+        prefix,
         out_scale=-1,
         use_neox_rotary_style=False,
         rope_theta=10000.0,
@@ -46,7 +46,7 @@ class Attention(nn.Layer):
         Args:
             inference_args (dict or object): Contains arguments for inference, including
                 number of key-value heads, weight data type, activation data type, etc.
-            layer_name (str): The name of the attention layer for identification purposes.
+            prefix (str): The name of the attention layer for identification purposes.
             out_scale (float, optional): Output scale factor. Defaults to -1.
             use_neox_rotary_style (bool, optional): Whether to use the NeoX rotary position
                 encoding style. Defaults to False.
@@ -66,9 +66,9 @@ class Attention(nn.Layer):
         self.nranks = inference_args.mp_size
         self.kv_num_heads = inference_args.num_key_value_heads // self.nranks
         self.head_dim = self.inference_args.head_dim
-        self.layer_name = layer_name
-        self.cache_k_scale_name = layer_name + ".cachek_matmul.activation_quanter"
-        self.cache_v_scale_name = layer_name + ".cachev_matmul.activation_quanter"
+        self.prefix = prefix
+        self.cache_k_scale_name = prefix + ".cachek_matmul.activation_quanter"
+        self.cache_v_scale_name = prefix + ".cachev_matmul.activation_quanter"
         self.out_scale = out_scale
 
         self.cache_k_zp_name = self.cache_k_scale_name + ".zero_point"
@@ -129,7 +129,6 @@ class Attention(nn.Layer):
             shape=([self.kv_num_heads *
                     self.head_dim] if self.inference_args.is_channel_wise else
                    [self.kv_num_heads]),
-            attr=paddle.ParamAttr(name=self.cache_k_scale_name),
             dtype=self.cache_scale_dtype,
             is_bias=False,
         )
@@ -137,7 +136,6 @@ class Attention(nn.Layer):
             shape=([self.kv_num_heads *
                     self.head_dim] if self.inference_args.is_channel_wise else
                    [self.kv_num_heads]),
-            attr=paddle.ParamAttr(name=self.cache_v_scale_name),
             dtype=self.cache_scale_dtype,
             is_bias=False,
         )
@@ -202,7 +200,6 @@ class Attention(nn.Layer):
                 shape=([self.kv_num_heads *
                         self.head_dim] if self.inference_args.is_channel_wise
                        else [self.kv_num_heads]),
-                attr=paddle.ParamAttr(name=self.cache_k_zp_name),
                 dtype=self.cache_scale_dtype,
                 is_bias=False,
             )
@@ -210,7 +207,6 @@ class Attention(nn.Layer):
                 shape=([self.kv_num_heads *
                         self.head_dim] if self.inference_args.is_channel_wise
                        else [self.kv_num_heads]),
-                attr=paddle.ParamAttr(name=self.cache_v_zp_name),
                 dtype=self.cache_scale_dtype,
                 is_bias=False,
             )
@@ -246,7 +242,6 @@ class Attention(nn.Layer):
     def forward(
         self,
         qkv,
-        padding_offset,
         input_ids,
         rotary_embs,
         rotary_emb_dims,

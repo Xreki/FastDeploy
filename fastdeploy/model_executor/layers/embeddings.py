@@ -32,7 +32,7 @@ class VocabParallelEmbedding(nn.Layer):
         num_embeddings,
         embedding_dim=768,
         params_dtype="bfloat16",
-        layer_name="",
+        prefix="",
     ):
         """
         Initialize the VocabParallelEmbedding layer for the model.
@@ -44,7 +44,7 @@ class VocabParallelEmbedding(nn.Layer):
             num_embeddings : vocabulary size.
             embedding_dim : size of hidden state.
             params_dtype : data type of parameters.
-            layer_name (str): Unique name of the layer, used for naming internal attributes,
+            prefix (str): Unique name of the layer, used for naming internal attributes,
                 you can give it any name you like.
         """
         super().__init__()
@@ -52,11 +52,7 @@ class VocabParallelEmbedding(nn.Layer):
         self.mp_rank = hcg.get_model_parallel_rank()
         self.column_cut = llm_config.parallel_config.column_cut
         self.world_size = hcg.get_model_parallel_world_size()
-        self.ring_id = hcg.get_model_parallel_group().id  # for NPU
-        self._word_emb_name = (llm_config.model_config.prefix_name +
-                               "word_embedding_expanded_" + str(self.mp_rank) +
-                               ".w_0")
-        self._pos_emb_name = llm_config.model_config.prefix_name + "pos_embedding_0.w_0"
+        self.ring_id = hcg.get_model_parallel_group().id
         self.use_rope = llm_config.model_config.use_rope
         self.rope_head_dim = llm_config.model_config.rope_head_dim
         self.use_ep = llm_config.parallel_config.use_ep
@@ -81,7 +77,6 @@ class VocabParallelEmbedding(nn.Layer):
                     mp_group=fleet.get_hybrid_communicate_group().
                     get_model_parallel_group(),
                     weight_attr=paddle.ParamAttr(
-                        name=self._word_emb_name,
                         initializer=nn.initializer.Normal(
                             mean=0.0, std=self.initializer_range),
                     ),
@@ -100,30 +95,22 @@ class VocabParallelEmbedding(nn.Layer):
                 self.max_position_embeddings,
                 embedding_dim,
                 weight_attr=paddle.ParamAttr(
-                    name=self._pos_emb_name,
                     initializer=nn.initializer.Normal(
                         mean=0.0, std=self.initializer_range),
                 ),
             )
 
-        self.layer_name = layer_name
+        self.prefix = prefix
 
         if self.weight_sharing and self.weight_sharing_add_bias:
-            if self.world_size > 1:
-                bias_name = "server_nlg_mask_lm_out_fc_" + str(
-                    self.mp_rank) + ".b_0"
-            else:
-                bias_name = "server_nlg_mask_lm_out_fc.b_0"
-            mask_lm_out_bias_attr = paddle.ParamAttr(
-                name=bias_name,
-                initializer=paddle.nn.initializer.Constant(value=0.0),
-            )
             assert num_embeddings % self.world_size == 0
             if self.use_ep:
                 self.bias = self.create_parameter(
                     shape=[num_embeddings],
                     dtype=paddle.get_default_dtype(),
-                    attr=mask_lm_out_bias_attr,
+                    attr=paddle.ParamAttr(
+                        initializer=paddle.nn.initializer.Constant(value=0.0),
+                    ),
                     is_bias=True,
                 )
             else:
@@ -152,7 +139,7 @@ class VocabParallelEmbedding(nn.Layer):
             state_dict (dict): A dictionary containing the checkpoint weights and biases.
         """
         self.word_embeddings.weight.set_value(
-            get_tensor(state_dict.pop(self.layer_name + ".weight")).astype(
+            get_tensor(state_dict.pop(self.prefix + ".weight")).astype(
                 paddle.get_default_dtype()))
 
     def forward(self, ids_remove_padding=None):

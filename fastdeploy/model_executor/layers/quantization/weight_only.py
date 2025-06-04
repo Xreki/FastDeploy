@@ -71,7 +71,7 @@ class WeightOnlyLinearMethod(QuantMethodBase):
         self.quant_config = quant_config
 
     def create_weights(self, layer):
-        weight_only_scale_name = layer.layer_name + ".weight_only_scale"
+        weight_only_scale_name = layer.prefix + ".weight_only_scale"
         linear_weight_scale_shape = [layer.embed_dim]
         if hasattr(layer, "linear_weight_shape"):
             if isinstance(layer.linear_weight_shape, list):
@@ -80,7 +80,6 @@ class WeightOnlyLinearMethod(QuantMethodBase):
 
         layer.linear_weight_scale = layer.create_parameter(
             shape=linear_weight_scale_shape,
-            attr=paddle.ParamAttr(name=weight_only_scale_name),
             dtype=layer._dtype,
             is_bias=False,
         )
@@ -93,6 +92,7 @@ class WeightOnlyLinearMethod(QuantMethodBase):
         linear_out = weight_only_linear(
             x,
             weight=layer.linear_weight,
+            bias=layer.linear_bias if layer.add_bias else None,
             weight_scale=layer.linear_weight_scale,
             weight_dtype=layer.weight_dtype,
             arch=self.quant_config.weight_only_linear_arch,

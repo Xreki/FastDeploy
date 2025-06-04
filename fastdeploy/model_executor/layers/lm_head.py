@@ -112,7 +112,6 @@ class ParallelLMHead(nn.Layer):
             if self.use_ep:
                 self.weight = self.create_parameter(
                     shape=[embedding_dim, num_embeddings],
-                    attr=None,
                     dtype=paddle.get_default_dtype(),
                     is_bias=False,
                 )

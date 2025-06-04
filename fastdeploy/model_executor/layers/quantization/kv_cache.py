@@ -162,7 +162,6 @@ class KVCacheMethodBase(QuantMethodBase):
                 if self.quant_config.is_channel_wise
                 else [layer.kv_num_heads]
             ),
-            attr=paddle.ParamAttr(name=self.cache_k_scale_name),
             dtype=self.cache_scale_dtype,
             is_bias=False,
         )
@@ -172,7 +171,6 @@ class KVCacheMethodBase(QuantMethodBase):
                 if self.quant_config.is_channel_wise
                 else [layer.kv_num_heads]
             ),
-            attr=paddle.ParamAttr(name=self.cache_v_scale_name),
             dtype=self.cache_scale_dtype,
             is_bias=False,
         )
@@ -207,7 +205,6 @@ class KVCacheMethodBase(QuantMethodBase):
                 if self.quant_config.is_channel_wise
                 else [layer.kv_num_heads]
             ),
-            attr=paddle.ParamAttr(name=self.cache_k_zp_name),
             dtype=self.cache_scale_dtype,
             is_bias=False,
         )
@@ -217,7 +214,6 @@ class KVCacheMethodBase(QuantMethodBase):
                 if self.quant_config.is_channel_wise
                 else [layer.kv_num_heads]
             ),
-            attr=paddle.ParamAttr(name=self.cache_v_zp_name),
             dtype=self.cache_scale_dtype,
             is_bias=False,
         )
@@ -226,9 +222,9 @@ class KVCacheMethodBase(QuantMethodBase):
         """
         create_weights
         """
-        self.layer_name = layer.layer_name
-        self.cache_k_scale_name = layer.layer_name + ".cachek_matmul.activation_quanter"
-        self.cache_v_scale_name = layer.layer_name + ".cachev_matmul.activation_quanter"
+        self.prefix = layer.prefix
+        self.cache_k_scale_name = layer.prefix + ".cachek_matmul.activation_quanter"
+        self.cache_v_scale_name = layer.prefix + ".cachev_matmul.activation_quanter"
         self.cache_k_zp_name = layer.cache_k_scale_name + ".zero_point"
         self.cache_v_zp_name = layer.cache_v_scale_name + ".zero_point"
 
