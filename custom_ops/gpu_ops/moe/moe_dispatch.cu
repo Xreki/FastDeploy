@@ -121,7 +121,7 @@ void MoeDispatchKernel(
   } else {
     initialize_moe_routing_kernelLauncher<data_t>::run(
         input.data<data_t>(), permute_input->data<data_t>(), permuted_rows_,
-        expert_idx_per_token->data<int32_t>(), w4a8_in_scale->data<float>(),
+        expert_idx_per_token->data<int32_t>(), nullptr,
         permute_indices_per_token->data<int32_t>(), num_rows, num_rows,
         hidden_size, moe_topk, stream);
   }

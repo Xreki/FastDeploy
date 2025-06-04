@@ -172,7 +172,8 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
             x,
             gate_out,
             layer.gate_correction_bias,
-            layer.moe_ffn1_in_scale,  # if set, permute_input will be int8_t
+            (layer.moe_ffn1_in_scale if hasattr(layer, "moe_ffn1_in_scale")
+             else None),  # if set, permute_input will be int8_t
             moe_compute_params.top_k,
             False,
             topk_only_mode=False,
