@@ -221,7 +221,7 @@ def background_start(job_id: str, model_path: str, model_version: str) -> None:
         # 执行start_cmd
         start_cmd = [
             "bash",
-            f"{rollout_worker_root}/fastdeploy/training/{start_job_by_agent_sh}",
+            f"{rollout_worker_root}/training/agent/{start_job_by_agent_sh}",
             "./",
             str(rollout_worker_http_port),
             str(rollout_worker_queue_port),
@@ -229,7 +229,7 @@ def background_start(job_id: str, model_path: str, model_version: str) -> None:
             str(parallel_degree),
         ]
         # Popen 时加 preexec_fn=os.setsid，让它在新的进程组里启动
-        proc = Popen(start_cmd, cwd=f"{rollout_worker_root}/fastdeploy/training",
+        proc = Popen(start_cmd, cwd=f"{rollout_worker_root}/training/agent",
                      preexec_fn=os.setsid)
         logging.info(f"Executing start command: {start_cmd}")
         print(f"Executing start command: {start_cmd}")

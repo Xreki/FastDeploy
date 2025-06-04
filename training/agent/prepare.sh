@@ -1,6 +1,6 @@
 #!/bin/bash
 
-source ./fastdeploy/training/build_env.sh
+source ./training/agent/build_env.sh
 
 # 1. Check if virtual environment exists
 if [ ! -d "$FASTDEPLOY_ENV_NAME" ]; then

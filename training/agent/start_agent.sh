@@ -10,7 +10,7 @@ fi
 export ROLLOUT_CONTROLLER_HOST=${rollout_controller_host:-"http://10.11.155.41:8771"}
 export USE_PIP_EFF_LLM=1
 
-source ${ROLLOUT_WORKER_ROOT}/fastdeploy/training/build_env.sh
+source ${ROLLOUT_WORKER_ROOT}/training/agent/build_env.sh
 source "${ROLLOUT_WORKER_ROOT}/${FASTDEPLOY_ENV_NAME}/bin/activate"
 
 FILES=("${ROLLOUT_WORKER_ROOT}/training/agent_work.yaml" "${ROLLOUT_WORKER_ROOT}/training/agent_work_45T.yaml")

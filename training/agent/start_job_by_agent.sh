@@ -14,7 +14,7 @@ export FLAGS_cascade_attention_max_partition_size=2048
 
 
 cd $ROLLOUT_WORKER_ROOT
-source ${ROLLOUT_WORKER_ROOT}/fastdeploy/training/build_env.sh
+source ${ROLLOUT_WORKER_ROOT}/training/agent/build_env.sh
 source "${ROLLOUT_WORKER_ROOT}/${FASTDEPLOY_ENV_NAME}/bin/activate"
 
 unset PADDLE_TRAINER_ENDPOINTS
