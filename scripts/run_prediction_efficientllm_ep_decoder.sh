@@ -38,6 +38,8 @@ export NCCL_IB_QPS_PER_CONNECTION=2
 export NCCL_IB_ADAPTIVE_ROUTING=1
 export NCCL_NVLS_ENABLE=0
 
+export ELLM_DYNAMIC_MODE=1
+
 export FLAGS_call_stack_level=2
 export GLOG_logtostderr=true
 export GLOG_v=0
@@ -55,17 +57,12 @@ export FLAGS_use_append_attn=1
 export devices=0,1,2,3,4,5,6,7
 export CUDA_VISIBLE_DEVICES=${devices}
 
-export PREDICT_MODEL_TYPE=${PREDICT_MODEL_TYPE:-"WINT8"}
-export MOE_QUANT_TYPE=${MOE_QUANT_TYPE-"weight_only_int4"}
+export PREDICT_MODEL_TYPE=${PREDICT_MODEL_TYPE:-"W8A16"}
+export MOE_QUANT_TYPE=${MOE_QUANT_TYPE-"fp8"}
 
 export EP_SCALE_DIR=${EP_SCALE_DIR:-"/path/to/scale_dir"} # scale json文件所在的目录
-export CACHE_PARAMS=${CACHE_PARAMS:-"/path/to/scale_dir/cache_params.pdparams"} # cache所需要的pdparams文件路径
+# export CACHE_PARAMS=${CACHE_PARAMS:-"/path/to/scale_dir/cache_params.pdparams"} # cache所需要的pdparams文件路径
 
-# 判断目录是否存在
-if [ -d "$EP_SCALE_DIR" ] && [ -f "$CACHE_PARAMS" ]; then
-  echo "目录 '$EP_SCALE_DIR' '$CACHE_PARAMS' 存在，使用Cfp8"
-  export PREDICT_MODEL_TYPE=${PREDICT_MODEL_TYPE}Cfp8
-fi
 
 
 

@@ -34,6 +34,13 @@ class LocalSchedulerConfig:
         self.max_size = max_size
         self.ttl = ttl
         self.wait_response_timeout = wait_response_timeout
+        self.max_model_len = kwargs.get("max_model_len", 8192)
+        self.enable_chunked_prefill = kwargs.get("enable_chunked_prefill", False)
+        self.max_num_partial_prefills = kwargs.get("max_num_partial_prefills", 1)
+        self.max_long_partial_prefills = kwargs.get("max_long_partial_prefills", 1)
+        self.long_prefill_token_threshold = kwargs.get("long_prefill_token_threshold", 0)
+        if self.long_prefill_token_threshold == 0:
+            self.long_prefill_token_threshold = int(self.max_model_len * 0.04)
 
     def check(self):
         """
@@ -79,6 +86,13 @@ class GlobalSchedulerConfig:
         self.ttl = ttl
         self.wait_response_timeout = wait_response_timeout
         self.remote_write_time = remote_write_time
+        self.max_model_len = kwargs.get("max_model_len", 8192)
+        self.enable_chunked_prefill = kwargs.get("enable_chunked_prefill", False)
+        self.max_num_partial_prefills = kwargs.get("max_num_partial_prefills", 1)
+        self.max_long_partial_prefills = kwargs.get("max_long_partial_prefills", 1)
+        self.long_prefill_token_threshold = kwargs.get("long_prefill_token_threshold", 0)
+        if self.long_prefill_token_threshold == 0:
+            self.long_prefill_token_threshold = int(self.max_model_len * 0.04)
 
     def check(self):
         """
@@ -156,9 +170,18 @@ class SchedulerConfig:
                                    topic=self.config.topic,
                                    ttl=self.config.ttl,
                                    remote_write_time=self.config.remote_write_time,
-                                   wait_response_timeout=self.config.wait_response_timeout)
+                                   wait_response_timeout=self.config.wait_response_timeout,
+                                   enable_chunked_prefill=self.config.enable_chunked_prefill,
+                                   max_num_partial_prefills=self.config.max_num_partial_prefills,
+                                   max_long_partial_prefills=self.config.max_long_partial_prefills,
+                                   long_prefill_token_threshold=self.config.long_prefill_token_threshold,
+                                )
 
         return LocalScheduler(max_size=self.config.max_size,
                               ttl=self.config.ttl,
-                              wait_response_timeout=self.config.wait_response_timeout
-                              )
+                              wait_response_timeout=self.config.wait_response_timeout,
+                              enable_chunked_prefill=self.config.enable_chunked_prefill,
+                              max_num_partial_prefills=self.config.max_num_partial_prefills,
+                              max_long_partial_prefills=self.config.max_long_partial_prefills,
+                              long_prefill_token_threshold=self.config.long_prefill_token_threshold,
+                            )

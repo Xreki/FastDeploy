@@ -109,6 +109,11 @@ class LLMEngine(object):
             self.do_profile = 1
         else:
             self.do_profile = 0
+        
+        self.partial_chunked_tokens = [0] * (self.cfg.max_num_partial_prefills + 1)
+        for idx in range(1, self.cfg.max_num_partial_prefills + 1):
+            self.partial_chunked_tokens[idx] = (self.cfg.max_num_batched_tokens // idx) \
+                                // self.cfg.cache_config.block_size * self.cfg.cache_config.block_size
 
         self._finalizer = weakref.finalize(self, self._exit_sub_services)
 
@@ -248,18 +253,13 @@ class LLMEngine(object):
                     int(self.resource_manager.available_batch()),
                     self.cfg.max_prefill_batch)
 
-                if self.cfg.enable_chunked_prefill:
-                    cur_max_num_batched_tokens = self.cfg.max_model_len * num_prefill_batch
-                else:
-                    cur_max_num_batched_tokens = self.cfg.max_num_batched_tokens
-
                 tasks = self.scheduler.get_requests(
                     available_blocks=self.resource_manager.available_block_num(
                     ),
                     block_size=self.cfg.cache_config.block_size,
                     reserved_output_blocks=self.cfg.cache_config.
                     enc_dec_block_num,
-                    max_num_batched_tokens=cur_max_num_batched_tokens,
+                    max_num_batched_tokens=self.cfg.max_num_batched_tokens,
                     batch=num_prefill_batch)
 
                 if len(tasks) == 0:
@@ -376,6 +376,50 @@ class LLMEngine(object):
         # get eos_token_id
         pass
 
+    def update_requests_chunk_size(self, requests):
+        """
+        update each request's chunk size info
+        """
+
+        def update_tokens(idx, chunk_size, update_chunk=False):
+            nonlocal remain_batched_tokens, chunk_request_num
+            if update_chunk:
+                requests_chunk[idx][-1] += chunk_size
+            else:
+                requests_chunk[idx].append(chunk_size)
+            remain_batched_tokens -= chunk_size
+            current_request_size[idx] -= chunk_size
+            if current_request_size[idx] <= 0:
+                chunk_request_num -= 1
+
+        if not self.cfg.enable_chunked_prefill or len(requests) == 0:
+            return
+
+        current_request_size = [request.prompt_token_ids_len for request in requests]
+        requests_chunk = [[] for _ in range(len(requests))]
+        chunk_request_num = len(current_request_size)
+        while chunk_request_num >= 1:
+            remain_batched_tokens = self.cfg.max_num_batched_tokens
+            for idx in range(len(current_request_size)):
+                if current_request_size[idx] <= 0:
+                    continue
+                chunk_size = min(current_request_size[idx], self.partial_chunked_tokens[chunk_request_num])
+                update_tokens(idx, chunk_size)
+            
+            while remain_batched_tokens >= self.cfg.cache_config.block_size:
+                # 当前 max_num_batched_tokens 还有剩余时，优先分配给较短的请求
+                waiting_requests = [input_lens for input_lens in current_request_size if input_lens > 0]
+                if len(waiting_requests) == 0:
+                    break
+
+                available_tokens = remain_batched_tokens // self.cfg.cache_config.block_size * self.cfg.cache_config.block_size
+                append_idx = current_request_size.index(min(waiting_requests))
+                chunk_size = min(current_request_size[append_idx], self.partial_chunked_tokens[chunk_request_num], available_tokens)
+                update_tokens(append_idx, chunk_size, update_chunk=True)
+
+        for idx in range(len(requests)):
+            requests[idx].set("prefill_chunk_info", requests_chunk[idx])
+
     def insert_tasks(self, tasks):
         """
         Insert tasks to engine.
@@ -402,13 +446,11 @@ class LLMEngine(object):
             llm_logger.error(error_msg)
             raise EngineError(error_msg, error_code=500)
 
+        self.update_requests_chunk_size(tasks)
         self.token_processor.number_of_tasks += len(tasks)
-        token_chunk_size =(self.cfg.max_num_batched_tokens // len(tasks)) // self.cfg.cache_config.block_size * self.cfg.cache_config.block_size
         for i in range(len(tasks)):
             self.token_processor.number_of_input_tokens += tasks[
                 i].prompt_token_ids_len
-
-            tasks[i].set("token_chunk_size", token_chunk_size)
 
         llm_logger.info(f"Tasks are sent to engine, req_ids={req_ids}")
         self.engine_worker_queue.put_tasks(

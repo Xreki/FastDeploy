@@ -14,10 +14,12 @@
 # limitations under the License.
 """
 
+import os
 import paddle
 from paddle import nn
-from .moe import MoELayer
-from ..utils import get_tensor
+from fastdeploy.model_executor.layers.moe.moe import MoELayer
+from fastdeploy.model_executor.layers.utils import get_tensor
+from fastdeploy.model_executor.ops.gpu import text_image_gather_scatter
 
 
 class TextMoELayer(MoELayer):
@@ -38,6 +40,7 @@ class TextMoELayer(MoELayer):
         返回值：
             无返回值，直接修改类的属性和方法。
         """
+        kwargs["moe_tag"] = "Text"
         super().__init__(*args, **kwargs)
 
     def load_gate_state_dict(self, state_dict):
@@ -53,7 +56,9 @@ class TextMoELayer(MoELayer):
                 每个元素都是一个列表，长度为网络的专家数量。
         """
         up_gate_proj_weight = []
+        up_gate_proj_weight_scale = []
         down_proj_weight = []
+        down_proj_weight_scale = []
         for j in range(0, self.num_experts):
             up_gate_proj_weight.append(
                 get_tensor(state_dict.pop(self.ffn1_expert_weight_key.format(j)))
@@ -61,7 +66,12 @@ class TextMoELayer(MoELayer):
             down_proj_weight.append(
                 get_tensor(state_dict.pop(self.ffn2_expert_weight_key.format(j)))
             )
-        return up_gate_proj_weight, down_proj_weight
+        return (
+            up_gate_proj_weight,
+            down_proj_weight,
+            up_gate_proj_weight_scale,
+            down_proj_weight_scale,
+        )
 
     def load_gate_correction_bias(self, state_dict):
         """
@@ -98,6 +108,10 @@ class ImageMoELayer(MoELayer):
         返回值：
             无返回值，直接修改类的属性和方法。
         """
+        moe_quant_type = os.getenv("ELLM_MM_IMAGE_QUANT_TYPE", None)
+        if moe_quant_type is not None:
+            kwargs["moe_quant_type"] = moe_quant_type
+        kwargs["moe_tag"] = "Image"
         super().__init__(*args, **kwargs)
 
     def load_gate_state_dict(self, state_dict):
@@ -110,7 +124,9 @@ class ImageMoELayer(MoELayer):
             tuple (list, list)，分别是两个专家的上下关门投影权重和两个专家的下降投影权重，都是列表类型。
         """
         up_gate_proj_weight = []
+        up_gate_proj_weight_scale = []
         down_proj_weight = []
+        down_proj_weight_scale = []
         for j in range(self.num_experts, self.num_experts + self.num_experts):
             up_gate_proj_weight.append(
                 get_tensor(state_dict.pop(self.ffn1_expert_weight_key.format(j)))
@@ -118,7 +134,12 @@ class ImageMoELayer(MoELayer):
             down_proj_weight.append(
                 get_tensor(state_dict.pop(self.ffn2_expert_weight_key.format(j)))
             )
-        return up_gate_proj_weight, down_proj_weight
+        return (
+            up_gate_proj_weight,
+            down_proj_weight,
+            up_gate_proj_weight_scale,
+            down_proj_weight_scale,
+        )
 
     def load_gate_correction_bias(self, state_dict):
         """
@@ -233,21 +254,18 @@ class MultimodalityMoeLayer(nn.Layer):
         Raises:
             AssertionError: 当未提供token_type_ids参数时会引发此错误。
         """
-        token_type_ids = kwargs.get("token_type_ids", None)
-        assert token_type_ids is not None
-
-        # x.shape is [token_num, hidden_size]
-        fused_moe_out = paddle.zeros_like(x)
-
-        text_mask = token_type_ids == 0  # [token_num]
-        image_mask = token_type_ids == 1
-
-        if text_mask.any():
-            text_out = self.text_moe_layer(x[text_mask])
-            fused_moe_out[text_mask] = text_out
-
-        if image_mask.any():
-            image_out = self.image_moe_layer(x[image_mask])
-            fused_moe_out[image_mask] = image_out
-
-        return fused_moe_out
+        image_input = kwargs.get("image_input", None)
+        if image_input is not None:
+            token_type_ids = kwargs.get("token_type_ids", None)
+            text_input = kwargs.get("text_input", None)
+            text_index = kwargs.get("text_index", None)
+            image_index = kwargs.get("image_index", None)
+            text_image_gather_scatter(
+                    x, text_input, image_input, token_type_ids, text_index, image_index, True)
+            text_out = self.text_moe_layer(text_input)
+            image_out = self.image_moe_layer(image_input)
+            text_image_gather_scatter(
+                    x, text_out, image_out, token_type_ids, text_index, image_index, False)
+        else:
+            x = self.text_moe_layer(x)
+        return x

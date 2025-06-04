@@ -15,6 +15,8 @@
 #include "remote_cache_kv_ipc.h"
 
 RemoteCacheKvIpc::save_cache_kv_complete_signal_layerwise_meta_data RemoteCacheKvIpc::kv_complete_signal_meta_data;
+RemoteCacheKvIpc::save_cache_kv_complete_signal_layerwise_meta_data_per_query 
+    RemoteCacheKvIpc::kv_complete_signal_meta_data_per_query;
 void* RemoteCacheKvIpc::kv_complete_signal_identity_ptr = nullptr;
 bool RemoteCacheKvIpc::kv_complete_signal_shmem_opened = false;
 
@@ -100,7 +102,7 @@ RemoteCacheKvIpc::save_cache_kv_complete_signal_layerwise_meta_data
     return meta_data;
 }
 
-void CUDART_CB RemoteCacheKvIpc::save_cache_kv_complete_signal_layerwise(void* meta_data){
+void CUDART_CB RemoteCacheKvIpc::save_cache_kv_complete_signal_layerwise(void* meta_data) {
     int64_t* meta_data_ptr = reinterpret_cast<int64_t*>(meta_data);
     int32_t layer_id = meta_data_ptr[0];
     int32_t* ptr = reinterpret_cast<int32_t*>(meta_data_ptr[1]);
@@ -108,3 +110,9 @@ void CUDART_CB RemoteCacheKvIpc::save_cache_kv_complete_signal_layerwise(void* m
     // std::printf("#### save_cache_kv_complete_signal_layerwise layer idx:%d, to ptx:%p \n",
     //             *ptr, meta_data_ptr[1]);
 }
+
+void CUDART_CB RemoteCacheKvIpc::save_cache_kv_complete_signal_layerwise_per_query(void* meta_data) {
+    RemoteCacheKvIpc::kv_complete_signal_meta_data_per_query.send_signal();
+    // std::printf("#### save_cache_kv_complete_signal_layerwise_per_query);
+}
+

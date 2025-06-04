@@ -192,7 +192,7 @@ class ModelRunnerBase(ABC):
             ),
         })
     
-    def update_chunked_prefill(self, token_chunk_size=384):
+    def update_chunked_prefill(self, tasks):
         """
         更新chunked prefill相关参数
         """

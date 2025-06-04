@@ -121,6 +121,18 @@ class EngineArgs:
     """
     Flag to enable chunked prefilling.
     """
+    max_num_partial_prefills: int = 1
+    """
+    For chunked prefill, the max number of concurrent partial prefills.
+    """
+    max_long_partial_prefills: int = 1
+    """
+    For chunked prefill, the maximum number of prompts longer than –long-prefill-token-threshold that will be prefilled concurrently. 
+    """
+    long_prefill_token_threshold: int = 0
+    """
+    For chunked prefill, a request is considered long if the prompt is longer than this number of tokens.
+    """
 
     """
     Scheduler name to be used
@@ -319,6 +331,24 @@ class EngineArgs:
             default=EngineArgs.enable_chunked_prefill,
             help="Flag to enable chunked prefill."
         )
+        perf_group.add_argument(
+            "--max-num-partial-prefills",
+            type=int,
+            default=EngineArgs.max_num_partial_prefills,
+            help="For chunked prefill, Maximum number of concurrent partial prefill requests."
+        )
+        perf_group.add_argument(
+            "--max-long-partial-prefills",
+            type=int,
+            default=EngineArgs.max_long_partial_prefills,
+            help="For chunked prefill, the maximum number of prompts longer than long-prefill-token-threshold that will be prefilled concurrently."
+        )
+        perf_group.add_argument(
+            "--long-prefill-token-threshold",
+            type=int,
+            default=EngineArgs.long_prefill_token_threshold,
+            help="For chunked prefill, the threshold number of tokens for a prompt to be considered long."
+        )
 
         # Scheduler parameters group
         scheduler_group = parser.add_argument_group("Scheduler")
@@ -420,12 +450,16 @@ class EngineArgs:
         """
         prefix = "scheduler_"
         prefix_len = len(prefix)
+        extra_params = ["max_model_len", "enable_chunked_prefill", "max_num_partial_prefills", "max_long_partial_prefills", "long_prefill_token_threshold"]
 
         all = asdict(self)
         params = dict()
         for k, v in all.items():
             if k[:prefix_len] == prefix:
                 params[k[prefix_len:]] = v
+            elif k in extra_params:
+                params[k] = v
+
         return SchedulerConfig(**params)
 
     def create_engine_config(self) -> Config:
@@ -459,4 +493,7 @@ class EngineArgs:
             engine_worker_queue_port=self.engine_worker_queue_port,
             enable_mm=self.enable_mm,
             enable_chunked_prefill=self.enable_chunked_prefill,
+            max_num_partial_prefills=self.max_num_partial_prefills,
+            max_long_partial_prefills=self.max_long_partial_prefills,
+            long_prefill_token_threshold=self.long_prefill_token_threshold
         )
