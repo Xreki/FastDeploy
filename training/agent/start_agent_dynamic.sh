@@ -3,7 +3,7 @@
 # 环境变量设置
 export ROLLOUT_WORKER_ROOT="${PWD%/*/*}"
 export ROLLOUT_CONTROLLER_HOST=${rollout_controller_host:-"http://10.11.155.41:8771"}
-source ${ROLLOUT_WORKER_ROOT}/fastdeploy/agent/build_env.sh
+source ${ROLLOUT_WORKER_ROOT}/fastdeploy/training/build_env.sh
 source "${ROLLOUT_WORKER_ROOT}/${FASTDEPLOY_ENV_NAME}/bin/activate"
 
 # 参数检查

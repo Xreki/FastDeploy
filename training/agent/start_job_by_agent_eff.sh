@@ -2,7 +2,7 @@
 
 
 cd $ROLLOUT_WORKER_ROOT
-source ${ROLLOUT_WORKER_ROOT}/fastdeploy/agent/build_env.sh
+source ${ROLLOUT_WORKER_ROOT}/fastdeploy/training/build_env.sh
 source "${ROLLOUT_WORKER_ROOT}/${FASTDEPLOY_ENV_NAME}/bin/activate"
 
 unset PADDLE_TRAINER_ENDPOINTS

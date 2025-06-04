@@ -1,4 +1,4 @@
 #!/bin/bash
 
-source ./fastdeploy/agent/build_env.sh
+source ./fastdeploy/training/build_env.sh
 rm -fr ${FASTDEPLOY_ENV_NAME}

@@ -61,7 +61,7 @@ def get_local_ip() -> str:
 def background_start(job_id: str, model_path: str, model_version: str) -> None:
     """Construct Start Command"""
     if model_path == "":
-        model_path = "./"
+        model_path = "/"
     start_cmd = (
             f"cd {rollout_worker_root}/fastdeploy/agent && bash {start_job_by_agent_sh} "
             f"{model_path} {rollout_worker_http_port} {rollout_worker_queue_port} {device_use_id} {parallel_degree} &"
