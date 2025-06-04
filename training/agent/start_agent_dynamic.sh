@@ -1,4 +1,5 @@
 #!/bin/bash
+set -x
 
 # 环境变量设置
 export ROLLOUT_WORKER_ROOT="${PWD%/*/*}"

@@ -1,4 +1,5 @@
 #!/bin/bash
+set -x
 
 # 环境变量设置
 # Check CE_root_path environment variable
