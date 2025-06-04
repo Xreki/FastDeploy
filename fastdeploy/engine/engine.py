@@ -88,7 +88,8 @@ class LLMEngine(object):
         self.cfg = cfg
         self.scheduler = cfg.scheduler_config.scheduler()
 
-        self.input_processor = InputPreprocessor(cfg.tokenizer, cfg.enable_mm)
+        self.input_processor = InputPreprocessor(
+            cfg.tokenizer, cfg.limit_mm_per_prompt, cfg.mm_processor_kwargs, cfg.enable_mm)
         self.resource_manager = ResourceManager(
             cfg.max_num_seqs, cfg.cache_config)
 
