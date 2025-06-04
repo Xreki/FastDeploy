@@ -39,6 +39,26 @@ paddle::Tensor OpenShmAndGetMetaSignalFunc(const int rank, const bool keep_pd_st
     return kv_signal_metadata_out;
 }
 
+void InitKVSignalPerQuery(const paddle::Tensor &seq_lens_encoder_tensor,
+                          const paddle::Tensor &seq_lens_this_time_tensor,
+                          const paddle::Tensor &seq_lens_decoder_tensor,
+                          const int rank,
+                          const int num_layers) {
+    const char* fmt_write_cache_completed_signal_str = std::getenv("FLAGS_fmt_write_cache_completed_signal");
+    if (fmt_write_cache_completed_signal_str &&
+        (std::strcmp(fmt_write_cache_completed_signal_str, "true") == 0 ||
+         std::strcmp(fmt_write_cache_completed_signal_str, "1") == 0)) {
+        int real_bsz = seq_lens_this_time_tensor.dims()[0];
+        // GPU init, cp to cpu?
+        auto seq_lens_encoder_cpu = seq_lens_encoder_tensor.copy_to(paddle::CPUPlace(), false);
+        auto seq_lens_decoder_cpu = seq_lens_decoder_tensor.copy_to(paddle::CPUPlace(), false);
+        RemoteCacheKvIpc::kv_complete_signal_meta_data_per_query.init(
+            seq_lens_encoder_cpu.data<int>(),
+            seq_lens_decoder_cpu.data<int>(),
+            rank, num_layers, real_bsz);
+    }
+}
+
 std::vector<paddle::Tensor> OpenShmAndGetMetaSignal(const int rank, const bool keep_pd_step_flag) {
     return {OpenShmAndGetMetaSignalFunc(rank, keep_pd_step_flag)};
 }

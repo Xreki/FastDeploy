@@ -83,6 +83,10 @@ class InferenceArgs:
         weight_block_size=[-1, -1],
         start_layer_index=0,
         scale_dir=None,
+        enable_redundant_experts: bool = False,
+        redundant_experts_num: int = 0,
+        use_offline_quant=False,
+        max_batch_size: int = 128,
     ):
         """
         Initialization function for quantization of the Transformer model
@@ -123,7 +127,7 @@ class InferenceArgs:
 
         self.weight_block_size = weight_block_size
         # self.weight_block_size = [-1, -1]
-
+        self.use_offline_quant = use_offline_quant
         self.use_avx512 = use_avx512
         self.ffn_hidden_size = ffn_hidden_size
         self.mp_rank = mp_rank
@@ -166,6 +170,10 @@ class InferenceArgs:
         logger.info(
             f"quant_type: weight[{self.weight_dtype}], act[{self.act_dtype}], cachekv[{self.cachekv_dtype}]"
         )
+        self.enable_redundant_experts = enable_redundant_experts
+        self.redundant_experts_num = redundant_experts_num
+
+        self.max_batch_size = max_batch_size
 
         class MoEConfig:
             """
@@ -211,8 +219,8 @@ class InferenceArgs:
             else:
                 self.moe_config.num_experts = moe_num_experts
             self.moe_config.num_experts_per_rank = (
-                self.moe_config.num_experts // self.nranks
-            )
+                self.moe_config.num_experts + redundant_experts_num
+            ) // self.nranks
             self.moe_config.num_experts_start_offset = (
                 self.moe_config.num_experts_per_rank * self.mp_rank
             )
@@ -332,7 +340,7 @@ class InferenceArgs:
         Raises:
             AssertionError: If the custom quantization type string format is incorrect.
         """
-        if self.use_avx512:
+        if hasattr(InferenceArgs, "use_avx512") and self.use_avx512:
             if quant_type == "fp16":
                 return "float32", "fp16", "fp16"
             elif quant_type == "bf16":

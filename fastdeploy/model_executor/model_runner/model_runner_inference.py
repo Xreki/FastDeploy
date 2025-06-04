@@ -134,7 +134,7 @@ class ModelRunner(ModelRunnerBase):
                     ErnieBotTokenizer.resource_files_names[
                         "vocab_file"] = vocab_file_names[i]
                     break
-            config, tokenizer, model = build_stream_line_model(
+            config, tokenizer, model, _ = build_stream_line_model(
                 os.path.join(self.args.model_name_or_path,
                             os.getenv("CONFIG_JSON_FILE", "config.json")),
                 self.args.model_name_or_path,

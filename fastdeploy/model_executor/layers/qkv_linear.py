@@ -13,20 +13,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
+
 # cipher_token=WjI1fQOvhN  # do not edit this line
-import paddle
-from paddle import nn
-from paddle.nn.quant import weight_only_linear
-from paddle.nn.quant import weight_quantize
+import fastdeploy
 from paddlenlp.utils.log import logger
 
-import fastdeploy
+import paddle
+from paddle import nn
+from paddle.nn.quant import weight_only_linear, weight_quantize
+
+from fastdeploy.platforms.utils import (
+    convert_to_npu_dequant_scale,
+    xpu_quant_qkv_weight,
+)
+
 import fastdeploy.model_executor.ops.gpu.deep_gemm as deep_gemm
-from .utils import _set_var_distributed
-from .utils import get_tensor
-from .utils import per_block_cast_to_fp8
-from fastdeploy.platforms.utils import convert_to_npu_dequant_scale
-from fastdeploy.platforms.utils import xpu_quant_qkv_weight
+from .utils import per_block_cast_to_fp8, _set_var_distributed, get_tensor
 
 
 class QKVLinear(nn.Layer):
@@ -34,12 +36,9 @@ class QKVLinear(nn.Layer):
     QKVLinear Layer.
     """
 
-    def __init__(self,
-                 inference_args,
-                 layer_name,
-                 weight_key,
-                 bias_key=None,
-                 skip_quant=False):
+    def __init__(
+        self, inference_args, layer_name, weight_key, bias_key=None, skip_quant=False
+    ):
         """
         Initialize the QKV Linear layer with given parameters.
 
@@ -83,15 +82,19 @@ class QKVLinear(nn.Layer):
         self.weight_scale_layer_name = self.layer_name + ".weight_scale"
         self.out_scale_layer_name = self.layer_name + ".out_scale"
         self._dtype = self._helper.get_default_dtype()
+        self.use_offline_quant = inference_args.use_offline_quant
 
         if inference_args.use_weight_only:
             self.init_weight_only_scale()
         if self.inference_args.weight_block_size[0] != -1:
             logger.debug("qkv use_fp8_blockwise")
             self.init_weight_block_scale()
-        if (inference_args.weight_dtype == "int8" and inference_args.act_dtype
-                == "int8") or ("float8" in inference_args.weight_dtype
-                               and "float8" in inference_args.act_dtype):
+        if (
+            inference_args.weight_dtype == "int8" and inference_args.act_dtype == "int8"
+        ) or (
+            "float8" in inference_args.weight_dtype
+            and "float8" in inference_args.act_dtype
+        ):
             self.set_ptq_scale()  # init and load scale
         self.init_weight()
 
@@ -107,13 +110,17 @@ class QKVLinear(nn.Layer):
             None.
         """
 
-        self.qkv_weight_shape = ([
-            (self.num_heads + 2 * self.kv_num_heads) * self.head_dim,
-            self.embed_dim,
-        ] if trans_qkvw else [
-            self.embed_dim,
-            (self.num_heads + 2 * self.kv_num_heads) * self.head_dim,
-        ])
+        self.qkv_weight_shape = (
+            [
+                (self.num_heads + 2 * self.kv_num_heads) * self.head_dim,
+                self.embed_dim,
+            ]
+            if trans_qkvw
+            else [
+                self.embed_dim,
+                (self.num_heads + 2 * self.kv_num_heads) * self.head_dim,
+            ]
+        )
         if self.weight_dtype == "int4":
             self.qkv_weight_shape[0] //= 2
 
@@ -154,12 +161,10 @@ class QKVLinear(nn.Layer):
         """init_weight_block_scale for fp8"""
         self.qkv_weight_scale = self.create_parameter(
             shape=[
-                ((self.num_heads + 2 * self.kv_num_heads) * self.head_dim +
-                 127) // 128,
+                ((self.num_heads + 2 * self.kv_num_heads) * self.head_dim + 127) // 128,
                 (self.embed_dim + 127) // 128,
             ],
-            attr=paddle.ParamAttr(name=self.layer_name +
-                                  ".weight_block_scale"),
+            attr=paddle.ParamAttr(name=self.layer_name + ".weight_block_scale"),
             dtype="float32",
             is_bias=False,
         )
@@ -180,8 +185,7 @@ class QKVLinear(nn.Layer):
         self.qkv_bias = None
         if self.with_bias:
             self.qkv_bias = self.create_parameter(
-                shape=[(self.num_heads + 2 * self.kv_num_heads) * self.head_dim
-                       ],
+                shape=[(self.num_heads + 2 * self.kv_num_heads) * self.head_dim],
                 attr=paddle.ParamAttr(name=self.bias_name),
                 dtype=self._dtype,
                 is_bias=True,
@@ -212,9 +216,11 @@ class QKVLinear(nn.Layer):
             return
 
         weight_scale = self.inference_args.weight_scale_dict.get(
-            self.layer_name + ".weight_quanter")
+            self.layer_name + ".weight_quanter"
+        )
         in_scale = self.inference_args.act_scale_dict.get(
-            self.layer_name + ".activation_quanter")
+            self.layer_name + ".activation_quanter"
+        )
 
         if weight_scale is None or in_scale is None:
             logger.debug(f"{self.layer_name} skip quant")
@@ -230,8 +236,8 @@ class QKVLinear(nn.Layer):
                 dtype="float32",
             )
             self.scalar_scale.set_value(
-                paddle.to_tensor([1.0 / (max_range * in_scale)],
-                                 dtype="float32"))
+                paddle.to_tensor([1.0 / (max_range * in_scale)], dtype="float32")
+            )
             qkv_scale = weight_scale / max_range
         else:
             max_range = 127.0
@@ -245,27 +251,41 @@ class QKVLinear(nn.Layer):
         )
 
         if self.inference_args.num_key_value_heads <= 0:
-            qkv_weight_scale = (paddle.to_tensor(qkv_scale).reshape([
-                self.num_heads,
-                3,
-                self.embed_dim // self.inference_args.num_attention_heads,
-            ]).transpose((1, 0, 2)).reshape([-1]).astype("float32"))
+            qkv_weight_scale = (
+                paddle.to_tensor(qkv_scale)
+                .reshape(
+                    [
+                        self.num_heads,
+                        3,
+                        self.embed_dim // self.inference_args.num_attention_heads,
+                    ]
+                )
+                .transpose((1, 0, 2))
+                .reshape([-1])
+                .astype("float32")
+            )
         else:
             # GQA
-            qkv_weight_scale = (paddle.to_tensor(qkv_scale).reshape([
-                self.num_heads + 2 * self.kv_num_heads,
-                self.embed_dim // self.inference_args.num_attention_heads,
-            ]).astype("float32"))
-            single_qkv_weight_scales = paddle.split(qkv_weight_scale,
-                                                    self.kv_num_heads,
-                                                    axis=0)
+            qkv_weight_scale = (
+                paddle.to_tensor(qkv_scale)
+                .reshape(
+                    [
+                        self.num_heads + 2 * self.kv_num_heads,
+                        self.embed_dim // self.inference_args.num_attention_heads,
+                    ]
+                )
+                .astype("float32")
+            )
+            single_qkv_weight_scales = paddle.split(
+                qkv_weight_scale, self.kv_num_heads, axis=0
+            )
             q_weight_scales, k_weight_scales, v_weight_scales = [], [], []
             for single_qkv_weight_scale in single_qkv_weight_scales:
                 q_weight_scale, k_weight_scale, v_weight_scale = paddle.split(
                     single_qkv_weight_scale,
                     [
-                        self.inference_args.num_attention_heads //
-                        self.inference_args.num_key_value_heads,
+                        self.inference_args.num_attention_heads
+                        // self.inference_args.num_key_value_heads,
                         1,
                         1,
                     ],
@@ -280,10 +300,9 @@ class QKVLinear(nn.Layer):
             v_weight_scale = paddle.concat(v_weight_scales, axis=0)
 
             qkv_weight_scale = paddle.concat(
-                [q_weight_scale, k_weight_scale, v_weight_scale],
-                axis=0).reshape([-1])
-        self.qkv_out_scale.set_value(
-            convert_to_npu_dequant_scale(qkv_weight_scale))
+                [q_weight_scale, k_weight_scale, v_weight_scale], axis=0
+            ).reshape([-1])
+        self.qkv_out_scale.set_value(convert_to_npu_dequant_scale(qkv_weight_scale))
 
     def load_state_dict_wint8(self, qkv_proj_weight):
         """
@@ -299,8 +318,9 @@ class QKVLinear(nn.Layer):
         if paddle.is_compiled_with_cuda():
             if not self.inference_args.moe_config.use_moe:
                 # Transpose Back to RowMajor.
-                qkv_proj_weight = qkv_proj_weight.reshape([-1, self.embed_dim
-                                                           ]).transpose([1, 0])
+                qkv_proj_weight = qkv_proj_weight.reshape(
+                    [-1, self.embed_dim]
+                ).transpose([1, 0])
                 qkv_quanted_weight_tensor, qkv_weight_scale_tensor = weight_quantize(
                     qkv_proj_weight,
                     algo="weight_only_int8",
@@ -308,29 +328,34 @@ class QKVLinear(nn.Layer):
                 )
             else:
                 gqa_hidden_size = (
-                    self.inference_args.num_attention_heads // self.nranks +
-                    2 * self.inference_args.num_key_value_heads // self.nranks
+                    self.inference_args.num_attention_heads // self.nranks
+                    + 2 * self.inference_args.num_key_value_heads // self.nranks
                 ) * (self.embed_dim // self.inference_args.num_attention_heads)
                 qkv_proj_weight = qkv_proj_weight.reshape_(
-                    [gqa_hidden_size, self.embed_dim])
+                    [gqa_hidden_size, self.embed_dim]
+                )
                 qkv_proj_weight = paddle.transpose(
-                    qkv_proj_weight,
-                    perm=[1, 0])  # ConvertBack to RowMajor Weight and to CPU.
+                    qkv_proj_weight, perm=[1, 0]
+                )  # ConvertBack to RowMajor Weight and to CPU.
                 qkv_quanted_weight_tensor, qkv_weight_scale_tensor = weight_quantize(
                     qkv_proj_weight,
                     algo="weight_only_int8",
                     arch=self.inference_args.weight_only_linear_arch,
                 )
-                qkv_quanted_weight_tensor.reshape_([
-                    gqa_hidden_size,
-                    self.embed_dim,
-                ])
+                qkv_quanted_weight_tensor.reshape_(
+                    [
+                        gqa_hidden_size,
+                        self.embed_dim,
+                    ]
+                )
             self.qkv_weight.set_value(qkv_quanted_weight_tensor)
             self.qkv_weight_scale.set_value(
-                qkv_weight_scale_tensor.astype(paddle.get_default_dtype()))
+                qkv_weight_scale_tensor.astype(paddle.get_default_dtype())
+            )
         elif paddle.is_compiled_with_xpu():
             qkv_quanted_weight_tensor, qkv_weight_scale_tensor = xpu_quant_qkv_weight(
-                qkv_proj_weight.cpu().numpy())
+                qkv_proj_weight.cpu().numpy()
+            )
             self.qkv_weight.set_value(qkv_quanted_weight_tensor)
             self.qkv_weight_scale.set_value(qkv_weight_scale_tensor)
         else:
@@ -350,8 +375,9 @@ class QKVLinear(nn.Layer):
         """
         if not self.inference_args.moe_config.use_moe:
             # Transpose Back to RowMajor.
-            qkv_proj_weight = qkv_proj_weight.reshape([-1, self.embed_dim
-                                                       ]).transpose([1, 0])
+            qkv_proj_weight = qkv_proj_weight.reshape([-1, self.embed_dim]).transpose(
+                [1, 0]
+            )
             qkv_proj_weight = paddle.to_tensor(qkv_proj_weight).cpu()
             qkv_quanted_weight_tensor, qkv_weight_scale_tensor = weight_quantize(
                 qkv_proj_weight,
@@ -360,23 +386,26 @@ class QKVLinear(nn.Layer):
             )
         else:
             gqa_hidden_size = (
-                self.inference_args.num_attention_heads // self.nranks +
-                2 * self.inference_args.num_key_value_heads // self.nranks) * (
-                    self.embed_dim // self.inference_args.num_attention_heads)
+                self.inference_args.num_attention_heads // self.nranks
+                + 2 * self.inference_args.num_key_value_heads // self.nranks
+            ) * (self.embed_dim // self.inference_args.num_attention_heads)
             qkv_proj_weight = qkv_proj_weight.reshape_(
-                [gqa_hidden_size, self.embed_dim])
+                [gqa_hidden_size, self.embed_dim]
+            )
             qkv_proj_weight = paddle.transpose(
-                qkv_proj_weight,
-                perm=[1, 0])  # ConvertBack to RowMajor Weight and to CPU.
+                qkv_proj_weight, perm=[1, 0]
+            )  # ConvertBack to RowMajor Weight and to CPU.
             qkv_quanted_weight_tensor, qkv_weight_scale_tensor = weight_quantize(
                 qkv_proj_weight,
                 algo="weight_only_int4",
                 arch=self.inference_args.weight_only_linear_arch,
             )
-            qkv_quanted_weight_tensor.reshape_([
-                gqa_hidden_size,
-                self.embed_dim,
-            ])
+            qkv_quanted_weight_tensor.reshape_(
+                [
+                    gqa_hidden_size // 2,
+                    self.embed_dim,
+                ]
+            )
         self.qkv_weight.set_value(qkv_quanted_weight_tensor)
         self.qkv_weight_scale.set_value(qkv_weight_scale_tensor)
 
@@ -393,18 +422,18 @@ class QKVLinear(nn.Layer):
             and `qkv_weight_scale` parameters respectively.
         """
         # Transpose Back to RowMajor.
-        qkv_proj_weight = qkv_proj_weight.reshape([-1, self.embed_dim
-                                                   ]).transpose([1, 0])
+        qkv_proj_weight = qkv_proj_weight.reshape([-1, self.embed_dim]).transpose(
+            [1, 0]
+        )
         qkv_proj_weight = paddle.to_tensor(qkv_proj_weight).cpu()
         qkv_quanted_weight_tensor, qkv_weight_scale_tensor = (
-            fastdeploy.model_executor.ops.gpu.
-            scaled_gemm_f8_i4_f16_weight_quantize(
+            fastdeploy.model_executor.ops.gpu.scaled_gemm_f8_i4_f16_weight_quantize(
                 paddle.cast(qkv_proj_weight, "float32"),
                 groupsize=-1,
                 scale_dtype="float16",
-            ))
-        qkv_weight_scale_tensor = paddle.view(qkv_weight_scale_tensor,
-                                              self._dtype)
+            )
+        )
+        qkv_weight_scale_tensor = paddle.view(qkv_weight_scale_tensor, self._dtype)
         self.qkv_weight.set_value(qkv_quanted_weight_tensor)
         self.qkv_weight_scale.set_value(qkv_weight_scale_tensor)
 
@@ -420,9 +449,26 @@ class QKVLinear(nn.Layer):
                 as INT8 quantization is only supported on these devices.
         """
         qkv_quanted_weight_tensor, qkv_weight_scale_tensor = per_block_cast_to_fp8(
-            qkv_proj_weight)
+            qkv_proj_weight
+        )
         self.qkv_weight.copy_(qkv_quanted_weight_tensor, False)
         self.qkv_weight_scale.set_value(qkv_weight_scale_tensor)
+
+    def load_offline_quant_state_dict(self, quant_weight, quant_scale=None):
+        """
+        Load offline the checkpoint state dictionary into the layer.
+        """
+        if quant_scale is None:
+            if "float8" in self.weight_dtype:
+                self.qkv_weight.copy_(quant_weight, False)
+            else:
+                self.qkv_weight.set_value(quant_weight)
+        else:
+            if self.inference_args.weight_block_size[0] != -1:
+                self.qkv_weight.copy_(quant_weight.view(paddle.float8_e4m3fn), False)
+            else:
+                self.qkv_weight.set_value(quant_weight)
+            self.qkv_weight_scale.set_value(quant_scale)
 
     def load_state_dict(self, state_dict):
         """
@@ -432,78 +478,106 @@ class QKVLinear(nn.Layer):
             state_dict (dict): A dictionary containing the checkpoint weights and biases.
         """
         # weight
-        if self.inference_args.num_key_value_heads <= 0:
-            qkv_proj_weight = (get_tensor(state_dict.pop(
-                self.weight_key)).reshape([
-                    self.embed_dim,
-                    self.num_heads,
-                    3,
-                    self.embed_dim // self.inference_args.num_attention_heads,
-                ]).transpose([2, 1, 3, 0]))
+        if self.use_offline_quant:
+            self.load_offline_quant_state_dict(
+                quant_weight=get_tensor(
+                    state_dict.pop(self.weight_key + ".quant_weight")
+                ),
+                quant_scale=get_tensor(
+                    state_dict.pop(self.weight_key + ".quant_scale")
+                ),
+            )
         else:
-            # qkv_weight [hidden_size, num_head + 2 * num_key_value_head, dim_head]
-            # layout [q q q q k v] * num_key_value_head
-            qkv_proj_weight = (get_tensor(state_dict.pop(
-                self.weight_key)).reshape([
-                    self.embed_dim,
-                    self.num_heads + 2 * self.kv_num_heads,
-                    self.embed_dim // self.inference_args.num_attention_heads,
-                ]).transpose([1, 2, 0])).reshape([-1, self.embed_dim])
+            if self.inference_args.num_key_value_heads <= 0:
+                qkv_proj_weight = (
+                    get_tensor(state_dict.pop(self.weight_key))
+                    .reshape(
+                        [
+                            self.embed_dim,
+                            self.num_heads,
+                            3,
+                            self.embed_dim // self.inference_args.num_attention_heads,
+                        ]
+                    )
+                    .transpose([2, 1, 3, 0])
+                )
+            else:
+                # qkv_weight [hidden_size, num_head + 2 * num_key_value_head, dim_head]
+                # layout [q q q q k v] * num_key_value_head
+                qkv_proj_weight = (
+                    get_tensor(state_dict.pop(self.weight_key))
+                    .reshape(
+                        [
+                            self.embed_dim,
+                            self.num_heads + 2 * self.kv_num_heads,
+                            self.embed_dim // self.inference_args.num_attention_heads,
+                        ]
+                    )
+                    .transpose([1, 2, 0])
+                ).reshape([-1, self.embed_dim])
 
-        # set weight
-        if self.skip_quant:
-            qkv_proj_weight = qkv_proj_weight.cast(self._dtype)
-            self.qkv_weight.set_value(qkv_proj_weight)
-        else:
-            if self.inference_args.weight_block_size[0] != -1:
-                self.load_state_dict_block_fp8(qkv_proj_weight)
-            elif self.weight_dtype == "int8" and self.act_dtype in [
+            # set weight
+            if self.skip_quant:
+                qkv_proj_weight = qkv_proj_weight.cast(self._dtype)
+                self.qkv_weight.set_value(qkv_proj_weight)
+            else:
+                if self.inference_args.weight_block_size[0] != -1:
+                    self.load_state_dict_block_fp8(qkv_proj_weight)
+                elif self.weight_dtype == "int8" and self.act_dtype in [
                     "bfloat16",
                     "float16",
                     "float32",
-            ]:  # WINT8
-                self.load_state_dict_wint8(qkv_proj_weight)
-            elif self.weight_dtype == "int4" and self.act_dtype in [
+                ]:  # WINT8
+                    self.load_state_dict_wint8(qkv_proj_weight)
+                elif self.weight_dtype == "int4" and self.act_dtype in [
                     "bfloat16",
                     "float16",
                     "float32",
-            ]:  # WINT4
-                self.load_state_dict_wint4(qkv_proj_weight)
-            elif (self.weight_dtype == "int4"
-                  and self.act_dtype == "float8_e4m3fn"):  # W4Afp8
-                self.load_state_dict_wint4_fp8(qkv_proj_weight)
-            else:  # bf16/fp16/fp32, A8W8, FP8
-                qkv_proj_weight = qkv_proj_weight.cast(self.weight_dtype)
-                if ("float8" in self.weight_dtype
+                ]:  # WINT4
+                    self.load_state_dict_wint4(qkv_proj_weight)
+                elif (
+                    self.weight_dtype == "int4" and self.act_dtype == "float8_e4m3fn"
+                ):  # W4Afp8
+                    self.load_state_dict_wint4_fp8(qkv_proj_weight)
+                else:  # bf16/fp16/fp32, A8W8, FP8
+                    qkv_proj_weight = qkv_proj_weight.cast(self.weight_dtype)
+                    if (
+                        "float8" in self.weight_dtype
                     ):  # TODO(wangzhe24) FP8 cannot use set_value now
-                    self.qkv_weight.copy_(qkv_proj_weight, False)
-                else:
-                    self.qkv_weight.set_value(qkv_proj_weight)
+                        self.qkv_weight.copy_(qkv_proj_weight, False)
+                    else:
+                        self.qkv_weight.set_value(qkv_proj_weight)
 
         # bias
         if self.with_bias:
             if self.inference_args.num_key_value_heads <= 0:
-                qkv_bias = (get_tensor(state_dict.pop(self.bias_key)).reshape([
-                    self.num_heads,
-                    3,
-                    self.embed_dim // self.inference_args.num_attention_heads,
-                ]).transpose([1, 0, 2]))
+                qkv_bias = (
+                    get_tensor(state_dict.pop(self.bias_key))
+                    .reshape(
+                        [
+                            self.num_heads,
+                            3,
+                            self.embed_dim // self.inference_args.num_attention_heads,
+                        ]
+                    )
+                    .transpose([1, 0, 2])
+                )
             else:
                 # GQA
-                qkv_bias = get_tensor(state_dict.pop(self.bias_key)).reshape([
-                    self.num_heads + 2 * self.kv_num_heads,
-                    self.embed_dim // self.inference_args.num_attention_heads,
-                ])
-                single_qkv_biases = paddle.split(qkv_bias,
-                                                 self.kv_num_heads,
-                                                 axis=0)
+                qkv_bias = get_tensor(state_dict.pop(self.bias_key)).reshape(
+                    [
+                        self.num_heads + 2 * self.kv_num_heads,
+                        self.embed_dim // self.inference_args.num_attention_heads,
+                    ]
+                )
+                single_qkv_biases = paddle.split(qkv_bias, self.kv_num_heads, axis=0)
                 q_biases, k_biases, v_biases = [], [], []
                 for single_qkv_bias in single_qkv_biases:
                     q_bias, k_bias, v_bias = paddle.split(
                         single_qkv_bias,
                         [
-                            self.inference_args.num_attention_heads //
-                            self.inference_args.num_key_value_heads,
+                            self.inference_args.num_attention_heads
+                            // self.inference_args.num_key_value_heads,
                             1,
                             1,
                         ],
@@ -539,17 +613,18 @@ class QKVLinear(nn.Layer):
             return qkv_out
         if self.inference_args.weight_block_size[0] != -1:
             x, x_scale_tensor = fastdeploy.model_executor.ops.gpu.per_token_quant_padding(
-                x, self.inference_args.weight_block_size[0])
+                x, self.inference_args.weight_block_size[0]
+            )
             qkv_out = paddle.empty(
-                (x.shape[0], self.inference_args.qkv_hidden_size),
-                dtype=paddle.bfloat16)
+                (x.shape[0], self.qkv_weight.shape[0]), dtype=paddle.bfloat16
+            )
             deep_gemm.gemm_fp8_fp8_bf16_nt(
-                (x, x_scale_tensor), (self.qkv_weight, self.qkv_weight_scale),
-                qkv_out)
+                (x, x_scale_tensor), (self.qkv_weight, self.qkv_weight_scale), qkv_out
+            )
         elif self.inference_args.use_weight_only and self.act_dtype in [
-                "bfloat16",
-                "float16",
-                "float32",
+            "bfloat16",
+            "float16",
+            "float32",
         ]:
             # print('===== qkv_weight',self.qkv_weight)
             # print('====== self.qkv_bias ', self.qkv_bias)
@@ -572,9 +647,15 @@ class QKVLinear(nn.Layer):
                 zero_points=None,
                 bias=self.qkv_bias,
                 out_scale=self.inference_args.weight_scale_dict.get(
-                    self.layer_name + ".weight_quanter") /
-                (self.inference_args.act_scale_dict.get(
-                    self.layer_name + ".activation_quanter") * 448 * 448),
+                    self.layer_name + ".weight_quanter"
+                )
+                / (
+                    self.inference_args.act_scale_dict.get(
+                        self.layer_name + ".activation_quanter"
+                    )
+                    * 448
+                    * 448
+                ),
                 groupsize=0,
                 out_dtype=self._dtype,
             )
@@ -589,8 +670,10 @@ class QKVLinear(nn.Layer):
                 transpose_y=True,
                 output_dtype=self._dtype,
             )
-        elif (self.weight_dtype in ["bfloat16", "float16", "float32"]
-              and self.act_dtype == self.weight_dtype):
+        elif (
+            self.weight_dtype in ["bfloat16", "float16", "float32"]
+            and self.act_dtype == self.weight_dtype
+        ):
             qkv_out = paddle.matmul(x, self.qkv_weight, False, True)
             if self.qkv_bias is not None:
                 qkv_out = paddle.add(qkv_out, self.qkv_bias)

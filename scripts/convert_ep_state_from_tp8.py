@@ -61,7 +61,7 @@ for p in model_path_pp:
             new_ffn1_1 = np.concatenate(half_ffn1_1, axis=1)
             new_ffn1_2 = np.concatenate(half_ffn1_2, axis=1)
             new_w = np.concatenate([new_ffn1_1, new_ffn1_2], axis=1)
-        elif "lm_head" in k:
+        elif "lm_head" in k or "mtp_linear_proj" in k:
             new_w = np.concatenate(state_now, axis=1)
         else:
             new_w = v

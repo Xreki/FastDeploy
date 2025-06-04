@@ -14,10 +14,11 @@
 # limitations under the License.
 """
 
+import os
 import paddle
 from paddle import nn
-from .moe import MoELayer
-from ..utils import get_tensor
+from fastdeploy.model_executor.layers.moe.moe import MoELayer
+from fastdeploy.model_executor.layers.utils import get_tensor
 
 
 class TextMoELayer(MoELayer):
@@ -38,6 +39,7 @@ class TextMoELayer(MoELayer):
         返回值：
             无返回值，直接修改类的属性和方法。
         """
+        kwargs["moe_tag"] = "Text"
         super().__init__(*args, **kwargs)
 
     def load_gate_state_dict(self, state_dict):
@@ -53,7 +55,9 @@ class TextMoELayer(MoELayer):
                 每个元素都是一个列表，长度为网络的专家数量。
         """
         up_gate_proj_weight = []
+        up_gate_proj_weight_scale = []
         down_proj_weight = []
+        down_proj_weight_scale = []
         for j in range(0, self.num_experts):
             up_gate_proj_weight.append(
                 get_tensor(state_dict.pop(self.ffn1_expert_weight_key.format(j)))
@@ -61,7 +65,12 @@ class TextMoELayer(MoELayer):
             down_proj_weight.append(
                 get_tensor(state_dict.pop(self.ffn2_expert_weight_key.format(j)))
             )
-        return up_gate_proj_weight, down_proj_weight
+        return (
+            up_gate_proj_weight,
+            down_proj_weight,
+            up_gate_proj_weight_scale,
+            down_proj_weight_scale,
+        )
 
     def load_gate_correction_bias(self, state_dict):
         """
@@ -98,6 +107,10 @@ class ImageMoELayer(MoELayer):
         返回值：
             无返回值，直接修改类的属性和方法。
         """
+        moe_quant_type = os.getenv("ELLM_MM_IMAGE_QUANT_TYPE", None)
+        if moe_quant_type is not None:
+            kwargs["moe_quant_type"] = moe_quant_type
+        kwargs["moe_tag"] = "Image"
         super().__init__(*args, **kwargs)
 
     def load_gate_state_dict(self, state_dict):
@@ -110,7 +123,9 @@ class ImageMoELayer(MoELayer):
             tuple (list, list)，分别是两个专家的上下关门投影权重和两个专家的下降投影权重，都是列表类型。
         """
         up_gate_proj_weight = []
+        up_gate_proj_weight_scale = []
         down_proj_weight = []
+        down_proj_weight_scale = []
         for j in range(self.num_experts, self.num_experts + self.num_experts):
             up_gate_proj_weight.append(
                 get_tensor(state_dict.pop(self.ffn1_expert_weight_key.format(j)))
@@ -118,7 +133,12 @@ class ImageMoELayer(MoELayer):
             down_proj_weight.append(
                 get_tensor(state_dict.pop(self.ffn2_expert_weight_key.format(j)))
             )
-        return up_gate_proj_weight, down_proj_weight
+        return (
+            up_gate_proj_weight,
+            down_proj_weight,
+            up_gate_proj_weight_scale,
+            down_proj_weight_scale,
+        )
 
     def load_gate_correction_bias(self, state_dict):
         """

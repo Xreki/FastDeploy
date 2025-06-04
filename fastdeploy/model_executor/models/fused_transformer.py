@@ -15,12 +15,12 @@
 """
 
 # cipher_token=WjI1fQOvhN  # do not edit this line
+import fastdeploy
 from paddlenlp.utils.log import logger
 
 import os
 import paddle
 import paddle.distributed as dist
-import fastdeploy
 from paddle import nn
 from paddle.distributed import fleet
 from paddle.framework import in_dynamic_mode
@@ -40,6 +40,8 @@ from ..layers.normalization import Normalization
 from ..layers.qkv_linear import QKVLinear
 from fastdeploy.inference_args import GenerationPhase
 from .micro_batch_control import MicroBatchControl
+from typing import Optional
+from fastdeploy.model_executor.eplb.experts_manager import RedundantExpertManger
 
 EP_MICRO_BATCH_NUM = 2  # DeepEP can only support
 
@@ -65,9 +67,9 @@ class FusedTransformer(nn.Layer):
         have_norm_bias=False,
         ring_id=-1,
         return_all_hidden_states=False,
-        base_model_prefix="ernie",
+        base_model_prefix="gpt",
         draft_type="",
-        max_len=32768,
+        redundant_table_manger: Optional[RedundantExpertManger] = None,
     ):
         """
         Initialize the fused transformer model.
@@ -83,7 +85,6 @@ class FusedTransformer(nn.Layer):
             use_neox_rotary_style (bool, optional): Whether to use NeoX rotary position encoding, defaults to False.
             fuse_ffn_act (bool, optional): Whether to fuse FFN and activation layers, defaults to False.
             ring_id (int, optional): Ring ID for multi-process parallel training, defaults to -1.
-            max_len (int): The maximum length of the input sequence.
         """
         super().__init__()
         self.inference_args = inference_args
@@ -95,7 +96,6 @@ class FusedTransformer(nn.Layer):
         else:
             self.use_micro_batch = False
 
-        self.max_len = max_len
         self.num_layers = inference_args.num_layers
         self.act_scales = inference_args.act_scale_dict
         self.fuse_ffn_act = fuse_ffn_act
@@ -107,7 +107,9 @@ class FusedTransformer(nn.Layer):
         self.use_pd_disaggregation = int(os.getenv("FLAGS_use_pd_disaggregation", 0))
         self.use_fa3 = int(os.getenv("FLAGS_use_fa3", 0))
         self.keep_pd_step_flag = draft_type in ["mtp", "eagle"]
-
+        self.num_dense_layers = min(
+            self.inference_args.moe_config.moe_layer_start_index, self.num_layers
+        )
         self.splitwise_role = os.getenv("SPLITWISE_ROLE", "mixed")
         assert self.splitwise_role in ["prefill", "decode", "mixed"], (
             f"Invalid role: {self.splitwise_role}. "
@@ -160,10 +162,9 @@ class FusedTransformer(nn.Layer):
                 Attention(
                     inference_args=inference_args,
                     layer_name=(
-                        f"ernie.layers.{i}.self_attn"
-                        if self.inference_args.moe_config.use_moe
-                        and self.inference_args.moe_config.moe_layer_start_index > 0
-                        else f"{base_model_prefix}.decoder.layers.{i}.self_attn"
+                        f"ernie.mtp_block.{i}.self_attn"
+                        if draft_type in ["mtp", "eagle"]
+                        else f"ernie.layers.{i}.self_attn"
                     ),
                     rope_theta=rope_theta,
                     rope_3d=rope_3d,
@@ -218,6 +219,7 @@ class FusedTransformer(nn.Layer):
                             if not (
                                 self.inference_args.moe_config.use_moe
                                 and not self.inference_args.moe_config.moe_use_ffn_shared_weight_and_bias
+                                or not self.inference_args.moe_config.use_moe
                             )
                             else True
                         ),
@@ -228,7 +230,7 @@ class FusedTransformer(nn.Layer):
                             self.inference_args.moe_config.use_moe
                             and not self.inference_args.moe_config.moe_use_ffn_shared_weight_and_bias
                         )
-                        else self.inference_args.moe_config.moe_layer_start_index
+                        else self.num_dense_layers
                     )
                 ]
             )
@@ -261,7 +263,7 @@ class FusedTransformer(nn.Layer):
                         self.inference_args.moe_config.use_moe
                         and not self.inference_args.moe_config.moe_use_ffn_shared_weight_and_bias
                     )
-                    else self.inference_args.moe_config.moe_layer_start_index
+                    else self.num_dense_layers
                 )
             ]
         )
@@ -288,7 +290,7 @@ class FusedTransformer(nn.Layer):
                             self.inference_args.moe_config.use_moe
                             and not self.inference_args.moe_config.moe_use_ffn_shared_weight_and_bias
                         )
-                        else self.inference_args.moe_config.moe_layer_start_index
+                        else self.num_dense_layers
                     )
                 ]
             )
@@ -334,24 +336,25 @@ class FusedTransformer(nn.Layer):
                 num_max_dispatch_tokens_per_rank = (
                     inference_args.moe_config.num_max_dispatch_tokens_per_rank
                 )
-                num_local_experts = num_experts // ep_size
-                ep_engine = DeepEPEngine(
-                    ep_group,
-                    ep_size,
-                    ep_rank,
-                    num_max_dispatch_tokens_per_rank,
-                    inference_args.hidden_size,
-                    num_experts,
-                    self.inference_args.generation_phase,
-                    async_finish=self.inference_args.use_micro_batch,
-                )
+                num_local_experts = (
+                    num_experts + inference_args.redundant_experts_num
+                ) // ep_size
+                if draft_type not in ["mtp", "eagle"]:
+                    ep_engine = DeepEPEngine(
+                        ep_group,
+                        ep_size,
+                        ep_rank,
+                        num_max_dispatch_tokens_per_rank,
+                        inference_args.hidden_size,
+                        num_experts + inference_args.redundant_experts_num,
+                        self.inference_args.generation_phase,
+                        async_finish=self.inference_args.use_micro_batch,
+                    )
+                else:
+                    ep_engine = None
+
                 self.moe_layers = nn.LayerList(
-                    [
-                        None
-                        for i in range(
-                            self.inference_args.moe_config.moe_layer_start_index
-                        )
-                    ]
+                    [None for i in range(self.num_dense_layers)]
                     + [
                         MoELayer(
                             ep_engine=ep_engine,
@@ -380,9 +383,10 @@ class FusedTransformer(nn.Layer):
                             ffn2_shared_weight_key=None,
                             ffn2_shared_bias_key=None,
                             layer_idx=i,
+                            redundant_table_manger=redundant_table_manger,
                         )
                         for i in range(
-                            self.inference_args.moe_config.moe_layer_start_index,
+                            self.num_dense_layers,
                             self.num_layers,
                         )
                     ]
@@ -400,12 +404,7 @@ class FusedTransformer(nn.Layer):
                 from ..layers.moe.mm import MultimodalityMoeLayer as MoELayer
 
                 self.moe_layers = nn.LayerList(
-                    [
-                        None
-                        for i in range(
-                            self.inference_args.moe_config.moe_layer_start_index
-                        )
-                    ]
+                    [None for i in range(self.num_dense_layers)]
                     + [
                         MoELayer(
                             inference_args=inference_args,
@@ -413,21 +412,34 @@ class FusedTransformer(nn.Layer):
                             layer_idx=i,
                         )
                         for i in range(
-                            self.inference_args.moe_config.moe_layer_start_index,
+                            self.num_dense_layers,
                             self.num_layers,
                         )
                     ]
                 )
             else:
-                from ..layers.moe.moe import MoELayer
+                if inference_args.moe_config.moe_quant_type == "fp8":
+                    if self.inference_args.generation_phase == GenerationPhase.PREFILL:
+                        logger.debug("Initializing MOE DeepGEMM Prefill TP Layer")
+                        from ..layers.moe.tp import (
+                            MoeTPPrefillDeepDeepGEMMLayer as MoELayer,
+                        )
+                    elif (
+                        self.inference_args.generation_phase == GenerationPhase.DECODER
+                    ):
+                        logger.debug("Initializing MOE DeepGEMM Decoder TP Layer")
+                        from ..layers.moe.tp import (
+                            MoeTPDecoerDeepDeepGEMMLayer as MoELayer,
+                        )
+                    else:
+                        raise ValueError(
+                            f"generation phase {self.inference_args.generation_phase} is invalid"
+                        )
+                else:
+                    from ..layers.moe.moe import MoELayer
 
                 self.moe_layers = nn.LayerList(
-                    [
-                        None
-                        for i in range(
-                            self.inference_args.moe_config.moe_layer_start_index
-                        )
-                    ]
+                    [None for i in range(self.num_dense_layers)]
                     + [
                         MoELayer(
                             inference_args=inference_args,
@@ -446,9 +458,10 @@ class FusedTransformer(nn.Layer):
                             ffn2_shared_weight_key=None,
                             ffn2_shared_bias_key=None,
                             layer_idx=i,
+                            redundant_table_manger=redundant_table_manger,
                         )
                         for i in range(
-                            self.inference_args.moe_config.moe_layer_start_index,
+                            self.num_dense_layers,
                             self.num_layers,
                         )
                     ]
@@ -523,7 +536,7 @@ class FusedTransformer(nn.Layer):
                 if self.inference_args.moe_config.moe_use_ffn_shared_weight_and_bias:
                     self.moe_layers[i].load_state_dict(state_dict)
                 else:
-                    if i >= self.inference_args.moe_config.moe_layer_start_index:
+                    if i >= self.num_dense_layers:
                         self.moe_layers[i].load_state_dict(state_dict)
                     else:
                         self.ffn1_layers[i].load_state_dict(state_dict)
@@ -534,7 +547,7 @@ class FusedTransformer(nn.Layer):
             paddle.device.cuda.empty_cache()
 
         num_wave = 8  # 4 will oom for mp4
-        wave_size = (self.num_layers + num_wave - 1) // num_wave
+        wave_size = max((self.num_layers + num_wave - 1) // num_wave, 1)
         for wave in range(num_wave):
             threads = []
             current_start_layer = wave * wave_size
@@ -553,6 +566,58 @@ class FusedTransformer(nn.Layer):
 
             logger.debug(
                 f"memory {paddle.device.cuda.memory_allocated() / 1024 / 1024 / 1024} GB"
+            )
+
+    def update_state_dict(self, state_dict):
+        """
+        Update the checkpoint state dictionary into the layer.
+
+        Args:
+            state_dict (dict): A dictionary containing the checkpoint weights and biases.
+        """
+        if not self.inference_args.moe_config.use_moe:
+            return
+        if self.inference_args.moe_config.moe_use_ffn_shared_weight_and_bias:
+            return
+
+        import threading
+
+        enable_efficientllm_load_model_concurrency = int(
+            os.getenv("ENABLE_EFFICIENTLLM_LOAD_MODEL_CONCURRENCY", "1")
+        )
+
+        def load_layer_state_dict(i):
+            if i < self.inference_args.moe_config.moe_layer_start_index:
+                return
+            self.moe_layers[i].load_state_dict(state_dict, True)
+            paddle.device.cuda.empty_cache()
+
+        num_wave = 8  # 4 will oom for mp4
+        wave_size = max(self.num_layers // num_wave, 1)
+        for wave in range(num_wave + 1):
+            threads = []
+            current_start_layer = wave * wave_size
+            if current_start_layer >= self.num_layers:
+                break
+            current_end_layer = (
+                self.num_layers
+                if (wave + 1) * wave_size > self.num_layers
+                else (wave + 1) * wave_size
+            )
+            for i in range(current_start_layer, current_end_layer):
+                logger.info(f"Start update layer {i}")
+                if enable_efficientllm_load_model_concurrency:
+                    thread = threading.Thread(target=load_layer_state_dict, args=(i,))
+                    threads.append(thread)
+                    thread.start()
+                else:
+                    load_layer_state_dict(i)
+
+            for t in threads:
+                t.join()
+
+            logger.debug(
+                f"update memory {paddle.device.cuda.memory_allocated() / 1024 / 1024 / 1024} GB"
             )
 
     def pre_process(self, **kwargs):
@@ -882,7 +947,7 @@ class FusedTransformer(nn.Layer):
             kwargs["encoder_block_shape_q"] = 64
             kwargs["decoder_block_shape_q"] = 16
             kwargs["max_partition_size"] = 32768
-            kwargs["encoder_max_partition_size"] = self.max_len
+            kwargs["encoder_max_partition_size"] = 32768
 
             (
                 kwargs["encoder_batch_ids"],
@@ -1083,7 +1148,7 @@ class FusedTransformer(nn.Layer):
 
             if (
                 not self.use_micro_batch
-                or i < self.inference_args.moe_config.moe_layer_start_index
+                or i < self.num_dense_layers
                 or bsz < self.micro_batch_control.micro_batch_num
             ):
                 tmp_out, residual_input = _compute_attn(
@@ -1094,7 +1159,7 @@ class FusedTransformer(nn.Layer):
                     self.inference_args.moe_config.use_moe
                     and not self.inference_args.moe_config.moe_use_ffn_shared_weight_and_bias
                 ):
-                    if i >= self.inference_args.moe_config.moe_layer_start_index:
+                    if i >= self.num_dense_layers:
                         ffn2_out = self.moe_layers[i](tmp_out, **kwargs)
                     else:
                         ffn1_out = self.ffn1_layers[i](tmp_out)
@@ -1129,11 +1194,11 @@ class FusedTransformer(nn.Layer):
                     or bsz < self.micro_batch_control.micro_batch_num
                     or (
                         self.inference_args.generation_phase == GenerationPhase.PREFILL
-                        and i < self.inference_args.moe_config.moe_layer_start_index - 1
+                        and i < self.num_dense_layers - 1
                     )
                     or (
                         self.inference_args.generation_phase == GenerationPhase.DECODER
-                        and i < self.inference_args.moe_config.moe_layer_start_index
+                        and i < self.num_dense_layers
                     )
                 ):
                     # norm + residual_add_bias
@@ -1145,7 +1210,7 @@ class FusedTransformer(nn.Layer):
                         tmp_out, _ = self.last_layernorm(ffn2_out, residual_input)
             elif self.inference_args.generation_phase == GenerationPhase.PREFILL:
                 # slice
-                if i == self.inference_args.moe_config.moe_layer_start_index:
+                if i == self.num_dense_layers:
                     for mbid in range(self.micro_batch_control.micro_batch_num):
                         self.micro_batch_control.micro_batches[mbid].ffn2_out = (
                             ffn2_out[
@@ -1166,13 +1231,13 @@ class FusedTransformer(nn.Layer):
                             ]
                         )
                 for mbid in range(self.micro_batch_control.micro_batch_num):
-                    if i > self.inference_args.moe_config.moe_layer_start_index:
+                    if i > self.num_dense_layers:
                         # 第一层不wait
                         self.micro_batch_control.wait_combine(mbid)
                     self.micro_batch_attention(
                         mbid,
                         i,
-                        self.inference_args.moe_config.moe_layer_start_index,
+                        self.num_dense_layers,
                         padding_offset,
                         input_ids,
                         rotary_embs,
@@ -1231,7 +1296,7 @@ class FusedTransformer(nn.Layer):
                         output, _ = self.last_layernorm(output, residual_inputs[mb_id])
                         outputs.append(output)
 
-                if i == self.inference_args.moe_config.moe_layer_start_index:
+                if i == self.num_dense_layers:
                     # Split
                     srcs = [
                         src[
@@ -1266,10 +1331,7 @@ class FusedTransformer(nn.Layer):
 
                     topk_idx, topk_weights = self.moe_layers[i].gate(tmp_out)
 
-                    if (
-                        mb_id == 0
-                        and i > self.inference_args.moe_config.moe_layer_start_index
-                    ):
+                    if mb_id == 0 and i > self.num_dense_layers:
                         output = self.decoder_ep_runner[
                             self.micro_batch_control.micro_batch_num - 1
                         ].combine_hook_wrap()

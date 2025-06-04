@@ -21,19 +21,12 @@
 #include <sys/types.h>
 #include "paddle/extension.h"
 
-#ifndef PD_BUILD_STATIC_OP
-#define PD_BUILD_STATIC_OP(name) PD_BUILD_OP(static_op_##name)
-#endif
+#define MAX_BSZ 256
+#define MAX_DRAFT_TOKENS 6
 
-#define MAX_BSZ 512
-
-struct msgdata {
+// TODO: replace all msgdata in speculate-decoding
+struct speculate_msgdata {
     long mtype;
-    int mtext[MAX_BSZ + 2];  // stop_flag, bsz, tokens
+    int mtext[MAX_BSZ * MAX_DRAFT_TOKENS + MAX_BSZ +
+              2];  // stop_flag, bsz, tokens
 };
-
-void SaveOutMmsg(const paddle::Tensor& x,
-                 const paddle::Tensor& not_need_stop,
-                 int64_t rank_id,
-                 int msg_queue_id,
-                 bool save_each_rank);

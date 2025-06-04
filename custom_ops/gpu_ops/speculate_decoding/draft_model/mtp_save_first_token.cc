@@ -23,7 +23,7 @@
 #define PD_BUILD_STATIC_OP(name) PD_BUILD_OP(static_op_##name)
 #endif
 
-#define MAX_BSZ 256
+#define MAX_BSZ 512
 
 // #define SAVE_WITH_OUTPUT_DEBUG
 #define MAX_DRAFT_TOKENS 6
@@ -45,23 +45,19 @@ void MTPSaveFirstToken(const paddle::Tensor& x,
     int64_t* x_data = x_cpu.data<int64_t>();
     static struct msgdata msg_sed;
 
-//     if (const char* inference_msg_queue_id_env_p =
-//             std::getenv("INFERENCE_MSG_QUEUE_ID")) {
-//         std::string inference_msg_queue_id_env_str(
-//             inference_msg_queue_id_env_p);
-//         int inference_msg_queue_id_from_env =
-//             std::stoi(inference_msg_queue_id_env_str);
-//         msg_queue_id = inference_msg_queue_id_from_env;
-// #ifdef SAVE_WITH_OUTPUT_DEBUG
-//         std::cout << "Your INFERENCE_MSG_QUEUE_ID is: "
-//                   << inference_msg_queue_id_from_env << std::endl;
-// #endif
-//     } else {
-// #ifdef SAVE_WITH_OUTPUT_DEBUG
-//         std::cout << "Failed to got INFERENCE_MSG_QUEUE_ID at env, use default."
-//                   << std::endl;
-// #endif
-//     }
+    if (const char* inference_msg_queue_id_env_p =
+            std::getenv("INFERENCE_MSG_QUEUE_ID")) {
+        std::string inference_msg_queue_id_env_str(
+            inference_msg_queue_id_env_p);
+        int inference_msg_queue_id_from_env =
+            std::stoi(inference_msg_queue_id_env_str);
+#ifdef SAVE_WITH_OUTPUT_DEBUG
+        std::cout << "Your INFERENCE_MSG_QUEUE_ID is: "
+                  << inference_msg_queue_id_from_env << std::endl;
+#endif
+        msg_queue_id = inference_msg_queue_id_from_env;
+    }
+    
     static key_t key = ftok("./", msg_queue_id);
     static int msgid = msgget(key, IPC_CREAT | 0666);
 

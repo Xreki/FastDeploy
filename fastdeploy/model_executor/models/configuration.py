@@ -26,10 +26,11 @@ from paddlenlp.transformers.configuration_utils import PretrainedConfig
 from paddlenlp.utils.log import logger
 
 import paddle
+import os
 
 __all__ = [
     "ERNIEBOT_PRETRAINED_INIT_CONFIGURATION",
-    "ModelConfig",
+    "ErnieBotConfig",
     "ErnieBotMoEConfig",
     "ERNIEBOT_PRETRAINED_RESOURCE_FILES_MAP",
 ]
@@ -66,7 +67,7 @@ ERNIEBOT_PRETRAINED_INIT_CONFIGURATION = {
 ERNIEBOT_PRETRAINED_RESOURCE_FILES_MAP = {"model_state": {"ernie-bot": ""}}
 
 
-class ModelConfig(PretrainedConfig):
+class ErnieBotConfig(PretrainedConfig):
     """
     The configuration class to store the configuration of a `ErnieBot`.
     """
@@ -132,8 +133,12 @@ class ModelConfig(PretrainedConfig):
         moe_layer_start_index: int | None = None,
         moe_intermediate_sizes: int | None = None,
         moe_use_gate_correction_bias: bool | None = None,
-        moe_gate_corrrect_bias: bool | None = None,
+        moe_gate_correct_bias: bool | None = None,
         num_hidden_layers: int | None = None,
+        weight_block_size=[-1, -1],
+        moe_use_ffn_shared_weight_and_bias=False,
+        moe_intermediate_size: int | None = None,
+        moe_use_aux_free: bool | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -204,15 +209,21 @@ class ModelConfig(PretrainedConfig):
         self.add_tail_layer = add_tail_layer
         self.use_var_len_flash_attn = use_var_len_flash_attn
         self.system_prompt_version = system_prompt_version
+        self.moe_use_ffn_shared_weight_and_bias = moe_use_ffn_shared_weight_and_bias
         if moe_layer_start_index is not None:
             self.moe_layer_start_index = moe_layer_start_index
         if moe_intermediate_sizes is not None:
-            self.moe_intermediate_sizes = moe_intermediate_sizes
-        if moe_gate_corrrect_bias is not None: 
-            self.moe_use_gate_correction_bias = moe_gate_corrrect_bias
+            self.moe_intermediate_size = moe_intermediate_sizes
+        if moe_intermediate_size is not None:
+            self.moe_intermediate_size = moe_intermediate_size
+        if moe_gate_correct_bias is not None:
+            self.moe_use_gate_correction_bias = moe_gate_correct_bias
         elif moe_use_gate_correction_bias is not None:
             self.moe_use_gate_correction_bias = moe_use_gate_correction_bias
-            
+        elif moe_use_aux_free is not None:
+            self.moe_use_gate_correction_bias = moe_use_aux_free
+        self.weight_block_size = weight_block_size
+
         self.register_unsavable_keys(
             [
                 "refined_recompute",
@@ -224,7 +235,7 @@ class ModelConfig(PretrainedConfig):
         )
 
 
-class ErnieBotMoEConfig(ModelConfig):
+class ErnieBotMoEConfig(ErnieBotConfig):
     """ErnieBotMoEConfig Class"""
 
     model_type = "ernie_bot"
@@ -299,3 +310,39 @@ class ErnieBotMoEConfig(ModelConfig):
             )
             + "\n"
         )
+
+
+class QuantizationConfig:
+    """
+    The quantization class to use for offline quantization.
+    """
+
+    def __init__(
+        self, quantization_type, groupsize=-1, scale_dtype="float16", arch=None
+    ):
+        """
+            Initializes the Quantizer class with the given parameters.
+        
+        Args:
+            quantization_type (str): Type of quantization to be used. Supported values are
+                'uniform', 'tensor_abs_max', and 'channel_wise_abs_max'.
+            groupsize (int, optional): Number of channels in each group for channel-wise
+                quantization. Defaults to -1, which means all channels will be grouped together.
+            scale_dtype (str, optional): Data type of the scales used in quantization. Defaults to
+                "float16".
+            arch (int, optional): Architecture of the model. If not specified, it will be set based
+                on the environment variable FLAGS_weight_only_linear_arch. Defaults to None.
+        
+        Raises:
+            ValueError: If the value of `quantization_type` is not one of 'uniform',
+                'tensor_abs_max', or 'channel_wise_abs_max'.
+        """
+        self.quantization_type = quantization_type
+        self.groupsize = groupsize
+        self.scale_dtype = scale_dtype
+        if arch is not None:
+            self.arch = arch
+        elif os.getenv("FLAGS_weight_only_linear_arch") is not None:
+            self.arch = int(os.getenv("FLAGS_weight_only_linear_arch"))
+        else:
+            self.arch = None

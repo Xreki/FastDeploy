@@ -23,7 +23,7 @@
 #define PD_BUILD_STATIC_OP(name) PD_BUILD_OP(static_op_##name)
 #endif
 
-#define MAX_BSZ 128
+#define MAX_BSZ 512
 #define K 10
 
 struct msgdata {

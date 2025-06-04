@@ -164,6 +164,17 @@ std::vector<paddle::Tensor> MoETopKSelectKernel(
     const bool apply_norm_weight,
     const bool enable_softmax_top_k_fused);
 
+std::vector<paddle::Tensor> MoERedundantTopKSelectKernel(
+    const paddle::Tensor& gating_logits,
+    const paddle::Tensor& expert_id_to_ep_rank_array,
+    const paddle::Tensor& expert_in_rank_num_list,
+    paddle::Tensor& tokens_per_expert_stats_list,
+    const paddle::optional<paddle::Tensor>& bias,
+    const int moe_topk,
+    const bool apply_norm_weight,
+    const bool enable_softmax_top_k_fused,
+    const int redundant_ep_rank_num_plus_one);
+
 std::vector<paddle::Tensor> EPMoeExpertDispatch(
     const paddle::Tensor& input,
     const paddle::Tensor& topk_ids,
@@ -200,6 +211,10 @@ std::vector<paddle::Tensor> EPMoeExpertCombine(
     const bool norm_topk_prob,
     const float routed_scaling_factor);
 
+std::vector<std::vector<int>> GetExpertTokenNum(
+    const paddle::Tensor& topk_ids,
+    const int num_experts);
+
 paddle::Tensor MoeExpertFFNFunc(
     const paddle::Tensor& permute_input,
     const paddle::Tensor& tokens_expert_prefix_sum,
@@ -233,6 +248,16 @@ paddle::Tensor OpenShmAndGetMetaSignalFunc(
 paddle::Tensor InitSignalLayerwiseFunc(
     const paddle::Tensor& kv_signal_metadata,
     const int layer_id);
+
+void InitKVSignalPerQuery(const paddle::Tensor &seq_lens_encoder_tensor,
+                          const paddle::Tensor &seq_lens_this_time_tensor,
+                          const paddle::Tensor &seq_lens_decoder_tensor,
+                          const int rank,
+                          const int num_layers);
+
+void GetOutputKVSignal(const paddle::Tensor& x,
+                       int64_t rank_id,
+                       bool wait_flag);
 
 std::vector<paddle::Tensor> GetBlockShapeAndSplitKVBlock(
     const paddle::Tensor& seq_lens_encoder,
@@ -310,6 +335,22 @@ std::vector<paddle::Tensor> ExtractTextTokenOutput(
     const paddle::Tensor& cu_seqlens_q,
     const paddle::Tensor& score_text);
 
+std::vector<paddle::Tensor> MoEDeepGEMMPermute(
+    const paddle::Tensor& x,
+    const paddle::Tensor& topk_idx,
+    const int num_experts,
+    const int max_tokens_per_expert
+);
+
+std::vector<paddle::Tensor> MoEDeepGEMMDePermute(
+    const paddle::Tensor& ffn_out, // [num_experts, max_tokens_per_expert, hidden]
+    const paddle::Tensor& permute_indices_per_token, // [token_num, topk}]
+    const paddle::Tensor& topk_idx,
+    const paddle::Tensor& topk_weights
+);
+
+
+
 PYBIND11_MODULE(efficientllm_ops, m) {
     /**
      * alloc_cache_pinned.cc
@@ -385,6 +426,10 @@ PYBIND11_MODULE(efficientllm_ops, m) {
            py::arg("permute_indices_per_token"), py::arg("top_k_indices"), py::arg("ffn2_bias"),
            py::arg("norm_topk_prob"), py::arg("routed_scaling_factor"),
            "ep moe export combine function");
+    
+    m.def("get_expert_token_num", &GetExpertTokenNum,
+           py::arg("topk_ids"), py::arg("num_experts"),
+           "get expert token num");
 
     m.def("per_token_quant", &PerTokenQuant,
            py::arg("input"), py::arg("block_size"),
@@ -407,6 +452,17 @@ PYBIND11_MODULE(efficientllm_ops, m) {
            py::arg("gating_logits"), py::arg("bias"), py::arg("moe_topk"), py::arg("apply_norm_weight"),
            py::arg("enable_softmax_top_k_fused"),
            "moe export TopKSelect function");
+
+    /**
+     * moe/fused_moe/moe_redundant_topk_select.cu
+     * moe_redundant_topk_select
+     */
+    m.def("f_moe_redundant_topk_select", &MoERedundantTopKSelectKernel,
+           py::arg("gating_logits"), py::arg("expert_id_to_ep_rank_array"),
+           py::arg("expert_in_rank_num_list"), py::arg("tokens_per_expert_stats_list"),
+           py::arg("bias"), py::arg("moe_topk"), py::arg("apply_norm_weight"),
+           py::arg("enable_softmax_top_k_fused"), py::arg("redundant_ep_rank_num_plus_one"),
+           "moe export RedundantTopKSelect function");
 
     /**
      * moe/fused_moe/moe_ffn.cu
@@ -441,6 +497,22 @@ PYBIND11_MODULE(efficientllm_ops, m) {
      * open_shm_and_get_meta_signal
      */
     m.def("open_shm_and_get_meta_signal", &OpenShmAndGetMetaSignalFunc, "open_shm_and_get_meta_signal function");
+
+    /**
+     * open_shm_and_get_meta_signal.cc
+     * InitKVSingnalPerQuery
+     */
+    m.def("init_kv_signal_per_query", &InitKVSignalPerQuery, 
+          py::arg("seq_lens_encoder_tensor"), py::arg("seq_lens_this_time_tensor"),
+          py::arg("seq_lens_decoder_tensor"), py::arg("rank"), py::arg("num_layers"),
+          "init_kv_signal_per_query function");
+        
+    /**
+     * GetOutputKVSignal
+     */
+    m.def("get_output_kv_signal", &GetOutputKVSignal, 
+          py::arg("x"), py::arg("rank_id"), py::arg("wait_flag"),
+          "get_output_kv_signal function");
 
     /**
      * append_attn/get_block_shape_and_split_kv_block.cu
@@ -491,4 +563,7 @@ PYBIND11_MODULE(efficientllm_ops, m) {
     m.def("extract_text_token_output", &ExtractTextTokenOutput, "extract_text_token_output function");
 
     m.def("group_swiglu_with_masked", &GroupSwigluWithMasked, "group_swiglu_with_masked function");
+
+    m.def("moe_deepgemm_permute", &MoEDeepGEMMPermute, "MoEDeepGEMMPermute");
+    m.def("moe_deepgemm_depermute", &MoEDeepGEMMDePermute, "MoEDeepGEMMDePermute");
 }
