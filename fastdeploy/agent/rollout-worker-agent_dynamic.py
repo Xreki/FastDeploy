@@ -50,6 +50,7 @@ rollout_worker_root = os.getenv('ROLLOUT_WORKER_ROOT', "/root/paddlejob/")
 update_procs = {}
 kill_cmd = "lsof /dev/nvidia* | awk '{print $2}' | xargs -I {} kill -9 {}"
 
+
 def get_local_ip() -> str:
     """Get local IP address"""
     try:
@@ -66,20 +67,37 @@ def get_local_ip() -> str:
 # 全局变量标记start_cmd是否已执行
 start_cmd_executed = False
 
+
 def fault_tolerance(job_id):
     """fault tolerance for oom error"""
     logging.error("Worker Exited unexpectedly or timed out, start fault tolerance...")
     print("Worker Exited unexpectedly or timed out, start fault tolerance...")
+    global start_cmd_executed
+    start_cmd_executed = False
     os.system(kill_cmd)
     notice_controller(job_id, "", "stopped", "fault_tolerance_stop")
+
+
+def init_child_logger(log_file: str):
+    """Initialize child logger"""
+    # 清空原有的 handlers
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='[%(asctime)s] [%(filename)s:%(lineno)d] %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        filename=log_file,
+        filemode='a'
+    )
+
 
 def update_weight_and_controller(job_id: str, model_path: str, model_version: str) -> None:
     """Update the weights of a model and notify the controller that it has been successfully loaded."""
     if model_path == "":
         model_path = "./"
-    ip = get_local_ip()
-    max_retries = 3
-    retry_interval = 1  # seconds
+    init_child_logger(f'rollout-worker-agent_child_{device_use_id}.log')
 
     try:
         # Call update_model_weight API with 300s timeout (不重试)
@@ -102,6 +120,10 @@ def update_weight_and_controller(job_id: str, model_path: str, model_version: st
         return
     except requests.exceptions.RequestException as e:
         logging.error(f"Error calling update_model_weight: {str(e)}")
+        print("Failed to update model weight", str(e))
+        return
+    except Exception as e:
+        logging.error(f"Unknown error occurred while updating model weight: {str(e)}")
         print("Failed to update model weight", str(e))
         return
 
@@ -179,6 +201,7 @@ def monitor_worker(job_id: str, proc: Popen, model_version: str):
             break
         time.sleep(30)
 
+
 def health_check() -> bool:
     """Perform health check on the worker process"""
     try:
@@ -189,9 +212,11 @@ def health_check() -> bool:
         logging.error(f"Health check failed: {str(e)}")
     return False
 
+
 def background_start(job_id: str, model_path: str, model_version: str) -> None:
     """Start worker by calling downstream HTTP APIs"""
     global start_cmd_executed
+    logging.info(f"Creating background_start thread, start_cmd status is {start_cmd_executed}")
     if not start_cmd_executed:
         # 执行start_cmd
         start_cmd = [
@@ -205,7 +230,6 @@ def background_start(job_id: str, model_path: str, model_version: str) -> None:
         ]
         # Popen 时加 preexec_fn=os.setsid，让它在新的进程组里启动
         proc = Popen(start_cmd, cwd=f"{rollout_worker_root}/fastdeploy/agent",
-                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                      preexec_fn=os.setsid)
         logging.info(f"Executing start command: {start_cmd}")
         print(f"Executing start command: {start_cmd}")
@@ -242,6 +266,7 @@ def background_start(job_id: str, model_path: str, model_version: str) -> None:
             logging.info("Skipping health check as requested")
 
         # 启动一个守护线程，监听进程，并上报
+        logging.info(f"Creating monitor_worker thread")
         thread = threading.Thread(
             target=monitor_worker,
             kwargs={
@@ -255,10 +280,14 @@ def background_start(job_id: str, model_path: str, model_version: str) -> None:
 
     p = update_procs.pop(job_id, None)
     if p and p.is_alive():
+        logging.info(f"Terminating subprocess")
         p.terminate()
         p.join(5)
         if p.is_alive():
+            logging.info(f"Terminating subprocess by os")
             os.kill(p.pid, signal.SIGKILL)
+
+    logging.info(f"Creating update_weight_and_controller subprocess")
     p = multiprocessing.Process(
         target=update_weight_and_controller,
         args=(job_id, model_path, model_version),
@@ -286,7 +315,9 @@ def start() -> str:
     )
     thread.start()
 
-    return json.dumps({'msg': 'ok', 'status': 0, 'data': {}}, indent=2)
+    ret = json.dumps({'msg': 'ok', 'status': 0, 'data': {}}, indent=2)
+    logging.info(f"send start response: {ret}")
+    return ret
 
 
 def background_stop(job_id: str) -> None:
@@ -302,13 +333,13 @@ def background_stop(job_id: str) -> None:
         if not is_health:
             fault_tolerance(job_id)
             return
-        
-        while cnt < max_retries:    
+
+        while cnt < max_retries:
             clear_response = requests.get(
                 f"{rollout_worker_host}:{rollout_worker_http_port}/clear_load_weight",
                 timeout=300
             )
-            
+
             if clear_response.status_code != 200:
                 logging.error(f"Failed to clear load weight: {clear_response.text} {clear_response.status_code}")
                 print(f"Failed to clear load weight: {clear_response.text}, {clear_response.status_code}")
@@ -330,7 +361,6 @@ def background_stop(job_id: str) -> None:
         return
 
 
-
 @app.route('/infer/stop', methods=['POST'])
 def stop() -> str:
     """Stop Infer Engine"""
@@ -345,14 +375,20 @@ def stop() -> str:
     )
     thread.start()
 
+    logging.info(f"clear subprocess of current job")
     p = update_procs.pop(str(info["job_id"]), None)
     if p and p.is_alive():
+        logging.info(f"Terminating subprocess")
         p.terminate()
         p.join(5)
         if p.is_alive():
+            logging.info(f"Terminating subprocess by os")
             os.kill(p.pid, signal.SIGKILL)
+    logging.info(f"clear done")
 
-    return json.dumps({'msg': 'ok', 'status': 0, 'data': {}}, indent=2)
+    ret = json.dumps({'msg': 'ok', 'status': 0, 'data': {}}, indent=2)
+    logging.info(f"send stop response: {ret}")
+    return ret
 
 
 def get_available_port() -> int:
@@ -537,6 +573,7 @@ def set_parallel_degree(degree: str):
 
 
 if __name__ == '__main__':
+    # multiprocessing.set_start_method("spawn", force=True)
     # 注册清理函数
     atexit.register(cleanup)
 
@@ -597,7 +634,7 @@ if __name__ == '__main__':
         format='[%(asctime)s] [%(filename)s:%(lineno)d] %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
         filename=f'rollout-worker-agent_{device_use_id}.log',
-        filemode='w'
+        filemode='a'
     )
 
     print(f"port: {port}, http_port: {rollout_worker_http_port}, queue_port: {rollout_worker_queue_port}")
