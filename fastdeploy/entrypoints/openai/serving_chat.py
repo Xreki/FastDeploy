@@ -60,7 +60,10 @@ class OpenAIServingChat:
         """
         Create a new chat completion using the specified parameters.
         """
-        request_id = f"chatcmpl-{uuid.uuid4()}"
+        if request.user is not None:
+            request_id = f"chatcmpl-{request.user}-{uuid.uuid4()}"
+        else:
+            request_id = f"chatcmpl-{uuid.uuid4()}"
         api_server_logger.info(f"create chat completion request: {request_id}")
 
         try:

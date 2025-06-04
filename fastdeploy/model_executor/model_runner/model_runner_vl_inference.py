@@ -197,7 +197,6 @@ class ModelRunner(ModelRunnerBase):
                 local_test=local_test,
                 vision_model=self.vision_model,
                 resampler_model=self.resampler_model
-
             )
         else:
             from ..models.export_model import build_stream_line_model
@@ -240,7 +239,7 @@ class ModelRunner(ModelRunnerBase):
         分享不拷贝数据
         """
         cache_kvs = {}
-        max_block_num = self.num_gpu_blocks
+        total_block_num = self.num_gpu_blocks
         num_layers = self.model_cfg.get("num_layers",
                                         None) or self.model_cfg.get(
                                             "num_hidden_layers", None)
@@ -256,7 +255,7 @@ class ModelRunner(ModelRunnerBase):
             cache_type = self.args.dtype
             cache_kvs["key_caches_{}".format(i)] = paddle.full(
                 shape=[
-                    max_block_num,
+                    total_block_num,
                     kv_num_head,
                     self.args.block_size,
                     self.model_cfg.hidden_size //
@@ -267,7 +266,7 @@ class ModelRunner(ModelRunnerBase):
             )
             cache_kvs["value_caches_{}".format(i)] = paddle.full(
                 shape=[
-                    max_block_num,
+                    total_block_num,
                     kv_num_head,
                     self.args.block_size,
                     self.model_cfg.hidden_size //
@@ -589,10 +588,10 @@ class ModelRunner(ModelRunnerBase):
         """
         fake input to profile
         """
-        full_length = num_total_tokens // number_of_tasks
-        input_length = int(full_length * self.args.kv_cache_ratio)
-        block_num = (input_length + self.args.block_size - 1 +
-                     self.args.enc_dec_block_num) // self.args.block_size
+        input_length = num_total_tokens // number_of_tasks
+        block_num = (input_length + self.args.block_size - 1 + self.args.enc_dec_block_num) // self.args.block_size
+        self.share_inputs["free_list"] = paddle.to_tensor([], dtype="int32")
+        self.share_inputs["free_list_len"][0] = 0
 
         for i in range(number_of_tasks):
             idx = i
