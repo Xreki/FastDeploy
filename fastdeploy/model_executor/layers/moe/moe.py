@@ -512,7 +512,7 @@ class MoELayer(nn.Layer):
         """
         if self.moe_config.moe_use_gate_correction_bias:
             gate_correction_bias_tensor = get_tensor(
-                state_dict.pop(self.gate_correction_bias_key)
+                state_dict.pop(self.gate_correction_bias_key[0].unsqueeze(0))
             )
             self.gate_correction_bias.set_value(gate_correction_bias_tensor)
 
