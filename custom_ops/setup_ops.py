@@ -211,7 +211,9 @@ elif paddle.is_compiled_with_cuda():
         "gpu_ops/share_external_data.cu",
         "gpu_ops/per_token_quant_fp8.cu",
         "gpu_ops/extract_text_token_output.cu",
-        "gpu_ops/update_split_fuse_input.cu"
+        "gpu_ops/update_split_fuse_input.cu",
+        "gpu_ops/text_image_index_out.cu",
+        "gpu_ops/text_image_gather_scatter.cu"
     ]
 
     # pd_disaggregation
