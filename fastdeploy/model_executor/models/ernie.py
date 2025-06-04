@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import os
 from functools import partial
+from typing import Dict, Union
 
 import numpy as np
 import paddle
@@ -41,9 +42,10 @@ from fastdeploy.model_executor.ops.gpu import (
     speculate_save_output_dynamic, speculate_set_stop_value_multi_seqs,
     speculate_set_value_by_flags_and_idx, speculate_update_v3,
     speculate_verify, top_p_candidates, update_inputs, update_inputs_beam)
+from fastdeploy.worker.model_runner import ForwardMeta
 
 from ..layers.embeddings import VocabParallelEmbedding
-from ..layers.lm_head import LMHead
+from ..layers.lm_head import ParallelLMHead
 from ..layers.normalization import RMSNorm
 from ..layers.quantization import get_quantization_config
 from .fused_transformer import FusedTransformer
@@ -714,10 +716,23 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
 
         else:
             llm_config.quant_config = None
+
+        if self.inference_args.cachekv_dtype not in [
+                "bfloat16", "float16", "float32"
+        ]:
+            quant_cls = get_quantization_config("kvcache")
+            llm_config.kvcache_quant_config = quant_cls.from_config(
+                {"cachekv_scale_dict": self.inference_args.cachekv_scale_dict})
+        else:
+            llm_config.kvcache_quant_config = None
+
         # we will move use_smooth_quant to quant_config later
+        llm_config.model_config.speculate_method = self.speculate_method
         llm_config.model_config.use_smooth_quant = self.use_smooth_quant
-        llm_config.model_config.weight_dtype = self.inference_args.weight_dtype  # we will remove later
-        llm_config.model_config.act_dtype = self.inference_args.act_dtype  # we will remove act_dtype later
+        # we will remove later
+        llm_config.model_config.weight_dtype = self.inference_args.weight_dtype
+        # we will remove act_dtype later
+        llm_config.model_config.act_dtype = self.inference_args.act_dtype
         llm_config.parallel_config.mp_size = mp_size
         llm_config.load_config.weight_keys = fmt_keys
         llm_config.quant_config.quant_round_type = self.inference_args.quant_round_type
@@ -725,6 +740,16 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         llm_config.quant_config.quant_min_bound = self.inference_args.quant_min_bound
         llm_config.load_config.act_scales = self.inference_args.act_scale_dict
         llm_config.load_config._post_init(llm_config.model_config)
+        # cachekv
+        if llm_config.kvcache_quant_config is not None:
+            llm_config.kvcache_quant_config.cache_quant_type_str = \
+                ("none" if self.inference_args.use_dynamic_cachekv_quant
+                 else self.inference_args.cache_quant_type)
+            llm_config.kvcache_quant_config.cachekv_dtype = self.inference_args.cachekv_dtype
+            llm_config.kvcache_quant_config.has_zero_point = self.inference_args.has_zero_point
+            llm_config.kvcache_quant_config.use_append_attn = self.inference_args.use_append_attn
+            llm_config.kvcache_quant_config.is_channel_wise = self.inference_args.is_channel_wise
+            llm_config.kvcache_quant_config.use_dynamic_cachekv_quant = self.inference_args.use_dynamic_cachekv_quant
 
         self.decoder = FusedTransformer(
             inference_args=self.inference_args,
@@ -828,6 +853,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
     def forward(
         self,
         input_ids,
+        forward_meta: ForwardMeta,
         token_type_ids=None,
         image_features=None,
         attention_mask=None,  # for NPU
@@ -860,25 +886,8 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             Tensor: Output tensor of shape `(batch_size, sequence_length, hidden_size)`.
         """
 
-        if self.speculate_method is not None:
-            (
-                ids_remove_padding,
-                padding_offset,
-                cum_offsets,
-                cu_seqlens_q,
-                cu_seqlens_k,
-            ) = self.speculate_remove_padding(input_ids, seq_lens_this_time,
-                                              draft_tokens, seq_lens_encoder)
-        else:
-            (
-                ids_remove_padding,
-                padding_offset,
-                cum_offsets,
-                cu_seqlens_q,
-                cu_seqlens_k,
-            ) = self.remove_padding(input_ids, seq_lens_this_time)
         embedding_output = self.embeddings(
-            ids_remove_padding=ids_remove_padding)
+            ids_remove_padding=forward_meta.ids_remove_padding)
         if self.is_mtp:
             embedding_output = paddle.concat(
                 [self.e_norm(embedding_output),
@@ -893,7 +902,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
 
         if (self.inference_args.moe_config.use_moe
                 and self.inference_args.moe_config.has_multimodality):
-            token_type_ids = (ids_remove_padding ==
+            token_type_ids = (forward_meta.ids_remove_padding ==
                               self.inference_args.moe_config.im_patch_id)
             image_mask = token_type_ids
             if image_mask.any():
@@ -905,24 +914,25 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             token_type_ids=token_type_ids,
             src=embedding_output,
             caches=caches,
-            rotary_embs=rope_emb,
+            rotary_embs=forward_meta.rotary_embs,
             rotary_emb_dims=1,
             max_input_length=self.max_len,
             block_size=self.block_size,
             inv_compression_ratio=self.inv_compression_ratio,
-            cum_offsets=cum_offsets,
-            cu_seqlens_q=cu_seqlens_q,
-            cu_seqlens_k=cu_seqlens_k,
-            padding_offsets=padding_offset,
-            block_tables=block_tables,
-            seq_lens_this_time=seq_lens_this_time,
-            seq_lens_encoder=seq_lens_encoder,
-            seq_lens_decoder=seq_lens_decoder,
+            cum_offsets=forward_meta.cum_offsets,
+            cu_seqlens_q=forward_meta.cu_seqlens_q,
+            cu_seqlens_k=forward_meta.cu_seqlens_k,
+            padding_offsets=forward_meta.padding_offset,
+            block_tables=forward_meta.block_tables,
+            seq_lens_this_time=forward_meta.seq_lens_this_time,
+            seq_lens_encoder=forward_meta.seq_lens_encoder,
+            seq_lens_decoder=forward_meta.seq_lens_decoder,
             attention_mask=attention_mask,  # for NPU
             beam_cache_offset=beam_cache_offset,
             draft_tokens=draft_tokens,
             output_padding_offset=output_padding_offset,
             return_all_hidden_states=self.return_all_hidden_states,
+            forward_meta=forward_meta,
         )
 
         if isinstance(output, tuple):
@@ -939,7 +949,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
                 "int32")
 
             if mm_token_num_len > 0:
-                token_num = paddle.shape(ids_remove_padding)[0]
+                token_num = paddle.shape(forward_meta.ids_remove_padding)[0]
                 token_type_ids = token_type_ids.reshape([-1])
                 text_pos_shifted = token_type_ids[:token_num] == 0
                 score_text = out[text_pos_shifted.reshape([-1])]
@@ -951,14 +961,14 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
                 max_seq_len_index.cast("int32"),
                 mm_token_num_len,
                 seq_lens_this_time,
-                cu_seqlens_q,
+                forward_meta.cu_seqlens_q,
                 score_text,
             )[0].cast(embedding_output.dtype)
 
         out = self.norm(out)
 
         if self.return_all_hidden_states:
-            return out, cum_offsets
+            return out, forward_meta.cum_offsets
         else:
             return out
 
@@ -1118,42 +1128,30 @@ class ErnieForCausalLM(ModelForCasualLM):
             self.is_norm_weight_type_fp32 = True
 
         if self.weight_sharing:
-            sharing_weight = self.ernie.embeddings.word_embeddings.weight
+            tie_word_embeddings = self.ernie.embeddings.word_embeddings.weight
         else:
-            sharing_weight = None
-        if self.weight_sharing_add_bias:
-            sharing_bias = self.ernie.embeddings.bias
-        else:
-            sharing_bias = None
+            tie_word_embeddings = None
 
-        lmhead_name = ("server_nlg_mask_lm_trans_fc_" if not self.ernie.is_mtp
-                       else "mtp_server_nlg_mask_lm_trans_fc_")
+        layer_prefix = None
         if self.use_moe:
-            self.lm_head = LMHead(
-                layer_name=lmhead_name,
-                linear_weight_key="lm_head.weight",
-                linear_bias_key=None,
-                input_dim=self.hidden_size,
-                output_dim=self.ernie.vocab_size,
-                fused_linear=self.configs["fused_linear"],
-                sharing_weight=sharing_weight,
-                sharing_bias=sharing_bias,
-                use_ep=self.ernie.use_ep,
+            layer_prefix = "lm_head"
+        else:
+            layer_prefix = f"{self.base_model_prefix}"
+        if self.use_moe:
+            self.lm_head = ParallelLMHead(
+                llm_config=llm_config,
+                embedding_dim=self.hidden_size,
+                num_embeddings=self.ernie.vocab_size,
+                tie_word_embeddings=tie_word_embeddings,
+                prefix=layer_prefix,
             )
         else:
-            self.lm_head = LMHead(
-                layer_name=lmhead_name,
-                linear_weight_key=
-                f"{self.base_model_prefix}.output_linear.out_linear.weight",
-                linear_bias_key=(
-                    f"{self.base_model_prefix}.output_linear.out_linear.bias"
-                    if self.have_norm_bias else None),
-                input_dim=self.hidden_size,
-                output_dim=self.ernie.vocab_size,
-                fused_linear=self.configs.model_config.fused_linear,
-                sharing_weight=sharing_weight,
-                sharing_bias=sharing_bias,
-                use_ep=self.ernie.use_ep,
+            self.lm_head = ParallelLMHead(
+                llm_config=llm_config,
+                embedding_dim=self.hidden_size,
+                num_embeddings=self.ernie.vocab_size,
+                tie_word_embeddings=tie_word_embeddings,
+                prefix=layer_prefix,
             )
 
     @classmethod
@@ -1161,8 +1159,8 @@ class ErnieForCausalLM(ModelForCasualLM):
         return "ErnieForCausalLM"
 
     @paddle.no_grad()
-    def set_state_dict(self, state_dict: dict[str,
-                                              np.ndarray | paddle.Tensor]):
+    def set_state_dict(self, state_dict: Dict[str, Union[np.ndarray,
+                                                         paddle.Tensor]]):
         """
         Load model parameters from a given state dictionary.
 
@@ -1290,6 +1288,7 @@ class ErnieForCausalLM(ModelForCasualLM):
         output_padding_offset = kwargs.get("actual_output_padding_offset",
                                            None)
         hidden_states = kwargs.get("hidden_states", None)
+        forward_meta = kwargs["forward_meta"]
         model_inputs = {
             "input_ids": input_ids,
             "image_features": image_features,
@@ -1304,6 +1303,7 @@ class ErnieForCausalLM(ModelForCasualLM):
             "draft_tokens": draft_tokens,
             "output_padding_offset": output_padding_offset,
             "hidden_states": hidden_states,
+            "forward_meta": forward_meta,
         }
         return model_inputs
 

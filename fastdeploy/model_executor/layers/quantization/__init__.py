@@ -39,12 +39,15 @@ def get_quantization_config(quantization: str) -> Type[QuantConfigBase]:
     from .w8a8 import W8A8Config
     from .weight_only import WeightOnlyConfig
     from .wfp8afp8 import WFP8AFP8Config
+    from .kv_cache import KvCacheQuantConfig
+    
     method_to_config: Dict[str, Type[QuantConfigBase]] = {
         "weight_only": WeightOnlyConfig,
         "block_wise": BlockWiseConfig,
         "w4afp8": W4AFP8Config,
         "w8a8": W8A8Config,
-        "wfp8afp8": WFP8AFP8Config
+        "wfp8afp8": WFP8AFP8Config,
+        "kvcache": KvCacheQuantConfig
     }
 
     return method_to_config[quantization]

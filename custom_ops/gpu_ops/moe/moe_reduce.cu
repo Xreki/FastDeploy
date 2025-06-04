@@ -108,6 +108,47 @@ std::vector<paddle::DataType> MoeExpertReduceInferDtype(
   return {ffn_out_dtype};
 }
 
+
+/**
+ * @brief Mixture of Experts (MoE) Expert Reduce Operator
+ * 
+ * This operator performs the following key functions:
+ * 1. Combines outputs from multiple experts based on routing weights
+ * 2. Applies optional bias and scaling to the combined output
+ * 3. Restores the original token order from permuted expert outputs
+ * 
+ * Inputs:
+ *   - ffn_out: Outputs from all expert networks (permuted)
+ *             Shape: [total_tokens * moe_topk, hidden_size]
+ *             dtype: bfloat16 or float16
+ *   - top_k_weight: Routing weights for top-k experts per token
+ *                  Shape: [total_tokens, moe_topk]
+ *                  dtype: float32
+ *   - permute_indices_per_token: Indices mapping for reconstructing original order
+ *                               Shape: [moe_topk, total_tokens]
+ *                               dtype: int32
+ *   - top_k_indices: Indices of selected top-k experts for each token
+ *                   Shape: [total_tokens, moe_topk]
+ *                   dtype: int32
+ *   - ffn2_bias: Optional bias term for expert outputs (hidden_size)
+ * 
+ * Outputs:
+ *   - output: Combined expert outputs in original token order
+ *            Shape: [total_tokens, hidden_size]
+ *            dtype: Same as ffn_out
+ * 
+ * Attributes:
+ *   - norm_topk_prob: Whether to normalize top-k probabilities
+ *                    (true: weights sum to 1 for each token,
+ *                     false: use raw weights)
+ *   - routed_scaling_factor: Scaling factor applied to top-k probabilities
+ * 
+ * Note:
+ * - The operator expects permuted expert outputs from moe_expert_dispatch
+ * - When norm_topk_prob is true, weights are normalized per token
+ * - The routed_scaling_factor is typically used to balance expert contributions
+ * - For optimal performance, hidden_size should be a multiple of 128
+ */
 PD_BUILD_STATIC_OP(moe_expert_reduce)
     .Inputs({"ffn_out", "top_k_weight", "permute_indices_per_token",
              "top_k_indices", paddle::Optional("ffn2_bias")})

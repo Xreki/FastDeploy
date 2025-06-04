@@ -14,39 +14,37 @@
 # limitations under the License.
 """
 
-
-import base64
+import argparse
 import codecs
+import importlib
 import logging
 import os
-import pickle
-import socket
 import re
-import subprocess
-import time
-import requests
+import socket
 import tarfile
-import shutil
-from tqdm import tqdm
+import time
 from datetime import datetime
-from enum import Enum
 from logging.handlers import BaseRotatingHandler
 from pathlib import Path
-import argparse
+
+import requests
 import yaml
+from tqdm import tqdm
 
 
 class EngineError(Exception):
     """Base exception class for engine errors"""
+
     def __init__(self, message, error_code=400):
         super().__init__(message)
         self.error_code = error_code
+
 
 class ColoredFormatter(logging.Formatter):
     """自定义日志格式器，用于控制台输出带颜色"""
     COLOR_CODES = {
         logging.WARNING: 33,  # 黄色
-        logging.ERROR: 31,     # 红色
+        logging.ERROR: 31,  # 红色
         logging.CRITICAL: 31,  # 红色
     }
 
@@ -65,15 +63,13 @@ class DailyRotatingFileHandler(BaseRotatingHandler):
     like `logging.TimedRotatingFileHandler`, but this class support multi-process
     """
 
-    def __init__(
-        self,
-        filename,
-        backupCount=0,
-        encoding="utf-8",
-        delay=False,
-        utc=False,
-        **kwargs
-    ):
+    def __init__(self,
+                 filename,
+                 backupCount=0,
+                 encoding="utf-8",
+                 delay=False,
+                 utc=False,
+                 **kwargs):
         """
             初始化 RotatingFileHandler 对象。
 
@@ -95,7 +91,8 @@ class DailyRotatingFileHandler(BaseRotatingHandler):
         self.base_log_path = Path(filename)
         self.base_filename = self.base_log_path.name
         self.current_filename = self._compute_fn()
-        self.current_log_path = self.base_log_path.with_name(self.current_filename)
+        self.current_log_path = self.base_log_path.with_name(
+            self.current_filename)
         BaseRotatingHandler.__init__(self, filename, "a", encoding, delay)
 
     def shouldRollover(self, record):
@@ -115,7 +112,8 @@ class DailyRotatingFileHandler(BaseRotatingHandler):
             self.stream = None
 
         self.current_filename = self._compute_fn()
-        self.current_log_path = self.base_log_path.with_name(self.current_filename)
+        self.current_log_path = self.base_log_path.with_name(
+            self.current_filename)
 
         if not self.delay:
             self.stream = self._open()
@@ -126,7 +124,8 @@ class DailyRotatingFileHandler(BaseRotatingHandler):
         """
         Calculate the log file name corresponding current time
         """
-        return self.base_filename + "." + time.strftime(self.suffix, time.localtime())
+        return self.base_filename + "." + time.strftime(
+            self.suffix, time.localtime())
 
     def _open(self):
         """
@@ -135,14 +134,13 @@ class DailyRotatingFileHandler(BaseRotatingHandler):
         if self.encoding is None:
             stream = open(str(self.current_log_path), self.mode)
         else:
-            stream = codecs.open(str(self.current_log_path), self.mode, self.encoding)
+            stream = codecs.open(str(self.current_log_path), self.mode,
+                                 self.encoding)
 
         if self.base_log_path.exists():
             try:
-                if (
-                    not self.base_log_path.is_symlink()
-                    or os.readlink(self.base_log_path) != self.current_filename
-                ):
+                if (not self.base_log_path.is_symlink() or os.readlink(
+                        self.base_log_path) != self.current_filename):
                     os.remove(self.base_log_path)
             except OSError:
                 pass
@@ -173,13 +171,16 @@ class DailyRotatingFileHandler(BaseRotatingHandler):
             result = []
         else:
             result.sort()
-            result = result[: len(result) - self.backup_count]
+            result = result[:len(result) - self.backup_count]
 
         for file_name in result:
             os.remove(str(self.base_log_path.with_name(file_name)))
 
 
-def get_logger(name, file_name, without_formater=False, print_to_console=False):
+def get_logger(name,
+               file_name,
+               without_formater=False,
+               print_to_console=False):
     """
     get logger
     """
@@ -254,12 +255,10 @@ def download_file(url, save_path):
         response.raise_for_status()
 
         total_size = int(response.headers.get('content-length', 0))
-        progress_bar = tqdm(
-            total=total_size,
-            unit='iB',
-            unit_scale=True,
-            desc=f"Downloading {os.path.basename(url)}"
-        )
+        progress_bar = tqdm(total=total_size,
+                            unit='iB',
+                            unit_scale=True,
+                            desc=f"Downloading {os.path.basename(url)}")
 
         with open(save_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=1024):
@@ -274,6 +273,7 @@ def download_file(url, save_path):
             os.remove(save_path)
         raise RuntimeError(f"Download failed: {str(e)}")
 
+
 def extract_tar(tar_path, output_dir):
     """Extract tar file with progress tracking"""
     try:
@@ -286,6 +286,7 @@ def extract_tar(tar_path, output_dir):
         print(f"Successfully extracted to: {output_dir}")
     except Exception as e:
         raise RuntimeError(f"Extraction failed: {str(e)}")
+
 
 def download_model(url, output_dir, temp_tar):
     """
@@ -311,11 +312,14 @@ def download_model(url, output_dir, temp_tar):
         print("\nExtracting files...")
         extract_tar(temp_tar, output_dir)
 
-    except Exception as e:
+    except Exception:
         # Cleanup on failure
         if os.path.exists(temp_tar):
             os.remove(temp_tar)
-        raise Exception(f"Failed to get model from {url}, please recheck the model name from https://github.com/PaddlePaddle/PaddleNLP/blob/develop/llm/server/docs/static_models.md")
+        raise Exception(
+            f"""Failed to get model from {url}, please recheck the model name from
+            https://github.com/PaddlePaddle/PaddleNLP/blob/develop/llm/server/docs/static_models.md"""
+        )
     finally:
         # Cleanup temp file
         if os.path.exists(temp_tar):
@@ -326,12 +330,15 @@ class FlexibleArgumentParser(argparse.ArgumentParser):
     """
     扩展 argparse.ArgumentParser，支持从 YAML 文件加载参数。
     """
+
     def __init__(self, *args, config_arg='--config', sep='_', **kwargs):
         super().__init__(*args, **kwargs)
         self.sep = sep  # 用于展平嵌套字典的分隔符
         # 创建临时解析器，仅用于解析 --config 参数
         self.tmp_parser = argparse.ArgumentParser(add_help=False)
-        self.tmp_parser.add_argument(config_arg, type=str, help='Path to YAML config file')
+        self.tmp_parser.add_argument(config_arg,
+                                     type=str,
+                                     help='Path to YAML config file')
 
     def parse_args(self, args=None, namespace=None):
         # 使用临时解析器解析出 --config 参数
@@ -349,7 +356,10 @@ class FlexibleArgumentParser(argparse.ArgumentParser):
         defined_dests = {action.dest for action in self._actions}
 
         # 过滤出已定义的参数
-        filtered_config = {k: v for k, v in config.items() if k in defined_dests}
+        filtered_config = {
+            k: v
+            for k, v in config.items() if k in defined_dests
+        }
 
         # 创建或使用现有的命名空间对象
         if namespace is None:
@@ -364,6 +374,7 @@ class FlexibleArgumentParser(argparse.ArgumentParser):
 
     def _flatten_dict(self, d):
         """将嵌套字典展平为单层字典，键由分隔符连接"""
+
         def _flatten(d, parent_key=''):
             items = []
             for k, v in d.items():
@@ -373,7 +384,15 @@ class FlexibleArgumentParser(argparse.ArgumentParser):
                 else:
                     items.append((new_key, v))
             return dict(items)
+
         return _flatten(d)
+
+
+def resolve_obj_from_strname(strname: str):
+    module_name, obj_name = strname.rsplit(".", 1)
+    module = importlib.import_module(module_name)
+    return getattr(module, obj_name)
+
 
 def check_unified_ckpt(model_dir):
     """
@@ -394,15 +413,20 @@ def check_unified_ckpt(model_dir):
 
     try:
         # check all the file exists
-        safetensors_num = int(model_files[0].strip(".safetensors").split("-")[-1])
+        safetensors_num = int(
+            model_files[0].strip(".safetensors").split("-")[-1])
         flags = [0] * safetensors_num
         for x in model_files:
             current_index = int(x.strip(".safetensors").split("-")[1])
             flags[current_index - 1] = 1
-        assert sum(flags) == safetensors_num, "Number of safetensor files should be {}, but now it's {}".format(len(model_files), sum(flags))
+        assert sum(
+            flags
+        ) == safetensors_num, "Number of safetensor files should be {}, but now it's {}".format(
+            len(model_files), sum(flags))
     except Exception as e:
         raise Exception(f"Failed to check unified checkpoint, details: {e}.")
     return is_unified_ckpt
+
 
 def get_host_ip():
     """
@@ -416,8 +440,8 @@ def is_port_available(host, port):
     """
     Check the port is available
     """
-    import socket
     import errno
+    import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -427,6 +451,8 @@ def is_port_available(host, port):
             if e.errno == errno.EADDRINUSE:
                 return False
             return True
+
+
 llm_logger = get_logger("fastdeploy", "fastdeploy.log")
 data_processor_logger = get_logger("data_processor", "data_processor.log")
 api_server_logger = get_logger("api_server", "api_server.log")

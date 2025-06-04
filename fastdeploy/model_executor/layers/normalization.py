@@ -38,6 +38,9 @@ class RMSNorm(nn.Layer):
         Initializes the normalization layer.
 
         Args:
+            llm_config (LLMConfig): Arguments related to inference, containing
+                attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
+                num_attention_heads, and ffn_hidden_size.
             hidden_size (int) : size of hidden state.
             eps:(float, optional): Small value added to the variance to avoid division by zero. Defaults to 1e-5.
             weight_key (str): Key name of weight in the pdparams state dict. Defaults to None, means no weight.

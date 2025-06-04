@@ -20,7 +20,12 @@ import numpy as np
 import paddle
 
 from fastdeploy.model_executor.layers.rotary_embedding import get_rope
+from fastdeploy.platforms import current_platform
 from fastdeploy.worker.model_runner.model_runner_base import ModelRunnerBase
+
+if current_platform.is_cuda() and current_platform.available():
+    from fastdeploy.model_executor.layers.utils import (
+        remove_padding, speculate_remove_padding)
 
 
 class ModelRunner(ModelRunnerBase):
@@ -77,6 +82,8 @@ class ModelRunner(ModelRunnerBase):
                     ErnieBotTokenizer.resource_files_names[
                         "vocab_file"] = vocab_file_names[i]
                     break
+            self.args.speculate_max_draft_tokens = 5
+
             config, tokenizer, model = build_stream_line_model(
                 os.path.join(self.args.model_name_or_path,
                              os.getenv("CONFIG_JSON_FILE", "config.json")),
@@ -90,10 +97,11 @@ class ModelRunner(ModelRunnerBase):
                 use_stop_seqs=self.model_cfg.ellm_dynamic_use_stop_seqs,
                 use_beam_search=False,
                 speculate_method=None,
-                speculate_max_draft_token_num=5,
+                speculate_max_draft_token_num=self.args.
+                speculate_max_draft_tokens,
                 return_all_hidden_states=False,
                 moe_quant_type="weight_only_int4",
-                use_safetensors=self.model_cfg.is_unified_ckpt,
+                use_safetensors=True,
             )
             model.eval()
             self.model = model
@@ -123,28 +131,22 @@ class ModelRunner(ModelRunnerBase):
         else:
             kv_num_head = self.model_cfg.num_attention_heads // self.nranks
         self.model_cfg.kv_num_head = kv_num_head
+        kv_cache_shape = self.attn_backend_cls.get_kv_cache_shape(
+            max_num_blocks=max_block_num,
+            block_size=self.args.block_size,
+            kv_num_head=kv_num_head,
+            head_dim=self.model_cfg.hidden_size //
+            self.model_cfg.num_attention_heads)
 
         for i in range(self.model_cfg.num_layers):
             cache_type = self.args.dtype
             cache_kvs["key_caches_{}".format(i)] = paddle.full(
-                shape=[
-                    max_block_num,
-                    kv_num_head,
-                    self.args.block_size,
-                    self.model_cfg.hidden_size //
-                    self.model_cfg.num_attention_heads,
-                ],
+                shape=kv_cache_shape,
                 fill_value=0,
                 dtype=cache_type,
             )
             cache_kvs["value_caches_{}".format(i)] = paddle.full(
-                shape=[
-                    max_block_num,
-                    kv_num_head,
-                    self.args.block_size,
-                    self.model_cfg.hidden_size //
-                    self.model_cfg.num_attention_heads,
-                ],
+                shape=kv_cache_shape,
                 fill_value=0,
                 dtype=cache_type,
             )
@@ -217,7 +219,48 @@ class ModelRunner(ModelRunnerBase):
                     task.get("stop_token_ids")[0])] = np.array(
                         task.get("stop_token_ids"), dtype="int64")
 
+    def pre_process(self):
+        """
+        pre_process
+        """
+        from fastdeploy.platforms import current_platform
+        if current_platform.is_cuda():
+            if self.args.speculate_method is not None:
+                (
+                    ids_remove_padding,
+                    padding_offset,
+                    cum_offsets,
+                    cu_seqlens_q,
+                    cu_seqlens_k,
+                ) = speculate_remove_padding(
+                    max_len=self.args.max_model_len,
+                    input_ids=self.share_inputs["input_ids"],
+                    seq_lens_this_time=self.share_inputs["seq_lens_this_time"],
+                    draft_tokens=self.share_inputs["draft_tokens"],
+                    seq_lens_encoder=self.share_inputs["seq_lens_encoder"])
+            else:
+                (
+                    ids_remove_padding,
+                    padding_offset,
+                    cum_offsets,
+                    cu_seqlens_q,
+                    cu_seqlens_k,
+                ) = remove_padding(
+                    max_len=self.args.max_model_len,
+                    input_ids=self.share_inputs["input_ids"],
+                    seq_lens_this_time=self.share_inputs["seq_lens_this_time"])
+        self.share_inputs["ids_remove_padding"] = ids_remove_padding
+        self.share_inputs["padding_offset"] = padding_offset
+        self.share_inputs["cum_offsets"] = cum_offsets
+        self.share_inputs["cu_seqlens_q"] = cu_seqlens_q
+        self.share_inputs["cu_seqlens_k"] = cu_seqlens_k
+        #init attn_backend
+        self.attn_backend = self.attn_backend_cls(self)
+        self._init_forward_meta()
+        self.attn_backend.init_attention_metadata(self.forward_meta)
+
     def generate(self):
+        self.pre_process()
         hiddden_states = self.model(**self.share_inputs)
         logits = self.model.compute_logits(hiddden_states)
         self.model.sample(logits, **self.share_inputs)
@@ -226,6 +269,8 @@ class ModelRunner(ModelRunnerBase):
         if "caches" in self.share_inputs:
             self.model.clear_parameters(pid)
             del self.share_inputs["caches"]
+            if self.forward_meta is not None:
+                del self.forward_meta.caches
             paddle.device.cuda.empty_cache()
             self.model.log_memory_usage("clear all memory")
 
@@ -254,6 +299,8 @@ class ModelRunner(ModelRunnerBase):
 
     def _update_share_input_block_num(self):
         del self.share_inputs["caches"]
+        if self.forward_meta is not None:
+            del self.forward_meta.caches
         self._init_kvcache()
 
         del self.share_inputs["block_tables"]

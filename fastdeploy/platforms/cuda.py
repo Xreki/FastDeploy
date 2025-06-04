@@ -1,3 +1,4 @@
+"""
 # Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,14 +12,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
 
 """
 cuda platform file
 """
 
 import paddle
-from .base import Platform
+from .base import Platform, _Backend
 from paddlenlp.utils.log import logger
+
 
 class CUDAPlatform(Platform):
     """
@@ -41,3 +44,22 @@ class CUDAPlatform(Platform):
                 f"\n Original Error is {e}"
             )
             return False
+
+    @classmethod
+    def get_attention_backend_cls(
+        cls,
+        selected_backend
+    ):
+        """
+        get_attention_backend_cls
+        """
+        if selected_backend == _Backend.NATIVE_ATTN:
+            logger.info("Using NATIVE ATTN backend.")
+            return ("fastdeploy.model_executor.layers.attention.PaddleNativeAttnBackend")
+        elif selected_backend == _Backend.APPEND_ATTN:
+            logger.info("Using APPEND ATTN backend.")
+            return ("fastdeploy.model_executor.layers.attention.AppendAttentionBackend")
+        else:
+            logger.warning(
+                "Other backends are not supported for now."
+            )
