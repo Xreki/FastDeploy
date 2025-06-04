@@ -45,7 +45,7 @@ from fastdeploy.model_executor.ops.gpu import (
 from fastdeploy.worker.model_runner import ForwardMeta
 
 from ..layers.embeddings import VocabParallelEmbedding
-from ..layers.lm_head import LMHead
+from ..layers.lm_head import ParallelLMHead
 from ..layers.normalization import RMSNorm
 from ..layers.quantization import get_quantization_config
 from .fused_transformer import FusedTransformer
@@ -1128,42 +1128,30 @@ class ErnieForCausalLM(ModelForCasualLM):
             self.is_norm_weight_type_fp32 = True
 
         if self.weight_sharing:
-            sharing_weight = self.ernie.embeddings.word_embeddings.weight
+            tie_word_embeddings = self.ernie.embeddings.word_embeddings.weight
         else:
-            sharing_weight = None
-        if self.weight_sharing_add_bias:
-            sharing_bias = self.ernie.embeddings.bias
-        else:
-            sharing_bias = None
+            tie_word_embeddings = None
 
-        lmhead_name = ("server_nlg_mask_lm_trans_fc_" if not self.ernie.is_mtp
-                       else "mtp_server_nlg_mask_lm_trans_fc_")
+        layer_prefix = None
         if self.use_moe:
-            self.lm_head = LMHead(
-                layer_name=lmhead_name,
-                linear_weight_key="lm_head.weight",
-                linear_bias_key=None,
-                input_dim=self.hidden_size,
-                output_dim=self.ernie.vocab_size,
-                fused_linear=self.configs.model_config.fused_linear,
-                sharing_weight=sharing_weight,
-                sharing_bias=sharing_bias,
-                use_ep=self.ernie.use_ep,
+            layer_prefix = "lm_head"
+        else:
+            layer_prefix = f"{self.base_model_prefix}"
+        if self.use_moe:
+            self.lm_head = ParallelLMHead(
+                llm_config=llm_config,
+                embedding_dim=self.hidden_size,
+                num_embeddings=self.ernie.vocab_size,
+                tie_word_embeddings=tie_word_embeddings,
+                prefix=layer_prefix,
             )
         else:
-            self.lm_head = LMHead(
-                layer_name=lmhead_name,
-                linear_weight_key=
-                f"{self.base_model_prefix}.output_linear.out_linear.weight",
-                linear_bias_key=(
-                    f"{self.base_model_prefix}.output_linear.out_linear.bias"
-                    if self.have_norm_bias else None),
-                input_dim=self.hidden_size,
-                output_dim=self.ernie.vocab_size,
-                fused_linear=self.configs.model_config.fused_linear,
-                sharing_weight=sharing_weight,
-                sharing_bias=sharing_bias,
-                use_ep=self.ernie.use_ep,
+            self.lm_head = ParallelLMHead(
+                llm_config=llm_config,
+                embedding_dim=self.hidden_size,
+                num_embeddings=self.ernie.vocab_size,
+                tie_word_embeddings=tie_word_embeddings,
+                prefix=layer_prefix,
             )
 
     @classmethod

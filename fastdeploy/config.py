@@ -458,13 +458,14 @@ class LoadConfig:
     scale_dir: str = None  # The directory where the scale file is located.
 
     act_scales = None
+    bias_keys = None
 
     def _post_init(self, model_config):
         if self.weight_keys:
-            self.norm_layer_mapping = self._create_weight_key_by_layer_name(
+            self.weight_keys_mapping = self._create_weight_key_by_layer_name(
                 model_config)
         else:
-            self.norm_layer_mapping = {}
+            self.weight_keys_mapping = {}
         self.quant_scale_mapping = self._create_quant_scale_mapping(
             model_config)
 
@@ -526,7 +527,7 @@ class LoadConfig:
         return mapping
 
     def get_weight_key_by_layer_name(self, layer_name: str) -> Optional[str]:
-        return self.norm_layer_mapping.get(layer_name)
+        return self.weight_keys_mapping.get(layer_name)
 
     def get_quant_scale_by_layer_name(self, layer_name: str) -> Optional[int]:
         return self.quant_scale_mapping.get(layer_name)
