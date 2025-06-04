@@ -271,7 +271,54 @@ std::vector<paddle::DataType> MoeExpertDispatchInferDtype(
           paddle::DataType::INT32};
 }
 
-
+/**
+ * @brief Mixture of Experts (MoE) Expert Dispatch Operator
+ * 
+ * This operator performs the following key functions:
+ * 1. Computes top-k experts for each input token based on gating scores
+ * 2. Permutes input tokens according to their selected experts for efficient expert processing
+ * 3. Computes prefix sums of tokens per expert for group_gemm optimization
+ * 
+ * Inputs:
+ *   - input: The input tensor to be routed to experts
+ *            Shape: [total_tokens, hidden_size]
+ *            dtype: bfloat16 or float16
+ *   - gating_output: Gating network output scores for each token-expert pair
+ *                   Shape: [total_tokens, expert_num]
+ *                   dtype: must be float32
+ *   - gating_correction_bias: Optional bias term for gating correction (expert_num)
+ * 
+ * Outputs:
+ *   - permute_input: Permuted input tensor organized by expert
+ *                   Shape: [moe_topk * total_tokens, hidden_size]
+ *                   dtype: Same as input
+ *   - tokens_expert_prefix_sum: Prefix sum array of token counts per expert for group_gemm
+ *                              Shape: [expert_num]
+ *                              dtype: int64
+ *   - permute_indices_per_token: Indices mapping for reconstructing original order
+ *                               Shape: [moe_topk, total_tokens]
+ *                               dtype: int32
+ *   - top_k_weight: Weight coefficients for combining expert outputs
+ *                  Shape: [total_tokens, moe_topk]
+ *                  dtype: float32
+ *   - top_k_indices: Indices of selected top-k experts for each token
+ *                   Shape: [total_tokens, moe_topk]
+ *                   dtype: int32
+ * 
+ * Attributes:
+ *   - moe_topk: Number of experts to select for each token (k value in top-k routing)
+ *   - group_moe: Whether to perform group softmax within the operator
+ *               (true: softmax is computed within groups of experts,
+ *                false: standard softmax across all experts)
+ *   - topk_only_mode: Operation mode selector
+ *                    (true: only performs topk selection without softmax,
+ *                     false: performs full softmax+topk computation)
+ * 
+ * Note:
+ * - The operator requires 2D input format [total_tokens, hidden_size]
+ * - For optimal performance, expert_num should be a power of 2 when possible
+ * - When group_moe is true, expert_num must be divisible by moe_topk
+ */
 PD_BUILD_STATIC_OP(moe_expert_dispatch)
     .Inputs({"input", "gating_output", paddle::Optional("gating_correction_bias")})
     .Outputs({"permute_input",
