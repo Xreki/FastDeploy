@@ -85,7 +85,7 @@ if [ $CARDS_PER_INSTANCE -lt 1 ] || [ $CARDS_PER_INSTANCE -gt 8 ]; then
     exit 1
 fi
 
-cd $ROLLOUT_WORKER_ROOT/fastdeploy/agent
+cd $ROLLOUT_WORKER_ROOT/training/agent
 
 # 计算需要的端口总数
 TOTAL_PORTS=$((NUM_INSTANCES * 3))
