@@ -143,7 +143,7 @@ class ModelRunner(ModelRunnerBase):
                     break
             self.args.speculate_max_draft_tokens = 5
 
-            config, tokenizer, model = build_stream_line_model(
+            config, tokenizer, model, _ = build_stream_line_model(
                 os.path.join(self.args.model_name_or_path,
                              os.getenv("CONFIG_JSON_FILE", "config.json")),
                 self.args.model_name_or_path,
@@ -160,7 +160,6 @@ class ModelRunner(ModelRunnerBase):
                 speculate_max_draft_tokens,
                 return_all_hidden_states=False,
                 moe_quant_type="weight_only_int4",
-                use_safetensors=True,
             )
             model.eval()
             self.model = model
@@ -191,7 +190,7 @@ class ModelRunner(ModelRunnerBase):
             kv_num_head = self.model_cfg.num_attention_heads // self.nranks
         self.model_cfg.kv_num_head = kv_num_head
         kv_cache_shape = self.attn_backend_cls.get_kv_cache_shape(
-            max_num_blocks=max_block_num,
+            max_num_blocks=total_block_num,
             block_size=self.args.block_size,
             kv_num_head=kv_num_head,
             head_dim=self.model_cfg.hidden_size //

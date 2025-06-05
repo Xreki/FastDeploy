@@ -50,7 +50,7 @@ from ..layers.normalization import RMSNorm
 from ..layers.quantization import get_quantization_config
 from .fused_transformer import FusedTransformer
 from .model_base import ModelForCasualLM
-
+from fastdeploy.model_executor.eplb.experts_manager import RedundantExpertManger
 
 def get_attr(layer, name):
     """
@@ -376,6 +376,11 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         weight_block_size=[-1, -1],
         scale_dir="None",
         output_via_mq=True,
+        enable_redundant_experts: bool = False,
+        redundant_experts_num: int = 0,
+        max_batch_size: int = 128,
+        use_offline_quant=False,
+        sharing_model=None,
         llm_config=None,
     ):
         """
@@ -444,7 +449,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         self.num_key_value_heads = num_key_value_heads
         self.cache_quant_dtype = cache_quant_dtype
         self.use_moe = use_moe
-
+        self.sharing_model = sharing_model
         if self.use_rmsnorm:
             self.norm_type = "rmsnorm"
         else:
@@ -524,7 +529,15 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         llm_config.parallel_config.column_cut = False
         llm_config.model_config.base_model_prefix = base_model_prefix
         llm_config.model_config.use_moe = use_moe
-
+        if enable_redundant_experts and use_moe:
+            self.redundant_table_manger = RedundantExpertManger(
+                n_routed_experts=moe_num_experts,
+                num_hidden_layers=num_layers,
+                redundant_experts_num=redundant_experts_num,
+                ep_size=mp_size,
+            )
+        else:
+            self.redundant_table_manger = None
         if use_moe and moe_layer_start_index > 0:
             fmt_keys.norm_before_qkv_weight_keys = [
                 f"ernie.layers.{i}.input_layernorm.weight"
@@ -618,15 +631,17 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
                 f"{base_model_prefix}.decoder.layers.{i}.linear2.bias"
                 for i in range(num_layers)
             ]
-
-        self.embeddings = VocabParallelEmbedding(
-            llm_config=llm_config,
-            num_embeddings=vocab_size,
-            embedding_dim=hidden_size,
-            params_dtype=paddle.get_default_dtype,
-            layer_name=(f"{base_model_prefix}.embeddings.word_embeddings"
-                        if not use_moe else "ernie.embed_tokens"),
-        )
+        if sharing_model is not None:
+            self.embeddings = sharing_model.gpt.embeddings
+        else:
+            self.embeddings = VocabParallelEmbedding(
+                llm_config=llm_config,
+                num_embeddings=vocab_size,
+                embedding_dim=hidden_size,
+                params_dtype=paddle.get_default_dtype,
+                layer_name=(f"{base_model_prefix}.embeddings.word_embeddings"
+                            if not use_moe else "ernie.embed_tokens"),
+            )
 
         # get ring_id
         ring_id = -1
@@ -765,14 +780,17 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             base_model_prefix=base_model_prefix,
             draft_type=draft_type,
             llm_config=llm_config,
+            redundant_table_manger=self.redundant_table_manger,
         )
-
-        self.norm = RMSNorm(
-            llm_config,
-            hidden_size=llm_config.model_config.hidden_size,
-            eps=1e-5,
-            layer_name=f"{base_model_prefix}.decoder.norm",
-        )
+        if sharing_model is not None:
+            self.norm = sharing_model.gpt.norm
+        else:
+            self.norm = RMSNorm(
+                llm_config,
+                hidden_size=llm_config.model_config.hidden_size,
+                eps=1e-5,
+                layer_name=f"{base_model_prefix}.decoder.norm",
+            )
 
         if is_mtp:
             self.e_norm = RMSNorm(
@@ -1138,33 +1156,50 @@ class ErnieForCausalLM(ModelForCasualLM):
 
         lmhead_name = ("server_nlg_mask_lm_trans_fc_" if not self.ernie.is_mtp
                        else "mtp_server_nlg_mask_lm_trans_fc_")
-        if self.use_moe:
-            self.lm_head = LMHead(
-                layer_name=lmhead_name,
-                linear_weight_key="lm_head.weight",
-                linear_bias_key=None,
-                input_dim=self.hidden_size,
-                output_dim=self.ernie.vocab_size,
-                fused_linear=self.configs.model_config.fused_linear,
-                sharing_weight=sharing_weight,
-                sharing_bias=sharing_bias,
-                use_ep=self.ernie.use_ep,
-            )
+        if self.ernie.sharing_model is not None:
+                self.lm_head = self.ernie.sharing_model.lm_head
         else:
-            self.lm_head = LMHead(
-                layer_name=lmhead_name,
-                linear_weight_key=
-                f"{self.base_model_prefix}.output_linear.out_linear.weight",
-                linear_bias_key=(
-                    f"{self.base_model_prefix}.output_linear.out_linear.bias"
-                    if self.have_norm_bias else None),
-                input_dim=self.hidden_size,
-                output_dim=self.ernie.vocab_size,
-                fused_linear=self.configs.model_config.fused_linear,
-                sharing_weight=sharing_weight,
-                sharing_bias=sharing_bias,
-                use_ep=self.ernie.use_ep,
+            if self.weight_sharing:
+                sharing_weight = self.ernie.embeddings.word_embeddings.weight
+            else:
+                sharing_weight = None
+            if self.weight_sharing_add_bias:
+                sharing_bias = self.ernie.embeddings.bias
+            else:
+                sharing_bias = None
+
+            lmhead_name = (
+                "server_nlg_mask_lm_trans_fc_"
+                if not self.ernie.is_mtp
+                else "mtp_server_nlg_mask_lm_trans_fc_"
             )
+            if self.use_moe:
+                self.lm_head = LMHead(
+                    layer_name=lmhead_name,
+                    linear_weight_key="lm_head.weight",
+                    linear_bias_key=None,
+                    input_dim=self.hidden_size,
+                    output_dim=self.ernie.vocab_size,
+                    fused_linear=self.configs.model_config.fused_linear,
+                    sharing_weight=sharing_weight,
+                    sharing_bias=sharing_bias,
+                    use_ep=self.ernie.use_ep,
+                )
+            else:
+                self.lm_head = LMHead(
+                    layer_name=lmhead_name,
+                    linear_weight_key=
+                    f"{self.base_model_prefix}.output_linear.out_linear.weight",
+                    linear_bias_key=(
+                        f"{self.base_model_prefix}.output_linear.out_linear.bias"
+                        if self.have_norm_bias else None),
+                    input_dim=self.hidden_size,
+                    output_dim=self.ernie.vocab_size,
+                    fused_linear=self.configs.model_config.fused_linear,
+                    sharing_weight=sharing_weight,
+                    sharing_bias=sharing_bias,
+                    use_ep=self.ernie.use_ep,
+                )
 
     @classmethod
     def name(self):

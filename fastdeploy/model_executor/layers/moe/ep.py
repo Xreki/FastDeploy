@@ -17,15 +17,16 @@
 import os
 import paddle
 import fastdeploy
+import paddle.distributed as dist
 
 from paddle.base.core import Config
 from paddle.distributed.communication.group import Group
 from paddle.distributed.communication import deep_ep
 from paddlenlp.utils.log import logger
 
-from .moe import MoELayer
+from fastdeploy.model_executor.layers.moe.moe import MoELayer
 from fastdeploy.inference_args import GenerationPhase
-from ..utils import get_tensor
+from fastdeploy.model_executor.layers.utils import get_tensor
 import fastdeploy.model_executor.ops.gpu.deep_gemm as deep_gemm
 
 import numpy as np
@@ -122,6 +123,7 @@ class DeepEPEngine:
         self,
         hidden_states: paddle.Tensor,
         topk_idx: paddle.Tensor,
+        moe_in_w4a8_scale,
         use_fp8: bool = False,
     ):
         """
@@ -149,6 +151,7 @@ class DeepEPEngine:
         ) = self.deepep_engine.low_latency_dispatch(
             hidden_states,
             topk_idx,
+            moe_in_w4a8_scale,
             self.num_max_dispatch_tokens_per_rank,
             self.num_experts,
             use_fp8=use_fp8,
@@ -204,7 +207,12 @@ class MoeEPLayer(MoELayer):
     """
 
     def __init__(
-        self, ep_engine: DeepEPEngine, num_local_experts: int, *args, **kwargs
+        self,
+        ep_engine: DeepEPEngine,
+        num_local_experts: int,
+        redundant_table_manger=None,
+        *args,
+        **kwargs,
     ):
         """
         Initialize MOE EP Layer
@@ -215,6 +223,7 @@ class MoeEPLayer(MoELayer):
         self.ep_engine = ep_engine
         self.ep_size = self.ep_engine.num_ranks
         self.ep_rank = self.ep_engine.rank_id
+        self.redundant_table_manger = redundant_table_manger
 
     def load_scale_state_dict(self):
         """
@@ -273,19 +282,133 @@ class MoeEPLayer(MoELayer):
         Args:
             state_dict: state dict
         """
+        logical_expert_ids = [
+            i
+            for i in range(
+                self.num_experts_start_offset,
+                self.num_experts_start_offset + self.num_local_experts,
+            )
+        ]
+        if self.redundant_table_manger is not None:
+            (
+                ep_rank_to_expert_id_list,
+                expert_id_to_ep_rank_array,
+                expert_in_rank_num_list,
+                tokens_per_expert_stats_list,
+            ) = self.redundant_table_manger.get_ep_rank_to_expert_id_list_by_layer(
+                self.layer_idx
+            )
+            logical_expert_ids = ep_rank_to_expert_id_list[
+                self.num_experts_start_offset : self.num_experts_start_offset
+                + self.num_local_experts
+            ]
+
         up_gate_proj_weight = []
+        up_gate_proj_weight_scale = []
         down_proj_weight = []
-        for j in range(
-            self.num_experts_start_offset,
-            self.num_experts_start_offset + self.num_local_experts,
-        ):
-            up_gate_proj_weight.append(
-                get_tensor(state_dict.pop(self.ffn1_expert_weight_key.format(j)))
-            )
-            down_proj_weight.append(
-                get_tensor(state_dict.pop(self.ffn2_expert_weight_key.format(j)))
-            )
-        return up_gate_proj_weight, down_proj_weight
+        down_proj_weight_scale = []
+        if self.redundant_table_manger is not None:
+            for j in logical_expert_ids:
+                if expert_in_rank_num_list[j] > 1:
+                    # TODO:减一计数，最后pop
+                    up_gate = (
+                        state_dict.get(self.ffn1_expert_weight_key.format(j))
+                        if self.moe_quant_type == "default"
+                        or not self.use_offline_quant
+                        else state_dict.get(
+                            (self.ffn1_expert_weight_key + ".quant_weight").format(j)
+                        )
+                    )
+                    down = (
+                        state_dict.get(self.ffn2_expert_weight_key.format(j))
+                        if self.moe_quant_type == "default"
+                        or not self.use_offline_quant
+                        else state_dict.get(
+                            (self.ffn2_expert_weight_key + ".quant_weight").format(j)
+                        )
+                    )
+                    if self.use_offline_quant:
+                        up_gate_scale = state_dict.get(
+                            (self.ffn1_expert_weight_key + ".quant_scale").format(j)
+                        )
+                        down_scale = state_dict.get(
+                            (self.ffn2_expert_weight_key + ".quant_scale").format(j)
+                        )
+                        up_gate_proj_weight_scale.append(get_tensor(up_gate_scale))
+                        down_proj_weight_scale.append(get_tensor(down_scale))
+                else:
+                    up_gate = (
+                        state_dict.pop(self.ffn1_expert_weight_key.format(j))
+                        if self.moe_quant_type == "default"
+                        or not self.use_offline_quant
+                        else state_dict.pop(
+                            (self.ffn1_expert_weight_key + ".quant_weight").format(j)
+                        )
+                    )
+                    down = (
+                        state_dict.pop(self.ffn2_expert_weight_key.format(j))
+                        if self.moe_quant_type == "default"
+                        or not self.use_offline_quant
+                        else state_dict.pop(
+                            (self.ffn2_expert_weight_key + ".quant_weight").format(j)
+                        )
+                    )
+
+                    if self.use_offline_quant:
+                        up_gate_scale = state_dict.pop(
+                            (self.ffn1_expert_weight_key + ".quant_scale").format(j)
+                        )
+                        down_scale = state_dict.pop(
+                            (self.ffn2_expert_weight_key + ".quant_scale").format(j)
+                        )
+                        up_gate_proj_weight_scale.append(get_tensor(up_gate_scale))
+                        down_proj_weight_scale.append(get_tensor(down_scale))
+                up_gate_proj_weight.append(get_tensor(up_gate))
+                down_proj_weight.append(get_tensor(down))
+                up_gate_proj_weight_scale.append(get_tensor(up_gate_scale))
+                down_proj_weight_scale.append(get_tensor(down_scale))
+        else:
+            for j in logical_expert_ids:
+                up_gate_proj_weight.append(
+                    get_tensor(state_dict.pop(self.ffn1_expert_weight_key.format(j)))
+                    if self.moe_quant_type == "default" or not self.use_offline_quant
+                    else get_tensor(
+                        state_dict.pop(
+                            (self.ffn1_expert_weight_key + ".quant_weight").format(j)
+                        )
+                    )
+                )
+                down_proj_weight.append(
+                    get_tensor(state_dict.pop(self.ffn2_expert_weight_key.format(j)))
+                    if self.moe_quant_type == "default" or not self.use_offline_quant
+                    else get_tensor(
+                        state_dict.pop(
+                            (self.ffn2_expert_weight_key + ".quant_weight").format(j)
+                        )
+                    )
+                )
+                if self.use_offline_quant:
+                    up_gate_proj_weight_scale.append(
+                        get_tensor(
+                            state_dict.pop(
+                                (self.ffn1_expert_weight_key + ".quant_scale").format(j)
+                            )
+                        )
+                    )
+                    down_proj_weight_scale.append(
+                        get_tensor(
+                            state_dict.pop(
+                                (self.ffn2_expert_weight_key + ".quant_scale").format(j)
+                            )
+                        )
+                    )
+
+        return (
+            up_gate_proj_weight,
+            down_proj_weight,
+            up_gate_proj_weight_scale,
+            down_proj_weight_scale,
+        )
 
     def forward(self, x, **kwargs):
         """
@@ -320,18 +443,48 @@ class PrefillMoeEPLayer(MoeEPLayer):
             topk_weights (Tensor): The scores of getting highest score's exports.
                 The shape is `[token, topk]`. The data type should be float32.
         """
+        topk_idx = None
+        topk_weights = None
         gate_out = paddle.matmul(x.cast("float32"), self.gate_weight)
-        topk_idx, topk_weights = fastdeploy.model_executor.ops.gpu.moe_topk_select(
-            gate_out,
+
+        if self.redundant_table_manger is not None:
             (
-                self.gate_correction_bias
-                if self.moe_config.moe_use_gate_correction_bias
-                else None
-            ),
-            self.top_k,
-            True,
-            False,
-        )
+                ep_rank_to_expert_id_list,
+                expert_id_to_ep_rank_array,
+                expert_in_rank_num_list,
+                tokens_per_expert_stats_list,
+            ) = self.redundant_table_manger.get_ep_rank_to_expert_id_list_by_layer(
+                self.layer_idx
+            )
+
+            topk_idx, topk_weights = fastdeploy.model_executor.ops.gpu.f_moe_redundant_topk_select(
+                gating_logits=gate_out,
+                expert_id_to_ep_rank_array=expert_id_to_ep_rank_array,
+                expert_in_rank_num_list=expert_in_rank_num_list,
+                tokens_per_expert_stats_list=tokens_per_expert_stats_list,
+                bias=(
+                    self.gate_correction_bias
+                    if self.moe_config.moe_use_gate_correction_bias
+                    else None
+                ),
+                moe_topk=self.top_k,
+                apply_norm_weight=True,  # apply_norm_weight
+                enable_softmax_top_k_fused=False,
+                redundant_ep_rank_num_plus_one=self.inference_args.redundant_experts_num
+                + 1,
+            )
+        else:
+            topk_idx, topk_weights = fastdeploy.model_executor.ops.gpu.moe_topk_select(
+                gate_out,
+                (
+                    self.gate_correction_bias
+                    if self.moe_config.moe_use_gate_correction_bias
+                    else None
+                ),
+                self.top_k,
+                True,
+                False,
+            )
         return topk_idx, topk_weights
 
     def micro_batch_dispatch(self, x, topk_idx, topk_weights, event):
@@ -352,7 +505,7 @@ class PrefillMoeEPLayer(MoeEPLayer):
         (num_tokens_per_rank, _, num_tokens_per_expert, is_token_in_rank, _) = (
             self.ep_engine.deepep_engine.get_dispatch_layout(
                 topk_idx,
-                self.num_experts,
+                self.num_experts + self.inference_args.redundant_experts_num,
                 previous_event=event,
                 async_finish=self.ep_engine.async_finish,
                 allocate_on_comm_stream=self.ep_engine.async_finish,
@@ -453,10 +606,8 @@ class PrefillMoeEPLayer(MoeEPLayer):
                 # swiglu
                 ffn_out = paddle.incubate.nn.functional.swiglu(ffn_out, None)
                 # ffn2
-                ffn_in_x, ffn_in_x_scale_tensor = (
-                    fastdeploy.model_executor.ops.gpu.per_token_quant(
-                        ffn_out, self.inference_args.weight_block_size[0]
-                    )
+                ffn_in_x, ffn_in_x_scale_tensor = fastdeploy.model_executor.ops.gpu.per_token_quant(
+                    ffn_out, self.inference_args.weight_block_size[0]
                 )
                 ffn_out = paddle.empty(
                     (ffn_out.shape[0], self.ffn2_weight_shape[1]), dtype=paddle.bfloat16
@@ -568,22 +719,53 @@ class PrefillMoeEPLayer(MoeEPLayer):
         Args:
             x: [token_num, hidden_dim]
         """
+        topk_idx = None
+        topk_weights = None
         gate_out = paddle.matmul(x.cast("float32"), self.gate_weight)
         # get topk
-        topk_idx, topk_weights = fastdeploy.model_executor.ops.gpu.moe_topk_select(
-            gate_out,
+        if self.redundant_table_manger is not None:
             (
-                self.gate_correction_bias
-                if self.moe_config.moe_use_gate_correction_bias
-                else None
-            ),
-            self.top_k,
-            True,  # apply_norm_weight,
-            False,
-        )
+                ep_rank_to_expert_id_list,
+                expert_id_to_ep_rank_array,
+                expert_in_rank_num_list,
+                tokens_per_expert_stats_list,
+            ) = self.redundant_table_manger.get_ep_rank_to_expert_id_list_by_layer(
+                self.layer_idx
+            )
+
+            topk_idx, topk_weights = fastdeploy.model_executor.ops.gpu.f_moe_redundant_topk_select(
+                gating_logits=gate_out,
+                expert_id_to_ep_rank_array=expert_id_to_ep_rank_array,
+                expert_in_rank_num_list=expert_in_rank_num_list,
+                tokens_per_expert_stats_list=tokens_per_expert_stats_list,
+                bias=(
+                    self.gate_correction_bias
+                    if self.moe_config.moe_use_gate_correction_bias
+                    else None
+                ),
+                moe_topk=self.top_k,
+                apply_norm_weight=True,  # apply_norm_weight
+                enable_softmax_top_k_fused=False,
+                redundant_ep_rank_num_plus_one=self.inference_args.redundant_experts_num
+                + 1,
+            )
+        else:
+            topk_idx, topk_weights = fastdeploy.model_executor.ops.gpu.moe_topk_select(
+                gate_out,
+                (
+                    self.gate_correction_bias
+                    if self.moe_config.moe_use_gate_correction_bias
+                    else None
+                ),
+                self.top_k,
+                True,  # apply_norm_weight,
+                False,
+            )
         # dispatch intranode
         (num_tokens_per_rank, _, num_tokens_per_expert, is_token_in_rank, _) = (
-            self.ep_engine.deepep_engine.get_dispatch_layout(topk_idx, self.num_experts)
+            self.ep_engine.deepep_engine.get_dispatch_layout(
+                topk_idx, self.num_experts + self.inference_args.redundant_experts_num
+            )
         )
         if self.moe_quant_type == "fp8":
             x, x_scale_tensor = fastdeploy.model_executor.ops.gpu.per_token_quant(
@@ -664,10 +846,8 @@ class PrefillMoeEPLayer(MoeEPLayer):
                 # swiglu
                 ffn_out = paddle.incubate.nn.functional.swiglu(ffn_out, None)
                 # ffn2
-                ffn_in_x, ffn_in_x_scale_tensor = (
-                    fastdeploy.model_executor.ops.gpu.per_token_quant(
-                        ffn_out, self.inference_args.weight_block_size[0]
-                    )
+                ffn_in_x, ffn_in_x_scale_tensor = fastdeploy.model_executor.ops.gpu.per_token_quant(
+                    ffn_out, self.inference_args.weight_block_size[0]
                 )
                 ffn_out = paddle.empty(
                     (ffn_out.shape[0], self.ffn2_weight_shape[1]), dtype=paddle.bfloat16
@@ -822,25 +1002,54 @@ class DecoderMoeEPLayer(MoeEPLayer):
         """
         Calculate gate
         """
+        topk_idx = None
+        topk_weights = None
         gate_out = paddle.matmul(x.cast("float32"), self.gate_weight)
 
         if os.getenv("EP_DECODER_PERF_TEST", "False") == "True":
             gate_out = paddle.rand(shape=gate_out.shape, dtype=gate_out.dtype)
 
-        topk_idx, topk_weights = fastdeploy.model_executor.ops.gpu.moe_topk_select(
-            gate_out,
+        if self.redundant_table_manger is not None:
             (
-                self.gate_correction_bias
-                if self.moe_config.moe_use_gate_correction_bias
-                else None
-            ),
-            self.top_k,
-            True,  # apply_norm_weight
-            False,
-        )
+                ep_rank_to_expert_id_list,
+                expert_id_to_ep_rank_array,
+                expert_in_rank_num_list,
+                tokens_per_expert_stats_list,
+            ) = self.redundant_table_manger.get_ep_rank_to_expert_id_list_by_layer(
+                self.layer_idx
+            )
+
+            topk_idx, topk_weights = fastdeploy.model_executor.ops.gpu.f_moe_redundant_topk_select(
+                gating_logits=gate_out,
+                expert_id_to_ep_rank_array=expert_id_to_ep_rank_array,
+                expert_in_rank_num_list=expert_in_rank_num_list,
+                tokens_per_expert_stats_list=tokens_per_expert_stats_list,
+                bias=(
+                    self.gate_correction_bias
+                    if self.moe_config.moe_use_gate_correction_bias
+                    else None
+                ),
+                moe_topk=self.top_k,
+                apply_norm_weight=True,  # apply_norm_weight
+                enable_softmax_top_k_fused=False,
+                redundant_ep_rank_num_plus_one=self.inference_args.redundant_experts_num
+                + 1,
+            )
+        else:
+            topk_idx, topk_weights = fastdeploy.model_executor.ops.gpu.moe_topk_select(
+                gate_out,
+                (
+                    self.gate_correction_bias
+                    if self.moe_config.moe_use_gate_correction_bias
+                    else None
+                ),
+                self.top_k,
+                True,  # apply_norm_weight
+                False,
+            )
         return topk_idx, topk_weights
 
-    def ffn(self, permute_input, token_nums_per_expert, expert_idx_per_token=None):
+    def ffn(self, permute_input, token_nums_per_expert):
         """
         Calculate moe
         """
@@ -898,6 +1107,14 @@ class DecoderMoeEPLayer(MoeEPLayer):
                 expected_m,
             )
         else:
+            expert_idx_per_token = None
+            if self.moe_quant_type == "w4a8":
+                # Note (zkk)
+                num_local_experts, max_num, _ = permute_input.shape
+                expert_idx_per_token = paddle.arange(num_local_experts)[:, None].tile(
+                    [1, max_num]
+                )
+
             ffn_out = fastdeploy.model_executor.ops.gpu.moe_expert_ffn(
                 permute_input,
                 token_nums_per_expert.cast("int64"),
@@ -931,20 +1148,20 @@ class DecoderMoeEPLayer(MoeEPLayer):
         """
         topk_idx, topk_weights = self.gate(x)
 
+        moe_in_w4a8_scale = None
+        if self.moe_quant_type == "w4a8":
+            moe_in_w4a8_scale = []
+            dist.all_gather(moe_in_w4a8_scale, self.moe_ffn1_in_scale)
+            moe_in_w4a8_scale = paddle.concat(moe_in_w4a8_scale, axis=0)
+
         recv_hidden_states, recv_expert_count, handle, dispatch_hook = (
             self.ep_engine.low_latency_dispatch(
-                x, topk_idx, self.moe_quant_type == "fp8"
+                x, topk_idx, moe_in_w4a8_scale, self.moe_quant_type == "fp8"
             )
         )
         if dispatch_hook is not None:
             dispatch_hook()
 
-        # TODO: dispatch 获取expert_idx_per_token
-        # expert_idx_per_token = []
-        # for expert_id in range(len(token_nums_per_expert)):
-        #     for i in range(token_nums_per_expert[expert_id]):
-        #         expert_idx_per_token.append(expert_id)
-        # expert_idx_per_token = paddle.to_tensor(expert_idx_per_token, "int64")
         ffn_out = self.ffn(recv_hidden_states, recv_expert_count)
 
         combined_hidden_states, combine_hook = self.ep_engine.low_latency_combine(

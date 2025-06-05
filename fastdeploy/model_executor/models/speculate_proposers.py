@@ -282,7 +282,7 @@ class ModelProposer(Proposer):
 
             args.draft_model_type = model_config["quant_type"]
 
-        config, tokenizer, model = build_stream_line_model(
+        config, tokenizer, model, _ = build_stream_line_model(
             config_path,
             args.draft_model_path,
             args.dtype,

@@ -16,7 +16,7 @@ rm -rf log
 rm -f core*
 
 export NVIDIA_TF32_OVERRIDE=0
-export NCCL_ALGO=Tree
+# export NCCL_ALGO=Tree
 export FLAGS_allocator_strategy=auto_growth
 export FLAGS_fraction_of_gpu_memory_to_use=0.98
 export FLAGS_gemm_use_half_precision_compute_type=False
@@ -27,6 +27,7 @@ export FLAGS_use_append_attn=1
 
 export devices=0,1,2,3,4,5,6,7
 export CUDA_VISIBLE_DEVICES=${devices}
+export GERERATION_PHASE=${GERERATION_PHASE:-2}
 
 # export FLAGS_enable_blaslt_global_search=1
 # export FLAGS_cublaslt_device_best_config=/path/to/cublaslt_device_best_config.csv
@@ -59,4 +60,5 @@ python -m paddle.distributed.launch \
         --top_p 0 \
         --moe_quant_type "weight_only_int4" \
         --use_ep "False" \
-        --use_safetensors "False"
+        --use_safetensors "False" \
+        --generation_phase ${GERERATION_PHASE} \

@@ -42,6 +42,7 @@ std::vector<paddle::Tensor> GetDataPtrIpc(const paddle::Tensor &tmp_input,
     sharedMemoryInfo info;
     if (sharedMemoryOpen(shm_name.c_str(), sizeof(shmStruct), &info) != 0) {
         printf("Failed to create shared memory slab\n");
+        printf("Func GetDataPtrIpc. Shm_name: %s\n", shm_name.c_str());
         exit(EXIT_FAILURE);
     }
     shm = (volatile shmStruct *)info.addr;

@@ -467,7 +467,6 @@ def parse_args():
     parser.add_argument("--speculate_max_draft_tokens", type=int, default=1)
 
     parser.add_argument("--max_num_batched_tokens", type=int, default=2048, help="max num batched tokens")
-    parser.add_argument("--enable_chunked_prefill", action='store_true', help="enable chunked prefill")
     args = parser.parse_args()
     return args
 

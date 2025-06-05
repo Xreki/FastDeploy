@@ -447,7 +447,8 @@ template <typename T,
           int VecSize = 4,
           int RoundType = 0,
           int HeadDim = 128,
-          typename InT = int>
+          typename InT = int,
+          bool IsFP8 = false>
 __global__ void append_speculate_cache_int8_rope_kernel(
     const InT* __restrict__ quant_qkv,  // [num_head, num_heads + 2 *
                                         // gqa_group_size, head_size]
@@ -643,22 +644,8 @@ __global__ void append_speculate_cache_int8_rope_kernel(
     }
 #pragma unroll
     for (uint32_t i = 0; i < HALF_K_VEC_SIZE; i++) {
-      float quant_value1 = static_cast<float>(scale * bias_vec1[i]);
-      float quant_value2 = static_cast<float>(scale * bias_vec2[i]);
-      if constexpr (RoundType == 0) {
-        quant_value1 = static_cast<float>(roundWithTiesToEven(quant_value1));
-        quant_value2 = static_cast<float>(roundWithTiesToEven(quant_value2));
-      } else {
-        quant_value1 = static_cast<float>(round(quant_value1));
-        quant_value2 = static_cast<float>(round(quant_value2));
-      }
-      quant_value1 = quant_value1 > max_bound ? max_bound : quant_value1;
-      quant_value1 = quant_value1 < min_bound ? min_bound : quant_value1;
-      quant_value2 = quant_value2 > max_bound ? max_bound : quant_value2;
-      quant_value2 = quant_value2 < min_bound ? min_bound : quant_value2;
-      cache_vec[i] = static_cast<uint8_t>(quant_value1 + 128.0f);
-      cache_vec[i + HALF_K_VEC_SIZE] =
-          static_cast<uint8_t>(quant_value2 + 128.0f);
+      cache_vec[i] = QuantToC8<T,true, IsFP8, RoundType>(scale, bias_vec1[i], max_bound, min_bound);
+      cache_vec[i + HALF_K_VEC_SIZE] = QuantToC8<T,true, IsFP8, RoundType>(scale, bias_vec2[i], max_bound, min_bound);
     }
     if (head_idx < num_heads + gqa_group_size) {
       const int start_block_16 =

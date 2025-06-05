@@ -14,12 +14,19 @@
 # limitations under the License.
 """
 
+import os
+
+import fastdeploy
+from paddlenlp.utils.log import logger
+
 import paddle
 from paddle import nn
 
 from fastdeploy.platforms import current_platform
 
 from .utils import _set_var_distributed, divide, get_tensor
+
+import fastdeploy.model_executor.ops.gpu.deep_gemm as deep_gemm
 
 
 class LinearBase(nn.Layer):
@@ -86,7 +93,8 @@ class LinearBase(nn.Layer):
 
         if llm_config.quant_config:
             self.quant_method = llm_config.quant_config.get_quant_method(self)
-
+        self.use_offline_quant = llm_config.tmp_config.use_offline_quant
+        
     def is_y_transposed(self):
         """
         Returns whether the y tensor should be transposed for inference.
@@ -190,10 +198,27 @@ class LinearBase(nn.Layer):
             return self._dtype
         if self.weight_dtype == "int4":
             return "int8"
-
+        # TODO(wangzhe24) create_parameter not support FP8
         if "float8" in self.weight_dtype:
-            return "float8_e4m3fn"
+            return self._dtype
         return self.weight_dtype
+
+
+    def load_offline_quant_state_dict(self, quant_weight, quant_scale=None):
+        """
+        Load offline the checkpoint state dictionary into the layer.
+        """
+        if quant_scale is None:
+            if "float8" in self.weight_dtype:
+                self.linear_weight.copy_(quant_weight, False)
+            else:
+                self.linear_weight.set_value(quant_weight)
+        else:
+            if self.inference_args.weight_block_size[0] != -1:
+                self.linear_weight.copy_(quant_weight.view(paddle.float8_e4m3fn), False)
+            else:
+                self.linear_weight.set_value(quant_weight)
+            self.linear_weight_scale.set_value(quant_scale)
 
     def load_state_dict(self, state_dict):
         """
@@ -202,26 +227,36 @@ class LinearBase(nn.Layer):
         Args:
             state_dict (dict): A dictionary containing the checkpoint weights and biases.
         """
-        # weight
-        assert self.weight_key is not None, 'weight_key should not be None.'
-        weight_tensor = get_tensor(state_dict.pop(self.weight_key))
-
-        if self.llm_config.quant_config:
-            self.quant_method.process_loaded_weights(self, weight_tensor)
+        if self.use_offline_quant:
+            self.load_offline_quant_state_dict(
+                quant_weight=get_tensor(
+                    state_dict.pop(self.weight_key + ".quant_weight")
+                ),
+                quant_scale=get_tensor(
+                    state_dict.pop(self.weight_key + ".quant_scale")
+                ),
+            )
         else:
-            self.linear_weight.set_value(weight_tensor)
+            # weight
+            assert self.weight_key is not None, 'weight_key should not be None.'
+            weight_tensor = get_tensor(state_dict.pop(self.weight_key))
+
+            if self.llm_config.quant_config:
+                self.quant_method.process_loaded_weights(self, weight_tensor)
+            else:
+                self.linear_weight.set_value(weight_tensor)
 
         # bias
         if self.with_bias:
-            bias_tensor = paddle.to_tensor(
-                get_tensor(state_dict.pop(self.bias_key)))
+            bias_tensor = paddle.to_tensor(get_tensor(state_dict.pop(self.bias_key)))
             self.linear_bias.set_value(bias_tensor)
 
         # smooth quant
         if self.use_smooth_quant:
             if self.shift_key in state_dict:
-                shift_tensor = get_tensor(state_dict.pop(
-                    self.shift_key)).astype(paddle.get_default_dtype())
+                shift_tensor = get_tensor(state_dict.pop(self.shift_key)).astype(
+                    paddle.get_default_dtype()
+                )
             else:
                 shift_tensor = paddle.zeros(
                     shape=self.linear_shift_shape,
@@ -229,8 +264,9 @@ class LinearBase(nn.Layer):
                 )
             self.linear_shift.set_value(shift_tensor)
             if self.smooth_key in state_dict:
-                smooth_tensor = get_tensor(state_dict.pop(
-                    self.smooth_key)).astype(paddle.get_default_dtype())
+                smooth_tensor = get_tensor(state_dict.pop(self.smooth_key)).astype(
+                    paddle.get_default_dtype()
+                )
             else:
                 smooth_tensor = paddle.ones(
                     shape=[self.linear_smooth_shape],
@@ -579,8 +615,9 @@ class QKVParallelLinear(ColumnParallelLinear):
         # smooth quant
         if self.use_smooth_quant:
             if self.shift_key in state_dict:
-                shift_tensor = get_tensor(state_dict.pop(
-                    self.shift_key)).astype(paddle.get_default_dtype())
+                shift_tensor = get_tensor(state_dict.pop(self.shift_key)).astype(
+                    paddle.get_default_dtype()
+                )
             else:
                 shift_tensor = paddle.zeros(
                     shape=self.linear_shift_shape,
@@ -588,8 +625,9 @@ class QKVParallelLinear(ColumnParallelLinear):
                 )
             self.linear_shift.set_value(shift_tensor)
             if self.smooth_key in state_dict:
-                smooth_tensor = get_tensor(state_dict.pop(
-                    self.smooth_key)).astype(paddle.get_default_dtype())
+                smooth_tensor = get_tensor(state_dict.pop(self.smooth_key)).astype(
+                    paddle.get_default_dtype()
+                )
             else:
                 smooth_tensor = paddle.ones(
                     shape=[self.linear_smooth_shape],

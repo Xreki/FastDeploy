@@ -544,7 +544,7 @@ class Predictor:
             from fastdeploy.model_executor.models.export_model import \
                 build_stream_line_model
 
-            config, tokenizer, model = build_stream_line_model(
+            config, tokenizer, model, _ = build_stream_line_model(
                 config_path,
                 args.model_name_or_path,
                 args.dtype,
@@ -695,31 +695,31 @@ class Predictor:
                 for i in range(num_layers):
                     qkv_weights_lora_A.append(
                         lora_states[
-                            f"ernie.decoder.layers.{i}.self_attn.qkv_proj.lora_A"
+                            f"gpt.decoder.layers.{i}.self_attn.qkv_proj.lora_A"
                         ].transpose((1, 0))
                     )
                     qkv_weights_lora_B.append(
                         lora_states[
-                            f"ernie.decoder.layers.{i}.self_attn.qkv_proj.lora_B"
+                            f"gpt.decoder.layers.{i}.self_attn.qkv_proj.lora_B"
                         ].transpose((1, 0))
                     )
                     linear_weights_lora_A.append(
                         lora_states[
-                            f"ernie.decoder.layers.{i}.self_attn.out_proj.lora_A"
+                            f"gpt.decoder.layers.{i}.self_attn.out_proj.lora_A"
                         ].transpose((1, 0))
                     )
                     linear_weights_lora_B.append(
                         lora_states[
-                            f"ernie.decoder.layers.{i}.self_attn.out_proj.lora_B"
+                            f"gpt.decoder.layers.{i}.self_attn.out_proj.lora_B"
                         ].transpose((1, 0))
                     )
                     ffn1_weights_lora_A.append(
-                        lora_states[f"ernie.decoder.layers.{i}.linear1.lora_A"].transpose(
+                        lora_states[f"gpt.decoder.layers.{i}.linear1.lora_A"].transpose(
                             (1, 0)
                         )
                     )
                     # for ffn1
-                    value = lora_states[f"ernie.decoder.layers.{i}.linear1.lora_B"]
+                    value = lora_states[f"gpt.decoder.layers.{i}.linear1.lora_B"]
                     convert_value = np.zeros_like(value)
                     out_dim = value.shape[-1]
                     convert_value[:, :out_dim // 2] = value[:, ::2]
@@ -727,12 +727,12 @@ class Predictor:
                     ffn1_weights_lora_B.append(convert_value.transpose((1, 0)))
 
                     ffn2_weights_lora_A.append(
-                        lora_states[f"ernie.decoder.layers.{i}.linear2.lora_A"].transpose(
+                        lora_states[f"gpt.decoder.layers.{i}.linear2.lora_A"].transpose(
                             (1, 0)
                         )
                     )
                     ffn2_weights_lora_B.append(
-                        lora_states[f"ernie.decoder.layers.{i}.linear2.lora_B"].transpose(
+                        lora_states[f"gpt.decoder.layers.{i}.linear2.lora_B"].transpose(
                             (1, 0)
                         )
                     )

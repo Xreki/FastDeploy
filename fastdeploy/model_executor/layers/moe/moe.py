@@ -51,7 +51,6 @@ class FusedMoE(nn.Layer):
     def __init__(
         self,
         llm_config,
-        moe_config,
         layer_name,
         layer_idx=-1,
     ):
@@ -74,9 +73,12 @@ class FusedMoE(nn.Layer):
         self.ep_size = llm_config.parallel_config.ep_size
 
         self.hidden_size = llm_config.model_config.hidden_size
-        self.moe_config = moe_config
+        self.moe_config = llm_config.moe_config
         self.moe_quant_type = self.moe_config.moe_quant_type
-        logger.info(f"MoE is running in {self.moe_quant_type} mode")
+        self.use_offline_quant = llm_config.tmp_config.use_offline_quant
+        moe_tag = self.llm_config.moe_config.moe_tag
+        logger.info(f"{moe_tag}MoE is running in {self.moe_quant_type} mode")
+        
         self.num_experts = self.moe_config.num_experts
         self.num_local_experts = self.num_experts // self.ep_size
 
@@ -124,7 +126,9 @@ class FusedMoE(nn.Layer):
         """
         logger.info("Load TP FFN1")
         up_gate_proj_weight = []
+        up_gate_proj_weight_scale = []
         down_proj_weight = []
+        down_proj_weight_scale = []
         for j in range(self.num_experts):
             up_gate_proj_weight.append(
                 get_tensor(
@@ -138,17 +142,18 @@ class FusedMoE(nn.Layer):
                                                            j))))
         return up_gate_proj_weight, down_proj_weight
 
-    def load_state_dict(self, state_dict):
+    def load_state_dict(self, state_dict, is_update: bool = False):
         """
         load_state_dict function.
         """
         # gate
-        gate_weight_tensor = get_tensor(state_dict.pop(self.gate_weight_key))
-        self.gate_weight = self.create_parameter(
-            shape=gate_weight_tensor.shape,
-            dtype="float32",
-        )
-        self.gate_weight.set_value(gate_weight_tensor)
+        if not is_update:
+            gate_weight_tensor = get_tensor(state_dict.pop(self.gate_weight_key))
+            self.gate_weight = self.create_parameter(
+                shape=gate_weight_tensor.shape,
+                dtype="float32",
+            )
+            self.gate_weight.set_value(gate_weight_tensor)
 
         # gate_correction_bias
         if self.moe_config.moe_use_gate_correction_bias:

@@ -187,13 +187,22 @@ void EncoderWriteCacheWithRopeKernel(
   }
 
   const char* fmt_write_cache_completed_signal_str = std::getenv("FLAGS_fmt_write_cache_completed_signal");
+  const char* FLAGS_use_pd_disaggregation_per_chunk = std::getenv("FLAGS_use_pd_disaggregation_per_chunk");
   if (fmt_write_cache_completed_signal_str &&
       (std::strcmp(fmt_write_cache_completed_signal_str, "true") == 0 ||
        std::strcmp(fmt_write_cache_completed_signal_str, "1") == 0)) {
-      if (kv_signal_data) {
+      if (FLAGS_use_pd_disaggregation_per_chunk &&
+          (std::strcmp(FLAGS_use_pd_disaggregation_per_chunk, "true") == 0 ||
+           std::strcmp(FLAGS_use_pd_disaggregation_per_chunk, "1") == 0)) {
         cudaLaunchHostFunc(qkv.stream(),
-                           &RemoteCacheKvIpc::save_cache_kv_complete_signal_layerwise,
-                           (void*)(const_cast<int64_t*>(kv_signal_data.get().data<int64_t>())));
+                           &(RemoteCacheKvIpc::save_cache_kv_complete_signal_layerwise_per_query),
+                           (void*)nullptr);
+      } else {
+        if (kv_signal_data) {
+          cudaLaunchHostFunc(qkv.stream(),
+                            &RemoteCacheKvIpc::save_cache_kv_complete_signal_layerwise,
+                            (void*)(const_cast<int64_t*>(kv_signal_data.get().data<int64_t>())));
+        }
       }
   }
 }

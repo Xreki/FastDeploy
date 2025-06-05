@@ -269,6 +269,7 @@ class MoEConfig:
     im_patch_id = (
         100295  # multimodality, TODO(liuyuanle): read from config.json
     )
+    moe_tag = ""
 
 
 @dataclass
@@ -453,7 +454,7 @@ class TmpConfig:
     has_zero_point: bool = False
     is_channel_wise: bool = False
     weight_block_size: int = 16
-
+    use_offline_quant: bool = False
 
 @dataclass
 class DecodingConfig:
