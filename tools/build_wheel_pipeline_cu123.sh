@@ -82,9 +82,10 @@ function copy_ops(){
     WHEEL_BASE_NAME="efficientllm_base_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
     WHEEL_NAME="efficientllm_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
     echo -e "OPS are for BASE"
-    mkdir -p ../fastdeploy/model_executor/ops/base && cp -r ./${OPS_TMP_DIR_BASE}/${WHEEL_BASE_NAME}/* ../fastdeploy/model_executor/ops/base
+    mkdir -p ../fastdeploy/model_executor/ops/base
+    find ./${OPS_TMP_DIR_BASE} -type f ! -name "*.cu.o" ! -name "*.o" -exec cp --parents {} ../fastdeploy/model_executor/ops/base \;
     echo -e "OPS are for CUDA"
-    cp -r ./${OPS_TMP_DIR}/${WHEEL_NAME}/* ../fastdeploy/model_executor/ops/gpu
+    find ./${OPS_TMP_DIR} -type f ! -name "*.cu.o" ! -name "*.o" -exec cp --parents {} ../fastdeploy/model_executor/ops/gpu \;
     if [ "$WITH_CPU" == "true" ]; then
       WHEEL_CPU_NAME="efficientllm_cpu_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
       echo -e "OPS are for CPU"
@@ -97,7 +98,7 @@ function copy_ops(){
         mv "$file" "${file/_pd_/}"
       done
       cd ../../../../
-      cp -r ${OPS_TMP_DIR_CPU}/${WHEEL_CPU_NAME}/* ../fastdeploy/model_executor/ops/cpu
+      find ${OPS_TMP_DIR_CPU}/${WHEEL_CPU_NAME} -type f ! -name "*.cu.o" ! -name "*.o" -exec cp --parents {} ../fastdeploy/model_executor/ops/cpu \;
     fi
     return
 
