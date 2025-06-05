@@ -32,8 +32,10 @@ from fastdeploy.model_executor.ops.gpu import (
     moe_expert_ffn,
     moe_expert_reduce,
 )
+from fastdeploy.model_executor.layers.ffn1 import FFN1, FFN1Split
+from fastdeploy.model_executor.layers.linear import FFN2, Linear
+from fastdeploy.model_executor.layers.activation import fused_act_bias_wrapper
 from paddlenlp.utils.log import logger
-
 
 class MoELayer(nn.Layer):
     """
@@ -100,6 +102,7 @@ class MoELayer(nn.Layer):
 
         self.num_experts = self.moe_config.num_experts
         self.num_local_experts = kwargs.get("num_local_experts", self.num_experts)
+        self.num_shared_experts = self.moe_config.moe_num_shared_experts
 
         if self.num_experts // self.num_local_experts >= 2:
             logger.debug(f"{moe_tag}MoE is running in ep mode")
@@ -156,6 +159,9 @@ class MoELayer(nn.Layer):
             self.init_weight_block_scale()
 
         self.init_weight()
+        
+        if self.num_shared_experts > 0:
+            self.init_shared_experts_layer()
 
     def init_weight_block_scale(self):
         """init_weight_block_scale for fp8"""
@@ -456,6 +462,34 @@ class MoELayer(nn.Layer):
             # row parallel
             _set_var_distributed(self.moe_ffn2_weight, split_axis=0)
 
+    def init_shared_experts_layer(self):
+        """
+        Initialize shared experts.
+        """
+        self.shared_experts_hidden_dim = self.num_shared_experts * self.moe_intermediate_size
+
+        self.shared_experts_prefix = f"ernie.layers.{self.layer_idx}.mlp.shared_experts"
+        self.shared_experts_up_gate_proj = FFN1(
+            inference_args=self.inference_args,
+            layer_name=f"{self.shared_experts_prefix}.up_gate_proj",
+            weight_key=f"{self.shared_experts_prefix}.up_gate_proj.weight",
+            dim_feedforward=self.shared_experts_hidden_dim,
+            bias_key=None,
+            activation=self.activation,
+            use_fast_ffn=True,
+        )
+
+        self.shared_experts_down_proj = FFN2(
+            inference_args=self.inference_args,
+            layer_name=f"{self.shared_experts_prefix}.down_proj",
+            weight_key=f"{self.shared_experts_prefix}.down_proj.weight",
+            dim_feedforward=self.shared_experts_hidden_dim,
+            bias_key=None,
+            use_smooth_quant=False,
+            shift_key=None,
+            smooth_key=None,
+        )
+
     def load_gate_state_dict(self, state_dict):
         """
         load_gate_state_dict function.
@@ -512,9 +546,9 @@ class MoELayer(nn.Layer):
         """
         if self.moe_config.moe_use_gate_correction_bias:
             gate_correction_bias_tensor = get_tensor(
-                state_dict.pop(self.gate_correction_bias_key[0].unsqueeze(0))
+                state_dict.pop(self.gate_correction_bias_key)
             )
-            self.gate_correction_bias.set_value(gate_correction_bias_tensor)
+            self.gate_correction_bias.set_value(gate_correction_bias_tensor.cast("float32"))
 
     def load_state_dict(self, state_dict, is_update: bool = False):
         """
@@ -523,8 +557,13 @@ class MoELayer(nn.Layer):
         # gate
         if not is_update:
             gate_weight_tensor = get_tensor(state_dict.pop(self.gate_weight_key))
-            self.gate_weight.set_value(gate_weight_tensor)
+            self.gate_weight.set_value(gate_weight_tensor.cast("float32"))
             self.load_gate_correction_bias(state_dict)
+
+        # shared experts
+        if self.num_shared_experts > 0:
+            self.shared_experts_up_gate_proj.load_state_dict(state_dict)
+            self.shared_experts_down_proj.load_state_dict(state_dict)
 
         if self.moe_quant_type == "w4a8":
             (
@@ -923,4 +962,10 @@ class MoELayer(nn.Layer):
             norm_topk_prob=True,
             routed_scaling_factor=1.0,
         )
+        
+        if self.num_shared_experts > 0:
+            s_x = self.shared_experts_up_gate_proj(x)
+            s_x = fused_act_bias_wrapper(s_x, act_method=self.activation)
+            fused_moe_out = fused_moe_out + self.shared_experts_down_proj(s_x)
+            
         return fused_moe_out
