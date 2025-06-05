@@ -14,6 +14,7 @@
 # limitations under the License.
 """
 
+import json
 from dataclasses import dataclass, asdict, fields as dataclass_fields
 from typing import Any, Dict, List, Optional
 
@@ -67,6 +68,10 @@ class EngineArgs:
     mm_processor_kwargs: Optional[Dict[str, Any]] = None
     """
     Additional keyword arguments for the multi-modal processor.
+    """
+    limit_mm_per_prompt: Optional[Dict[str, Any]] = None
+    """
+    Limitation of numbers of multi-modal data.
     """
     enable_mm: bool = False
     """
@@ -232,8 +237,15 @@ class EngineArgs:
             help="Flag to indicate whether to use warm-up before inference."
         )
         model_group.add_argument(
-            "--mm_processor_kwargs",
-            default=None,
+            "--limit-mm-per-prompt",
+            default=EngineArgs.limit_mm_per_prompt,
+            type=json.loads,
+            help="Limitation of numbers of multi-modal data."
+        )
+        model_group.add_argument(
+            "--mm-processor-kwargs",
+            default=EngineArgs.mm_processor_kwargs,
+            type=json.loads,
             help="Additional keyword arguments for the multi-modal processor."
         )
         model_group.add_argument(
@@ -484,13 +496,14 @@ class EngineArgs:
             max_model_len=self.max_model_len,
             tensor_parallel_size=self.tensor_parallel_size,
             max_num_seqs=self.max_num_seqs,
-            mm_processor_kwargs=self.mm_processor_kwargs,
             speculative_config=self.speculative_config,
             max_num_batched_tokens=self.max_num_batched_tokens,
             nnode=self.nnode,
             pod_ips=self.pod_ips,
             use_warmup=self.use_warmup,
             engine_worker_queue_port=self.engine_worker_queue_port,
+            limit_mm_per_prompt=self.limit_mm_per_prompt,
+            mm_processor_kwargs=self.mm_processor_kwargs,
             enable_mm=self.enable_mm,
             enable_chunked_prefill=self.enable_chunked_prefill,
             max_num_partial_prefills=self.max_num_partial_prefills,

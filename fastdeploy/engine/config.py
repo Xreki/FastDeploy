@@ -268,10 +268,11 @@ class Config:
         max_num_seqs: int = 8,
         max_num_batched_tokens: Optional[int] = None,
         pod_ips: Optional[List[str]] = None,
-        mm_processor_kwargs: Optional[Dict[str, Any]] = None,
         speculative_config: Optional[Dict[str, Any]] = None,
         use_warmup: bool = False,
         engine_worker_queue_port: int = 8002,
+        limit_mm_per_prompt: Optional[Dict[str, Any]] = None,
+        mm_processor_kwargs: Optional[Dict[str, Any]] = None,
         enable_mm: bool = False,
         enable_chunked_prefill: bool = False,
         max_num_partial_prefills: int = 1,
@@ -312,6 +313,7 @@ class Config:
         self.pod_ips = pod_ips
         self.max_model_len = max_model_len
         self.max_num_seqs = max_num_seqs
+        self.limit_mm_per_prompt = limit_mm_per_prompt
         self.mm_processor_kwargs = mm_processor_kwargs
         self.enable_mm = enable_mm
         self.speculative_config = speculative_config

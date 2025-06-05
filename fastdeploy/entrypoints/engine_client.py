@@ -30,8 +30,10 @@ class EngineClient:
     """
     EngineClient is a class that handles the communication between the client and the server.
     """
-    def __init__(self, tokenizer, max_model_len, tensor_parallel_size, pid, enable_mm=False):
-        input_processor =  InputPreprocessor(tokenizer, enable_mm)
+
+    def __init__(self, tokenizer, max_model_len, tensor_parallel_size, pid, limit_mm_per_prompt, mm_processor_kwargs,
+                 enable_mm=False):
+        input_processor = InputPreprocessor(tokenizer, limit_mm_per_prompt, mm_processor_kwargs, enable_mm)
         self.enable_mm = enable_mm
         self.data_processor = input_processor.create_processor()
         self.max_model_len = max_model_len

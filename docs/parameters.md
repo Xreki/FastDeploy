@@ -64,12 +64,6 @@
 | `min_tokens`       | int           | 生成的最少token数（遇到停止条件前必须生成）                 | 否       | 1          |
 | `logprobs`         | int    | 返回每个token的前N个概率（None表示不返回）     （目前暂不支持）             | 否       | `None`      |
 
-
-
-
-
-
-
 ### OpenAI Compatible API 请求参数
 
 

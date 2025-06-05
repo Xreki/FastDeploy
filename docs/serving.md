@@ -42,6 +42,10 @@ python -m fastdeploy.entrypoints.openai.api_server --model ernie-45-turbo --port
 
 * --enable-mm
 
+* --limit-mm-per-prompt
+
+* --mm-processor-kwargs
+
 ## 请求服务
 
 FastDeploy服务接口兼容OpenAI协议，因此可以直接使用openai的请求方式请求服务，如下分别提供curl和python示例,
