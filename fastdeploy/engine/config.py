@@ -97,7 +97,7 @@ class ModelConfig:
 
         if not hasattr(self, "mla_use_absorb"):
             self.mla_use_absorb = False
-        if self.head_dim is None:
+        if not hasattr(self, "head_dim"):
             assert hasattr(self, "hidden_size") and hasattr(
                 self, "num_attention_heads")
             self.head_dim = self.hidden_size // self.num_attention_heads
