@@ -188,8 +188,8 @@ class ModelRunner(ModelRunnerBase):
                 tokenizer=tokenizer,
                 output_via_mq=True,
                 pad_vocab=False,
-                export_model_type="W8A16C16",
-                moe_quant_type="weight_only_int8",
+                export_model_type=getattr(self.model_cfg, "predict_model_type", "W8A16C16"),
+                moe_quant_type=getattr(self.model_cfg, "moe_quant_type", "weight_only_int8"),
                 stage_flag=None,
                 load_model_from_ipc=dynamic_load_weight,
                 nranks=self.nranks,
@@ -211,8 +211,8 @@ class ModelRunner(ModelRunnerBase):
                 pad_vocab=False,
                 tokenizer=tokenizer,
                 output_via_mq=True,
-                export_model_type="W8A16C16",
-                moe_quant_type="weight_only_int8",
+                export_model_type=getattr(self.model_cfg, "predict_model_type", "W8A16C16"),
+                moe_quant_type=getattr(self.model_cfg, "moe_quant_type", "weight_only_int8"),
                 use_safetensors=self.is_safetensors_model,
             )
             self.model.eval()
