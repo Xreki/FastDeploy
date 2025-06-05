@@ -563,19 +563,8 @@ class QKVParallelLinear(ColumnParallelLinear):
                     .transpose([2, 1, 3, 0])
                     )
             else:
-                # qkv_weight [hidden_size, num_head + 2 * num_key_value_head, dim_head]
-                # layout [q q q q k v] * num_key_value_head
-                weight_tensor = (
-                    weight_tensor
-                    .reshape(
-                        [
-                            self.embed_dim,
-                            self.num_heads + 2 * self.kv_num_heads,
-                            self.embed_dim // self.num_heads,
-                        ]
-                    )
-                    .transpose([1, 2, 0])
-                ).reshape([-1, self.embed_dim]) 
+                # do nothing!
+                pass
         else:
             q_weight_key = self.weight_key.replace("qkv_proj", "q_proj")
             k_weight_key = self.weight_key.replace("qkv_proj", "k_proj")

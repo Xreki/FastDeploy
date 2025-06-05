@@ -125,15 +125,14 @@ class FusedTransformer(nn.Layer):
         self.qkv_linear_layers = nn.LayerList([
             QKVParallelLinear(
                 llm_config=llm_config,
-                layer_name=f"{base_model_prefix}.decoder.layers.{i}.self_attn.qkv_proj",
-                weight_key=fmt_keys.qkv_linear_weight_keys[i],
-                bias_key=fmt_keys.qkv_linear_bias_keys[i],
+                prefix=fmt_keys.qkv_linear_weight_keys[i].rpartition('.')[0],
+                with_bias=fmt_keys.qkv_linear_bias_keys[i] is not None,
             ) for i in range(self.num_layers)
         ])
         self.out_linear_layers = nn.LayerList([
             RowParallelLinear(
                 llm_config=llm_config,
-                layer_name=fmt_keys.out_linear_weight_keys[i].rpartition('.')[0],
+                prefix=fmt_keys.out_linear_weight_keys[i].rpartition('.')[0],
                 with_bias=fmt_keys.out_linear_bias_keys[i] is not None,
                 input_size=self.num_heads *
                 (llm_config.model_config.hidden_size //
