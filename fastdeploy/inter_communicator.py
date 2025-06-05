@@ -138,9 +138,9 @@ class ZmqClient:
         except Exception as e:
             llm_logger.error(f"Send result to zmq client failed: {e}")
         
-        if data["finished"]:
+        if data.finished:
             with self.mutex:
-                self.req_dict.pop(data["request_id"], None)
+                self.req_dict.pop(data.request_id, None)
     
     def send_multipart2(self, get_results_handler):
         """
