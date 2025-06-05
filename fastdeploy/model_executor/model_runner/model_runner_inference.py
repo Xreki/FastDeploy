@@ -142,14 +142,14 @@ class ModelRunner(ModelRunnerBase):
                 block_size=self.args.block_size,
                 max_len=self.args.max_model_len,
                 stage_flag="msgid-1 predict",
-                export_model_type="weight_only_int8",
+                export_model_type=getattr(self.model_cfg, "predict_model_type", "weight_only_int8"),
                 use_fake_parameter=False,
                 use_stop_seqs=self.model_cfg.ellm_dynamic_use_stop_seqs,
                 use_beam_search=False,
                 speculate_method=None,
                 speculate_max_draft_token_num=5,
                 return_all_hidden_states=False,
-                moe_quant_type="weight_only_int4",
+                moe_quant_type=getattr(self.model_cfg, "moe_quant_type", "weight_only_int4"),
                 use_safetensors=self.model_cfg.is_unified_ckpt,
             )
             model.eval()

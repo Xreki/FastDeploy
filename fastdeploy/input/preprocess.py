@@ -55,7 +55,8 @@ class InputPreprocessor:
         """
         architectures = ModelConfig(self.model_name_or_path).architectures
         if not self.enable_mm:
-            if "ErnieForCausalLM" not in architectures:
+            if "ErnieForCausalLM" not in architectures \
+                and "ErnieBotLMHeadModel" not in architectures:
                 from fastdeploy.input.text_processor import DataProcessor
                 self.processor = DataProcessor(model_name_or_path=self.model_name_or_path)
             else:

@@ -94,7 +94,8 @@ class TokenProcessor(object):
         read tokens from paddle inference engine and process
         """
         if "ErnieForCausalLM" not in self.cfg.model_config.architectures \
-            and "ErnieMoEVLForCausalLM" not in self.cfg.model_config.architectures:
+            and "ErnieMoEVLForCausalLM" not in self.cfg.model_config.architectures \
+            and "ErnieBotLMHeadModel" not in self.cfg.model_config.architectures:
             from paddlenlp_ops import get_output, speculate_get_output
         else:
             os.environ["ELLM_LOG_LEVEL"] = "3"
@@ -102,7 +103,7 @@ class TokenProcessor(object):
             if use_pip_eff_llm is None:
                 from fastdeploy.model_executor.ops.gpu import get_output, speculate_get_output
             else:
-                from efficientllm.gpu import get_output
+                from efficientllm.ops.gpu import get_output
 
         while True:
             try:

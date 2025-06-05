@@ -261,7 +261,7 @@ def build_stream_line_model(
     use_moe = config.get(
         "moe_layer_start_index", num_layers
     ) < num_layers or draft_type in ["mtp", "eagle"]
-    if "ErnieBotLMHeadModel" in ernie_config.architectures:
+    if "ErnieBotLMHeadModel" in ernie_config.architectures and not use_moe:
         from .modeling_ernie_bot_toy import (
             ErnieBotToyForGeneration,
             ErnieBotToyFusedModel,

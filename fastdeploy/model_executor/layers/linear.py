@@ -45,6 +45,7 @@ class Linear(nn.Layer):
         layer_name,
         weight_key,
         bias_key=None,
+        dim_feedforward=None,
         skip_quant=False,
         use_smooth_quant=True,
         shift_key=None,
@@ -61,6 +62,7 @@ class Linear(nn.Layer):
                 you can give it any name you like.
             weight_key (str): Key name of weight in the pdparams state dict.
             bias_key (str): Key name of bias in the pdparams state dict. Defaults to None, means no bias.
+            dim_feedforward (int, optional): Size of intermediate layer. Defaults to None.
             skip_quant (bool, optional): Whether to skip quantization for this layer.
                 Defaults to False.
             use_smooth_quant (bool, optional): Whether to use smooth quantization for this
@@ -81,7 +83,11 @@ class Linear(nn.Layer):
         self.embed_dim = inference_args.hidden_size
         self.head_dim = inference_args.head_dim
         self.num_heads = inference_args.num_attention_heads // self.nranks
-        self.dim_feedforward = inference_args.dim_feedforward // self.nranks
+        self.dim_feedforward = (
+            inference_args.dim_feedforward
+            if dim_feedforward is None
+            else dim_feedforward
+        ) // self.nranks
 
         self.weight_key = weight_key
         self.bias_key = bias_key
@@ -565,6 +571,7 @@ class FFN2(Linear):
         layer_name,
         weight_key,
         bias_key=None,
+        dim_feedforward=None,
         skip_quant=False,
         use_smooth_quant=True,
         shift_key=None,
@@ -580,6 +587,7 @@ class FFN2(Linear):
             layer_name (str): Name of the layer, used for naming internal attributes.
             with_bias (bool, optional): Whether to include a bias term in the layer.
                 Defaults to True.
+            dim_feedforward (int, optional): Size of intermediate layer. Defaults to None.
             skip_quant (bool, optional): Whether to skip quantization for this layer.
                 Defaults to False.
             use_smooth_quant (bool, optional): Whether to use smooth quantization for this
@@ -591,6 +599,7 @@ class FFN2(Linear):
             layer_name,
             weight_key,
             bias_key,
+            dim_feedforward,
             skip_quant,
             use_smooth_quant,
             shift_key,

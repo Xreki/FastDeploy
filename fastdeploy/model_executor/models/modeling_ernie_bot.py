@@ -1021,12 +1021,16 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         if sharing_model is not None:
             self.embeddings = sharing_model.gpt.embeddings
         else:
-            self.embeddings = Embeddings(
-                layer_name=(
+            if ernie_config.get("embedding_use_lm_head_weight", False):
+                layer_name = "lm_head"
+            else:
+                layer_name = (
                     f"{base_model_prefix}.embeddings.word_embeddings"
                     if not use_moe
                     else "ernie.embed_tokens"
-                ),
+                )
+            self.embeddings = Embeddings(
+                layer_name=layer_name,
                 vocab_size=vocab_size,
                 hidden_size=hidden_size,
                 hidden_dropout_prob=hidden_dropout_prob,

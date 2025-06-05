@@ -44,6 +44,7 @@ class FFN1(nn.Layer):
         layer_name,
         weight_key,
         bias_key=None,
+        dim_feedforward=None,
         skip_quant=False,
         activation="gelu",
         use_fast_ffn=False,
@@ -59,6 +60,7 @@ class FFN1(nn.Layer):
             layer_name (str): Unique name of the layer, you can give it any name you like.
             weight_key (str): Key name of weight in the pdparams state dict.
             bias_key (str): Key name of bias in the pdparams state dict. Defaults to None, means no bias.
+            dim_feedforward (int, optional): Size of intermediate layer. Defaults to None.
             skip_quant (bool, optional): Whether to skip quantization for this layer.
                 Defaults to False.
             activation (str, optional): Activation function to use. Defaults to "gelu".
@@ -75,7 +77,11 @@ class FFN1(nn.Layer):
         self.act_dtype = inference_args.act_dtype
         self.nranks = inference_args.mp_size
         self.embed_dim = inference_args.hidden_size
-        self.dim_feedforward = inference_args.dim_feedforward // self.nranks
+        self.dim_feedforward = (
+            inference_args.dim_feedforward
+            if dim_feedforward is None
+            else dim_feedforward
+        ) // self.nranks
 
         self.weight_key = weight_key
         self.bias_key = bias_key
