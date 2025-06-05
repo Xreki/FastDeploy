@@ -57,6 +57,21 @@ inline GpuLaunchConfig Get1DBlocksAnd2DGridsMoe(const int64_t cols) {
   return config;
 }
 
+constexpr static int FINALIZE_THREADS_PER_BLOCK = 256;
+template <class T, class U>
+__host__ __device__ constexpr static U arrayConvert(T const& input)
+{
+    using Type = typename U::Element;
+    static_assert(T::kElements == U::kElements);
+    U u;
+#pragma unroll
+    for (int i = 0; i < U::kElements; i++)
+    {
+        u[i] = static_cast<Type>(input[i]);
+    }
+    return u;
+}
+
 // ====================== Softmax things ===============================
 // We have our own implementation of softmax here so we can support transposing
 // the output in the softmax kernel when we extend this module to support
@@ -1166,43 +1181,69 @@ __global__ void finalize_moe_routing_kernel(
     const bool norm_topk_prob,
     const float routed_scaling_factor,
     const int64_t num_rows) {
-  const int original_row = blockIdx.x + blockIdx.y * gridDim.x;
-  // const int original_row = blockIdx.x;
-  // const int num_rows = gridDim.x;
-  if (original_row >= num_rows) return;
-  T* reduced_row_ptr = reduced_unpermuted_output + original_row * cols;
+  const int original_row = blockIdx.x;
+  auto const offset = original_row * cols;
 
-  for (int tid = threadIdx.x; tid < cols; tid += blockDim.x) {
-    T thread_output{0.f};
-    float row_rescale{0.f};
-    for (int k_idx = 0; k_idx < k; ++k_idx) {
-      const int expanded_original_row = original_row + k_idx * num_rows;
-      const int expanded_permuted_row =
-          expanded_source_row_to_expanded_dest_row[expanded_original_row];
+  T* reduced_row_ptr = reduced_unpermuted_output + offset;
+  constexpr int64_t FINALIZE_ELEM_PER_THREAD
+        = 128 / cutlass::sizeof_bits<T>::value;
+  int64_t const start_offset = threadIdx.x;
+  int64_t const stride = FINALIZE_THREADS_PER_BLOCK;
+  int64_t const num_elems_in_col = cols / FINALIZE_ELEM_PER_THREAD;
 
-      const int64_t k_offset = original_row * k + k_idx;
-      const float row_scale = scales[k_offset];
-      row_rescale = row_rescale + row_scale;
+  using BiasElem = cutlass::Array<T, FINALIZE_ELEM_PER_THREAD>;
+  using InputElem = cutlass::Array<T, FINALIZE_ELEM_PER_THREAD>;
+  using OutputElem = cutlass::Array<T, FINALIZE_ELEM_PER_THREAD>;
+  using ComputeElem = cutlass::Array<float, FINALIZE_ELEM_PER_THREAD>;
+  using SharedOutputElem = cutlass::Array<T, FINALIZE_ELEM_PER_THREAD>;
 
-      const T* expanded_permuted_rows_row_ptr =
-          expanded_permuted_rows + expanded_permuted_row * cols;
+  auto const* bias_v = reinterpret_cast<BiasElem const*>(bias);
+  auto const* expanded_permuted_rows_v = reinterpret_cast<InputElem const*>(expanded_permuted_rows);
+  auto* reduced_row_ptr_v = reinterpret_cast<OutputElem*>(reduced_row_ptr);
 
-      const int expert_idx = expert_for_source_row[k_offset];
-      const T* bias_ptr = bias ? bias + expert_idx * cols : nullptr;
-      const T bias_value = bias_ptr ? bias_ptr[tid] : T{0.f};
+#pragma unroll
+  for (int elem_index = start_offset; elem_index < num_elems_in_col; elem_index += stride)
+  {
+      ComputeElem thread_output;
+      thread_output.fill(0);
+      float row_rescale{0.f};
+      for (int k_idx = 0; k_idx < k; ++k_idx)
+      {
+        int64_t const expanded_original_row = original_row + k_idx * num_rows;
+        int64_t const expanded_permuted_row = expanded_source_row_to_expanded_dest_row[expanded_original_row];
+        int64_t const k_offset = original_row * k + k_idx;
+        const float row_scale = scales[k_offset];
+        row_rescale = row_rescale + row_scale;
 
-      thread_output =
-          static_cast<float>(thread_output) +
-          row_scale * static_cast<float>(
-                          expanded_permuted_rows_row_ptr[tid] +
-                          bias_value *
-                              static_cast<T>(static_cast<float>(compute_bias)));
-    }
+        auto const* expanded_permuted_rows_row_ptr
+                = expanded_permuted_rows_v + expanded_permuted_row * num_elems_in_col;
 
-    thread_output = static_cast<float>(thread_output) /
-                    (norm_topk_prob ? row_rescale : 1.0f) *
-                    routed_scaling_factor;
-    reduced_row_ptr[tid] = thread_output;
+        int const expert_idx = expert_for_source_row[k_offset];
+        auto const* bias_ptr = bias_v + expert_idx * num_elems_in_col;
+
+        ComputeElem bias_value;
+        if (bias)
+        {
+            bias_value = arrayConvert<BiasElem, ComputeElem>(bias_ptr[elem_index]);
+        }
+        else
+        {
+            bias_value.fill(0);
+        }
+
+        ComputeElem expert_result
+                = arrayConvert<InputElem, ComputeElem>(expanded_permuted_rows_row_ptr[elem_index]);
+
+        thread_output = thread_output + row_scale * (expert_result + bias_value);
+
+
+      }
+      for (auto& elem : thread_output)
+      {
+          elem = elem / (norm_topk_prob ? row_rescale : 1.0f) * routed_scaling_factor;
+      }
+      OutputElem output_elem = arrayConvert<ComputeElem, OutputElem>(thread_output);
+      reduced_row_ptr_v[elem_index] = output_elem;
   }
 }
 
@@ -1221,23 +1262,23 @@ void finalize_moe_routing_kernelLauncher(
     const bool norm_topk_prob,
     const float routed_scaling_factor,
     cudaStream_t stream) {
-  const int threads = std::min(cols, int64_t(1024));
-  const auto config_final = Get1DBlocksAnd2DGridsMoe(num_rows);
+  const int blocks = num_rows;
+  const int threads = FINALIZE_THREADS_PER_BLOCK;
 
   finalize_moe_routing_kernel<T, 1>
-      <<<config_final.block_per_grid, threads, 0, stream>>>(
-          expanded_permuted_rows,
-          reduced_unpermuted_output,
-          bias,
-          scales,
-          expanded_source_row_to_expanded_dest_row,
-          expert_for_source_row,
-          cols,
-          k,
-          compute_bias,
-          norm_topk_prob,
-          routed_scaling_factor,
-          num_rows);
+        <<<blocks, threads, 0, stream>>>(
+            expanded_permuted_rows,
+            reduced_unpermuted_output,
+            bias,
+            scales,
+            expanded_source_row_to_expanded_dest_row,
+            expert_for_source_row,
+            cols,
+            k,
+            compute_bias,
+            norm_topk_prob,
+            routed_scaling_factor,
+            num_rows);
 }
 
 // ========================= TopK Softmax specializations
