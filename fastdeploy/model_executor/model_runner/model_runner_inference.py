@@ -123,7 +123,7 @@ class ModelRunner(ModelRunnerBase):
                     ErnieBotTokenizer.resource_files_names[
                         "vocab_file"] = vocab_file_names[i]
                     break
-            config, tokenizer, model = build_stream_line_model(
+            config, tokenizer, model, _ = build_stream_line_model(
                 os.path.join(self.args.model_name_or_path,
                             os.getenv("CONFIG_JSON_FILE", "config.json")),
                 self.args.model_name_or_path,
@@ -147,9 +147,7 @@ class ModelRunner(ModelRunnerBase):
     def init_rotary_position_embedding(self, max_model_len):
         tmp_position_ids = paddle.arange(max_model_len).reshape((1, -1))
         self.share_inputs["rope_emb"] = self.get_rotary_position_embedding(
-            tmp_position_ids,
-            self.model_cfg.hidden_size // self.model_cfg.num_attention_heads,
-            self.rope_theta)
+            tmp_position_ids, self.model_cfg.head_dim, self.rope_theta)
 
     def _init_kvcache(self):
         """
@@ -176,8 +174,7 @@ class ModelRunner(ModelRunnerBase):
                     total_block_num,
                     kv_num_head,
                     self.args.block_size,
-                    self.model_cfg.hidden_size //
-                    self.model_cfg.num_attention_heads,
+                    self.model_cfg.head_dim,
                 ],
                 fill_value=0,
                 dtype=cache_type,
@@ -187,8 +184,7 @@ class ModelRunner(ModelRunnerBase):
                     total_block_num,
                     kv_num_head,
                     self.args.block_size,
-                    self.model_cfg.hidden_size //
-                    self.model_cfg.num_attention_heads,
+                    self.model_cfg.head_dim,
                 ],
                 fill_value=0,
                 dtype=cache_type,
@@ -344,9 +340,7 @@ class ModelRunner(ModelRunnerBase):
         #TODO
         # 支持c8 c4
 
-        hidden_size = self.model_cfg.hidden_size
-        attention_heads = self.model_cfg.num_attention_heads
-        hidden_dim = hidden_size / attention_heads * self.model_cfg.kv_num_head
+        hidden_dim = self.model_cfg.head_dim * self.model_cfg.kv_num_head
         theoretical_kv_cache_memory = (2 * byte_of_cache *
                                        self.args.block_size * num_layers *
                                        hidden_dim)

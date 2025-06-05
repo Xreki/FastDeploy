@@ -607,6 +607,7 @@ class ErnieBotToyFusedModel(ErnieBotToyPretrainedModel):
         max_batch_size: int = 128,
         use_offline_quant=False,
         sharing_model=None,
+        embeddings_column_cut=False,
     ):
         """
         Initializer for the ErnieBotFusedModel class.
@@ -652,7 +653,7 @@ class ErnieBotToyFusedModel(ErnieBotToyPretrainedModel):
         self.num_attention_heads = num_attention_heads
         self.ffn_hidden_size = ffn_hidden_size
         self.num_layers = num_layers
-        self.head_dim = self.hidden_size // self.num_attention_heads
+        self.head_dim = ernie_config.head_dim
         self.use_rope = use_rope
         self.max_len = max_len
         self.use_fast_ffn = use_fast_ffn
@@ -733,6 +734,7 @@ class ErnieBotToyFusedModel(ErnieBotToyPretrainedModel):
             redundant_experts_num=redundant_experts_num,
             max_batch_size=max_batch_size,
             use_offline_quant=use_offline_quant,
+            head_dim=self.head_dim,
         )
 
         self.redundant_table_manger = None
@@ -1145,7 +1147,9 @@ class ErnieBotToyForGeneration(nn.Layer):
         # for NPU
         self.hidden_size = self.configs.get("hidden_size", 4096)
         self.num_attention_heads = self.configs.get("num_attention_heads", 32)
-        self.head_dim = self.hidden_size // self.num_attention_heads
+        self.head_dim = self.configs.get(
+            "head_dim", self.hidden_size // self.num_attention_heads
+        )
         self.rank = (
             paddle.distributed.fleet.get_hybrid_communicate_group().get_model_parallel_rank()
         )
@@ -1243,7 +1247,29 @@ class ErnieBotToyForGeneration(nn.Layer):
                 A dictionary containing model parameters, where keys are parameter names
                 and values are NumPy arrays or PaddlePaddle tensors.
         """
+        new_state_dict = {}
+        for k, v in state_dict.items():
+            new_k = k.replace("ernie", "ernie.decoder")
+            if "input_layernorm.weight" in k:
+                new_k = new_k.replace("input_layernorm", "norm1")
+            elif "o_proj.weight" in k:
+                new_k = new_k.replace("o_proj", "out_proj")
+            elif "post_attention_layernorm.weight" in k:
+                new_k = new_k.replace("post_attention_layernorm", "norm2")
+            elif "mlp.up_gate_proj.weight" in k:
+                new_k = new_k.replace("mlp.up_gate_proj", "linear1")
+            elif "mlp.down_proj.weight" in k:
+                new_k = new_k.replace("mlp.down_proj", "linear2")
+            new_state_dict[new_k] = v
+        state_dict = new_state_dict
         embeddings_weight_name = self.ernie.embeddings.layer_name + ".weight"
+        if (
+            state_dict["lm_head.weight"].shape
+            != self.ernie.embeddings.word_embeddings.weight.shape
+        ):
+            state_dict["lm_head.weight"] = state_dict["lm_head.weight"].reshape(
+                self.ernie.embeddings.word_embeddings.weight.shape
+            )
         if embeddings_weight_name not in state_dict.keys():
             state_dict[embeddings_weight_name] = state_dict["lm_head.weight"]
         try:
@@ -1252,10 +1278,6 @@ class ErnieBotToyForGeneration(nn.Layer):
                 self.ernie.norm.load_state_dict(state_dict)
                 self.lm_head.load_state_dict(state_dict)
             self.ernie.decoder.load_state_dict(state_dict)
-            if self.ernie.is_mtp:
-                self.ernie.e_norm.load_state_dict(state_dict)
-                self.ernie.h_norm.load_state_dict(state_dict)
-                self.ernie.eh_proj.load_state_dict(state_dict)
         except Exception as e:
             raise RuntimeError(f"set_state_dict error which is {e}")
             traceback.print_exc()
