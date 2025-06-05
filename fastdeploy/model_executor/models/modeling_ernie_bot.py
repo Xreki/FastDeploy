@@ -1098,6 +1098,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
                 base_model_prefix=base_model_prefix,
                 draft_type=draft_type,
                 redundant_table_manger=self.redundant_table_manger,
+                max_len=max_len,
             )
 
             if sharing_model is not None:
