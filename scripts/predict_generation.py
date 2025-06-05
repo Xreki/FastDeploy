@@ -354,7 +354,7 @@ def get_parser(add_input_output_file: bool = True):
     )
 
     if add_input_output_file:
-        parser.add_argument("--input_file", type=str, required=True)
+        parser.add_argument("--input_file", type=str, required=False)
         parser.add_argument("--output_file",
                             type=str,
                             default="predict.json",
@@ -491,6 +491,7 @@ class Predictor:
                             self.args.msg_queue_id,
                             self.args.use_ep,
                             self.args.ep_just_for_test,
+                            tokenizer
                         ],
                     )
 
@@ -580,6 +581,7 @@ class Predictor:
                 use_micro_batch=args.use_micro_batch,
                 scale_dir=args.scale_dir,
                 use_safetensors=args.use_safetensors,
+                tokenizer = tokenizer
             )
 
             model.eval()
@@ -823,6 +825,12 @@ class Predictor:
             system_prompt_version=system_prompt_version,
         )
 
+        if int(os.getenv("TEST_QWEN", "1")) == 1:
+            input_ids = [[151644,   8948,    198,   2610,    525,    264,  10950,  17847,
+            13, 151645, 151644,    872,    198,  68990,  35727,  50285,
+            64689, 104208, 105930,   5267, 151645, 151644,  77091,    198]]
+            num_input_tokens = 24
+
         if (os.getenv("EP_DECODER_PERF_TEST", "False") == "True"
                 or os.getenv("EP_PREFILL_PERF_TEST", "False") == "True"):
             test_len = 4383
@@ -899,10 +907,8 @@ class Predictor:
                 real_len = seq_len[i] + self.args.max_dec_len
                 if real_len > max_sec_len:
                     raise ValueError(f"input_len({seq_len[i]}) + \
-                        max_dec_len({self.args.max_dec_len}) > max_seq_len({max_sec_len})"
-                                     )
-                for j in range((real_len + self.args.block_size - 1) //
-                               self.args.block_size):
+                        max_dec_len({self.args.max_dec_len}) > max_seq_len({max_sec_len})")
+                for j in range((real_len + self.args.block_size - 1) // self.args.block_size): 
                     used_block_id = self.free_list.pop()
                     self.used_list[i].append(used_block_id)
                     inputs["block_tables"][i, j] = used_block_id
@@ -914,9 +920,13 @@ class Predictor:
         inputs["top_p"] = get_full_array(self.args.top_p)
         inputs["temperature"] = get_full_array(self.args.temperature)
 
-        inputs["eos_token_id"] = np.array(
-            [self.tokenizer.eos_token_id,
-             self.tokenizer.cls_token_id]).astype("int64")
+        if int(os.getenv("TEST_QWEN", "1")) == 1:
+            inputs["eos_token_id"] = np.array(
+                [self.tokenizer.eos_token_id]).astype("int64")
+        else:
+            inputs["eos_token_id"] = np.array(
+                [self.tokenizer.eos_token_id,
+                self.tokenizer.cls_token_id]).astype("int64")
 
         inputs["penalty_score"] = get_full_array(self.args.penalty_score)
         inputs["frequency_score"] = get_full_array(self.args.frequency_score)
@@ -1408,7 +1418,18 @@ def main():
     if args.lora_num > 0:
         assert args.lora_dir is not None, "lora_dir should be set when lora_num > 0"
 
-    predictor = Predictor(args)
+    if int(os.getenv("TEST_QWEN", "1")) == 1:
+        from paddlenlp.transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(
+            args.model_name_or_path,
+            padding_side="left",
+            use_fast=False
+        )
+
+        predictor = Predictor(args, tokenizer=tokenizer)
+    else:
+        predictor = Predictor(args)
     # inference
     infer_dials: list[list[dict]] = []
     if args.input_file is None or not os.path.exists(args.input_file):

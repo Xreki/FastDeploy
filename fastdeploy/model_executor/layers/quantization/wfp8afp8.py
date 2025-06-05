@@ -61,8 +61,8 @@ class WFP8AFP8LinearMethod(QuantMethodBase):
     def create_weights(self, layer):
         # TODO(YuanRisheng): set weight logic should be moved to process_loaded_weights func
         weight_scale = self.quant_config.weight_scale_dict.get(
-            layer.layer_name + ".weight_quanter")
-        in_scale = self.quant_config.act_scale_dict.get(layer.layer_name +
+            layer.prefix + ".weight_quanter")
+        in_scale = self.quant_config.act_scale_dict.get(layer.prefix +
                                                         ".activation_quanter")
         self.skip_quant = False
         # we will skip quant if weight_scale is not found or in_scale is not found
@@ -70,10 +70,9 @@ class WFP8AFP8LinearMethod(QuantMethodBase):
             self.skip_quant = True
         else:
             max_range = 448.0
-            layer.scalar_scale_name = layer.layer_name + ".scalar_weight_quanter"
+            layer.scalar_scale_name = layer.prefix + ".scalar_weight_quanter"
             layer.scalar_scale = layer.create_parameter(
                 shape=([1]),
-                attr=paddle.ParamAttr(name=layer.scalar_scale_name),
                 dtype="float32",
             )
             layer.scalar_scale.set_value(
@@ -83,7 +82,6 @@ class WFP8AFP8LinearMethod(QuantMethodBase):
                                                 max_range).astype("float32")
             layer.linear_out_scale = layer.create_parameter(
                 shape=[layer.embed_dim],
-                attr=paddle.ParamAttr(name=layer.out_scale_name),
                 dtype="float32",
                 is_bias=False,
                 default_initializer=paddle.nn.initializer.Constant(0),
@@ -108,7 +106,7 @@ class WFP8AFP8LinearMethod(QuantMethodBase):
         linear_out = fastdeploy.model_executor.ops.gpu.per_channel_fp8_fp8_half_gemm_fused(
             x,
             layer.linear_weight,
-            bias=None,
+            bias=layer.linear_bias if layer.add_bias else None,
             scalar_scale=layer.scalar_scale,
             channel_scale=layer.linear_out_scale,
             transpose_x=False,

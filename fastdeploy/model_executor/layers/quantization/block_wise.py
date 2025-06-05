@@ -69,8 +69,6 @@ class BlockWiseLinearMethod(QuantMethodBase):
                 (layer.num_heads * layer.head_dim + QUANT_ALIGNMENT_OFFSET) //
                 QUANT_BLOCK_SIZE,
             ],
-            attr=paddle.ParamAttr(name=layer.layer_name +
-                                  ".weight_block_scale"),
             dtype="float32",
             is_bias=False,
         )
