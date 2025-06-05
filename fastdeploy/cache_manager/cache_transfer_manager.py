@@ -31,7 +31,7 @@ from fastdeploy.utils import get_logger
 from fastdeploy.cache_manager.cache_queue_manager import CacheQueueManager
 from fastdeploy.inter_communicator import IPCSignal
 # TODO 不显式 import 初始化
-from fastdeploy.cache_manager.transfer_factory.ipc_cache_messager import IPCCacheMessager
+
 
 use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
 if use_pip_eff_llm is None:
@@ -238,6 +238,7 @@ class CacheTransferManager:
             assert len(commu_protocol) == 1
             assert commu_protocol[0] in ["ipc"], f"not support protocol: {args.protocol}"
             logger.info(f"{args}")
+            from fastdeploy.cache_manager.transfer_factory.ipc_cache_messager import IPCCacheMessager
             self.cache_messager = IPCCacheMessager(engine_worker_queue_port=args.engine_worker_queue_port, 
                         gpu_cache_kvs=self.gpu_cache_kvs,
                         rank=self.rank, 

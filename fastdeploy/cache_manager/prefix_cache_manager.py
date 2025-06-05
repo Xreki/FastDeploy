@@ -283,7 +283,7 @@ class PrefixCacheManager:
                 + f" --cache_queue_port {cache_config.cache_queue_port}"
                 + f" --enable_splitwise {int(self.enable_splitwise)}"
                 + f" --engine_worker_queue_port {engine_worker_queue_port}"
-                + f" --num_gpu_blocks {cache_config.num_gpu_blocks_override}"
+                + f" --num_gpu_blocks {cache_config.total_block_num}"
                 + f" --num_cpu_blocks {cache_config.num_cpu_blocks}"
                 + f" --bytes_per_layer_per_block {cache_config.bytes_per_layer_per_block}"
                 + f" --block_size {cache_config.block_size}"
@@ -315,7 +315,7 @@ class PrefixCacheManager:
         update cache config
         """
         self.cache_config = cache_config
-        self.num_gpu_blocks = cache_config.max_block_num
+        self.num_gpu_blocks = cache_config.prefill_kvcache_block_num
         self.gpu_free_block_list = list(
             range(self.num_gpu_blocks - 1, -1, -1)
         )  # 服务端管理的GPU上剩余的block id

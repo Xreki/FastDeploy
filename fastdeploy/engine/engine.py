@@ -91,7 +91,8 @@ class LLMEngine(object):
 
         self.input_processor = InputPreprocessor(
             cfg.tokenizer, cfg.limit_mm_per_prompt, cfg.mm_processor_kwargs, cfg.enable_mm)
-        self.resource_manager = ResourceManager(cfg.max_num_seqs, cfg.cache_config, cfg.tensor_parallel_size, cfg.splitwise_role)
+        self.resource_manager = ResourceManager(cfg.max_num_seqs, cfg.cache_config, \
+                cfg.tensor_parallel_size, cfg.splitwise_role)
 
 
         address = ('0.0.0.0', self.cfg.engine_worker_queue_port)
@@ -147,7 +148,9 @@ class LLMEngine(object):
             time.sleep(3)
 
         if self.do_profile == 0 and (self.cfg.cache_config.enable_prefix_caching or self.cfg.splitwise_role != "mixed"):
-            self.resource_manager.cache_manager.launch_cache_manager(self.cfg.cache_config, self.cfg.tensor_parallel_size, self.cfg.device_ids, self.cfg.engine_worker_queue_port, self.ipc_signal_suffix)
+            self.resource_manager.cache_manager.launch_cache_manager(self.cfg.cache_config, \
+            self.cfg.tensor_parallel_size, self.cfg.device_ids, \
+            self.cfg.engine_worker_queue_port, self.ipc_signal_suffix)
 
 
         self.worker_proc = self._start_worker_service()
@@ -700,7 +703,8 @@ class LLMEngine(object):
         # TODO
         uncache_worker_stdout = "" if os.getenv("UNCACHE_WORKER_STDOUT",
                                                 "0") == 1 else "-u"
-        pd_cmd = f"{command_prefix} {sys.executable} {uncache_worker_stdout} -m paddle.distributed.launch --log_dir {log_dir}"
+        pd_cmd = f"{command_prefix} {sys.executable} {uncache_worker_stdout} -m paddle.distributed.launch"
+        pd_cmd = pd_cmd + f" --log_dir {log_dir}"
         py_script = os.path.join(current_dir_path,
                                  "../model_executor/worker.py")
         arguments = (
@@ -723,7 +727,7 @@ class LLMEngine(object):
         )
 
         worker_append_flag = {
-            "enable_chunked_prefill": self.cfg.enable_chunked_prefill,
+            "enable_chunked_prefill": self.cfg.cache_config.enable_chunked_prefill,
             "do_profile": self.do_profile,
             "dynamic_load_weight": self.cfg.model_config.dynamic_load_weight,
         }
@@ -827,8 +831,10 @@ class LLMEngine(object):
         console_logger.info(f"Stop profile, num_gpu_blocks:  {num_gpu_blocks}")
         self.cfg.cache_config.reset(num_gpu_blocks)
         self.resource_manager.reset_cache_config(self.cfg.cache_config)
-        self.resource_manager.prefix_cache_manager.launch_cache_manager(self.cfg.cache_config, self.cfg.tensor_parallel_size, \
-            self.cfg.device_ids, self.cfg.engine_worker_queue_port, self.ipc_signal_suffix)
+        if self.cfg.cache_config.enable_prefix_caching or self.cfg.splitwise_role != "mixed":
+            self.resource_manager.cache_manager.launch_cache_manager(self.cfg.cache_config, \
+                self.cfg.tensor_parallel_size, self.cfg.device_ids, \
+                self.cfg.engine_worker_queue_port, self.ipc_signal_suffix)
 
     def check_health(self, time_interval_threashold=30):
         """

@@ -31,14 +31,6 @@ class ModelRunner(ModelRunnerBase):
     def __init__(self, config, args, nranks, rank):
         self.nranks = nranks
         self.rank = rank
-        if args.enable_prefix_caching or args.splitwise_role != 'mixed':
-            cache_ready_signal_data = np.zeros(
-                shape=[nranks], dtype=np.int32)
-            self.cache_ready_signal = IPCSignal(name="cache_ready_signal",
-                                                array=cache_ready_signal_data,
-                                                dtype=np.int32,
-                                                suffix=args.engine_pid,
-                                                create=False)
         super().__init__(config, args)
         self._reset_paddle_env()
 
@@ -166,7 +158,7 @@ class ModelRunner(ModelRunnerBase):
         cache_kvs_list = []
         # TODO infer 进程初始化cache
 
-        if self.args.do_profile == 0 and (self.args.enable_prefix_caching or self.args.splitwise_role != "mixed"):
+        if not self.args.do_profile and (self.args.enable_prefix_caching or self.args.splitwise_role != "mixed"):
             use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
             if use_pip_eff_llm is None:
                 from fastdeploy.model_executor.ops.gpu import set_data_ipc
@@ -175,8 +167,6 @@ class ModelRunner(ModelRunnerBase):
                 from efficientllm.gpu import set_data_ipc
                 from efficientllm.gpu import share_external_data
             
-            while np.sum(self.cache_ready_signal.value) < self.nranks:
-                continue
             for i in range(self.model_cfg.num_layers):
                 key_cache = paddle.empty(shape=[], dtype=cache_type)
                 key_cache_name = f"key_caches_{i}_rank{self.rank}.device{self.device_ids_list[self.rank]}"
@@ -231,6 +221,8 @@ class ModelRunner(ModelRunnerBase):
         """
         dynamic insertion
         """
+        if "caches" not in self.share_inputs:
+            self._init_kvcache()
         if tasks[-1].disaggregate_info is not None and tasks[-1].disaggregate_info["role"] == "prefill":
             os.environ['PREFILL_NODE_ONE_STEP_STOP'] = "1" 
         for i in range(len(tasks)):
@@ -399,8 +391,10 @@ class ModelRunner(ModelRunnerBase):
 
     def _update_share_input_block_num(self):
         del self.share_inputs["caches"]
-        self.args.do_profile = 0
-        self._init_kvcache()
+        paddle.device.cuda.empty_cache()
+        self.args.do_profile = False
+        if not self.args.enable_prefix_caching and self.args.splitwise_role == "mixed":
+            self._init_kvcache()
 
         del self.share_inputs["block_tables"]
         self.share_inputs["block_tables"] = paddle.full(
