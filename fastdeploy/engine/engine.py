@@ -631,13 +631,13 @@ class LLMEngine(object):
             f" --eos_tokens_lens {self.data_processor.eos_token_id_len}"
             f" --pad_token_id {self.data_processor.pad_token_id}"
             f" --engine_pid {self.engine_pid}"
-            f" --do_profile {self.do_profile}"
-            f" --dynamic_load_weight {self.cfg.model_config.dynamic_load_weight}"
             f" --max_num_batched_tokens {self.cfg.max_num_batched_tokens}"
             f" --kv_cache_ratio {self.cfg.cache_config.kv_cache_ratio} --dtype {self.cfg.cache_config.cache_dtype}"
         )
         worker_append_flag = {
             "enable_chunked_prefill": self.cfg.enable_chunked_prefill,
+            "do_profile": self.do_profile,
+            "dynamic_load_weight": self.cfg.model_config.dynamic_load_weight,
         }
         for worker_flag, value in worker_append_flag.items():
             if value:
