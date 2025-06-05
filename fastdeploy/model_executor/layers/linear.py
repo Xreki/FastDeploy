@@ -37,12 +37,12 @@ class LinearBase(nn.Layer):
     def __init__(
         self,
         llm_config,
-        layer_name: str = "",
+        prefix: str = "",
         input_size: int = None,
         output_size: int = None,
-        weight_key=None,
-        bias_key=None,
-        skip_quant=False,
+        with_bias: bool = False,
+        add_bias: bool = False,
+        skip_quant: bool = False,
     ):
         """
         Initializes a linear layer and provides additional parameters required for inference and quantization.
@@ -51,7 +51,7 @@ class LinearBase(nn.Layer):
             llm_config (LLMConfig): Inference-related parameters containing attributes such as
                 weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
-            layer_name (str): Unique name of the layer, used to name internal attributes.
+            prefix (str): Unique name of the layer, used to name internal attributes.
                 Can be arbitrarily named.
             input_size (int, optional): Number of input features. Defaults to None.
             output_size (int, optional): Number of output features. Defaults to None.
@@ -75,20 +75,16 @@ class LinearBase(nn.Layer):
         self.act_dtype = llm_config.model_config.act_dtype
         self.input_size = input_size
         self.output_size = output_size
-        self.weight_key = weight_key
-        self.bias_key = bias_key
-        self.with_bias = True if self.bias_key is not None else False
-
-        self.shift_key = f"{layer_name}.shift_bias"
-        self.smooth_key = f"{layer_name}.smooth_weight"
-
-        self.layer_name = layer_name
-        self.weight_name = self.layer_name + ".weight"
-        self.bias_name = self.layer_name + ".bias"
-        self.out_scale_name = self.layer_name + ".out_scale"
-        if self.use_smooth_quant:
-            self.shift_name = self.layer_name + ".shift_bias"
-            self.smooth_name = self.layer_name + ".smooth_weight"
+        self.with_bias = with_bias
+        self.add_bias = add_bias
+        self.prefix = prefix
+        # key
+        self.weight_key = f"{prefix}.weight"
+        self.bias_key = f"{prefix}.bias"
+        self.shift_key = f"{prefix}.shift_bias"
+        self.smooth_key = f"{prefix}.smooth_weight"
+        self.out_scale_key = f"{prefix}.out_scale"
+        
         self._dtype = self._helper.get_default_dtype()
 
         if llm_config.quant_config:
@@ -104,19 +100,14 @@ class LinearBase(nn.Layer):
         Returns:
             bool, whether the y tensor should be transposed for inference.
         """
-        if current_platform.is_dcu():
-            return False
-        elif current_platform.is_npu():
+        if self.weight_dtype == "int4":
             return True
-        else:  # GPU
-            if self.weight_dtype == "int4":
-                return True
-            if self.weight_dtype == "int8":
-                return True
-            if "float8" in self.weight_dtype:
-                return True
-            # bf16/fp16/fp32 y is not transposed
-            return False
+        if self.weight_dtype == "int8":
+            return True
+        if "float8" in self.weight_dtype:
+            return True
+        # bf16/fp16/fp32 y is not transposed
+        return False
 
     def init_weight_shape(self, trans=False):
         """
@@ -149,7 +140,6 @@ class LinearBase(nn.Layer):
 
         self.linear_weight = self.create_parameter(
             shape=self.linear_weight_shape,
-            attr=paddle.ParamAttr(name=self.weight_name),
             dtype=self.get_weight_create_dtype(),
             is_bias=False,
             default_initializer=paddle.nn.initializer.Constant(0),
@@ -159,7 +149,6 @@ class LinearBase(nn.Layer):
         if self.with_bias:
             self.linear_bias = self.create_parameter(
                 shape=[self.output_size],
-                attr=paddle.ParamAttr(name=self.bias_name),
                 dtype=self._dtype,
                 is_bias=True,
             )
@@ -170,13 +159,11 @@ class LinearBase(nn.Layer):
         if self.use_smooth_quant:
             self.linear_shift = self.create_parameter(
                 shape=self.linear_shift_shape,
-                attr=paddle.ParamAttr(name=self.shift_name),
                 dtype=self._dtype,
                 is_bias=False,
             )
             self.linear_smooth = self.create_parameter(
                 shape=self.linear_smooth_shape,
-                attr=paddle.ParamAttr(name=self.smooth_name),
                 dtype=self._dtype,
                 is_bias=False,
             )
@@ -303,12 +290,12 @@ class ReplicatedLinear(LinearBase):
     def __init__(
         self,
         llm_config,
-        layer_name: str = "",
+        prefix: str = "",
         input_size: int = None,
         output_size: int = None,
-        weight_key=None,
-        bias_key=None,
-        skip_quant=False,
+        with_bias: bool = False,
+        add_bias: bool = False,
+        skip_quant: bool = False,
     ):
         """
         Initialize a linear layer with additional parameters for inference and quantization.
@@ -317,17 +304,17 @@ class ReplicatedLinear(LinearBase):
             llm_config (LLMConfig): Arguments related to inference, containing
                 attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
-            layer_name (str): Unique name of the layer, used for naming internal attributes,
+            prefix (str): Unique name of the layer, used for naming internal attributes,
                 you can give it any name you like.
             layer_index (int): The index of the linear layer in the model
 
         """
         super().__init__(llm_config=llm_config,
-                         layer_name=layer_name,
+                         prefix=prefix,
                          input_size=input_size,
                          output_size=output_size,
-                         weight_key=weight_key,
-                         bias_key=bias_key,
+                         with_bias=with_bias,
+                         add_bias=add_bias,
                          skip_quant=skip_quant)
         self.nranks = llm_config.parallel_config.mp_size
         self.input_size = input_size
@@ -342,7 +329,6 @@ class ReplicatedLinear(LinearBase):
 
         self.linear_weight = self.create_parameter(
             shape=self.linear_weight_shape,
-            attr=paddle.ParamAttr(name=self.weight_name),
             dtype=self.get_weight_create_dtype(),
             is_bias=False,
             default_initializer=paddle.nn.initializer.Constant(0),
@@ -352,7 +338,6 @@ class ReplicatedLinear(LinearBase):
         if self.with_bias:
             self.linear_bias = self.create_parameter(
                 shape=[self.output_size],
-                attr=paddle.ParamAttr(name=self.bias_name),
                 dtype=self._dtype,
                 is_bias=True,
             )
@@ -363,13 +348,11 @@ class ReplicatedLinear(LinearBase):
         if self.use_smooth_quant:
             self.linear_shift = self.create_parameter(
                 shape=self.linear_shift_shape,
-                attr=paddle.ParamAttr(name=self.shift_name),
                 dtype=self._dtype,
                 is_bias=False,
             )
             self.linear_smooth = self.create_parameter(
                 shape=self.linear_smooth_shape,
-                attr=paddle.ParamAttr(name=self.smooth_name),
                 dtype=self._dtype,
                 is_bias=False,
             )
@@ -383,12 +366,12 @@ class ColumnParallelLinear(LinearBase):
     def __init__(
         self,
         llm_config,
-        layer_name: str = "",
+        prefix: str = "",
         input_size: int = None,
         output_size: int = None,
-        weight_key=None,
-        bias_key=None,
-        skip_quant=False,
+        with_bias: bool = False,
+        add_bias: bool = False,
+        skip_quant: bool = False,
     ):
         """
         Initialize a linear layer with additional parameters for inference and quantization.
@@ -397,17 +380,17 @@ class ColumnParallelLinear(LinearBase):
             llm_config (LLMConfig): Arguments related to inference, containing
                 attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
-            layer_name (str): Unique name of the layer, used for naming internal attributes,
+            prefix (str): Unique name of the layer, used for naming internal attributes,
                 you can give it any name you like.
             layer_index (int): The index of the linear layer in the model
 
         """
         super().__init__(llm_config=llm_config,
-                         layer_name=layer_name,
+                         prefix=prefix,
                          input_size=input_size,
                          output_size=output_size,
-                         weight_key=weight_key,
-                         bias_key=bias_key,
+                         with_bias=with_bias,
+                         add_bias=add_bias,
                          skip_quant=skip_quant)
         self.nranks = llm_config.parallel_config.mp_size
         self.input_size = input_size
@@ -424,7 +407,6 @@ class ColumnParallelLinear(LinearBase):
 
         self.linear_weight = self.create_parameter(
             shape=self.linear_weight_shape,
-            attr=paddle.ParamAttr(name=self.weight_name),
             dtype=self.get_weight_create_dtype(),
             is_bias=False,
             default_initializer=paddle.nn.initializer.Constant(0),
@@ -437,7 +419,6 @@ class ColumnParallelLinear(LinearBase):
         if self.with_bias:
             self.linear_bias = self.create_parameter(
                 shape=[self.output_size],
-                attr=paddle.ParamAttr(name=self.bias_name),
                 dtype=self._dtype,
                 is_bias=True,
             )
@@ -451,13 +432,11 @@ class ColumnParallelLinear(LinearBase):
         if self.use_smooth_quant:
             self.linear_shift = self.create_parameter(
                 shape=self.linear_shift_shape,
-                attr=paddle.ParamAttr(name=self.shift_name),
                 dtype=self._dtype,
                 is_bias=False,
             )
             self.linear_smooth = self.create_parameter(
                 shape=self.linear_smooth_shape,
-                attr=paddle.ParamAttr(name=self.smooth_name),
                 dtype=self._dtype,
                 is_bias=False,
             )
@@ -471,9 +450,9 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
     def __init__(
         self,
         llm_config,
-        layer_name,
-        weight_key,
-        bias_key=None,
+        prefix,
+        with_bias=False,
+        add_bias=False,
         activation="gelu",
         use_fast_ffn=False,
         skip_quant=False,
@@ -487,7 +466,7 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
                 attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
 
-            layer_name (str): Unique name of the layer, used for naming weights and biases.
+            prefix (str): Unique name of the layer, used for naming weights and biases.
             weight_key (str): Key name of weight in the pdparams state dict.
             bias_key (str): Key name of bias in the pdparams state dict. Defaults to None, means no bias.
             with_bias (bool, optional): Whether to include bias term. Defaults to True.
@@ -504,14 +483,13 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         self.dim_feedforward_per_rank = divide(self.dim_feedforward,
                                                self.nranks)
         input_size = self.embed_dim
-        output_size = self.dim_feedforward * 2 if self.activation.endswith(
-            "glu") else self.dim_feedforward
+        output_size = self.dim_feedforward * 2
         super().__init__(llm_config=llm_config,
-                         layer_name=layer_name,
+                         prefix=prefix,
                          input_size=input_size,
                          output_size=output_size,
-                         weight_key=weight_key,
-                         bias_key=bias_key,
+                         with_bias=with_bias,
+                         add_bias=add_bias,
                          skip_quant=skip_quant)
 
     def load_state_dict(self, state_dict):
@@ -532,6 +510,22 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
             up_tensor = get_tensor(state_dict.pop(up_weight_key))
             weight_tensor = paddle.concat([gate_tensor, up_tensor], axis=-1)
 
+            if self.with_bias:
+                gate_bias_key = self.bias_key.replace("linear1", "gate_proj")
+                bias_tensor = get_tensor(state_dict.pop(gate_bias_key)).astype(
+                    paddle.get_default_dtype()
+                )
+                converted_bias_tensor = paddle.zeros(
+                    shape=list(bias_tensor.shape), dtype=bias_tensor.dtype
+                )
+                if not self.use_fast_ffn:
+                    converted_bias_tensor = paddle.concat(
+                        [bias_tensor[::2], bias_tensor[1::2]], axis=0
+                    )
+                else:
+                    converted_bias_tensor = bias_tensor
+                state_dict[self.bias_key] = converted_bias_tensor
+
         if not self.use_fast_ffn:
             converted_weight_tensor = paddle.concat(
                 [weight_tensor[:, ::2], weight_tensor[:, 1::2]], axis=1)
@@ -548,7 +542,7 @@ class QKVParallelLinear(ColumnParallelLinear):
     QKVParallelLinear Layer.
     """
 
-    def __init__(self, llm_config, layer_name, weight_key, bias_key=None):
+    def __init__(self, llm_config, prefix, with_bias=False, add_bias=True):
         """
         Initialize the QKV Linear layer with given parameters.
 
@@ -557,7 +551,7 @@ class QKVParallelLinear(ColumnParallelLinear):
                 attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
 
-            layer_name (str): Unique name of the layer, used for naming weights and biases.
+            prefix (str): Unique name of the layer, used for naming weights and biases.
             weight_key (str): Key name of weight in the pdparams state dict.
             bias_key (str): Key name of bias in the pdparams state dict. Defaults to None, means no bias.
             with_bias (bool, optional): Whether to include bias term. Defaults to True.
@@ -573,11 +567,11 @@ class QKVParallelLinear(ColumnParallelLinear):
         input_size = self.embed_dim
         output_size = (self.num_heads + 2 * self.kv_num_heads) * self.head_dim
         super().__init__(llm_config=llm_config,
-                         layer_name=layer_name,
+                         prefix=prefix,
                          input_size=input_size,
                          output_size=output_size,
-                         weight_key=weight_key,
-                         bias_key=bias_key)
+                         with_bias=with_bias,
+                         add_bias=add_bias)
 
     def load_state_dict(self, state_dict):
         """
@@ -599,7 +593,18 @@ class QKVParallelLinear(ColumnParallelLinear):
             k_tensor = get_tensor(state_dict.pop(k_weight_key))
             v_tensor = get_tensor(state_dict.pop(v_weight_key))
             weight_tensor = paddle.concat([q_tensor, k_tensor, v_tensor],
-                                          axis=-1)
+                                          axis=-1).transpose([1, 0])   
+            weight_tensor = weight_tensor.reshape(
+                    [
+                        (
+                            self.num_heads_per_rank
+                            + 2 * self.kv_num_heads_per_rank
+                        )
+                        * (self.head_dim),
+                        self.embed_dim,
+                    ]
+                )
+            weight_tensor = paddle.transpose(weight_tensor, perm=[1, 0])
 
         if self.llm_config.quant_config:
             self.quant_method.process_loaded_weights(self, weight_tensor)
@@ -608,9 +613,19 @@ class QKVParallelLinear(ColumnParallelLinear):
 
         # bias
         if self.with_bias:
-            bias_tensor = paddle.to_tensor(
-                get_tensor(state_dict.pop(self.bias_key)))
-            self.linear_bias.set_value(bias_tensor)
+            if self.bias_key in state_dict.keys():
+                bias_tensor = paddle.to_tensor(
+                    get_tensor(state_dict.pop(self.bias_key)))
+                self.linear_bias.set_value(bias_tensor)
+            else:
+                q_bias_key = self.bias_key.replace("qkv_proj", "q_proj")
+                k_bias_key = self.bias_key.replace("qkv_proj", "k_proj")
+                v_bias_key = self.bias_key.replace("qkv_proj", "v_proj")
+                q_bias = get_tensor(state_dict.pop(q_bias_key))
+                k_bias = get_tensor(state_dict.pop(k_bias_key))
+                v_bias = get_tensor(state_dict.pop(v_bias_key))
+                qkv_bias = paddle.concat([q_bias, k_bias, v_bias], axis=-1)
+            self.linear_bias.set_value(qkv_bias)
 
         # smooth quant
         if self.use_smooth_quant:
@@ -644,12 +659,12 @@ class RowParallelLinear(LinearBase):
     def __init__(
         self,
         llm_config,
-        layer_name: str = "",
+        prefix: str = "",
         input_size: int = None,
         output_size: int = None,
-        weight_key=None,
-        bias_key=None,
-        skip_quant=False,
+        with_bias: bool = False,
+        add_bias: bool = False,
+        skip_quant: bool = False,
     ):
         """
         Initialize a linear layer with additional parameters for inference and quantization.
@@ -658,17 +673,17 @@ class RowParallelLinear(LinearBase):
             llm_config (LLMConfig): Arguments related to inference, containing
                 attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
-            layer_name (str): Unique name of the layer, used for naming internal attributes,
+            prefix (str): Unique name of the layer, used for naming internal attributes,
                 you can give it any name you like.
             layer_index (int): The index of the linear layer in the model
 
         """
         super().__init__(llm_config=llm_config,
-                         layer_name=layer_name,
+                         prefix=prefix,
                          input_size=input_size,
                          output_size=output_size,
-                         weight_key=weight_key,
-                         bias_key=bias_key,
+                         with_bias=with_bias,
+                         add_bias=add_bias,
                          skip_quant=skip_quant)
         self.llm_config = llm_config
         self.skip_quant = False
@@ -680,22 +695,15 @@ class RowParallelLinear(LinearBase):
         self.head_dim = llm_config.model_config.hidden_size // llm_config.model_config.num_attention_heads
         self.num_heads = llm_config.model_config.num_attention_heads // self.nranks
         self.dim_feedforward = llm_config.model_config.ffn_hidden_size // self.nranks
+        self.with_bias = with_bias
+        self.prefix = prefix
+        self.shift_key = f"{prefix}.shift_bias"
+        self.smooth_key = f"{prefix}.smooth_weight"
+        self.weight_key = f"{prefix}.weight"
+        self.bias_key = f"{prefix}.bias"
+        self.weight_only_scale_key = f"{prefix}.weight_only_scale"
+        self.out_scale_key = f"{prefix}.out_scale"
 
-        self.weight_key = weight_key
-        self.bias_key = bias_key
-        self.with_bias = True if self.bias_key is not None else False
-
-        self.shift_key = f"{layer_name}.shift_bias"
-        self.smooth_key = f"{layer_name}.smooth_weight"
-
-        self.layer_name = layer_name
-        self.weight_name = self.layer_name + ".weight"
-        self.bias_name = self.layer_name + ".bias"
-        self.weight_only_scale_name = self.layer_name + ".weight_only_scale"
-        self.out_scale_name = self.layer_name + ".out_scale"
-        if self.use_smooth_quant:
-            self.shift_name = self.layer_name + ".shift_bias"
-            self.smooth_name = self.layer_name + ".smooth_weight"
         self._dtype = self._helper.get_default_dtype()
 
         if llm_config.quant_config:
@@ -712,7 +720,6 @@ class RowParallelLinear(LinearBase):
 
         self.linear_weight = self.create_parameter(
             shape=self.linear_weight_shape,
-            attr=paddle.ParamAttr(name=self.weight_name),
             dtype=self.get_weight_create_dtype(),
             is_bias=False,
             default_initializer=paddle.nn.initializer.Constant(0),
@@ -722,7 +729,6 @@ class RowParallelLinear(LinearBase):
         if self.with_bias:
             self.linear_bias = self.create_parameter(
                 shape=[self.embed_dim],
-                attr=paddle.ParamAttr(name=self.bias_name),
                 dtype=self._dtype,
                 is_bias=True,
             )
@@ -737,13 +743,11 @@ class RowParallelLinear(LinearBase):
         if self.use_smooth_quant:
             self.linear_shift = self.create_parameter(
                 shape=self.linear_shift_shape,
-                attr=paddle.ParamAttr(name=self.shift_name),
                 dtype=self._dtype,
                 is_bias=False,
             )
             self.linear_smooth = self.create_parameter(
                 shape=self.linear_smooth_shape,
-                attr=paddle.ParamAttr(name=self.smooth_name),
                 dtype=self._dtype,
                 is_bias=False,
             )

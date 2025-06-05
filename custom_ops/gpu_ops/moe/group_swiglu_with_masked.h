@@ -13,6 +13,8 @@
 // limitations under the License.
 
 #pragma once
+#include "helper.h"
 
-paddle::Tensor GroupSwigluWithMasked(const paddle::Tensor& fc1_out_tensor,
-                                    const paddle::Tensor& token_nums_per_expert);
+paddle::Tensor
+GroupSwigluWithMasked(const paddle::Tensor &fc1_out_tensor,
+                      const paddle::Tensor &token_nums_per_expert);

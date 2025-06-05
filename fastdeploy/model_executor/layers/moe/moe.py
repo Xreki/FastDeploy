@@ -25,7 +25,7 @@ from .cutlass_fused_moe import CutlassFusedMoeMethod
 
 
 @dataclass
-class UniversalMoEComputeParams:
+class MoEComputeParams:
     """
     some params for computing MoE.
     it is given to different compute methods.
@@ -103,14 +103,14 @@ class FusedMoE(nn.Layer):
 
         if self.moe_quant_type == "w4a8":
             # below keys are only used in MoE W4A8!
-            self.ffn1_expert_weight_scale_key = weight_keys.moe_ffn1_weight_scale_key
-            self.ffn2_expert_weight_scale_key = weight_keys.moe_ffn2_weight_scale_key
-            self.ffn1_expert_in_scale_key = weight_keys.moe_ffn1_expert_in_scale_key
-            self.ffn2_expert_in_scale_key = weight_keys.moe_ffn2_expert_in_scale_key
+            self.ffn1_expert_weight_scale_key = weight_keys.moe_ffn1_weight_scale_keys
+            self.ffn2_expert_weight_scale_key = weight_keys.moe_ffn2_weight_scale_keys
+            self.ffn1_expert_in_scale_key = weight_keys.moe_ffn1_in_scale_keys
+            self.ffn2_expert_in_scale_key = weight_keys.moe_ffn2_in_scale_keys
 
         self.compute_method = CutlassFusedMoeMethod()
 
-        self.moe_compute_params = UniversalMoEComputeParams()
+        self.moe_compute_params = MoEComputeParams()
         self.moe_compute_params.global_num_experts = self.num_experts
         self.moe_compute_params.top_k = self.moe_config.top_k
         self.moe_compute_params.hidden_size = self.hidden_size
@@ -172,11 +172,45 @@ class FusedMoE(nn.Layer):
         up_gate_proj_weight, down_proj_weight = self.load_gate_state_dict(
             state_dict)
 
+        weight1_scale = None
+        weight2_scale = None
+        ffn1_in_scale = None
+        ffn2_in_scale = None
+        if self.moe_quant_type == "w4a8":
+            weight1_scale = []
+            weight2_scale = []
+            ffn1_in_scale = []
+            ffn2_in_scale = []
+
+            for j in range(self.num_experts):
+                weight1_scale.append(
+                    get_tensor(
+                        state_dict.pop(
+                            self.ffn1_expert_weight_scale_key.format(
+                                self.layer_idx, j))))
+                weight2_scale.append(
+                    get_tensor(
+                        state_dict.pop(
+                            self.ffn2_expert_weight_scale_key.format(
+                                self.layer_idx, j))))
+                ffn1_in_scale.append(
+                    get_tensor(
+                        state_dict.pop(
+                            self.ffn1_expert_in_scale_key.format(
+                                self.layer_idx, j))))
+                ffn2_in_scale.append(
+                    get_tensor(
+                        state_dict.pop(
+                            self.ffn2_expert_in_scale_key.format(
+                                self.layer_idx, j))))
+
         # other weight is with compute_method
         # different method may have different way to create weights
         self.compute_method.create_weights(self, self.moe_compute_params,
                                            up_gate_proj_weight,
-                                           down_proj_weight)
+                                           down_proj_weight, None, None,
+                                           weight1_scale, weight2_scale,
+                                           ffn1_in_scale, ffn2_in_scale)
 
     def forward(self, x, **kwargs):
         """

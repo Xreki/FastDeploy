@@ -317,7 +317,8 @@ def download_model(url, output_dir, temp_tar):
         if os.path.exists(temp_tar):
             os.remove(temp_tar)
         raise Exception(
-            f"Failed to get model from {url}, please recheck the model name from https://github.com/PaddlePaddle/PaddleNLP/blob/develop/llm/server/docs/static_models.md"
+            f"""Failed to get model from {url}, please recheck the model name from
+            https://github.com/PaddlePaddle/PaddleNLP/blob/develop/llm/server/docs/static_models.md"""
         )
     finally:
         # Cleanup temp file
@@ -418,9 +419,9 @@ def check_unified_ckpt(model_dir):
         for x in model_files:
             current_index = int(x.strip(".safetensors").split("-")[1])
             flags[current_index - 1] = 1
-        assert sum(flags) == len(
-            model_files
-        ), "Number of safetensor files should be {}, but now it's {}".format(
+        assert sum(
+            flags
+        ) == safetensors_num, "Number of safetensor files should be {}, but now it's {}".format(
             len(model_files), sum(flags))
     except Exception as e:
         raise Exception(f"Failed to check unified checkpoint, details: {e}.")

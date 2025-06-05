@@ -14,12 +14,12 @@
 
 #pragma once
 #include "cutlass/numeric_conversion.h"
-#include "helper.h"
-#include "moe/fused_moe_helper.h"
-#include "group_swiglu_with_masked.h"
-#include "cutlass_kernels/w4a8_moe/w4a8_moe_gemm_kernel.h"
 #include "cutlass_kernels/w4a8_moe/cutlass_extensions/epilogue/epilogue_quant_helper.h"
+#include "cutlass_kernels/w4a8_moe/w4a8_moe_gemm_kernel.h"
+#include "group_swiglu_with_masked.h"
+#include "helper.h"
 #include "moe/fast_hardamard_kernel.h"
+#include "moe/fused_moe_helper.h"
 
 template <paddle::DataType T>
 void MoeFFNKernel(const paddle::Tensor& permute_input,
@@ -363,24 +363,75 @@ std::vector<std::vector<int64_t>> MoeExpertFFNInferShape(
 }
 
 std::vector<paddle::DataType> MoeExpertFFNInferDtype(
-    const paddle::DataType& permute_input_dtype,
-    const paddle::DataType& tokens_expert_prefix_sum_dtype,
-    const paddle::DataType& ffn1_weight_dtype,
-    const paddle::DataType& ffn2_weight_dtype,
-    const paddle::optional<paddle::DataType>& ffn1_bias_dtype,
-    const paddle::optional<paddle::DataType>& ffn1_scale_dtype,
-    const paddle::optional<paddle::DataType>& ffn2_scale_dtype,
-    const paddle::optional<paddle::DataType>& ffn2_in_scale_dtype,
-    const paddle::optional<paddle::DataType>& expert_idx_per_token_dtype,
-    const std::string& quant_method,
-    const bool used_in_ep_low_latency) {
-    if (quant_method == "w4a8") {
-        return {ffn1_scale_dtype.get()};
-    } else {
-        return {permute_input_dtype};
-    }
+    const paddle::DataType &permute_input_dtype,
+    const paddle::DataType &tokens_expert_prefix_sum_dtype,
+    const paddle::DataType &ffn1_weight_dtype,
+    const paddle::DataType &ffn2_weight_dtype,
+    const paddle::optional<paddle::DataType> &ffn1_bias_dtype,
+    const paddle::optional<paddle::DataType> &ffn1_scale_dtype,
+    const paddle::optional<paddle::DataType> &ffn2_scale_dtype,
+    const paddle::optional<paddle::DataType> &ffn2_in_scale_dtype,
+    const std::string &quant_method, const bool used_in_ep_low_latency) {
+  if (quant_method == "w4a8") {
+    return {ffn1_scale_dtype.get()};
+  } else {
+    return {permute_input_dtype};
+  }
 }
 
+/**
+ * @brief Mixture of Experts (MoE) Feed-Forward Network Operator
+ * 
+ * This operator performs the expert computation in MoE architecture, including:
+ * 1. First linear transformation (FFN1) with optional quantization
+ * 2. SwiGLU activation function
+ * 3. Second linear transformation (FFN2) with optional quantization
+ * 
+ * Supports multiple quantization methods including weight-only int4/int8 and w4a8 quantization.
+ * 
+ * Inputs:
+ *   - permute_input: Permuted input tensor organized by expert
+ *                   Shape: [total_tokens * top_k, hidden_size]
+ *                   dtype: bfloat16/float16 (or int8 for w4a8)
+ *   - tokens_expert_prefix_sum: Prefix sum array of token counts per expert for group_gemm
+ *                              Shape: [num_experts]
+ *                              dtype: int64
+ *   - ffn1_weight: First FFN layer weights
+ *                 Shape: [num_experts, inter_size * 2, hidden_size]
+ *                 dtype: Same as input (unquantized) or int8 (quantized)
+ *   - ffn2_weight: Second FFN layer weights
+ *                 Shape: [num_experts, hidden_size, inter_size]
+ *                 dtype: Same as input (unquantized) or int8 (quantized)
+ *   - ffn1_bias: Optional bias for first FFN layer
+ *               Shape: [num_experts, inter_size * 2]
+ *               dtype: Same as input
+ *   - ffn1_scale: Quantization scales for first FFN layer
+ *                Shape: [num_experts, inter_size * 2]
+ *                dtype: Same as input
+ *   - ffn2_scale: Quantization scales for second FFN layer
+ *                Shape: [num_experts, hidden_size]
+ *                dtype: Same as input
+ *   - ffn2_in_scale: Optional input scales for second FFN layer (w4a8 only)
+ *                   dtype: float32
+ *   - expert_idx_per_token: Optional expert indices per token (w4a8 only)
+ *                         Shape: [total_tokens]
+ *                         dtype: int64
+ * 
+ * Outputs:
+ *   - output_tensor: Output tensor after MoE FFN computation
+ *                   Shape: Same as permute_input
+ *                   dtype: Same as input (or ffn1_scale dtype for w4a8)
+ * 
+ * Attributes:
+ *   - quant_method: Quantization method to use
+ *                 Options: "none", "weight_only_int4", "weight_only_int8", "w4a8"
+ *   - used_in_ep_low_latency: Whether running in low latency mode
+ *                            Affects activation function implementation
+ * 
+ * Note:
+ * - w4a8 mode requires additional workspace memory allocation
+ * - Low latency mode uses specialized grouped SwiGLU implementation
+ */
 PD_BUILD_STATIC_OP(moe_expert_ffn)
     .Inputs({"permute_input",
              "tokens_expert_prefix_sum",

@@ -77,10 +77,10 @@ class W4AFP8LinearMethod(QuantMethodBase):
             layer.linear_weight,
             layer.linear_weight_scale,
             zero_points=None,
-            bias=None,
+            bias=layer.linear_bias if layer.add_bias else None,
             out_scale=self.quant_config.weight_scale_dict.get(
-                layer.layer_name + ".weight_quanter") /
-            (self.quant_config.act_scale_dict.get(layer.layer_name +
+                layer.prefix + ".weight_quanter") /
+            (self.quant_config.act_scale_dict.get(layer.prefix +
                                                   ".activation_quanter") *
              QUANT_SCALING_FACTOR * QUANT_SCALING_FACTOR),
             groupsize=0,
