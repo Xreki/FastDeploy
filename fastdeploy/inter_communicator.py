@@ -341,6 +341,11 @@ class EngineWorkerQueue:
             self.lock_init: threading.Lock = threading.Lock()
             self.read_finish_flag_init: Value = Value("i", 0)
             self.connected_client_counter_init: Value = Value("i", 0)
+            self.barrier1 = threading.Barrier(self.num_client)
+            self.finished_req_queue = Queue()
+            self.cache_infos_init: List[Any] = list()
+            self.client_read_info_flag_init: List[int] = [1] * self.num_client
+            self.lock_info_init: threading.Lock = threading.Lock()
 
             # Register shared objects with proxy types
             QueueManager.register("get_tasks",
@@ -360,6 +365,28 @@ class EngineWorkerQueue:
                 callable=lambda: self.connected_client_counter_init,
                 proxytype=ValueProxy)
 
+            QueueManager.register('get_barrier1', callable=lambda: self.barrier1)
+            QueueManager.register('get_queue', callable=lambda: self.finished_req_queue)
+
+            QueueManager.register("get_cache_infos",
+                                  callable=lambda: self.cache_infos_init,
+                                  proxytype=ListProxy)
+
+            QueueManager.register("get_client_read_info_flag",
+                                  callable=lambda: self.client_read_info_flag_init,
+                                  proxytype=ListProxy)
+            QueueManager.register("get_lock_info",
+                                  callable=lambda: self.lock_info_init,
+                                  proxytype=AcquirerProxy)
+
+            self.prefill_list = Queue()
+            QueueManager.register("get_prefill_list", callable=lambda: self.prefill_list)
+
+
+            self.available_prefill = Queue()
+            QueueManager.register("get_available_prefill", callable=lambda: self.available_prefill)
+            
+
             self.manager: BaseManager = QueueManager(address=self.address,
                                                      authkey=self.authkey)
             self.manager.start()
@@ -373,6 +400,13 @@ class EngineWorkerQueue:
             QueueManager.register("get_lock")
             QueueManager.register("get_read_finish_flag")
             QueueManager.register("get_connected_client_counter")
+            QueueManager.register("get_barrier1")
+            QueueManager.register("get_queue")
+            QueueManager.register("get_cache_infos")
+            QueueManager.register("get_client_read_info_flag")
+            QueueManager.register("get_lock_info")
+            QueueManager.register("get_prefill_list")
+            QueueManager.register("get_available_prefill")
             self.manager = QueueManager(address=self.address,
                                         authkey=self.authkey)
             self._connect_with_retry()
@@ -382,8 +416,21 @@ class EngineWorkerQueue:
         self.client_read_flag: ListProxy = self.manager.get_client_read_flag()
         self.lock: AcquirerProxy = self.manager.get_lock()
         self.read_finish_flag: ValueProxy = self.manager.get_read_finish_flag()
-        self.connected_client_counter: ValueProxy = self.manager.get_connected_client_counter(
-        )
+        self.connected_client_counter: ValueProxy = self.manager.get_connected_client_counter()
+        self.cache_infos: ListProxy = self.manager.get_cache_infos()
+        self.client_read_info_flag: ListProxy = self.manager.get_client_read_info_flag()
+        self.lock_info: AcquirerProxy = self.manager.get_lock_info()
+        self.finished_req_queue = self.manager.get_queue()
+
+
+
+        # p/d 分离获取
+        self.prefill_list = self.manager.get_prefill_list()
+        self.available_prefill = self.manager.get_available_prefill()
+
+
+        self.barrier1 = self.manager.get_barrier1()
+        self.finished_req_queue = self.manager.get_queue()
         assert self.num_client == len(self.client_read_flag)
 
         if is_server:
@@ -468,3 +515,109 @@ class EngineWorkerQueue:
         total_num: int = len(self.tasks)
         self.lock.release()
         return total_num
+    
+    def put_cache_info(self, cache_info) -> None:
+        """
+        Args:
+            tasks: Tasks to be added to the queue
+        """
+        self.lock_info.acquire()
+        while sum(self.client_read_info_flag) < self.num_client:
+            self.lock_info.release()
+            time.sleep(0.001)
+            self.lock_info.acquire()
+
+        self.cache_infos[:] = list()
+        self.client_read_info_flag[:] = [0] * self.num_client
+
+        self.cache_infos.extend(cache_info)
+        llm_logger.info(f"cache_infos: {self.cache_infos}")
+        self.lock_info.release()
+
+    def get_prefill(self):
+        """
+        check if the prefill queue is empty
+        """
+        if self.available_prefill.qsize() == 0:
+            return 0
+        else:
+            return self.available_prefill.get()
+
+    def get_cache_info(self) -> List[Any]:
+        """
+        Retrieve tasks from the shared queue and update read status.
+
+        Returns:
+            tuple: (list of tasks, bool indicating if all clients have read)
+        """
+        cache_infos: List[Any] = list()
+        self.lock_info.acquire()
+        if self.client_read_info_flag[self.client_id] == 1:
+            self.lock_info.release()
+            return cache_infos
+        cache_infos.extend(self.cache_infos)
+        self.client_read_info_flag[self.client_id] = 1
+        all_client_read: bool = np.sum(
+            self.client_read_info_flag) == self.num_client
+        if all_client_read:
+            self.cache_infos[:] = list()
+        self.lock_info.release()
+        return cache_infos
+    
+
+
+    def put_finished_req(self, req_ids) -> None:
+        """
+        Put finished request ID into the queue.
+
+        Args:
+            req_ids: Request ID to be added to the queue
+        """
+        self.finished_req_queue.put(req_ids)
+    
+
+    def get_finished_req(self) -> str:
+        """
+        Get finished request ID from the queue.
+
+        Returns:
+            str: Finished request ID
+        """
+        ans = []
+        if self.finished_req_queue.empty():
+            return ans
+        while not self.finished_req_queue.empty():
+            ans.extend(self.finished_req_queue.get())
+        llm_logger.info(f"get finished req: {ans}")
+        return ans
+
+
+
+    def queue_empty(self):
+        """
+        check if the queue is empty
+        """
+        return self.prefill_list.qsize() == 0
+        
+
+    def put_splitwise_tasks(self, item):
+        """
+        put splitwise tasks to the queue
+        """
+        llm_logger.info(f"put item to queue {item[0]}")
+        self.prefill_list.put(item)
+        llm_logger.info(f"put item to queue success")
+
+    def get_splitwise_tasks(self):
+        """
+        get splitwise tasks from the queue
+        """
+        llm_logger.info(f"get tasks from queue")
+        if self.queue_empty():
+            return None
+        item = []
+        while not self.prefill_list.empty():
+            item.append(self.prefill_list.get())
+        llm_logger.info(f"get tasks from queue success")
+        return item
+

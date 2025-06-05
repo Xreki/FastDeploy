@@ -112,6 +112,16 @@ class EngineArgs:
     List of IP addresses for nodes in the cluster.
     """
 
+    cpu_offload_gb: float = None
+    """
+    The amount of CPU memory to offload to.
+    """
+
+    cache_queue_port: int = 55666
+    """
+    Port for cache queue.
+    """
+
     # System configuration parameters
     use_warmup: int = 0
     """
@@ -122,6 +132,20 @@ class EngineArgs:
     Flag to enable prefix caching.
     """
     engine_worker_queue_port: int = 8002
+    """
+    Port for engine worker queue.
+    """
+
+    splitwise_role: str = "mixed"
+    """
+    Splitwise role: prefill, decode or mixed
+    """
+
+    innode_prefill_ports: Optional[List[int]] = None
+    """
+    Port for innode dispatch request.
+    """
+
     enable_chunked_prefill: bool = False
     """
     Flag to enable chunked prefilling.
@@ -139,6 +163,8 @@ class EngineArgs:
     For chunked prefill, a request is considered long if the prompt is longer than this number of tokens.
     """
 
+
+    # Scheduler configuration parameters
     """
     Scheduler name to be used
     """
@@ -307,12 +333,31 @@ class EngineArgs:
             default=EngineArgs.gpu_memory_utilization,
             help="Fraction of GPU memory to be utilized."
         )
-        parallel_group.add_argument(
+
+        # CacheConfig parameters group
+        cache_group = parser.add_argument_group("Cache Configuration")
+
+        cache_group.add_argument(
             "--kv-cache-ratio",
             type=float,
             default=EngineArgs.kv_cache_ratio,
             help="Ratio of tokens to process in a block."
         )
+
+        cache_group.add_argument(
+            "--cpu-offload-gb",
+            type=float,
+            default=EngineArgs.cpu_offload_gb,
+            help="The amount of CPU memory to offload to."
+        )
+
+        cache_group.add_argument(
+            "--cache-queue-port",
+            type=int,
+            default=8003,
+            help="port for cache queue"
+        )
+
 
         # Cluster system parameters group
         system_group = parser.add_argument_group("System Configuration")
@@ -337,6 +382,21 @@ class EngineArgs:
             default=EngineArgs.enable_prefix_caching,
             help="Flag to enable prefix caching."
         )
+
+        perf_group.add_argument(
+            "--splitwise-role",
+            type=str,
+            default=EngineArgs.splitwise_role,
+            help="Role of splitwise. Default is 'mixed'. (prefill, decode, mixed)"
+        )
+
+        perf_group.add_argument(
+            "--innode-prefill-ports",
+            type=lambda s: s.split(",") if s else None,
+            default=EngineArgs.innode_prefill_ports,
+            help="port for innode prefill"
+        )
+
         perf_group.add_argument(
             "--enable-chunked-prefill",
             action='store_true',
@@ -444,16 +504,21 @@ class EngineArgs:
             dynamic_load_weight=self.dynamic_load_weight
         )
 
-    def create_cache_config(self) -> CacheConfig:
+    def create_cache_config(self, model_cfg) -> CacheConfig:
         """
         Create and return a CacheConfig object based on the current settings.
         """
         return CacheConfig(
             block_size=self.block_size,
+            tensor_parallel_size=self.tensor_parallel_size,
             gpu_memory_utilization=self.gpu_memory_utilization,
             num_gpu_blocks_override=self.num_gpu_blocks_override,
             kv_cache_ratio=self.kv_cache_ratio,
-            enable_prefix_caching=self.enable_prefix_caching
+            enable_prefix_caching=self.enable_prefix_caching,
+            cpu_offload_gb=self.cpu_offload_gb,
+            cache_queue_port=self.cache_queue_port,
+            model_cfg=model_cfg,
+            enable_chunked_prefill=self.enable_chunked_prefill
         )
 
     def create_scheduler_config(self) -> SchedulerConfig:
@@ -492,7 +557,7 @@ class EngineArgs:
             model_config=model_cfg,
             scheduler_config=scheduler_cfg,
             tokenizer=self.tokenizer,
-            cache_config=self.create_cache_config(),
+            cache_config=self.create_cache_config(model_cfg),
             max_model_len=self.max_model_len,
             tensor_parallel_size=self.tensor_parallel_size,
             max_num_seqs=self.max_num_seqs,
@@ -505,7 +570,8 @@ class EngineArgs:
             limit_mm_per_prompt=self.limit_mm_per_prompt,
             mm_processor_kwargs=self.mm_processor_kwargs,
             enable_mm=self.enable_mm,
-            enable_chunked_prefill=self.enable_chunked_prefill,
+            splitwise_role=self.splitwise_role,
+            innode_prefill_ports=self.innode_prefill_ports,
             max_num_partial_prefills=self.max_num_partial_prefills,
             max_long_partial_prefills=self.max_long_partial_prefills,
             long_prefill_token_threshold=self.long_prefill_token_threshold

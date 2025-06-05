@@ -21,7 +21,9 @@ import paddle
 import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
 
+
 from fastdeploy.model_executor.model_runner.model_runner_base import ModelRunnerBase
+from fastdeploy.inter_communicator import IPCSignal
 
 
 class ModelRunner(ModelRunnerBase):
@@ -29,8 +31,19 @@ class ModelRunner(ModelRunnerBase):
     def __init__(self, config, args, nranks, rank):
         self.nranks = nranks
         self.rank = rank
+        if args.enable_prefix_caching or args.splitwise_role != 'mixed':
+            cache_ready_signal_data = np.zeros(
+                shape=[nranks], dtype=np.int32)
+            self.cache_ready_signal = IPCSignal(name="cache_ready_signal",
+                                                array=cache_ready_signal_data,
+                                                dtype=np.int32,
+                                                suffix=args.engine_pid,
+                                                create=False)
         super().__init__(config, args)
         self._reset_paddle_env()
+
+
+            
 
     def _reset_paddle_env(self):
         #FLAGS_gqa_use_tensorcore
@@ -38,35 +51,7 @@ class ModelRunner(ModelRunnerBase):
         # gqa .etc paddle Flags set
         pass
     
-    def update_chunked_prefill(self, tasks):
-        """
-        更新chunked prefill相关参数
-        """
-        if not self.args.enable_chunked_prefill:
-            return
 
-        for task in tasks:
-            if task.chunk_idx > len(task.prefill_chunk_info):
-                continue
-
-            idx = task.idx
-            start_idx = sum(task.prefill_chunk_info[:task.chunk_idx])
-            if task.chunk_idx == len(task.prefill_chunk_info):
-                self.share_inputs["seq_lens_this_time"][idx:idx + 1] = 1
-                self.share_inputs['seq_lens_encoder'][idx:idx + 1] = 0
-                self.share_inputs["step_idx"][idx:idx + 1] = 1
-                self.share_inputs["seq_lens_decoder"][idx:idx + 1] = start_idx
-            else:
-                token_chunk_size = task.prefill_chunk_info[task.chunk_idx]
-
-                self.share_inputs["seq_lens_this_time"][idx:idx + 1] = token_chunk_size
-                self.share_inputs['input_ids'][idx, :token_chunk_size] = np.array(
-                    task.prompt_token_ids[start_idx:start_idx + token_chunk_size]
-                )
-                self.share_inputs['seq_lens_encoder'][idx:idx + 1] = token_chunk_size
-                self.share_inputs["step_idx"][idx:idx + 1] = 0
-                self.share_inputs["seq_lens_decoder"][idx:idx + 1] = start_idx
-            task.chunk_idx += 1
 
     def _load_model(self, model_name, dynamic_load_weight):
         use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
@@ -158,6 +143,7 @@ class ModelRunner(ModelRunnerBase):
 
         cache_kvs = {}
         total_block_num = self.num_gpu_blocks
+        self.device_ids_list = self.args.device_ids.split(",")
 
         if (hasattr(self.model_cfg, "num_key_value_heads")
                 and hasattr(self.model_cfg, "num_key_value_heads")
@@ -168,40 +154,75 @@ class ModelRunner(ModelRunnerBase):
         else:
             kv_num_head = self.model_cfg.num_attention_heads // self.nranks
         self.model_cfg.kv_num_head = kv_num_head
+        cache_type = self.args.dtype
 
-        for i in range(self.model_cfg.num_layers):
-            cache_type = self.args.dtype
-            cache_kvs["key_caches_{}".format(i)] = paddle.full(
-                shape=[
-                    total_block_num,
-                    kv_num_head,
-                    self.args.block_size,
-                    self.model_cfg.hidden_size //
-                    self.model_cfg.num_attention_heads,
-                ],
-                fill_value=0,
-                dtype=cache_type,
-            )
-            cache_kvs["value_caches_{}".format(i)] = paddle.full(
-                shape=[
-                    total_block_num,
-                    kv_num_head,
-                    self.args.block_size,
-                    self.model_cfg.hidden_size //
-                    self.model_cfg.num_attention_heads,
-                ],
-                fill_value=0,
-                dtype=cache_type,
-            )
+        key_cache_shape = value_cache_shape =  [
+            total_block_num,
+            kv_num_head,
+            self.args.block_size,
+            self.model_cfg.hidden_size // self.model_cfg.num_attention_heads,
+        ]
 
-        self.share_inputs["caches"] = list(cache_kvs.values())
-        for value in cache_kvs.values():
-            del value
+        cache_kvs_list = []
+        # TODO infer 进程初始化cache
+
+        if self.args.do_profile == 0 and (self.args.enable_prefix_caching or self.args.splitwise_role != "mixed"):
+            use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
+            if use_pip_eff_llm is None:
+                from fastdeploy.model_executor.ops.gpu import set_data_ipc
+                from fastdeploy.model_executor.ops.gpu import share_external_data
+            else:
+                from efficientllm.gpu import set_data_ipc
+                from efficientllm.gpu import share_external_data
+            
+            while np.sum(self.cache_ready_signal.value) < self.nranks:
+                continue
+            for i in range(self.model_cfg.num_layers):
+                key_cache = paddle.empty(shape=[], dtype=cache_type)
+                key_cache_name = f"key_caches_{i}_rank{self.rank}.device{self.device_ids_list[self.rank]}"
+                val_cache_name = f"value_caches_{i}_rank{self.rank}.device{self.device_ids_list[self.rank]}"
+                key_cache = share_external_data(key_cache, key_cache_name, key_cache_shape)
+                cache_kvs_list.append(key_cache)
+                value_cache = paddle.empty(shape=[], dtype=cache_type)
+                value_cache = share_external_data(value_cache, val_cache_name, key_cache_shape)
+                cache_kvs_list.append(value_cache)
+        
+            self.share_inputs["caches"] = cache_kvs_list
+
+        else:
+            for i in range(self.model_cfg.num_layers):
+                cache_type = self.args.dtype
+                cache_kvs["key_caches_{}".format(i)] = paddle.full(
+                    shape=[
+                        total_block_num,
+                        kv_num_head,
+                        self.args.block_size,
+                        self.model_cfg.hidden_size //
+                        self.model_cfg.num_attention_heads,
+                    ],
+                    fill_value=0,
+                    dtype=cache_type,
+                )
+                cache_kvs["value_caches_{}".format(i)] = paddle.full(
+                    shape=[
+                        total_block_num,
+                        kv_num_head,
+                        self.args.block_size,
+                        self.model_cfg.hidden_size //
+                        self.model_cfg.num_attention_heads,
+                    ],
+                    fill_value=0,
+                    dtype=cache_type,
+                )
+
+            self.share_inputs["caches"] = list(cache_kvs.values())
+            for value in cache_kvs.values():
+                del value
         paddle.device.cuda.empty_cache()
     
     def prefill_finished(self):
         """
-        判断是否已经完成了prefill操作
+        check whether prefill stage finished
         """
         prefill_statue = (self.share_inputs["seq_lens_this_time"] != 0) & (self.share_inputs["seq_lens_this_time"] != 1)
         return not paddle.any(prefill_statue).numpy()
@@ -210,32 +231,53 @@ class ModelRunner(ModelRunnerBase):
         """
         dynamic insertion
         """
+        if tasks[-1].disaggregate_info is not None and tasks[-1].disaggregate_info["role"] == "prefill":
+            os.environ['PREFILL_NODE_ONE_STEP_STOP'] = "1" 
         for i in range(len(tasks)):
             task = tasks[i]
             idx = task.idx
-            length = task.prompt_token_ids_len
-            
-            if self.args.enable_chunked_prefill:
-                task.set("chunk_idx", 1)
-                token_chunk_size = task.prefill_chunk_info[0]
-                self.share_inputs["seq_lens_this_time"][idx:idx + 1] = token_chunk_size
-                self.share_inputs['input_ids'][idx, :token_chunk_size] = np.array(
-                    task.prompt_token_ids[:token_chunk_size]
-                )
-                self.share_inputs['step_seq_lens_encoder'][idx:idx + 1] = token_chunk_size
-                self.share_inputs['seq_lens_encoder'][idx:idx + 1] = token_chunk_size
+            length = len(task.prompt_token_ids)
+
+            if tasks[i].disaggregate_info is not None and tasks[i].disaggregate_info["role"] == "decode":
+                self.share_inputs["pre_ids"][idx:idx + 1] = task.prompt_token_ids[-1]
+                self.share_inputs["input_ids"][idx:idx + 1, 0] = task.prompt_token_ids[0]
+                self.share_inputs['seq_lens_encoder'][idx:idx + 1] = 0
+                self.share_inputs['seq_lens_decoder'][idx:idx + 1] = length
+                self.share_inputs['seq_lens_this_time'][idx:idx + 1] = 1
+                self.share_inputs['step_seq_lens_encoder'][idx:idx + 1] = 0
+                self.share_inputs['step_seq_lens_decoder'][idx:idx + 1] = length
+                self.share_inputs['step_idx'][idx:idx + 1] = 1
             else:
+                self.share_inputs["pre_ids"][idx:idx + 1] = -1
+                self.share_inputs["step_idx"][idx:idx + 1] = 0
                 self.share_inputs["input_ids"][idx:idx + 1, :length] = np.array(
                     task.prompt_token_ids)
-                self.share_inputs["seq_lens_this_time"][idx:idx + 1] = length
-                self.share_inputs["step_seq_lens_encoder"][idx:idx + 1] = length
-                self.share_inputs["seq_lens_encoder"][idx:idx + 1] = length
+
+                if self.args.enable_chunked_prefill:
+                    # print(f"chunked_prefill, {task} {length}, {task.token_chunk_size}")
+                    task.set("chunk_idx", 1)
+                    token_chunk_size = task.prefill_chunk_info[0]
+                    self.share_inputs["seq_lens_this_time"][idx:idx + 1] = token_chunk_size
+                    self.share_inputs['input_ids'][idx, :token_chunk_size] = np.array(
+                        task.prompt_token_ids[:token_chunk_size]
+                    )
+                    self.share_inputs['step_seq_lens_encoder'][idx:idx + 1] = token_chunk_size
+                    self.share_inputs['seq_lens_encoder'][idx:idx + 1] = token_chunk_size
+                    self.share_inputs['seq_lens_decoder'][idx:idx + 1] = task.seq_lens_decoder
+                    self.share_inputs['step_seq_lens_decoder'][idx:idx + 1] = task.seq_lens_decoder
+                else:
+                    self.share_inputs['seq_lens_decoder'][idx:idx + 1] = task.seq_lens_decoder
+                    self.share_inputs['step_seq_lens_decoder'][idx:idx + 1] = task.seq_lens_decoder
+                    self.share_inputs['seq_lens_this_time'][idx:idx + 1] = length
+                    self.share_inputs['step_seq_lens_encoder'][idx:idx + 1] = length
+                    self.share_inputs['seq_lens_encoder'][idx:idx + 1] = length
+
 
             if len(task.eos_token_ids) < self.args.eos_tokens_lens:
                 task.eos_token_ids.append(task.eos_token_ids[0])
             self.share_inputs["eos_token_id"][:] = np.array(
                 task.eos_token_ids, dtype="int64").reshape(-1, 1)
-            self.share_inputs["pre_ids"][idx:idx + 1] = -1
+            
             self.share_inputs["top_p"][idx:idx + 1] = task.get("top_p", 0.7)
             self.share_inputs["temperature"][idx:idx + 1] = task.get(
                 "temperature", 0.95)
@@ -245,8 +287,7 @@ class ModelRunner(ModelRunnerBase):
                 "frequency_penalty", 0.0)
             self.share_inputs["presence_score"][idx:idx + 1] = task.get(
                 "presence_penalty", 0.0)
-            self.share_inputs["seq_lens_decoder"][idx:idx + 1] = 0
-            self.share_inputs["step_idx"][idx:idx + 1] = 0
+
             self.share_inputs["min_dec_len"][idx:idx + 1] = task.get(
                 "min_tokens", 1)
 
@@ -340,9 +381,13 @@ class ModelRunner(ModelRunnerBase):
         计算理论的kvcache大小
         """
         num_layers = self.model_cfg.num_layers
-        byte_of_cache = 2
-        #TODO
-        # 支持c8 c4
+
+        if self.args.dtype == "wint8":
+            byte_of_cache = 1
+        elif self.args.dtype == "wint4":
+            byte_of_cache = 0.5
+        else:
+            byte_of_cache = 2
 
         hidden_size = self.model_cfg.hidden_size
         attention_heads = self.model_cfg.num_attention_heads
@@ -354,6 +399,7 @@ class ModelRunner(ModelRunnerBase):
 
     def _update_share_input_block_num(self):
         del self.share_inputs["caches"]
+        self.args.do_profile = 0
         self._init_kvcache()
 
         del self.share_inputs["block_tables"]
@@ -372,17 +418,47 @@ class ModelRunner(ModelRunnerBase):
             paddle.full([1], self.free_list_len, dtype="int32"),
         })
 
+    def update_chunked_prefill(self, tasks):
+        """
+        更新chunked prefill相关参数
+        """
+        if not self.args.enable_chunked_prefill:
+            return
+
+        for task in tasks:
+            if task.get("prefill_chunk_info", None) is None:
+                continue
+
+            if task.chunk_idx > len(task.prefill_chunk_info):
+                continue
+
+            idx = task.idx
+            start_idx = sum(task.prefill_chunk_info[:task.chunk_idx])
+            if task.chunk_idx == len(task.prefill_chunk_info):
+                self.share_inputs["seq_lens_this_time"][idx:idx + 1] = 1
+                self.share_inputs['seq_lens_encoder'][idx:idx + 1] = 0
+                self.share_inputs["step_idx"][idx:idx + 1] = 1
+                self.share_inputs["seq_lens_decoder"][idx:idx + 1] = start_idx + task.seq_lens_decoder
+            else:
+                token_chunk_size = task.prefill_chunk_info[task.chunk_idx]
+
+                self.share_inputs["seq_lens_this_time"][idx:idx + 1] = token_chunk_size
+                self.share_inputs['input_ids'][idx, :token_chunk_size] = np.array(
+                    task.prompt_token_ids[start_idx:start_idx + token_chunk_size]
+                )
+                self.share_inputs['seq_lens_encoder'][idx:idx + 1] = token_chunk_size
+                self.share_inputs["step_idx"][idx:idx + 1] = 0
+                self.share_inputs["seq_lens_decoder"][idx:idx + 1] = start_idx + task.seq_lens_decoder
+            task.chunk_idx += 1
+
     def dummy_input(self, num_total_tokens, number_of_tasks):
         """
         fake input to profile
         """
-        input_length = num_total_tokens // number_of_tasks
-
+        full_length = num_total_tokens // number_of_tasks
+        input_length = int(full_length * self.args.kv_cache_ratio)
         block_num = (input_length + self.args.block_size - 1 +
                      self.args.enc_dec_block_num) // self.args.block_size
-        self.share_inputs["free_list"] = paddle.to_tensor([], dtype="int32")
-        self.share_inputs["free_list_len"][0] = 0
-
 
         for i in range(number_of_tasks):
             idx = i

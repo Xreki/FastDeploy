@@ -243,6 +243,7 @@ paddle::Tensor DequantInt8Func(
 
 paddle::Tensor OpenShmAndGetMetaSignalFunc(
     const int rank,
+    const int device_id,
     const bool keep_pd_step_flag);
 
 paddle::Tensor InitSignalLayerwiseFunc(

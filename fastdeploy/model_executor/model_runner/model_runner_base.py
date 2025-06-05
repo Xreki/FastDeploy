@@ -143,6 +143,7 @@ class ModelRunnerBase(ABC):
             "seq_lens_this_time": paddle.full(max_num_seqs, 0, **int32_config),
             "seq_lens_encoder": paddle.full([max_num_seqs, 1], 0, **int32_config),
             "step_seq_lens_encoder": paddle.full([max_num_seqs, 1], 0, **int32_config),
+            "step_seq_lens_decoder": paddle.full([max_num_seqs, 1], 0, **int32_config),
             "seq_lens_decoder": paddle.full([max_num_seqs, 1], 0, **int32_config),
             "step_idx": paddle.full([max_num_seqs, 1], 0, **int64_config),
             "not_need_stop": paddle.full([1], False, **bool_config).cpu(),

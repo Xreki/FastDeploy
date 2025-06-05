@@ -221,6 +221,8 @@ elif paddle.is_compiled_with_cuda():
         "gpu_ops/remote_cache_kv_ipc.cc",
         "gpu_ops/open_shm_and_get_meta_signal.cc",
         "gpu_ops/init_signal_layerwise.cc",
+        "gpu_ops/get_data_ptr_ipc.cu",
+        "gpu_ops/ipc_sent_key_value_cache_by_remote_ptr.cu",
     ]
 
     cutlass_dir = "third_party/cutlass"

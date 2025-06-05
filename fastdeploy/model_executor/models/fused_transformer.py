@@ -119,6 +119,8 @@ class FusedTransformer(nn.Layer):
             + "Expected one of ['prefill', 'decode', 'mixed']."
         )
 
+        self.device_id = os.getenv("CUDA_VISIBLE_DEVICES").split(",")[self.rank]
+
         if self.nranks > 1:
             assert ring_id != -1
 
@@ -1017,6 +1019,7 @@ class FusedTransformer(nn.Layer):
         if self.use_pd_disaggregation:
             kv_signal_metadata = fastdeploy.model_executor.ops.gpu.open_shm_and_get_meta_signal(
                 self.rank,
+                int(self.device_id),
                 self.keep_pd_step_flag,
             )
             self.kv_signal_datas = (
