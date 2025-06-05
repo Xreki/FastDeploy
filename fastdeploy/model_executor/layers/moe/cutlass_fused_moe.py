@@ -41,7 +41,7 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
             ffn2_tensor,
             ffn1_bias=None,
             ffn2_bias=None,
-            # belows are only used in w4a8.
+            # belows only used in w4a8.
             moe_ffn1_weight_scale=None,
             moe_ffn2_weight_scale=None,
             moe_ffn1_in_scale=None,
