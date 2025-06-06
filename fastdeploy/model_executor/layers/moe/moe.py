@@ -51,8 +51,22 @@ class FusedMoE(nn.Layer):
     def __init__(
         self,
         llm_config,
-        layer_name,
-        layer_idx=-1,
+        moe_intermediate_size: int = -1,
+        num_experts: int = -1,
+        top_k: int = -1,
+        moe_use_gate_correction_bias: bool = False,
+        moe_quant_type: str = "weight_only_int4",
+        layer_idx: int = -1,
+        gate_weight_key=None,
+        gate_correction_bias_key=None,
+        ffn1_expert_weight_key=None,
+        ffn2_expert_weight_key=None,
+        moe_ffn1_bias_keys=None,
+        moe_ffn2_bias_keys=None,
+        moe_ffn1_weight_scale_keys=None,
+        moe_ffn2_weight_scale_keys=None,
+        moe_ffn1_in_scale_keys=None,
+        moe_ffn2_in_scale_keys=None,
     ):
         """
         Initialize the Moe layer with given parameters.
@@ -60,59 +74,56 @@ class FusedMoE(nn.Layer):
             llm_config (LLMConfig): Arguments related to inference, containing
                 attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
-
-            layer_name (str): Unique name of the layer.
         """
         super().__init__()
 
         self.llm_config = llm_config
-        self.layer_name = layer_name
         self.layer_idx = layer_idx
-
         self.tp_size = llm_config.parallel_config.mp_size
         self.ep_size = llm_config.parallel_config.ep_size
 
+        self.moe_use_gate_correction_bias = moe_use_gate_correction_bias
+
         self.hidden_size = llm_config.model_config.hidden_size
         self.moe_config = llm_config.moe_config
-        self.moe_quant_type = self.moe_config.moe_quant_type
         self.use_offline_quant = llm_config.tmp_config.use_offline_quant
         moe_tag = self.llm_config.moe_config.moe_tag
         logger.info(f"{moe_tag}MoE is running in {self.moe_quant_type} mode")
         
-        self.num_experts = self.moe_config.num_experts
+        self.moe_quant_type = moe_quant_type
+        self.num_experts = num_experts
         self.num_local_experts = self.num_experts // self.ep_size
 
-        if self.ep_size >= 2:
-            logger.debug("MoE is running in ep mode")
-            self.moe_intermediate_size = self.moe_config.moe_intermediate_size
-        else:
-            logger.debug(f"MoE is running in tp{self.tp_size} mode")
-            self.moe_intermediate_size = (
-                self.moe_config.moe_intermediate_size // self.tp_size)
+        logger.info(f'''MoE config is num_experts:{num_experts},
+             top_k:{top_k},
+             hidden_size:{self.hidden_size},
+             moe_intermediate_size:{moe_intermediate_size}''')
+        logger.info(
+            f"MoE is running on moe_quant_type: {self.moe_quant_type}, ep:{self.ep_size}, tp:{self.tp_size} mode"
+        )
+        if self.tp_size >= 2:
+            self.moe_intermediate_size = moe_intermediate_size // self.tp_size
 
-        weight_keys = llm_config.load_config.weight_keys
-        self.gate_weight_key = weight_keys.moe_gate_weight_keys.format(
-            layer_idx)
-        self.gate_correction_bias_key = weight_keys.moe_gate_correction_bias_keys.format(
-            layer_idx)
+        self.gate_weight_key = gate_weight_key
+        self.gate_correction_bias_key = gate_correction_bias_key
 
-        self.ffn1_expert_weight_key = weight_keys.moe_ffn1_weight_keys
-        self.ffn2_expert_weight_key = weight_keys.moe_ffn2_weight_keys
-        self.ffn1_bias_key = weight_keys.moe_ffn1_bias_keys
-        self.ffn2_bias_key = weight_keys.moe_ffn2_bias_keys
+        self.ffn1_expert_weight_key = ffn1_expert_weight_key
+        self.ffn2_expert_weight_key = ffn2_expert_weight_key
+        self.ffn1_bias_key = moe_ffn1_bias_keys
+        self.ffn2_bias_key = moe_ffn2_bias_keys
 
         if self.moe_quant_type == "w4a8":
             # below keys are only used in MoE W4A8!
-            self.ffn1_expert_weight_scale_key = weight_keys.moe_ffn1_weight_scale_keys
-            self.ffn2_expert_weight_scale_key = weight_keys.moe_ffn2_weight_scale_keys
-            self.ffn1_expert_in_scale_key = weight_keys.moe_ffn1_in_scale_keys
-            self.ffn2_expert_in_scale_key = weight_keys.moe_ffn2_in_scale_keys
+            self.ffn1_expert_weight_scale_key = moe_ffn1_weight_scale_keys
+            self.ffn2_expert_weight_scale_key = moe_ffn2_weight_scale_keys
+            self.ffn1_expert_in_scale_key = moe_ffn1_in_scale_keys
+            self.ffn2_expert_in_scale_key = moe_ffn2_in_scale_keys
 
         self.compute_method = CutlassFusedMoeMethod()
 
         self.moe_compute_params = MoEComputeParams()
         self.moe_compute_params.global_num_experts = self.num_experts
-        self.moe_compute_params.top_k = self.moe_config.top_k
+        self.moe_compute_params.top_k = top_k
         self.moe_compute_params.hidden_size = self.hidden_size
         self.moe_compute_params.num_local_experts = self.num_local_experts
         self.moe_compute_params.moe_quant_type = self.moe_quant_type
@@ -156,7 +167,7 @@ class FusedMoE(nn.Layer):
             self.gate_weight.set_value(gate_weight_tensor)
 
         # gate_correction_bias
-        if self.moe_config.moe_use_gate_correction_bias:
+        if self.moe_use_gate_correction_bias:
             gate_correction_bias_tensor = get_tensor(
                 state_dict.pop(self.gate_correction_bias_key))
 

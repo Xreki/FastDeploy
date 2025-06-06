@@ -14,12 +14,14 @@
 # limitations under the License.
 """
 
-from dataclasses import dataclass, asdict, fields as dataclass_fields
+from dataclasses import asdict, dataclass
+from dataclasses import fields as dataclass_fields
 from typing import Any, Dict, List, Optional
 
-from fastdeploy.engine.config import Config, ModelConfig, CacheConfig, TaskOption
-from fastdeploy.utils import FlexibleArgumentParser
+from fastdeploy.engine.config import (CacheConfig, Config, ModelConfig,
+                                      TaskOption)
 from fastdeploy.scheduler.config import SchedulerConfig
+from fastdeploy.utils import FlexibleArgumentParser
 
 
 def nullable_str(x: str) -> Optional[str]:
@@ -177,118 +179,96 @@ class EngineArgs:
         """
         # Model parameters group
         model_group = parser.add_argument_group("Model Configuration")
-        model_group.add_argument(
-            "--model",
-            type=str,
-            default=EngineArgs.model,
-            help="Model name or path to be used."
-        )
-        model_group.add_argument(
-            "--model-config-name",
-            type=nullable_str,
-            default=EngineArgs.model_config_name,
-            help="The model configuration file name."
-        )
+        model_group.add_argument("--model",
+                                 type=str,
+                                 default=EngineArgs.model,
+                                 help="Model name or path to be used.")
+        model_group.add_argument("--model-config-name",
+                                 type=nullable_str,
+                                 default=EngineArgs.model_config_name,
+                                 help="The model configuration file name.")
         model_group.add_argument(
             "--tokenizer",
             type=nullable_str,
             default=EngineArgs.tokenizer,
-            help="Tokenizer name or path (defaults to model path if not specified)."
+            help=
+            "Tokenizer name or path (defaults to model path if not specified)."
         )
         model_group.add_argument(
             "--max-model-len",
             type=int,
             default=EngineArgs.max_model_len,
-            help="Maximum context length supported by the model."
-        )
+            help="Maximum context length supported by the model.")
         model_group.add_argument(
             "--block-size",
             type=int,
             default=EngineArgs.block_size,
-            help="Number of tokens processed in one block."
-        )
-        model_group.add_argument(
-            "--task",
-            type=str,
-            default=EngineArgs.task,
-            help="Task to be executed by the model."
-        )
+            help="Number of tokens processed in one block.")
+        model_group.add_argument("--task",
+                                 type=str,
+                                 default=EngineArgs.task,
+                                 help="Task to be executed by the model.")
         model_group.add_argument(
             "--use-warmup",
             type=int,
             default=EngineArgs.use_warmup,
-            help="Flag to indicate whether to use warm-up before inference."
-        )
+            help="Flag to indicate whether to use warm-up before inference.")
         model_group.add_argument(
             "--mm_processor_kwargs",
             default=None,
-            help="Additional keyword arguments for the multi-modal processor."
-        )
-        model_group.add_argument(
-            "--enable-mm",
-            action='store_true',
-            default=EngineArgs.enable_mm,
-            help="Flag to enable multi-modal model."
-        )
+            help="Additional keyword arguments for the multi-modal processor.")
+        model_group.add_argument("--enable-mm",
+                                 action='store_true',
+                                 default=EngineArgs.enable_mm,
+                                 help="Flag to enable multi-modal model.")
         model_group.add_argument(
             "--speculative_config",
             default=None,
-            help="Configuration for speculative execution."
-        )
+            help="Configuration for speculative execution.")
 
         model_group.add_argument(
             "--dynamic_load_weight",
             type=int,
             default=EngineArgs.dynamic_load_weight,
-            help="Flag to indicate whether to load weight dynamically."
-        )
+            help="Flag to indicate whether to load weight dynamically.")
 
-        model_group.add_argument(
-            "--engine-worker-queue-port",
-            type=int,
-            default=8002,
-            help="port for engine worker queue"
-        )
+        model_group.add_argument("--engine-worker-queue-port",
+                                 type=int,
+                                 default=EngineArgs.engine_worker_queue_port,
+                                 help="port for engine worker queue")
 
         # Parallel processing parameters group
         parallel_group = parser.add_argument_group("Parallel Configuration")
-        parallel_group.add_argument(
-            "--tensor-parallel-size",
-            "-tp",
-            type=int,
-            default=EngineArgs.tensor_parallel_size,
-            help="Degree of tensor parallelism."
-        )
+        parallel_group.add_argument("--tensor-parallel-size",
+                                    "-tp",
+                                    type=int,
+                                    default=EngineArgs.tensor_parallel_size,
+                                    help="Degree of tensor parallelism.")
         parallel_group.add_argument(
             "--max-num-seqs",
             type=int,
             default=EngineArgs.max_num_seqs,
-            help="Maximum number of sequences per iteration."
-        )
+            help="Maximum number of sequences per iteration.")
         parallel_group.add_argument(
             "--num-gpu-blocks-override",
             type=int,
             default=EngineArgs.num_gpu_blocks_override,
-            help="Override for the number of GPU blocks."
-        )
+            help="Override for the number of GPU blocks.")
         parallel_group.add_argument(
             "--max-num-batched-tokens",
             type=int,
             default=EngineArgs.max_num_batched_tokens,
-            help="Maximum number of tokens to batch together."
-        )
+            help="Maximum number of tokens to batch together.")
         parallel_group.add_argument(
             "--gpu-memory-utilization",
             type=float,
             default=EngineArgs.gpu_memory_utilization,
-            help="Fraction of GPU memory to be utilized."
-        )
+            help="Fraction of GPU memory to be utilized.")
         parallel_group.add_argument(
             "--kv-cache-ratio",
             type=float,
             default=EngineArgs.kv_cache_ratio,
-            help="Ratio of tokens to process in a block."
-        )
+            help="Ratio of tokens to process in a block.")
 
         # Cluster system parameters group
         system_group = parser.add_argument_group("System Configuration")
@@ -296,14 +276,12 @@ class EngineArgs:
             "--pod-ips",
             type=lambda s: s.split(",") if s else None,
             default=EngineArgs.pod_ips,
-            help="List of IP addresses for nodes in the cluster (comma-separated)."
-        )
-        system_group.add_argument(
-            "--nnode",
-            type=int,
-            default=EngineArgs.nnode,
-            help="Number of nodes in the cluster."
-        )
+            help=
+            "List of IP addresses for nodes in the cluster (comma-separated).")
+        system_group.add_argument("--nnode",
+                                  type=int,
+                                  default=EngineArgs.nnode,
+                                  help="Number of nodes in the cluster.")
 
         # Performance tuning parameters group
         perf_group = parser.add_argument_group("Performance Tuning")
@@ -325,38 +303,43 @@ class EngineArgs:
         scheduler_group.add_argument(
             "--scheduler-name",
             default=EngineArgs.scheduler_name,
-            help=f"Scheduler name to be used. Default is {EngineArgs.scheduler_name}. (local,global)"
+            help=
+            f"Scheduler name to be used. Default is {EngineArgs.scheduler_name}. (local,global)"
         )
         scheduler_group.add_argument(
             "--scheduler-max-size",
             type=int,
             default=EngineArgs.scheduler_max_size,
-            help=f"Size of scheduler. Default is {EngineArgs.scheduler_max_size}. (Local)"
+            help=
+            f"Size of scheduler. Default is {EngineArgs.scheduler_max_size}. (Local)"
         )
         scheduler_group.add_argument(
             "--scheduler-ttl",
             type=int,
             default=EngineArgs.scheduler_ttl,
-            help=f"TTL of request. Default is {EngineArgs.scheduler_ttl} seconds. (local,global)"
+            help=
+            f"TTL of request. Default is {EngineArgs.scheduler_ttl} seconds. (local,global)"
         )
         scheduler_group.add_argument(
             "--scheduler-wait-response-timeout",
             type=float,
             default=EngineArgs.scheduler_wait_response_timeout,
-            help=("Timeout for waiting for response. Default is "
-                  f"{EngineArgs.scheduler_wait_response_timeout} seconds. (local,global)")
-        )
+            help=
+            ("Timeout for waiting for response. Default is "
+             f"{EngineArgs.scheduler_wait_response_timeout} seconds. (local,global)"
+             ))
         scheduler_group.add_argument(
             "--scheduler-host",
             default=EngineArgs.scheduler_host,
-            help=f"Host address of redis. Default is {EngineArgs.scheduler_host}. (global)"
+            help=
+            f"Host address of redis. Default is {EngineArgs.scheduler_host}. (global)"
         )
         scheduler_group.add_argument(
             "--scheduler-port",
             type=int,
             default=EngineArgs.scheduler_port,
-            help=f"Port of redis. Default is {EngineArgs.scheduler_port}. (global)"
-        )
+            help=
+            f"Port of redis. Default is {EngineArgs.scheduler_port}. (global)")
         scheduler_group.add_argument(
             "--scheduler-db",
             type=int,
@@ -366,18 +349,21 @@ class EngineArgs:
         scheduler_group.add_argument(
             "--scheduler-password",
             default=EngineArgs.scheduler_password,
-            help=f"Password of redis. Default is {EngineArgs.scheduler_password}. (global)"
+            help=
+            f"Password of redis. Default is {EngineArgs.scheduler_password}. (global)"
         )
         scheduler_group.add_argument(
             "--scheduler-topic",
             default=EngineArgs.scheduler_topic,
-            help=f"Topic of scheduler. Defaule is {EngineArgs.scheduler_topic}. (global)"
+            help=
+            f"Topic of scheduler. Defaule is {EngineArgs.scheduler_topic}. (global)"
         )
         scheduler_group.add_argument(
             "--scheduler-remote-write-time",
             type=int,
             default=EngineArgs.scheduler_remote_write_time,
-            help=f"Max write time of redis. Default is {EngineArgs.scheduler_remote_write_time} seconds (global)"
+            help=
+            f"Max write time of redis. Default is {EngineArgs.scheduler_remote_write_time} seconds (global)"
         )
 
         return parser
@@ -387,20 +373,19 @@ class EngineArgs:
         """
         Create an instance of EngineArgs from command line arguments.
         """
-        return cls(**{
-            field.name: getattr(args, field.name)
-            for field in dataclass_fields(cls)
-        })
+        return cls(
+            **{
+                field.name: getattr(args, field.name)
+                for field in dataclass_fields(cls)
+            })
 
     def create_model_config(self) -> ModelConfig:
         """
         Create and return a ModelConfig object based on the current settings.
         """
-        return ModelConfig(
-            model_name_or_path=self.model,
-            config_json_file=self.model_config_name,
-            dynamic_load_weight=self.dynamic_load_weight
-        )
+        return ModelConfig(model_name_or_path=self.model,
+                           config_json_file=self.model_config_name,
+                           dynamic_load_weight=self.dynamic_load_weight)
 
     def create_cache_config(self) -> CacheConfig:
         """
@@ -411,8 +396,7 @@ class EngineArgs:
             gpu_memory_utilization=self.gpu_memory_utilization,
             num_gpu_blocks_override=self.num_gpu_blocks_override,
             kv_cache_ratio=self.kv_cache_ratio,
-            enable_prefix_caching=self.enable_prefix_caching
-        )
+            enable_prefix_caching=self.enable_prefix_caching)
 
     def create_scheduler_config(self) -> SchedulerConfig:
         """
@@ -433,7 +417,8 @@ class EngineArgs:
         Create and return a Config object based on the current settings.
         """
         model_cfg = self.create_model_config()
-        if not model_cfg.is_unified_ckpt and hasattr(model_cfg, 'tensor_parallel_size'):
+        if not model_cfg.is_unified_ckpt and hasattr(model_cfg,
+                                                     'tensor_parallel_size'):
             self.tensor_parallel_size = model_cfg.tensor_parallel_size
         if self.max_num_batched_tokens is None:
             if self.enable_chunked_prefill:

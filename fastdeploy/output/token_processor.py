@@ -19,17 +19,12 @@ import time
 import traceback
 from collections import Counter
 
-from paddlenlp.utils.env import MAX_BSZ
-from paddlenlp.utils.env import MAX_DRAFT_TOKENS
-from paddlenlp.utils.env import SPECULATE_MAX_BSZ
+from paddlenlp.utils.env import MAX_BSZ, MAX_DRAFT_TOKENS, SPECULATE_MAX_BSZ
 
-from fastdeploy.engine.request import CompletionOutput
-from fastdeploy.engine.request import RequestMetrics
-from fastdeploy.engine.request import RequestOutput
-from fastdeploy.utils import datetime_diff
-from fastdeploy.utils import llm_logger
-
+from fastdeploy.engine.request import (CompletionOutput, RequestMetrics,
+                                       RequestOutput)
 from fastdeploy.metrics.metrics import main_process_metrics
+from fastdeploy.utils import llm_logger
 
 
 class TokenProcessor(object):
@@ -93,16 +88,20 @@ class TokenProcessor(object):
         """
         read tokens from paddle inference engine and process
         """
-        if "ErnieForCausalLM" not in self.cfg.model_config.architectures \
+        from fastdeploy.model_executor.models import \
+            inference_runner_supported_models
+        if self.cfg.model_config.architectures[0] not in inference_runner_supported_models \
             and "ErnieMoEVLForCausalLM" not in self.cfg.model_config.architectures:
             from paddlenlp_ops import get_output, speculate_get_output
         else:
             os.environ["ELLM_LOG_LEVEL"] = "3"
             use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
             if use_pip_eff_llm is None:
-                from fastdeploy.model_executor.ops.gpu import get_output, speculate_get_output
+                from fastdeploy.model_executor.ops.gpu import (
+                    get_output, speculate_get_output)
             else:
-                from efficientllm.gpu import get_output
+                from efficientllm.ops.gpu import (get_output,
+                                                  speculate_get_output)
 
         while True:
             try:
@@ -189,17 +188,21 @@ class TokenProcessor(object):
                     inference_start_time=task.inference_start_time,
                     first_token_time=time.time() - task.inference_start_time,
                     time_in_queue=task.schedule_start_time -
-                                  task.preprocess_end_time,
+                    task.preprocess_end_time,
                     preprocess_cost_time=task.preprocess_end_time -
-                                         task.preprocess_start_time)
+                    task.preprocess_start_time)
 
-                main_process_metrics.time_to_first_token.observe(current_time - task.inference_start_time)
-                main_process_metrics.request_queue_time.observe(metrics.time_in_queue)
+                main_process_metrics.time_to_first_token.observe(
+                    current_time - task.inference_start_time)
+                main_process_metrics.request_queue_time.observe(
+                    metrics.time_in_queue)
 
             else:
-                if hasattr(task, 'last_token_time') and task.last_token_time is not None:
+                if hasattr(task, 'last_token_time'
+                           ) and task.last_token_time is not None:
                     token_gen_time = current_time - task.last_token_time
-                    main_process_metrics.time_per_output_token.observe(token_gen_time)
+                    main_process_metrics.time_per_output_token.observe(
+                        token_gen_time)
 
                 task.last_token_time = current_time
                 metrics = RequestMetrics(
@@ -237,7 +240,8 @@ class TokenProcessor(object):
                     )
                     self._recycle_resources(task_id, i, task)
                     main_process_metrics.num_requests_running.dec(1)
-                    main_process_metrics.request_inference_time.observe(current_time - task.inference_start_time)
+                    main_process_metrics.request_inference_time.observe(
+                        current_time - task.inference_start_time)
                     break
             batch_result.append(result)
 
@@ -261,11 +265,27 @@ class WarmUpTokenProcessor(TokenProcessor):
         """
         get output from model and process it
         """
+        from fastdeploy.model_executor.models import \
+            inference_runner_supported_models
+        if self.cfg.model_config.architectures[0] not in inference_runner_supported_models \
+            and "ErnieMoEVLForCausalLM" not in self.cfg.model_config.architectures:
+            from paddlenlp_ops import get_output, speculate_get_output
+        else:
+            os.environ["ELLM_LOG_LEVEL"] = "3"
+            use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
+            if use_pip_eff_llm is None:
+                from fastdeploy.model_executor.ops.gpu import (
+                    get_output, speculate_get_output)
+            else:
+                from efficientllm.ops.gpu import (get_output,
+                                                  speculate_get_output)
+
         while self._is_running:
             try:
                 rank_id = 0
                 if self.is_speculate_decoding:
-                    speculate_get_output(self.output_tokens, rank_id, self._is_blocking)
+                    speculate_get_output(self.output_tokens, rank_id,
+                                         self._is_blocking)
                 else:
                     get_output(self.output_tokens, rank_id, self._is_blocking)
 

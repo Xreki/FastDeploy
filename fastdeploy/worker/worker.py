@@ -15,28 +15,22 @@
 """
 
 import argparse
-import copy
-import json
-import os
-import sys
 import time
-from multiprocessing import shared_memory
+
 import numpy as np
 import paddle
 import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
-from paddle.base.framework import use_pir_api
 
-
-from fastdeploy.inter_communicator import IPCSignal
 from fastdeploy.engine.config import ModelConfig
+from fastdeploy.inter_communicator import EngineWorkerQueue, IPCSignal
 from fastdeploy.utils import get_logger
-from fastdeploy.inter_communicator import EngineWorkerQueue
 
 logger = get_logger("worker", "worker.log")
 
 
 class Worker:
+
     def __init__(self, args):
         """
             Args:
@@ -55,28 +49,34 @@ class Worker:
         self.device_ids = self.args.device_ids.split(",")
         self.model_cfg = ModelConfig(args.model_name_or_path)
 
-        if "ErnieForCausalLM" in self.model_cfg.architectures:
-            from fastdeploy.worker.model_runner.model_runner_inference import ModelRunner
+        from fastdeploy.model_executor.models import \
+            inference_runner_supported_models
+        if self.model_cfg.architectures[
+                0] in inference_runner_supported_models:
+            from fastdeploy.worker.model_runner.model_runner_inference import \
+                ModelRunner
         elif "ErnieMoEVLForCausalLM" in self.model_cfg.architectures:
-            from fastdeploy.worker.model_runner.model_runner_vl_inference import ModelRunner
+            from fastdeploy.worker.model_runner.model_runner_vl_inference import \
+                ModelRunner
         else:
-            from fastdeploy.worker.model_runner.model_runner_paddlenlp import ModelRunner
+            from fastdeploy.worker.model_runner.model_runner_paddlenlp import \
+                ModelRunner
 
         self.init_dist_env()
         self.format_print_configuration()
         self.helper_tensors = {}
 
-        self.infer_engine = ModelRunner(
-            config=self.model_cfg,
-            args=self.args,
-            nranks=self.nranks,
-            rank=self.rank
-        )
+        self.infer_engine = ModelRunner(config=self.model_cfg,
+                                        args=self.args,
+                                        nranks=self.nranks,
+                                        rank=self.rank)
 
         # TODO 多机
         address = ('0.0.0.0', self.args.engine_worker_queue_port)
-        self.engine_worker_queue = EngineWorkerQueue(
-            address=address, is_server=False, num_client=self.nranks, client_id=self.rank)
+        self.engine_worker_queue = EngineWorkerQueue(address=address,
+                                                     is_server=False,
+                                                     num_client=self.nranks,
+                                                     client_id=self.rank)
         self.init_health()
 
     def init_dist_env(self, seed=20):
@@ -99,35 +99,35 @@ class Worker:
         fleet.init(is_collective=True, strategy=strategy)
         self.rank = fleet.worker_index()
 
-
     def init_health(self):
-        print("init_health")
         # worker_ready_signal 用于engine感知各worker进程是否Ready
-        worker_ready_signal_data = np.zeros(shape=[self.nranks], dtype=np.int32)
+        worker_ready_signal_data = np.zeros(shape=[self.nranks],
+                                            dtype=np.int32)
         self.worker_ready_signal = IPCSignal(name="worker_ready_singnal",
                                              array=worker_ready_signal_data,
                                              dtype=np.int32,
-                                              suffix=self.args.engine_pid,
+                                             suffix=self.args.engine_pid,
                                              create=False)
         self.worker_ready_signal.value[self.rank] = 1
 
         # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
-        worker_healthy_live_recorded_time_array = np.zeros(shape=[self.nranks], dtype=np.int32)
-        self.worker_healthy_live_signal = IPCSignal(name="worker_healthy_live_signal",
-                    array=worker_healthy_live_recorded_time_array,
-                    dtype=np.int32,
-                    suffix=self.args.engine_pid,
-                    create=False)
+        worker_healthy_live_recorded_time_array = np.zeros(shape=[self.nranks],
+                                                           dtype=np.int32)
+        self.worker_healthy_live_signal = IPCSignal(
+            name="worker_healthy_live_signal",
+            array=worker_healthy_live_recorded_time_array,
+            dtype=np.int32,
+            suffix=self.args.engine_pid,
+            create=False)
         self.worker_healthy_live_signal.value[self.rank] = int(time.time())
 
         # exist_task_signal 用于各worker进程感知是否有新Task需要处理
         exist_task_signal_data = np.zeros([1], dtype=np.int32)
-        self.exist_task_signal = IPCSignal(
-            name="exist_task_signal",
-            array=exist_task_signal_data,
-            dtype=np.int32,
-            suffix=self.args.engine_pid,
-            create=False)
+        self.exist_task_signal = IPCSignal(name="exist_task_signal",
+                                           array=exist_task_signal_data,
+                                           dtype=np.int32,
+                                           suffix=self.args.engine_pid,
+                                           create=False)
 
         # exist_swapped_task_signal 用于engine感知worker中是否存在swapped task
         exist_swapped_task_signal_data = np.zeros([1], dtype=np.int32)
@@ -146,7 +146,6 @@ class Worker:
             dtype=np.int32,
             suffix=self.args.engine_pid,
             create=False)
-
 
     def format_print_configuration(self):
         """
@@ -178,7 +177,6 @@ class Worker:
             from fastdeploy.worker.model_runner.model_runner_vl_inference import ModelRunner
         else:
             from paddlenlp_ops import step_paddle
-            from fastdeploy.worker.model_runner.model_runner_paddlenlp import ModelRunner
 
         step_paddle(
             self.infer_engine.share_inputs["stop_flags"],
@@ -206,6 +204,7 @@ class Worker:
             self.args.block_size,
             self.args.enc_dec_block_num,
         )
+
     def check_model_weights_status(self):
         """
         check model weights status
@@ -213,19 +212,25 @@ class Worker:
         is_stop = 0
         while self.model_weights_status_signal.value[0] != 0:
             if self.model_weights_status_signal.value[0] == 1:
-                logger.info(f"infer engine stopped! start to load new checkpoint... {self.rank}")
+                logger.info(
+                    f"infer engine stopped! start to load new checkpoint... {self.rank}"
+                )
                 self.infer_engine.update_parameters(self.args.engine_pid)
             elif self.model_weights_status_signal.value[0] == -1:
-                logger.info(f"infer engine stopped! start to clear checkpoint... {self.rank}")
+                logger.info(
+                    f"infer engine stopped! start to clear checkpoint... {self.rank}"
+                )
                 self.infer_engine.clear_parameters(self.args.engine_pid)
 
             while True:
                 if self.model_weights_status_signal.value[0] == 0:
                     logger.info(f"finished loading new checkpoint {self.rank}")
                     break
-                elif  is_stop == 1 or (self.model_weights_status_signal.value[0] == -2 and is_stop == 0):
+                elif is_stop == 1 or (self.model_weights_status_signal.value[0]
+                                      == -2 and is_stop == 0):
                     if is_stop == 0:
-                        logger.info(f"finished clearing checkpoint {self.rank}")
+                        logger.info(
+                            f"finished clearing checkpoint {self.rank}")
                         is_stop = 1
                     time.sleep(0.001)
                     break
@@ -246,7 +251,9 @@ class Worker:
             Raises:
                 None.
         """
-        infer_seed_increment = paddle.full(shape=[self.args.max_num_seqs, 1], fill_value=4, dtype="int64")
+        infer_seed_increment = paddle.full(shape=[self.args.max_num_seqs, 1],
+                                           fill_value=4,
+                                           dtype="int64")
         self.nnode = 1
 
         while True:
@@ -262,12 +269,10 @@ class Worker:
             if self.exist_task_signal.value[0] == 2:
                 self.check_model_weights_status()
 
-
             self.insert_step = False
 
             self.worker_healthy_live_signal.value[self.rank] = int(time.time())
             mp_num_per_node = self.nranks
-
 
             if self.rank % mp_num_per_node == 0:
                 if self.engine_worker_queue.num_tasks() > 0 and self.infer_engine.prefill_finished():
@@ -279,8 +284,9 @@ class Worker:
             if self.nranks > 1:
                 paddle.distributed.barrier()
 
-
-            if self.exist_task_signal.value[0] == 1 or self.engine_worker_queue.read_finish_flag.get() == 1:
+            if self.exist_task_signal.value[
+                    0] == 1 or self.engine_worker_queue.read_finish_flag.get(
+                    ) == 1:
                 logger.info(f"Rank: {self.rank} Detected new requests.")
                 self.insert_step = True
 
@@ -304,8 +310,10 @@ class Worker:
                 continue
 
             self.infer_engine.generate()
-            self.infer_engine.share_inputs["infer_seed"].add_(infer_seed_increment)
-            self.infer_engine.share_inputs["infer_seed"][:] %= self.MAX_INFER_SEED
+            self.infer_engine.share_inputs["infer_seed"].add_(
+                infer_seed_increment)
+            self.infer_engine.share_inputs[
+                "infer_seed"][:] %= self.MAX_INFER_SEED
 
             self.infer_engine.update_chunked_prefill(req_dicts[0].token_chunk_size)
             self.step_cuda()
@@ -330,13 +338,17 @@ class Worker:
         paddle.device.cuda.empty_cache()
 
         paddle.device.cuda.reset_max_memory_allocated()
-        before_activation_gpu_memory = paddle.device.cuda.max_memory_allocated() / GiB
-        logger.info(f"before activate gpu memory: {before_activation_gpu_memory} GiB.")
+        before_activation_gpu_memory = paddle.device.cuda.max_memory_allocated(
+        ) / GiB
+        logger.info(
+            f"before activate gpu memory: {before_activation_gpu_memory} GiB.")
+
+        import gc
 
         import pynvml
-        import gc
         pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(int(self.device_ids[self.rank]))
+        handle = pynvml.nvmlDeviceGetHandleByIndex(
+            int(self.device_ids[self.rank]))
         meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
         total_gpu_memory = meminfo.total / GiB
         used_gpu_memory = meminfo.used / GiB
@@ -344,9 +356,12 @@ class Worker:
         logger.info(f"used gpu memory: {used_gpu_memory} GiB.")
 
         self.run_profile()
-        current_max_peak_gpu_memory = paddle.device.cuda.max_memory_reserved() / GiB
-        logger.info(f"current max peak gpu memory: {current_max_peak_gpu_memory} GiB.")
-        per_block_memory_used = self.infer_engine._cal_theortical_kvcache() / GiB
+        current_max_peak_gpu_memory = paddle.device.cuda.max_memory_reserved(
+        ) / GiB
+        logger.info(
+            f"current max peak gpu memory: {current_max_peak_gpu_memory} GiB.")
+        per_block_memory_used = self.infer_engine._cal_theortical_kvcache(
+        ) / GiB
         logger.info(f"each kv cache block takes {per_block_memory_used} GiB.")
         used_cache_gpu_memory = self.args.total_block_num * per_block_memory_used
         logger.info(f"used cache gpu memory: {used_cache_gpu_memory} GiB.")
@@ -389,12 +404,16 @@ class Worker:
             dtype=np.int32,
             suffix=self.args.engine_pid,
             create=False)
-        self.get_profile_block_num_signal.value[self.rank] = int(num_gpu_blocks)
+        self.get_profile_block_num_signal.value[self.rank] = int(
+            num_gpu_blocks)
         while np.any(self.get_profile_block_num_signal.value <= 0):
             time.sleep(0.01)
         num_gpu_blocks = self.get_profile_block_num_signal.value.min().item()
-        self.get_profile_block_num_signal.value[self.rank] = int(num_gpu_blocks)
-        logger.info(f"{self.get_profile_block_num_signal.value[self.rank]} GPU KV blocks can be allocated.")
+        self.get_profile_block_num_signal.value[self.rank] = int(
+            num_gpu_blocks)
+        logger.info(
+            f"{self.get_profile_block_num_signal.value[self.rank]} GPU KV blocks can be allocated."
+        )
         self.infer_engine.num_gpu_blocks = num_gpu_blocks
         self.infer_engine._update_share_input_block_num()
 
@@ -405,8 +424,9 @@ class Worker:
         """
         run profile
         """
-        infer_seed_increment = paddle.full(shape=[self.args.max_num_seqs, 1], fill_value=4, dtype="int64")
-        mp_num_per_node = self.nranks
+        infer_seed_increment = paddle.full(shape=[self.args.max_num_seqs, 1],
+                                           fill_value=4,
+                                           dtype="int64")
 
 
         self.infer_engine.dummy_input(self.args.max_num_batched_tokens, self.args.max_num_seqs)
@@ -414,10 +434,13 @@ class Worker:
             if self.nranks > 1:
                 paddle.distributed.barrier()
             self.infer_engine.generate()
-            self.infer_engine.share_inputs["infer_seed"].add_(infer_seed_increment)
-            self.infer_engine.share_inputs["infer_seed"][:] %= self.MAX_INFER_SEED
+            self.infer_engine.share_inputs["infer_seed"].add_(
+                infer_seed_increment)
+            self.infer_engine.share_inputs[
+                "infer_seed"][:] %= self.MAX_INFER_SEED
             self.step_cuda()
-            if int((self.infer_engine.share_inputs['seq_lens_this_time'] > 0).sum()) == 0:
+            if int((self.infer_engine.share_inputs['seq_lens_this_time']
+                    > 0).sum()) == 0:
                 break
 
 
@@ -431,44 +454,83 @@ def parse_args():
     parser.add_argument("--total_block_num", type=int, default=2000)
     parser.add_argument("--block_size", type=int, default=64)
     parser.add_argument("--engine_worker_queue_port", type=int, default=9923)
-    parser.add_argument("--max_model_len", type=int, default=3072, help="max model len")
-    parser.add_argument("--device_ids", type=str, default="0", help="cuda visible devices")
-    parser.add_argument("--dtype", type=str, default="bfloat16", help="input dtype")
-    parser.add_argument("--enc_dec_block_num", type=int, default=1, help="encoder's decoder num")
-    parser.add_argument("--kv_cache_ratio", type=float, default=0.7, help="kv cache ratio for input")
-    parser.add_argument("--first_token_id", type=int, default=1, help="first token id")
-    parser.add_argument("--gpu_memory_utilization", type=float, default=0.9, help="gpu memory utilization")
-    parser.add_argument("--engine_pid", type=int, default=None, help="Process ID of engine")
-    parser.add_argument("--do_profile", type=int, default=0, help="do profile or not")
-    parser.add_argument("--dynamic_load_weight", type=int, default=0, help="dynamic load weight or not")
-    parser.add_argument("--pad_token_id", type=int, default=-1, help="pad token id")
-    parser.add_argument("--eos_tokens_lens", type=int, default=2, help="eos token lens")
-    parser.add_argument("--enable_chunked_prefill", action='store_true', help="enable chunked prefill")
+    parser.add_argument("--max_model_len",
+                        type=int,
+                        default=3072,
+                        help="max model len")
+    parser.add_argument("--device_ids",
+                        type=str,
+                        default="0",
+                        help="cuda visible devices")
+    parser.add_argument("--dtype",
+                        type=str,
+                        default="bfloat16",
+                        help="input dtype")
+    parser.add_argument("--enc_dec_block_num",
+                        type=int,
+                        default=1,
+                        help="encoder's decoder num")
+    parser.add_argument("--kv_cache_ratio",
+                        type=float,
+                        default=0.7,
+                        help="kv cache ratio for input")
+    parser.add_argument("--first_token_id",
+                        type=int,
+                        default=1,
+                        help="first token id")
+    parser.add_argument("--gpu_memory_utilization",
+                        type=float,
+                        default=0.9,
+                        help="gpu memory utilization")
+    parser.add_argument("--engine_pid",
+                        type=int,
+                        default=None,
+                        help="Process ID of engine")
+    parser.add_argument("--do_profile",
+                        type=int,
+                        default=0,
+                        help="do profile or not")
+    parser.add_argument("--dynamic_load_weight",
+                        type=int,
+                        default=0,
+                        help="dynamic load weight or not")
+    parser.add_argument("--pad_token_id",
+                        type=int,
+                        default=-1,
+                        help="pad token id")
+    parser.add_argument("--eos_tokens_lens",
+                        type=int,
+                        default=2,
+                        help="eos token lens")
+    parser.add_argument("--enable_chunked_prefill",
+                        action='store_true',
+                        help="enable chunked prefill")
     parser.add_argument(
-        "--speculate_method", 
+        "--speculate_method",
         default=None,
-            type=str,
-            choices=[
-                "autoregressive",
-                "inference_with_reference",
-                "draft_model",
-                "hydra",
-                "eagle",
-            ],
+        type=str,
+        choices=[
+            "autoregressive",
+            "inference_with_reference",
+            "draft_model",
+            "hydra",
+            "eagle",
+        ],
     )
     parser.add_argument(
-        "--attention_backend", 
+        "--attention_backend",
         default="APPEND_ATTN",
-            type=str,
-            choices=[
-                "APPEND_ATTN",
-            ],
+        type=str,
+        choices=[
+            "APPEND_ATTN",
+        ],
     )
     parser.add_argument("--speculate_max_draft_tokens", type=int, default=1)
 
     parser.add_argument("--max_num_batched_tokens", type=int, default=2048, help="max num batched tokens")
     args = parser.parse_args()
     return args
+
 
 def main():
     """
@@ -479,6 +541,7 @@ def main():
     if args.do_profile:
         worker.determine_num_available_blocks()
     worker.run()
+
 
 if __name__ == "__main__":
     main()
