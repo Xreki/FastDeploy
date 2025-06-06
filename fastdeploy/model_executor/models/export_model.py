@@ -28,6 +28,7 @@ from paddle.distributed import fleet
 from paddlenlp.trainer import RuntimeTimer
 from paddlenlp.transformers import AutoTokenizer
 from paddlenlp.transformers.configuration_utils import PretrainedConfig
+from paddlenlp.transformers.model_utils import load_tp_checkpoint
 from paddlenlp.trl import llm_utils
 from paddlenlp.utils.env import USE_FAST_TOKENIZER
 from paddlenlp.utils.log import logger
@@ -345,10 +346,10 @@ def build_stream_line_model(
     else:
         context = paddle.LazyGuard()
         model_class = model_classes_mapping[architectures[0]]
-        state_dict = load_checkpoint(model_path,
-                                     model_class,
-                                     model_config,
-                                     return_numpy=True)
+        state_dict = load_tp_checkpoint(model_path,
+                                        model_class,
+                                        model_config,
+                                        return_numpy=True)
 
     if "ErnieForCausalLM" in architectures:
         use_rmsnorm = config.get("use_rmsnorm", False)
