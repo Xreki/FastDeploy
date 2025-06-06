@@ -26,8 +26,8 @@ import paddle.nn as nn
 from fastdeploy.config import KVCacheConfig, LLMConfig
 from fastdeploy.engine.request import Request
 from fastdeploy.model_executor.layers.attention import get_attention_backend
-from fastdeploy.model_executor.layers.attention.base_attention_backend import (
-    AttentionBackend, AttentionMetadata)
+from fastdeploy.model_executor.layers.attention.base_attention_backend import \
+    AttentionBackend
 from fastdeploy.model_executor.layers.rotary_embedding import get_rope
 from fastdeploy.model_executor.layers.sample import Sampler
 from fastdeploy.model_executor.model_loader import get_model
@@ -72,14 +72,13 @@ class GPUModelRunner(ModelRunnerBase):
         # In the future, we will expand it as a list.
         self.attn_backends: list[AttentionBackend] = []
         self.forward_meta: ForwardMeta = None
-        self.attn_metadatas: list[AttentionMetadata] = []
+        # self.attn_metadatas: list[AttentionMetadata] = []
         self.initialize_attn_backend()
 
         # Forward meta store the global meta information of the forward
         self.forward_meta: ForwardMeta = None
         # Initialize forward meta data
         self.initialize_forward_meta()
-
 
     def process_prefill_inputs(self, req_dicts: List[Request]):
         """ Process inputs for prefill tasks and update share_inputs buffer """
@@ -390,22 +389,8 @@ class GPUModelRunner(ModelRunnerBase):
         cache_kvs = {}
         max_block_num = self.num_gpu_blocks
 
-        if (hasattr(self.model_config, "num_key_value_heads")
-                and hasattr(self.model_config, "num_key_value_heads")
-                and self.model_config.num_key_value_heads is not None
-                and int(self.model_config.num_key_value_heads) > 0):
-            kv_num_head = int(
-                self.model_config.num_key_value_heads) // self.nranks
-        else:
-            kv_num_head = self.model_config.num_attention_heads // self.nranks
-        self.model_config.kv_num_head = kv_num_head
-
         kv_cache_shape = self.attn_backends[0].get_kv_cache_shape(
-            max_num_blocks=max_block_num,
-            block_size=self.parallel_config.block_size,
-            kv_num_head=kv_num_head,
-            head_dim=self.model_config.hidden_size //
-            self.model_config.num_attention_heads)
+            max_num_blocks=max_block_num)
 
         for i in range(self.model_config.num_layers):
             cache_type = self.parallel_config.dtype
@@ -425,16 +410,27 @@ class GPUModelRunner(ModelRunnerBase):
             del value
         paddle.device.cuda.empty_cache()
 
-    def initialize_attn_backend(self, kv_cache_config: KVCacheConfig) -> None:
+    def initialize_attn_backend(self,
+                                kv_cache_config: Optional[KVCacheConfig] = None
+                                ) -> None:
         """
         Initialize attention backends and forward metadata
         Args:
             kv_cache_config:
         """
         assert len(self.attn_backends) == 0
-        # Get the attention backend shared by all attention layers
-        attn_backend = get_attention_backend(
+
+        self.model_config.kv_num_heads = self.model_config.num_attention_heads // self.rank
+        num_heads = int(self.model_config.num_key_value_heads) // self.rank
+        head_dim = self.model_config.hidden_size // self.model_config.num_attention_heads
+
+        # Get the attention backend
+        attn_cls = get_attention_backend(
             self.parallel_config.attention_backend)
+        attn_backend = attn_cls(self.llm_config,
+                                kv_num_heads=self.model_config.kv_num_heads,
+                                num_heads=num_heads,
+                                head_dim=head_dim)
         if attn_backend is None:
             raise NotImplementedError(
                 f"{ self.parallel_config.attention_backend} attention backend is not support by GPUModelRunner"

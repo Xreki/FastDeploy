@@ -67,7 +67,8 @@ class AppendAttentionBackend(AttentionBackend):
     AppendAttentionBackend backend implementation.
     """
 
-    def __init__(self, llm_config: LLMConfig, rank: int):
+    def __init__(self, llm_config: LLMConfig, kv_num_heads: int,
+                 num_heads: int, head_dim: int):
         """
         AppendAttentionBackend __init__
         """
@@ -85,12 +86,10 @@ class AppendAttentionBackend(AttentionBackend):
         self.speculate_method = llm_config.parallel_config.speculate_method
         self.use_speculate = self.speculate_method is not None
         self.speculate_max_draft_token_num = llm_config.parallel_config.speculate_max_draft_tokens
-        # TODO(gongshaotian): get global rank
-        # self.num_heads = llm_config.parallel_config.num_attention_heads // rank
-        # self.kv_num_heads = int(
-        #     llm_config.model_config.num_key_value_heads) // rank
-        self.num_heads = llm_config.model_config.num_heads
-        self.kv_num_heads = llm_config.model_config.kv_num_heads
+
+        self.kv_num_heads = kv_num_heads
+        self.num_heads = num_heads
+        self.head_dim = head_dim
 
     def init_attention_metadata(self, forward_meta: ForwardMeta):
         """Initialize attntion metadata hence all layers in the forward pass can reuse it."""
@@ -139,17 +138,15 @@ class AppendAttentionBackend(AttentionBackend):
         """get_attntion_meta"""
         return self.attention_metadata
 
-    @staticmethod
     def get_kv_cache_shape(
+        self,
         max_num_blocks: int,
-        block_size: int,
-        kv_num_head: int,
-        head_dim: int,
     ):
         """
-        get_kv_cache_shape
+        Caculate kv cache shape
         """
-        return (max_num_blocks, kv_num_head, block_size, head_dim)
+        return (max_num_blocks, self.kv_num_heads, self.block_size,
+                self.head_dim)
 
     def forward_mixed(self,
                       q,
