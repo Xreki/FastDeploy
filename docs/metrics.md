@@ -12,6 +12,13 @@
 | `fastdeploy:e2e_request_latency_seconds`  | Histogram | 请求的端到端延迟分布 | 秒   |
 | `fastdeploy:request_inference_time_seconds`  | Histogram | 请求在RUNNING阶段耗时 | 秒   |
 | `fastdeploy:request_queue_time_seconds`  | Histogram | 请求在WAITING阶段耗时 | 秒   |
+| `fastdeploy:request_prefill_time_seconds`   | Histogram | 请求的prefill阶段耗时 | 秒   |
+| `fastdeploy:request_decode_time_seconds`    | Histogram | 请求的decode阶段耗时 | 秒   |
+| `fastdeploy:prompt_tokens_total`            | Counter   | 已处理的prompt token总数 | 个   |
+| `fastdeploy:generation_tokens_total`        | Counter   | 已生成的token总数 | 个   |
+| `fastdeploy:request_prompt_tokens`          | Histogram | 每个请求的prompt token数量 | 个   |
+| `fastdeploy:request_generation_tokens`      | Histogram | 每个请求生成的token数量 | 个   |
+| `fastdeploy:gpu_cache_usage_perc`           | Gauge     | GPU KV-cache使用率 | %    |
 
 
 ## 指标访问

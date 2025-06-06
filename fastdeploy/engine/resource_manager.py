@@ -22,6 +22,7 @@ import time
 import math
 import numpy as np
 
+from fastdeploy.metrics.metrics import main_process_metrics
 from fastdeploy.utils import llm_logger
 from fastdeploy.cache_manager.prefix_cache_manager import PrefixCacheManager
 
@@ -134,7 +135,7 @@ class ResourceManager(object):
         block_list = self.cache_manager.allocate_gpu_blocks(block_num)
         llm_logger.debug(f"dispatch {len(block_list)} blocks.")
         return block_list
-    
+
     def check_and_free_block_tables(self):
         """
         Check and free block tables only in prefix caching mode.
@@ -143,7 +144,7 @@ class ResourceManager(object):
         if self.enable_prefix_cache:
             if self.available_block_num() < self.cfg.max_block_num_per_seq:
                 self.free_block_tables(self.cfg.max_block_num_per_seq)
-    
+
     def _recycle_block_tables(self, task):
         """
         Recycling memory resource blocks
@@ -163,6 +164,7 @@ class ResourceManager(object):
             ori_number = self.available_block_num()
             self.cache_manager.recycle_gpu_blocks(block_tables)
             cur_number = self.available_block_num()
+            main_process_metrics.gpu_cache_usage_perc.set(self.get_gpu_cache_usage_perc())
             llm_logger.info(f"recycle {req_id} {cur_number - ori_number} blocks.")
 
     def available_batch(self):
@@ -259,7 +261,7 @@ class ResourceManager(object):
                         task.cache_prepare_time = time.time() - cache_prepare_time
 
 
-                        
+
                         if task.disaggregate_info is not None:
                             if task.disaggregate_info['role'] == "prefill":
                                 self.cache_transfer_finished[task.request_id] = False
@@ -289,7 +291,7 @@ class ResourceManager(object):
                                 self.req_dict[task.request_id] = allocated_position
 
 
-                        
+
                     processed_tasks.append(task)
                     self.stop_flags[allocated_position] = False
                     task.inference_start_time = time.time()
@@ -311,6 +313,8 @@ class ResourceManager(object):
         llm_logger.info(f"Number of allocated requests: {len(tasks)}, number of "
                         f"running requests in worker: {self.real_bsz}")
         llm_logger.info(f"{self.info()}")
+        main_process_metrics.gpu_cache_usage_perc.set(self.get_gpu_cache_usage_perc())
+
         return processed_tasks
 
 
@@ -324,9 +328,9 @@ class ResourceManager(object):
         else:
             task.prompt_token_ids = task.prompt_token_ids[cached_len:]
             task.seq_lens_decoder = cached_len
-        
-        
-    
+
+
+
     def _record_request_cache_info(self, task, common_block_ids, unique_block_ids, hit_info):
         """
         Record the cache information for a given task and its corresponding block IDs.
@@ -357,3 +361,17 @@ class ResourceManager(object):
                f"total_block_number: {self.total_block_number()}, total_batch_number: {len(self.stop_flags)}, " \
                f"available_block_num: {self.available_block_num()}, available_batch: {self.available_batch()}"
         return info
+
+
+    def get_gpu_cache_usage_perc(self):
+        """
+        Calculate GPU KV-cache usage
+
+        Returns:
+        float: GPU KV-cache usage (0.0 - 1.0)
+        """
+        num_total_gpu = self.total_block_number()
+        num_free_gpu = len(self.free_list)
+        if num_total_gpu > 0:
+            return 1.0 - (num_free_gpu / num_total_gpu)
+        return 0.0

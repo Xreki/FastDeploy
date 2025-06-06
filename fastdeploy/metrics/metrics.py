@@ -3,16 +3,15 @@ metrics
 """
 import os
 import shutil
-from typing import Set, TYPE_CHECKING
+from typing import Set, TYPE_CHECKING, List
 
-from prometheus_client import Gauge, Histogram, multiprocess, CollectorRegistry, generate_latest
+from prometheus_client import Gauge, Histogram, multiprocess, CollectorRegistry, generate_latest, Counter
 from prometheus_client.registry import Collector
 
 from fastdeploy.metrics.work_metrics import work_process_metrics
-from fastdeploy.utils import api_server_logger
 
 if TYPE_CHECKING:
-    from prometheus_client import Gauge, Histogram
+    from prometheus_client import Gauge, Histogram, Counter
 
 
 def cleanup_prometheus_files(is_main):
@@ -91,6 +90,30 @@ REQUEST_LATENCY_BUCKETS = [
 ]
 
 
+def build_buckets(mantissa_lst: List[int], max_value: int) -> List[int]:
+    """
+    Generate a list of bucket boundaries using a set of mantissas scaled by powers of 10,
+    stopping when the generated value exceeds the specified maximum value.
+    """
+    exponent = 0
+    buckets: List[int] = []
+    while True:
+        for m in mantissa_lst:
+            value = m * 10 ** exponent
+            if value <= max_value:
+                buckets.append(value)
+            else:
+                return buckets
+        exponent += 1
+
+
+def build_1_2_5_buckets(max_value: int) -> List[int]:
+    """
+    Generate a bucket list using the common [1, 2, 5] mantissa pattern,
+    scaled by powers of 10 up to the specified maximum value.
+    """
+    return build_buckets([1, 2, 5], max_value)
+
 class MetricsManager:
     """Prometheus Metrics Manager handles all metric updates """
 
@@ -102,6 +125,13 @@ class MetricsManager:
     time_per_output_token: 'Histogram'
     request_inference_time: 'Histogram'
     request_queue_time: 'Histogram'
+    gpu_cache_usage_perc: 'Gauge'
+    prompt_tokens_total: 'Counter'
+    generation_tokens_total: 'Counter'
+    request_prefill_time: 'Histogram'
+    request_decode_time: 'Histogram'
+    request_prompt_tokens: 'Histogram'
+    request_generation_tokens: 'Histogram'
 
     # 定义所有指标配置
     METRICS = {
@@ -148,6 +178,56 @@ class MetricsManager:
             'description': 'Time spent in waiting queue (from preprocess end to inference start)',
             'kwargs': {
                 'buckets': REQUEST_LATENCY_BUCKETS
+            }
+        },
+        'gpu_cache_usage_perc': {
+            'type': Gauge,
+            'name': 'fastdeploy:gpu_cache_usage_perc',
+            'description': 'GPU KV-cache usage. 1 means 100 percent usage',
+            'kwargs': {}
+        },
+        'prompt_tokens_total': {
+            'type': Counter,
+            'name': 'fastdeploy:prompt_tokens_total',
+            'description': 'Total number of prompt tokens processed',
+            'kwargs': {}
+        },
+        'generation_tokens_total': {
+            'type': Counter,
+            'name': 'fastdeploy:generation_tokens_total',
+            'description': 'Total number of generation tokens processed',
+            'kwargs': {}
+        },
+        'request_prefill_time': {
+            'type': Histogram,
+            'name': 'fastdeploy:request_prefill_time_seconds',
+            'description': 'Time spent in prefill phase (from preprocess start to preprocess end)',
+            'kwargs': {
+                'buckets': REQUEST_LATENCY_BUCKETS
+            }
+        },
+        'request_decode_time': {
+            'type': Histogram,
+            'name': 'fastdeploy:request_decode_time_seconds',
+            'description': 'Time spent in decode phase (from first token to last token)',
+            'kwargs': {
+                'buckets': REQUEST_LATENCY_BUCKETS
+            }
+        },
+        'request_prompt_tokens': {
+            'type': Histogram,
+            'name': 'fastdeploy:request_prompt_tokens',
+            'description': 'Number of prefill tokens processed.',
+            'kwargs': {
+                'buckets': build_1_2_5_buckets(33792)
+            }
+        },
+        'request_generation_tokens': {
+            'type': Histogram,
+            'name': 'fastdeploy:request_generation_tokens',
+            'description': 'Number of generation tokens processed.',
+            'kwargs': {
+                'buckets': build_1_2_5_buckets(33792)
             }
         }
     }

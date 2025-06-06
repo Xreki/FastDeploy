@@ -23,6 +23,7 @@ import numpy as np
 from fastdeploy.input.preprocess import InputPreprocessor
 from fastdeploy.engine.request import Request
 from fastdeploy.inter_communicator import ZmqClient, IPCSignal
+from fastdeploy.metrics.metrics import main_process_metrics
 from fastdeploy.utils import api_server_logger, EngineError
 
 
@@ -97,6 +98,8 @@ class EngineClient:
             input_ids_len = task["prompt_token_ids_len"]
             task["max_tokens"] = min(self.max_model_len - input_ids_len , task.get("max_tokens"))
             min_tokens = task.get("min_tokens", 1)
+            main_process_metrics.prompt_tokens_total.inc(input_ids_len)
+            main_process_metrics.request_prompt_tokens.observe(input_ids_len)
         except Exception as e:
             api_server_logger.error(e)
             raise EngineError(str(e), error_code=400)
