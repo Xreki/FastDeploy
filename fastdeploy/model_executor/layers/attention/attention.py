@@ -37,6 +37,7 @@ class Attention(nn.Layer):
         qkv_bias: Optional[paddle.Tensor] = None,
         qkv_scale: Optional[paddle.Tensor] = None,
         prefix: str = "",
+        out_scale: float = -1.,
         linear_shift=None,
         linear_smooth=None,
     ) -> None:
@@ -78,18 +79,14 @@ class Attention(nn.Layer):
         self.qkv_bias = qkv_bias
         self.qkv_scale = qkv_scale
         self._dtype = self._helper.get_default_dtype()
-        # if llm_config.load_config is not None:
-        #     self.out_scale = llm_config.load_config.act_scales.get(
-        #         f"{prefix}.out_proj.activation_quanter",
-        #         -1,
-        #     )
+        self.out_scale = out_scale
         if llm_config.kvcache_config is not None:
             self.kvcache_quant_method = llm_config.kvcache_config.kvcache_quant_config.get_quant_method(
                 self)
             self.kvcache_quant_method.create_weights(self)
-        # if llm_config.quant_config is not None:
-        #     self.quant_max_bound = llm_config.quant_config.quant_max_bound
-        #     self.quant_min_bound = llm_config.quant_config.quant_min_bound
+        if llm_config.quant_config is not None:
+            self.quant_max_bound = llm_config.quant_config.quant_max_bound
+            self.quant_min_bound = llm_config.quant_config.quant_min_bound
 
     def forward(
         self,

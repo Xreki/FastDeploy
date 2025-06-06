@@ -93,23 +93,6 @@ class ModelForCasualLM(nn.Layer, ABC):
     def compute_logits(self, hidden_state, **logits_prosessor_kwargs):
         raise NotImplementedError
 
-    # @abstractmethod
-    # def sample(
-    #     self,
-    #     logits,
-    #     **sample_kwargs,
-    # ):
-    #     """Sample from GPT using beam search and post process the generated sequence.
-
-    #     Args:
-    #         logits (Tensor): The id of the token indicating the end of a sentence.
-    #         sample_kwargs (dict): Number of highest probability vocabulary tokens to keep for top-k-filtering.
-
-    #     Returns:
-    #         Tensor: The sampled tokens. The shape is [batch_size].
-    #     """
-    #     raise NotImplementedError
-
     @classmethod
     @abstractmethod
     def name(self):

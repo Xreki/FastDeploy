@@ -90,10 +90,10 @@ class SiluAndMul(nn.Layer):
                     bfloat16 as default dtype, but received {self._dtype}")
 
         # fp8 is not support smooth quantization
-        # if "float8" in llm_config.model_config.act_dtype:
-        #     self.dequant_scales = None
-        #     self.shift = None
-        #     self.smooth = None
+        if "float8" in llm_config.model_config.act_dtype:
+            self.dequant_scales = None
+            self.shift = None
+            self.smooth = None
 
     def forward_cuda(self, x):
         """

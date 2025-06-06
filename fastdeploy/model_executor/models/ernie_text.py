@@ -203,8 +203,6 @@ class Ernie45TDecoderLayer(nn.Layer):
             hidden_states, residual = self.input_layernorm(
                 hidden_states, residual)
 
-        print("[debug6]\n", hidden_states)
-
         hidden_states = self.self_attn(
             hidden_states=hidden_states,
             forward_meta=forward_meta,
@@ -213,11 +211,7 @@ class Ernie45TDecoderLayer(nn.Layer):
         hidden_states, residual = self.post_attention_layernorm(
             hidden_states, residual)
 
-        print("[debug5]\n", hidden_states)
-
         hidden_states = self.mlp(hidden_states)
-
-        print("[debug5.5]\n", hidden_states)
 
         return hidden_states, residual
 
@@ -237,6 +231,7 @@ class Ernie45TModel(nn.Layer):
         super().__init__()
 
         self.num_layers = llm_config.model_config.num_layers
+        llm_config.model_config.prefix_name = "ernie"
 
         self.embeddings = VocabParallelEmbedding(
             llm_config=llm_config,
@@ -289,8 +284,6 @@ class Ernie45TModel(nn.Layer):
         """
 
         hidden_states = self.embeddings(ids_remove_padding=ids_remove_padding)
-
-        print("[debug4]\n", hidden_states)
 
         residual = None
         for i in range(self.num_layers):

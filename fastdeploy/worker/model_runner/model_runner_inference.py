@@ -279,13 +279,6 @@ class ModelRunner(ModelRunnerBase):
             eos_token_ids=self.share_inputs["eos_token_id"],
         )
 
-    # def generate(self):
-    #     self.pre_process()
-    #     hiddden_states = self.model(**self.share_inputs)
-    #     logits = self.model.compute_logits(hiddden_states)
-    #     print("[debug7]\n", logits)
-    #     self.model.sample(logits, **self.share_inputs)
-
     def generate(self):
         self.pre_process()
         hiddden_states = self.model(self.share_inputs["ids_remove_padding"],
@@ -301,7 +294,6 @@ class ModelRunner(ModelRunnerBase):
             self.args.max_model_len,
         )
         logits = self.model.compute_logits(hiddden_states)
-        print("[debug7]\n", logits)
 
         # sampler & save_output
         next_tokens = self.sampler(logits, self.sampling_metadata)

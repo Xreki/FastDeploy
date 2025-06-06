@@ -63,11 +63,9 @@ class LinearBase(nn.Layer):
 
         self.llm_config = llm_config
         self.skip_quant = skip_quant
-        # self.use_smooth_quant = llm_config.model_config.use_smooth_quant
-        self.use_smooth_quant = False
-        # self.weight_dtype = llm_config.model_config.weight_dtype
-        self.weight_dtype = "int8"
-        # self.act_dtype = llm_config.model_config.act_dtype
+        self.use_smooth_quant = llm_config.model_config.use_smooth_quant
+        self.weight_dtype = llm_config.model_config.weight_dtype
+        self.act_dtype = llm_config.model_config.act_dtype
         self.input_size = input_size
         self.output_size = output_size
         self.with_bias = with_bias
@@ -470,14 +468,16 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         if self.weight_key in state_dict.keys():
             weight_tensor = get_tensor(state_dict.pop(self.weight_key))
         else:
-            gate_weight_key = self.weight_key.replace("linear1", "gate_proj")
-            up_weight_key = self.weight_key.replace("linear1", "up_proj")
+            gate_weight_key = self.weight_key.replace("up_gate_proj",
+                                                      "gate_proj")
+            up_weight_key = self.weight_key.replace("up_gate_proj", "up_proj")
             gate_tensor = get_tensor(state_dict.pop(gate_weight_key))
             up_tensor = get_tensor(state_dict.pop(up_weight_key))
             weight_tensor = paddle.concat([gate_tensor, up_tensor], axis=-1)
 
             if self.with_bias:
-                gate_bias_key = self.bias_key.replace("linear1", "gate_proj")
+                gate_bias_key = self.bias_key.replace("up_gate_proj",
+                                                      "gate_proj")
                 bias_tensor = get_tensor(state_dict.pop(gate_bias_key)).astype(
                     paddle.get_default_dtype())
                 converted_bias_tensor = paddle.zeros(shape=list(
@@ -644,12 +644,9 @@ class RowParallelLinear(LinearBase):
                          skip_quant=skip_quant)
         self.llm_config = llm_config
         self.skip_quant = False
-        # self.use_smooth_quant = llm_config.model_config.use_smooth_quant
-        self.use_smooth_quant = False
-        # self.weight_dtype = llm_config.model_config.weight_dtype
-        self.weight_dtype = "int8"
-        # self.act_dtype = llm_config.model_config.act_dtype
-        self.act_dtype = "bfloat16"
+        self.use_smooth_quant = llm_config.model_config.use_smooth_quant
+        self.weight_dtype = llm_config.model_config.weight_dtype
+        self.act_dtype = llm_config.model_config.act_dtype
         self.nranks = llm_config.parallel_config.mp_size
         self.embed_dim = llm_config.model_config.hidden_size
         self.head_dim = llm_config.model_config.hidden_size // llm_config.model_config.num_attention_heads
