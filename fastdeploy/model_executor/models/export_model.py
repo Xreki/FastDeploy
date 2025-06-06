@@ -39,7 +39,7 @@ from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
 from fastdeploy.inference_args import GenerationPhase
 
 from ..layers.quantization import get_quantization_config
-from .ernie import ErnieBotFusedModel
+from .ernie import ErnieBotPretrainedModel
 from .model_base import ModelRegistry
 from .qwen2 import Qwen2Model
 from .tokenizer import ErnieBotTokenizer
@@ -47,7 +47,7 @@ from .utils import (_vocab_size_with_padding, convert_ndarray_dtype,
                     load_checkpoint, parser_quant_type)
 
 model_classes_mapping = {
-    "ErnieForCausalLM": ErnieBotFusedModel,
+    "ErnieForCausalLM": ErnieBotPretrainedModel,
     "Qwen2ForCausalLM": Qwen2Model,
 }
 
@@ -113,7 +113,7 @@ def build_stream_line_model(
     min_dec_len=1,
     max_dec_len=128,
     temperature=1,
-    top_k=0,
+    top_k=8,
     top_p=0.8,
     pre_caches_length=0,
     export_model_type="default",

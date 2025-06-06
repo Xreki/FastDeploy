@@ -129,7 +129,6 @@ class FusedMoE(nn.Layer):
         """
         load_gate_state_dict function.
         """
-        logger.info("Load TP FFN1")
         up_gate_proj_weight = []
         down_proj_weight = []
         for j in range(self.num_experts):
@@ -223,4 +222,8 @@ class FusedMoE(nn.Layer):
         """
 
         out = self.compute_method.apply(self, self.moe_compute_params, x)
+        if self.tp_size > 1:
+            from fastdeploy.distributed.communication_op import \
+                tensor_model_parallel_all_reduce
+            tensor_model_parallel_all_reduce(out)
         return out

@@ -216,7 +216,7 @@ class Qwen2Model(nn.Layer):
         llm_config: LLMConfig = None,
     ):
         """
-        Initializer for the ErnieBotFusedModel class.
+        Initializer for the Qwen2Model class.
 
         Args:
 
