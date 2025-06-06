@@ -42,6 +42,7 @@ registered = False
 rollout_worker_host = "http://127.0.0.1"
 rollout_worker_http_port = int(os.getenv('ROLLOUT_WORKER_HTTP_PORT', "8146"))
 rollout_worker_queue_port = int(os.getenv('ROLLOUT_WORKER_QUEUE_PORT', "8147"))
+metrics_port = int(8000)
 rollout_worker_health_api = f"{rollout_worker_host}:{rollout_worker_http_port}/health"
 rollout_worker_root = os.getenv('ROLLOUT_WORKER_ROOT', "/root/paddlejob/")
 # rollout_worker_yaml = "test.yaml"
@@ -269,6 +270,7 @@ def background_start(job_id: str, model_path: str, model_version: str, modify_ma
             str(rollout_worker_queue_port),
             device_use_id,
             str(parallel_degree),
+            str(metrics_port)
         ]
         # Popen 时加 preexec_fn=os.setsid，让它在新的进程组里启动
         proc = Popen(start_cmd, cwd=f"{rollout_worker_root}/training/agent",
@@ -358,10 +360,10 @@ def start() -> str:
     try:
         global max_model_len
         new_max_model_len = int(info["max_model_len"])
-        set_max_model_len(new_max_model_len)
         if max_model_len != new_max_model_len:
+            set_max_model_len(new_max_model_len)
             modify_max_model_len = True
-        max_model_len = new_max_model_len
+            max_model_len = new_max_model_len
     except Exception as e:
         logging.error(f"set max_model_len failed: {str(e)}")
 
@@ -709,6 +711,7 @@ if __name__ == '__main__':
     parser.add_argument('-ap', '--agent_port', help='agent_port')
     parser.add_argument('-ip', '--infer_port', help='infer_port')
     parser.add_argument('-qp', '--queue_port', help='queue_port')
+    parser.add_argument('-mp', '--metrics_port', help='metrics_port')
     parser.add_argument('-skip', '--skip-health-check', action='store_true', help='跳过健康检查')
 
     args = parser.parse_args()
@@ -726,6 +729,8 @@ if __name__ == '__main__':
         rollout_worker_http_port = int(args.infer_port)
     if args.queue_port:
         rollout_worker_queue_port = int(args.queue_port)
+    if args.metrics_port:
+        metrics_port = int(args.metrics_port)
 
     print(f"device_use_id: {device_use_id},\n"
           f"job_id: {job_id},\n"
@@ -748,9 +753,11 @@ if __name__ == '__main__':
         filemode='a'
     )
 
-    print(f"port: {port}, http_port: {rollout_worker_http_port}, queue_port: {rollout_worker_queue_port}")
+    print(f"port: {port}, http_port: {rollout_worker_http_port}, "
+          f"queue_port: {rollout_worker_queue_port}, metrics_port: {metrics_port}")
 
-    logging.info(f"port: {port}, http_port: {rollout_worker_http_port}, queue_port: {rollout_worker_queue_port}")
+    logging.info(f"port: {port}, http_port: {rollout_worker_http_port}"
+                 f", queue_port: {rollout_worker_queue_port}, metrics_port: {metrics_port}")
 
     logging.info("Starting service")
 
