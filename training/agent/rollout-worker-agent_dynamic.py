@@ -19,6 +19,9 @@ import sys
 import argparse
 from subprocess import Popen
 import multiprocessing
+import yaml
+import glob
+import tempfile
 
 port = 8098
 app = Flask(__name__)
@@ -185,22 +188,24 @@ def notice_controller(job_id: str, model_version: str, status: str, reason: str)
                 time.sleep(retry_interval)
 
 
-def monitor_worker(job_id: str, proc: Popen, model_version: str):
+def monitor_worker(job_id: str, proc: Popen, model_version: str, stop_event: threading.Event):
     """Monitor the worker process and report its status"""
     # 每隔 1s 检查一次进程状态
-    while True:
-        ret = proc.poll()
-        if ret is not None:
-            # ret 就是子进程的退出码
-            logging.error(f"[{job_id}] Worker exited with error (code={ret})")
-            time.sleep(5)
-            # 仅对通知controller的请求进行重试
-            notice_controller(job_id, model_version, "stopped", "abnormal_stop")
-            global start_cmd_executed
-            start_cmd_executed = False
-            break
-        time.sleep(30)
-
+    try:
+        while not stop_event.is_set():
+            ret = proc.poll()
+            if ret is not None:
+                # ret 就是子进程的退出码
+                logging.error(f"[{job_id}] Worker exited with error (code={ret})")
+                time.sleep(5)
+                # 仅对通知controller的请求进行重试
+                notice_controller(job_id, model_version, "stopped", "abnormal_stop")
+                global start_cmd_executed
+                start_cmd_executed = False
+                break
+            time.sleep(30)
+    except Exception as e:
+        logging.error(f"Monitor worker thread failed: {e}")
 
 def health_check() -> bool:
     """Perform health check on the worker process"""
@@ -213,9 +218,46 @@ def health_check() -> bool:
     return False
 
 
-def background_start(job_id: str, model_path: str, model_version: str) -> None:
+worker_proc = None
+worker_monitor_thread = None
+worker_stop_event = threading.Event()
+
+def cleanup_worker(job_id):
+    """clean up rollout worker process"""
+    global worker_proc, worker_monitor_thread, worker_stop_event
+    #  监控线程
+    if worker_monitor_thread and worker_monitor_thread.is_alive():
+        worker_stop_event.set()
+        worker_monitor_thread.join(timeout=5)
+
+    #  推理进程
+    if worker_proc and worker_proc.poll() is None:
+        logging.info("Killing previous worker process")
+        os.killpg(os.getpgid(worker_proc.pid), signal.SIGTERM)
+        try:
+            worker_proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            logging.warning("Worker process did not exit in time")
+
+    #  更新进程
+    p = update_procs.pop(job_id, None)
+    if p and p.is_alive():
+        p.terminate()
+        p.join(5)
+        if p.is_alive():
+            os.kill(p.pid, signal.SIGKILL)
+
+def background_start(job_id: str, model_path: str, model_version: str, modify_max_model_len: bool) -> None:
     """Start worker by calling downstream HTTP APIs"""
     global start_cmd_executed
+    try:
+        #  如果max_model_len被修改，需要重启进程
+        if modify_max_model_len and start_cmd_executed:
+            cleanup_worker(job_id)
+            start_cmd_executed = False
+    except Exception as e:
+        logging.error(f"Failed to restart worker process: {str(e)}")
+
     logging.info(f"Creating background_start thread, start_cmd status is {start_cmd_executed}")
     if not start_cmd_executed:
         # 执行start_cmd
@@ -231,6 +273,8 @@ def background_start(job_id: str, model_path: str, model_version: str) -> None:
         # Popen 时加 preexec_fn=os.setsid，让它在新的进程组里启动
         proc = Popen(start_cmd, cwd=f"{rollout_worker_root}/training/agent",
                      preexec_fn=os.setsid)
+        global worker_proc
+        worker_proc = proc
         logging.info(f"Executing start command: {start_cmd}")
         print(f"Executing start command: {start_cmd}")
         start_cmd_executed = True
@@ -267,16 +311,20 @@ def background_start(job_id: str, model_path: str, model_version: str) -> None:
 
         # 启动一个守护线程，监听进程，并上报
         logging.info(f"Creating monitor_worker thread")
-        thread = threading.Thread(
+        global worker_monitor_thread
+        global worker_stop_event
+        worker_stop_event = threading.Event()
+        worker_monitor_thread = threading.Thread(
             target=monitor_worker,
             kwargs={
                 "job_id": job_id,
                 "proc": proc,
-                "model_version": model_version
+                "model_version": model_version,
+                "stop_event": worker_stop_event
             },
             daemon=True
         )
-        thread.start()
+        worker_monitor_thread.start()
 
     p = update_procs.pop(job_id, None)
     if p and p.is_alive():
@@ -297,6 +345,8 @@ def background_start(job_id: str, model_path: str, model_version: str) -> None:
     update_procs[job_id] = p
 
 
+max_model_len = 0
+
 @app.route('/infer/start', methods=['POST'])
 def start() -> str:
     """Start Infer Engine"""
@@ -304,13 +354,24 @@ def start() -> str:
     info = json.loads(req.decode('utf-8'))
 
     logging.info(f"receive start request: {info}")
+    modify_max_model_len = False
+    try:
+        global max_model_len
+        new_max_model_len = int(info["max_model_len"])
+        set_max_model_len(new_max_model_len)
+        if max_model_len != new_max_model_len:
+            modify_max_model_len = True
+        max_model_len = new_max_model_len
+    except Exception as e:
+        logging.error(f"set max_model_len failed: {str(e)}")
 
     thread = threading.Thread(
         target=background_start,
         kwargs={
             "job_id": str(info["job_id"]),
             "model_path": str(info["model_info"]["local_path"]),
-            "model_version": str(info["model_info"]["model_version"])
+            "model_version": str(info["model_info"]["model_version"]),
+            "modify_max_model_len": modify_max_model_len
         }
     )
     thread.start()
@@ -571,6 +632,56 @@ def set_parallel_degree(degree: str):
     global parallel_degree
     parallel_degree = degree
 
+
+def set_max_model_len(max_model_len: int):
+    """Set max model length in all agent_work YAML files"""
+    try:
+        pattern = os.path.join(rollout_worker_root, "training", "agent_work*.yaml")
+        yaml_files = glob.glob(pattern)
+
+        if not yaml_files:
+            print(f"未找到匹配的 YAML 文件：{pattern}")
+            logging.warning(f"未找到匹配的 YAML 文件：{pattern}")
+            return
+
+        for yaml_path in yaml_files:
+            try:
+                with open(yaml_path, 'r') as f:
+                    data = yaml.safe_load(f)
+
+                if not isinstance(data, dict):
+                    print(f"{yaml_path} 内容不是字典，跳过")
+                    logging.warning(f"{yaml_path} 内容不是字典，跳过")
+                    continue
+
+                if 'max_model_len' in data:
+                    old_value = data['max_model_len']
+                    data['max_model_len'] = max_model_len
+                    print(f"{yaml_path}: max_model_len 从 {old_value} 修改为 {max_model_len}")
+                    logging.info(f"{yaml_path}: max_model_len 从 {old_value} 修改为 {max_model_len}")
+                else:
+                    print(f"{yaml_path}: 不存在 max_model_len 字段，跳过")
+                    logging.info(f"{yaml_path}: 不存在 max_model_len 字段，跳过")
+                    continue
+
+                # 原子写入，防止并发读到一半的内容
+                atomic_write_yaml(data, yaml_path)
+
+            except Exception as fe:
+                print(f"{yaml_path}: 修改失败 - {str(fe)}")
+                logging.error(f"{yaml_path}: 修改失败 - {str(fe)}")
+
+    except Exception as e:
+        print(f"Set max_model_len failed: {str(e)}")
+        logging.error(f"Set max_model_len failed: {str(e)}")
+
+def atomic_write_yaml(data, target_path):
+    """原子方式写入 YAML 文件，防止写一半被读到"""
+    dir_name = os.path.dirname(target_path)
+    with tempfile.NamedTemporaryFile('w', delete=False, dir=dir_name) as tf:
+        yaml.dump(data, tf, default_flow_style=False, sort_keys=False)
+        temp_name = tf.name
+    os.replace(temp_name, target_path)  # 原子替换
 
 if __name__ == '__main__':
     # multiprocessing.set_start_method("spawn", force=True)
