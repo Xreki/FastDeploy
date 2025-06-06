@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import sys
 
@@ -25,9 +26,11 @@ import paddle.distributed as dist
 from paddle.common_ops_import import convert_dtype
 from paddle.distributed import fleet
 from paddlenlp.trainer import RuntimeTimer
+from paddlenlp.transformers import AutoTokenizer
 from paddlenlp.transformers.configuration_utils import PretrainedConfig
 from paddlenlp.transformers.model_utils import load_tp_checkpoint
 from paddlenlp.trl import llm_utils
+from paddlenlp.utils.env import USE_FAST_TOKENIZER
 from paddlenlp.utils.log import logger
 
 from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
@@ -37,6 +40,7 @@ from fastdeploy.inference_args import GenerationPhase
 
 from .ernie import ErnieBotFusedModel
 from .model_base import ModelRegistry
+from .qwen2 import Qwen2Model
 from .tokenizer import ErnieBotTokenizer
 from .utils import (_vocab_size_with_padding, convert_ndarray_dtype,
                     load_checkpoint)
@@ -166,8 +170,19 @@ def build_stream_line_model(
     runtime_timer = RuntimeTimer("build_model")
     runtime_timer.start(f"{stage_flag} stage model loading time")
 
+    # config_path = os.path.join(model_path,"config.json")
+    with open(config_path, "r") as fin:
+        config = json.load(fin)
+    architectures = config.get("architectures")
     if tokenizer is None:
-        tokenizer = ErnieBotTokenizer.from_pretrained(model_path)
+        if "ErnieForCausalLM" in architectures:
+            tokenizer = ErnieBotTokenizer.from_pretrained(model_path)
+        else:
+            tokenizer = AutoTokenizer.from_pretrained(
+                model_path,
+                padding_side="left",
+                use_fast=USE_FAST_TOKENIZER,
+            )
 
     config, _ = PretrainedConfig.get_config_dict(model_path)
     model_config = ModelConfig.from_dict(config)
@@ -237,10 +252,17 @@ def build_stream_line_model(
         context = contextlib.nullcontext()
     elif use_safetensors:
         context = paddle.LazyGuard()
-        state_dict = load_checkpoint(model_path,
-                                     ErnieBotFusedModel,
-                                     model_config,
-                                     return_numpy=True)
+        if "ErnieForCausalLM" in architectures:
+            state_dict = load_checkpoint(model_path,
+                                         ErnieBotFusedModel,
+                                         model_config,
+                                         return_numpy=True)
+        elif "Qwen2ForCausalLM" in architectures:
+            state_dict = load_checkpoint(model_path,
+                                         Qwen2Model,
+                                         model_config,
+                                         return_numpy=True)
+
     elif use_moe:
         tensor_parallel_degree = dist.get_world_size()
         if tensor_parallel_degree > 1:
@@ -263,7 +285,6 @@ def build_stream_line_model(
 
         context = paddle.LazyGuard()
         if not use_ep:
-            logger.info(f"start to loading weight: {rank_model_paths}")
             state_dicts = [
                 paddle.load(path, return_numpy=True)
                 for path in rank_model_paths
@@ -320,13 +341,22 @@ def build_stream_line_model(
             state_dict = paddle.load(model_state_path, return_numpy=True)
     else:
         context = paddle.LazyGuard()
-        state_dict = load_tp_checkpoint(
-            model_path,
-            ErnieBotFusedModel,
-            model_config,
-            return_numpy=True,
-        )
-    use_rmsnorm = config.get("use_rmsnorm", False)
+        if "ErnieForCausalLM" in architectures:
+            state_dict = load_tp_checkpoint(
+                model_path,
+                ErnieBotFusedModel,
+                model_config,
+                return_numpy=True,
+            )
+        elif "Qwen2ForCausalLM" in architectures:
+            state_dict = load_checkpoint(model_path,
+                                         Qwen2Model,
+                                         model_config,
+                                         return_numpy=True)
+    if "ErnieForCausalLM" in architectures:
+        use_rmsnorm = config.get("use_rmsnorm", False)
+    else:
+        use_rmsnorm = config.get("use_rmsnorm", True)
 
     if use_beam_search:
         decode_strategy = "beam_search"
