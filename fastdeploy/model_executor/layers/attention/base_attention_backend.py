@@ -30,9 +30,19 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+
 import paddle
 
-from fastdeploy.worker.model_runner import ForwardMeta, ForwardMode
+from fastdeploy.worker.model_runner import ForwardMeta
+
+
+@dataclass
+class AttentionMetadata():
+    """ The base class of attention metadata """
+
+    #TODO(tangbinghan): Set base attributes
+    pass
 
 
 class AttentionBackend(ABC):

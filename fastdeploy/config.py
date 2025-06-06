@@ -288,6 +288,60 @@ class ParallelConfig:
     mp_size = 1,  # mp size
     ep_size = 1,  # ep size
     column_cut = False,  # (bool, optional): The embedding weight distributed on your gpu cards is divided by row or column. Defaults to False means divide by row. When vocab_size can not be divided by world_size but hidden_size can, we can consider split embedding weight by column.
+    """
+    From old wersion worker args
+    TODO(gongshaotian): Reclassify
+    """
+    model_name_or_path: str = "./output"
+    max_num_seqs: int = 34
+    # Set default block num for profile run
+    max_block_num: int = 2000
+    #
+    block_size: int = 64
+    # Engine worker queue port
+    engine_worker_queue_port: int = 9923
+    # Max model len
+    max_model_len: int = 3072
+    # cuda visible devices
+    device_ids: str = "0"
+    # Input dtype
+    dtype: str = "bfloat16"
+    # Encoder's decoder num
+    enc_dec_block_num: int = 1
+    # KV cache ratio for input
+    kv_cache_ratio: float = 0.7
+    # First token id
+    first_token_id: int = 1
+    # Gpu memory utilization
+    gpu_memory_utilization: float = 0.9
+    # Process ID of engine
+    engine_pid: Optional[int] = None
+    # Do profile or not
+    do_profile: bool = False
+    # Dynamic load weight or not
+    dynamic_load_weight: bool = False
+    #
+    pad_token_id: int = -1
+    #
+    eos_tokens_lens: int = 2
+    # Enable chunked prefill
+    enable_chunked_prefill: str = "store_true"
+    """
+
+    - autoregressive:
+    - inference_with_reference:
+    - draft_model:
+    - hydra:
+    - eagle:
+    """
+    speculate_method: str = None
+    """
+    - APPEND_ATTN:
+    """
+    attention_backend: str = "APPEND_ATTN"
+
+    # speculate_max_draft_tokens
+    speculate_max_draft_tokens: int = 1
 
 
 @dataclass

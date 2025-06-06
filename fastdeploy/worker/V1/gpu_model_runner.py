@@ -25,6 +25,10 @@ import paddle.nn as nn
 
 from fastdeploy.config import KVCacheConfig, LLMConfig
 from fastdeploy.engine.request import Request
+from fastdeploy.model_executor.layers.attention import get_attention_backend
+from fastdeploy.model_executor.layers.attention.base_attention_backend import (
+    AttentionBackend, AttentionMetadata)
+from fastdeploy.model_executor.layers.rotary_embedding import get_rope
 from fastdeploy.model_executor.layers.sample import Sampler
 from fastdeploy.model_executor.model_loader import get_model
 from fastdeploy.model_executor.pre_and_post_process import (post_process,
@@ -32,6 +36,7 @@ from fastdeploy.model_executor.pre_and_post_process import (post_process,
                                                             step_cuda)
 from fastdeploy.scheduler.scheduler_batch import ModelForwardBatch
 from fastdeploy.utils import get_logger
+from fastdeploy.worker.forward_meta import ForwardMeta
 from fastdeploy.worker.output import ModelOutputData, ModelRunnerOutput
 from fastdeploy.worker.V1.model_runner_base import ModelRunnerBase
 
@@ -42,14 +47,13 @@ class GPUModelRunner(ModelRunnerBase):
     """ """
 
     def __init__(self, llm_config: LLMConfig, device: str):
-        # Initialize config
-        self.llm_config = llm_config
+        super().__init__(llm_config=llm_config, device=device)
 
         #  Sampler
         self.sampler = Sampler()
 
         # Lazy initialize kv cache after model loading
-        self.kv_caches: list[paddle.Tensor] = []
+        # self.kv_caches: list[paddle.Tensor] = []
 
         # Cuda Graph
         self.use_cuda_grpah = False
@@ -57,10 +61,25 @@ class GPUModelRunner(ModelRunnerBase):
                                       dtype='int32',
                                       device=self.device)
 
+        # Initialize share inputs
+        self._init_share_inputs(self.llm_config.parallel_config.max_num_seqs)
         self.infer_seed_increment = paddle.full(
             shape=[self.scheduler_config.max_num_seqs, 1],
             fill_value=4,
             dtype="int64")
+
+        # Initialize attention Backend
+        # Note(gonshaotian): Currently, all attention layers share one attention backend instance.
+        # In the future, we will expand it as a list.
+        self.attn_backends: list[AttentionBackend] = []
+        self.forward_meta: ForwardMeta = None
+        self.attn_metadata: list[AttentionMetadata] = []
+        self.initialize_attn_backend()
+
+        # Forward meta store the global meta information of the forward
+        self.forward_meta: ForwardMeta = None
+        # Initialize forward meta data
+        self.initialize_forward_meta()
 
     def process_prefill_inputs(self, req_dicts: List[Request]):
         """ Process inputs for prefill tasks and update share_inputs buffer """
@@ -267,6 +286,15 @@ class GPUModelRunner(ModelRunnerBase):
                                                       -1,
                                                       dtype='int32')
 
+        # Initialize rotary position embedding
+        tmp_position_ids = paddle.arange(
+            self.model_config.max_model_len).reshape((1, -1))
+        self.share_inputs["rope_emb"] = get_rope(
+            rotary_dim=self.model_cfg.hidden_size //
+            self.model_config.num_attention_heads,
+            position_ids=tmp_position_ids,
+            base=self.rope_theta)
+
         # Set block tables
         pre_max_block_num = (
             self.model_config.max_model_len + self.kv_cache_config.block_size -
@@ -339,6 +367,14 @@ class GPUModelRunner(ModelRunnerBase):
         """ get current model """
         return self.model
 
+    def initialize_forward_meta(self):
+        """
+
+        """
+        # Initialize forward meta
+        self.forward_meta = ForwardMeta.init_forward_meta(
+            self.share_inputs, self.attn_backend)
+
     def initialize_kv_cache(self,
                             kv_cache_config: KVCacheConfig = None) -> None:
         """
@@ -396,7 +432,15 @@ class GPUModelRunner(ModelRunnerBase):
         Args:
             kv_cache_config:
         """
-        pass
+        assert len(self.attn_backends) == 0
+        # Get the attention backend shared by all attention layers
+        attn_backend = get_attention_backend(
+            self.parallel_config.attention_backend)
+        if attn_backend is None:
+            raise NotImplementedError(
+                f"{ self.parallel_config.attention_backend} attention backend is not support by GPUModelRunner"
+            )
+        self.attn_backends.append(attn_backend)
 
     def _dummy_run(self, num_tokens) -> paddle.Tensor:
         """

@@ -68,54 +68,55 @@ class PaddleDisWorkerProc():
         """
         Initialize the health status of the worker.
         Worker Status:
-            workers_ready_status: -> worker_ready_singnal
-            workers_alive_status: -> worker_healthy_live_signal
-            workers_exist_task_status: -> exist_task_signal
-            workers_swapped_task_status: -> exist_swapped_task_signal
-            workers_model_weights_status: -> model_weights_status
+            worker_ready_singnal:
+            worker_healthy_live_signal:
+            exist_task_signal:
+            exist_swapped_task_signal:
+            model_weights_status:
         """
-        # init workers_ready_status
+        # init worker_ready_singnal
         workers_ready = np.zeros(shape=[self.rank], dtype=np.int32)
-        self.workers_ready_status = IPCSignal(
-            name="workers_ready_status",
+        self.worker_ready_singnal = IPCSignal(
+            name="worker_ready_singnal",
             array=workers_ready,
             dtype=np.int32,
             suffix=self.parallel_config.engine_pid,
             create=False)
-        self.workers_ready_status.value[self.local_rank] = 1
+        self.worker_ready_singnal.value[self.local_rank] = 1
 
-        # init workers_alive_status
+        # init worker_healthy_live_signal
         workers_alive = np.zeros(shape=[self.rank], dtype=np.int32)
-        self.workers_alive_status = IPCSignal(
-            name="workers_alive_status",
+        self.worker_healthy_live_signal = IPCSignal(
+            name="worker_healthy_live_signal",
             array=workers_alive,
             dtype=np.int32,
             suffix=self.parallel_config.engine_pid,
             create=False)
-        self.workers_alive_status.value[self.local_rank] = int(time.time())
+        self.worker_healthy_live_signal.value[self.local_rank] = int(
+            time.time())
 
-        # init workers_exist_task_status
+        # init exist_task_signal
         workers_exist_task = np.zeros([1], dtype=np.int32)
-        self.workers_exist_task_status = IPCSignal(
-            name="workers_exist_task_status",
+        self.exist_task_signal = IPCSignal(
+            name="exist_task_signal",
             array=workers_exist_task,
             dtype=np.int32,
             suffix=self.parallel_config.engine_pid,
             create=False)
 
-        # init workers_swapped_task_status
+        # init exist_swapped_task_signal
         workers_swapped_task = np.zeros(shape=[1], dtype=np.int32)
-        self.workers_swapped_task_status = IPCSignal(
-            name="workers_swapped_task_status",
+        self.exist_swapped_task_signal = IPCSignal(
+            name="exist_swapped_task_signal",
             array=workers_swapped_task,
             dtype=np.int32,
             suffix=self.parallel_config.engine_pid,
             create=False)
 
-        # init workers_model_weights_status
+        # init model_weights_status
         workers_model_weights = np.zeros(shape=[1], dtype=np.int32)
-        self.workers_model_weights_status = IPCSignal(
-            name="workers_model_weights_status",
+        self.model_weights_status = IPCSignal(
+            name="model_weights_status",
             array=workers_model_weights,
             dtype=np.int32,
             suffix=self.parallel_config.engine_pid,
@@ -134,7 +135,8 @@ class PaddleDisWorkerProc():
                 paddle.distributed.barrier()
 
             self.insert_step = False
-            self.workers_alive_status.value[self.local_rank] = int(time.time())
+            self.worker_healthy_live_signal.value[self.local_rank] = int(
+                time.time())
 
             # The first worker detects whether there are tasks in the task queue
             mp_num_per_node = self.rank / self.nnode
@@ -143,12 +145,12 @@ class PaddleDisWorkerProc():
                     if self.nnode > 1:
                         self.task_queue.read_finish_flag.set(1)
                     else:
-                        self.workers_exist_task_status.value[0] = 1
+                        self.exist_task_signal.value[0] = 1
             if self.rank > 1:
                 # Synchronize the signal for other workers
                 paddle.distributed.barrier()
 
-            if self.workers_exist_task_status.value[
+            if self.exist_task_signal.value[
                     0] == 1 or self.task_queue.read_finish_flag.get() == 1:
                 logger.info(f"Rank: {self.local_rank} Detected new requests.")
                 self.insert_step = True
@@ -234,8 +236,9 @@ class PaddleDisWorkerProc():
 
 
 def parse_args():
-    """ """
-    # TODO(gongshaotian): move to parallel config
+    """
+    Parse args from command line
+    """
     parser = argparse.ArgumentParser("FastDeploy LLM Inference")
     parser.add_argument("-m",
                         "--model_name_or_path",
@@ -298,6 +301,31 @@ def parse_args():
                         type=int,
                         default=2,
                         help="eos token lens")
+    parser.add_argument("--enable_chunked_prefill",
+                        action='store_true',
+                        help="enable chunked prefill")
+    parser.add_argument(
+        "--speculate_method",
+        default=None,
+        type=str,
+        choices=[
+            "autoregressive",
+            "inference_with_reference",
+            "draft_model",
+            "hydra",
+            "eagle",
+        ],
+    )
+    parser.add_argument(
+        "--attention_backend",
+        default="APPEND_ATTN",
+        type=str,
+        choices=[
+            "APPEND_ATTN",
+        ],
+    )
+    parser.add_argument("--speculate_max_draft_tokens", type=int, default=1)
+
     args = parser.parse_args()
     return args
 
@@ -306,7 +334,34 @@ def run_worker_proc():
     """
     start worker process
     """
+    # Get args form Engine
+    args = parse_args()
+    # Initialize LLMConfig
+    # TODO(gongshaotian): Unified all configs to LLMConfig
     llm_config = LLMConfig()
+    llm_config.parallel_config.engine_pid = args.engine_pid
+    llm_config.parallel_config.model_name_or_path = args.model_name_or_path
+    llm_config.parallel_config.max_num_seqs = args.max_num_seqs
+    llm_config.parallel_config.max_block_num = args.max_block_num
+    llm_config.parallel_config.block_size = args.block_size
+    llm_config.parallel_config.engine_worker_queue_port = args.engine_worker_queue_port
+    llm_config.parallel_config.max_model_len = args.max_model_len
+    llm_config.parallel_config.device_ids = args.device_ids
+    llm_config.parallel_config.dtype = args.dtype
+    llm_config.parallel_config.enc_dec_block_num = args.enc_dec_block_num
+    llm_config.parallel_config.kv_cache_ratio = args.kv_cache_ratio
+    llm_config.parallel_config.first_token_id = args.first_token_id
+    llm_config.parallel_config.gpu_memory_utilization = args.gpu_memory_utilization
+    llm_config.parallel_config.engine_pid = args.engine_pid
+    llm_config.parallel_config.do_profile = args.do_profile
+    llm_config.parallel_config.dynamic_load_weight = args.dynamic_load_weight
+    llm_config.parallel_config.pad_token_id = args.pad_token_id
+    llm_config.parallel_config.eos_tokens_lens = args.eos_tokens_lens
+    llm_config.parallel_config.enable_chunked_prefill = args.enable_chunked_prefill
+    llm_config.parallel_config.speculate_method = args.speculate_method
+    llm_config.parallel_config.attention_backend = args.attention_backend
+    llm_config.parallel_config.speculate_max_draft_tokens = args.speculate_max_draft_tokens
+
     worker_proc = PaddleDisWorkerProc(llm_config)
     worker_proc.init_device()
     if llm_config.parallel_config.do_profile:

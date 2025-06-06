@@ -18,15 +18,20 @@ from abc import ABC, abstractmethod
 
 import paddle
 from paddle import nn
+from paddle.common_ops_import import convert_dtype
 
 from fastdeploy.config import LLMConfig, LoadConfig, ModelConfig
+from fastdeploy.model_executor.models.model_base import ModelRegistry
+from fastdeploy.model_executor.models.qwen2 import Qwen2Model
+from fastdeploy.model_executor.models.utils import (convert_ndarray_dtype,
+                                                    load_checkpoint)
 
 
 # TODO(gongshaotian): implement real interface to replace this
 def get_model(llm_config: LLMConfig) -> nn.Layer:
     """ load or download model """
-    model_path = llm_config.load_config.model_path
-    model = paddle.load(model_path, return_numpy=True)
+    model_loader = DefaultModelLoader(llm_config.load_config)
+    model = model_loader.load_model(llm_config)
     return model
 
 
@@ -57,4 +62,23 @@ class DefaultModelLoader(BaseModelLoader):
         pass
 
     def load_model(self, llm_config: LLMConfig) -> nn.Layer:
-        pass
+        context = paddle.LazyGuard()
+        architectures = llm_config.model_config.architectures[0]
+        # TODO(gongshaotian): Get model from config
+        state_dict = load_checkpoint(llm_config.load_config.model_path,
+                                     Qwen2Model,
+                                     llm_config.model_config,
+                                     return_numpy=True)
+        with context:
+            model_cls = ModelRegistry.get_class(architectures)
+            model = model_cls(llm_config)
+
+        model.eval()
+        for k, v in state_dict.items():
+            if convert_dtype(v.dtype) == llm_config.model_config.dtype:
+                continue
+            elif convert_dtype(v.dtype) == "float32":
+                continue
+            state_dict[k] = convert_ndarray_dtype(
+                v, llm_config.model_config.dtype)
+        model.set_state_dict(state_dict)

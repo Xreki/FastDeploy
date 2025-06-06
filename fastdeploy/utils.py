@@ -419,9 +419,9 @@ def check_unified_ckpt(model_dir):
         for x in model_files:
             current_index = int(x.strip(".safetensors").split("-")[1])
             flags[current_index - 1] = 1
-        assert sum(
-            flags
-        ) == safetensors_num, "Number of safetensor files should be {}, but now it's {}".format(
+        assert sum(flags) == len(
+            model_files
+        ), "Number of safetensor files should be {}, but now it's {}".format(
             len(model_files), sum(flags))
     except Exception as e:
         raise Exception(f"Failed to check unified checkpoint, details: {e}.")

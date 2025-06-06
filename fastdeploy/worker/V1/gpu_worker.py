@@ -49,7 +49,8 @@ class GpuWorker(WorkerBase):
         pass
 
     def init_device(self):
-        """  """
+        """ Initialize device and Construct model runner
+        """
         if self.device_config.device.type == "cuda" and paddle.device.is_compiled_with_cuda(
         ):
             # Set evironment variable
