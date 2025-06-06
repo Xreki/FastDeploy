@@ -107,7 +107,7 @@ class ModelRunner(ModelRunnerBase):
                     local_test=local_test,
                 )
             else:
-                from ..models.dynamic_load_model import DynamicLoadModel
+                from fastdeploy.model_executor.models.dynamic_load_model import DynamicLoadModel
                 dynamic_load_model = DynamicLoadModel(
                     model_name_or_path=self.args.model_name_or_path,
                     dtype=self.args.dtype,

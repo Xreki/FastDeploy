@@ -251,8 +251,7 @@ class MoEConfig:
 
     use_moe: bool = False
     num_experts: int = -1
-    use_top_k: bool = True
-    top_k: int = -1
+    top_k = 8
     moe_intermediate_size: int = -1
     num_experts_per_rank: int = -1
     num_experts_start_offset: int = -1
@@ -260,7 +259,6 @@ class MoEConfig:
 
     moe_use_gate_correction_bias = False
     moe_every2 = (False, )
-    moe_topk = (8, )
     moe_num_shared_experts = (0, )
     moe_layer_start_index = 0
     moe_use_ffn_shared_weight_and_bias = (False, )

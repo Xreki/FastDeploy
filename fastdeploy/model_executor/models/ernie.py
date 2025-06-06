@@ -645,7 +645,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
                 num_embeddings=vocab_size,
                 embedding_dim=hidden_size,
                 params_dtype=paddle.get_default_dtype,
-                layer_name=(f"{base_model_prefix}.embeddings.word_embeddings"
+                prefix=(f"{base_model_prefix}.embeddings.word_embeddings"
                             if not use_moe else "ernie.embed_tokens"),
             )
 
@@ -1104,7 +1104,6 @@ class ErnieForCausalLM(ModelForCasualLM):
 
         self.ori_vocab_size = self.configs.model_config.ori_vocab_size
 
-        self.use_top_k = self.configs.moe_config.use_top_k
         self.top_k = self.configs.moe_config.top_k
         self.bos_token_id = self.configs.decoding_config.bos_token_id
         self.pad_token_id = self.configs.decoding_config.pad_token_id
@@ -1155,7 +1154,7 @@ class ErnieForCausalLM(ModelForCasualLM):
             tie_word_embeddings = self.ernie.embeddings.word_embeddings.weight
         else:
             tie_word_embeddings = None
-            
+
         if self.ernie.sharing_model is not None:
                 self.lm_head = self.ernie.sharing_model.lm_head
         else:

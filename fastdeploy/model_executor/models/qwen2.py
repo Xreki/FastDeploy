@@ -902,8 +902,6 @@ class Qwen2ForCausalLM(ModelForCasualLM):
 
         self.ori_vocab_size = self.configs.model_config.ori_vocab_size
 
-        self.use_top_k = self.configs.moe_config.use_top_k
-        self.top_k = self.configs.moe_config.top_k
         self.bos_token_id = self.configs.decoding_config.bos_token_id
         self.pad_token_id = self.configs.decoding_config.pad_token_id
         self.num_return_sequences = self.configs.decoding_config.num_return_sequences

@@ -480,20 +480,24 @@ def build_stream_line_model(
     speculative_config.draft_type = draft_type
     model_config.start_layer_index = start_layer_index
     model_config.use_moe = use_moe
-    moe_config.num_experts = config.get("moe_num_experts", None)
-    moe_config.moe_intermediate_size = config.get("moe_intermediate_size",
-                                                  None)
-    moe_config.moe_use_gate_correction_bias = config.get(
-        "moe_use_gate_correction_bias", True)
-    moe_config.moe_every2 = config.get("moe_every2", False)
-    moe_config.moe_topk = config.get("moe_topk", 8)
-    moe_config.moe_num_shared_experts = config.get("moe_num_shared_experts", 0)
-    moe_config.moe_layer_start_index = config.get("moe_layer_start_index", 0)
-    moe_config.moe_use_ffn_shared_weight_and_bias = config.get(
-        "moe_use_ffn_shared_weight_and_bias", False)
-    moe_config.use_moe = use_moe
-    moe_config.moe_group = config.get("moe_group", False)
-    moe_config.moe_quant_type = moe_quant_type
+    if use_moe:
+        moe_config.use_moe = use_moe
+        moe_config.num_experts = config.get("moe_num_experts", None)
+        moe_config.moe_intermediate_size = config.get("moe_intermediate_size",
+                                                    None)
+        moe_config.moe_use_gate_correction_bias = config.get(
+            "moe_use_gate_correction_bias", True)
+        moe_config.moe_every2 = config.get("moe_every2", False)
+        moe_config.moe_topk = config.get("moe_topk", 8)
+        moe_config.moe_num_shared_experts = config.get("moe_num_shared_experts", 0)
+        moe_config.moe_layer_start_index = config.get("moe_layer_start_index", 0)
+        moe_config.moe_use_ffn_shared_weight_and_bias = config.get(
+            "moe_use_ffn_shared_weight_and_bias", False)
+        moe_config.use_moe = use_moe
+        moe_config.moe_group = config.get("moe_group", False)
+        moe_config.moe_quant_type = moe_quant_type
+        if top_k > 0:
+            moe_config.top_k = top_k
     parallel_config.use_ep = use_ep
     additional_config.ep_just_for_test = ep_just_for_test
     model_config.generation_phase = generation_phase
@@ -502,8 +506,7 @@ def build_stream_line_model(
     load_config.scale_dir = scale_dir
     model_config.output_via_mq = output_via_mq
 
-    moe_config.use_top_k = (top_k > 0)
-    moe_config.top_k = top_k
+
     decoding_config.bos_token_id = tokenizer.bos_token_id
     decoding_config.pad_token_id = tokenizer.pad_token_id
     decoding_config.temperature = temperature
