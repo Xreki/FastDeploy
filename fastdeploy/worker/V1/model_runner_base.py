@@ -18,8 +18,8 @@ from abc import ABC, abstractmethod
 from paddle import nn
 
 from fastdeploy.config import LLMConfig
-from fastdeploy.model_runner.output import ModelRunnerOutput
 from fastdeploy.utils import get_logger
+from fastdeploy.worker.output import ModelRunnerOutput
 
 logger = get_logger("model_runner_base", "model_runner_base.log")
 

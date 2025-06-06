@@ -75,6 +75,19 @@ class ModelConfig(PretrainedConfig):
     model_type = "ernie_bot"
     pretrained_init_configuration = ERNIEBOT_PRETRAINED_INIT_CONFIGURATION
 
+    max_stop_seqs_num = 5  # int(os.getenv("MAX_STOP_SEQS_NUM", "5"))
+    stop_seqs_max_len = 8  # int(os.getenv("STOP_SEQS_MAX_LEN", "8"))
+
+    # NOTE(gongshaotain): form _load_model_init_val()
+    top_p = 0.0
+    temperature = 1.0
+    rope_theta = 10000.0
+    rope_scaling = None
+    penalty_score = 1.0
+    frequency_score = 0.0
+    presence_score = 0.0
+    min_length = 1
+
     def __init__(
         self,
         vocab_size: int = 100224,
@@ -296,7 +309,7 @@ class ParallelConfig:
     max_num_seqs: int = 34
     # Set default block num for profile run
     max_block_num: int = 2000
-    #
+    # block size
     block_size: int = 64
     # Engine worker queue port
     engine_worker_queue_port: int = 9923
@@ -362,6 +375,7 @@ class DeviceConfig:
     """
     Configuration for device settings.
     """
+    device_type = "cuda"
 
 
 @dataclass
@@ -655,5 +669,5 @@ class LLMConfig:
     moe_config: MoEConfig = field(default=None, init=True)  # type: ignore
     decoding_config: DecodingConfig = field(default=None,
                                             init=True)  # type: ignore
-    kvcache_config: KVCacheConfig = field(default=None,
-                                          init=True)  # type: ignore
+    kv_cache_config: KVCacheConfig = field(default=None,
+                                           init=True)  # type: ignore

@@ -29,13 +29,13 @@ from fastdeploy.model_executor.layers.attention import get_attention_backend
 from fastdeploy.model_executor.layers.attention.base_attention_backend import \
     AttentionBackend
 from fastdeploy.model_executor.layers.rotary_embedding import get_rope
-from fastdeploy.model_executor.layers.sample import Sampler
+from fastdeploy.model_executor.layers.sample.sampler import Sampler
 from fastdeploy.model_executor.model_loader import get_model
 from fastdeploy.model_executor.pre_and_post_process import (post_process,
                                                             pre_process,
                                                             step_cuda)
 from fastdeploy.utils import get_logger
-from fastdeploy.worker.forward_meta import ForwardMeta
+from fastdeploy.worker.model_runner.forward_meta import ForwardMeta
 from fastdeploy.worker.output import ModelOutputData, ModelRunnerOutput
 from fastdeploy.worker.V1.model_runner_base import ModelRunnerBase
 
@@ -56,14 +56,13 @@ class GPUModelRunner(ModelRunnerBase):
 
         # Cuda Graph
         self.use_cuda_grpah = False
-        self.input_ids = paddle.zeros(self.scheduler_config.max_num_seqs,
-                                      dtype='int32',
-                                      device=self.device)
+        self.input_ids = paddle.zeros(self.parallel_config.max_num_seqs,
+                                      dtype='int32')
 
         # Initialize share inputs
         self._init_share_inputs(self.llm_config.parallel_config.max_num_seqs)
         self.infer_seed_increment = paddle.full(
-            shape=[self.scheduler_config.max_num_seqs, 1],
+            shape=[self.parallel_config.max_num_seqs, 1],
             fill_value=4,
             dtype="int64")
 
@@ -147,10 +146,10 @@ class GPUModelRunner(ModelRunnerBase):
                               number_of_tasks: int):
         """ Set dummy prefill inputs to share inputs"""
         full_length = num_total_tokens // number_of_tasks
-        input_length = int(full_length * self.kv_cache_config.kv_cache_ratio)
-        block_num = (input_length + self.kv_cache_config.block_size - 1 +
-                     self.kv_cache_config.enc_dec_block_num
-                     ) // self.kv_cache_config.block_size
+        input_length = int(full_length * self.parallel_config.kv_cache_ratio)
+        block_num = (input_length + self.parallel_config.block_size - 1 +
+                     self.parallel_config.enc_dec_block_num
+                     ) // self.parallel_config.block_size
 
         for i in range(number_of_tasks):
             idx = i
@@ -187,13 +186,15 @@ class GPUModelRunner(ModelRunnerBase):
         self.share_inputs = {}
 
         self.share_inputs["pre_ids"] = paddle.full(
-            [max_num_seqs, self.model_config.max_model_len], -1, dtype='int64')
+            [max_num_seqs, self.parallel_config.max_model_len],
+            -1,
+            dtype='int64')
         self.share_inputs["input_ids"] = paddle.full(
-            [max_num_seqs, self.model_config.max_model_len],
-            self.model_config.pad_token_id,
+            [max_num_seqs, self.parallel_config.max_model_len],
+            self.parallel_config.pad_token_id,
             dtype='int64')
         self.share_inputs["eos_token_id"] = paddle.full(
-            [self.model_config.eos_tokens_lens, 1], 0, dtype='int64')
+            [self.parallel_config.eos_tokens_lens, 1], 0, dtype='int64')
         self.share_inputs["top_p"] = paddle.full([max_num_seqs, 1],
                                                  self.model_config.top_p,
                                                  dtype='float32')
@@ -287,18 +288,18 @@ class GPUModelRunner(ModelRunnerBase):
 
         # Initialize rotary position embedding
         tmp_position_ids = paddle.arange(
-            self.model_config.max_model_len).reshape((1, -1))
+            self.parallel_config.max_model_len).reshape((1, -1))
         self.share_inputs["rope_emb"] = get_rope(
-            rotary_dim=self.model_cfg.hidden_size //
+            rotary_dim=self.model_config.hidden_size //
             self.model_config.num_attention_heads,
             position_ids=tmp_position_ids,
-            base=self.rope_theta)
+            base=self.model_config.rope_theta)
 
         # Set block tables
         pre_max_block_num = (
-            self.model_config.max_model_len + self.kv_cache_config.block_size -
-            1
-        ) // self.kv_cache_config.block_size + self.kv_cache_config.enc_dec_block_num
+            self.parallel_config.max_model_len +
+            self.parallel_config.block_size - 1
+        ) // self.parallel_config.block_size + self.parallel_config.enc_dec_block_num
         self.share_inputs["block_tables"] = paddle.full(
             [max_num_seqs, pre_max_block_num], -1, dtype='int32')
 
@@ -307,7 +308,7 @@ class GPUModelRunner(ModelRunnerBase):
             range(
                 self.parallel_config.max_block_num - 1,
                 int(self.parallel_config.max_block_num *
-                    self.kv_cache_config.kv_cache_ratio) - 1, -1))
+                    self.parallel_config.kv_cache_ratio) - 1, -1))
         self.free_list_len = len(free_list)
         self.share_inputs["free_list"] = paddle.to_tensor(free_list,
                                                           dtype="int32")
@@ -420,8 +421,10 @@ class GPUModelRunner(ModelRunnerBase):
         """
         assert len(self.attn_backends) == 0
 
-        self.model_config.kv_num_heads = self.model_config.num_attention_heads // self.rank
-        num_heads = int(self.model_config.num_key_value_heads) // self.rank
+        # TODO(gongshaotian): Get rank from config
+        self.model_config.kv_num_heads = self.model_config.num_attention_heads // self.parallel_config.mp_size
+        num_heads = int(self.model_config.num_key_value_heads
+                        ) // self.parallel_config.mp_size
         head_dim = self.model_config.hidden_size // self.model_config.num_attention_heads
 
         # Get the attention backend
@@ -445,8 +448,8 @@ class GPUModelRunner(ModelRunnerBase):
         """
 
         # 1. Compute real num_tokens
-        self._dummy_prefill_inputs(self.model_config.max_model_len,
-                                   self.model_config.max_num_seqs)
+        self._dummy_prefill_inputs(self.parallel_config.max_model_len,
+                                   self.parallel_config.max_num_seqs)
         (
             ids_remove_padding,
             cum_offsets,
@@ -473,8 +476,8 @@ class GPUModelRunner(ModelRunnerBase):
         # 7. Updata 'infer_seed' and step_cuda()
         self.share_inputs["infer_seed"].add_(self.infer_seed_increment)
         self.share_inputs["infer_seed"][:] %= self.MAX_INFER_SEED
-        step_cuda(self.share_inputs, self.kv_cache_config.block_size,
-                  self.kv_cache_config.enc_dec_block_num)
+        step_cuda(self.share_inputs, self.parallel_config.block_size,
+                  self.parallel_config.enc_dec_block_num)
 
     def _dummy_sampler_run(self) -> paddle.Tensor:
         """ """
@@ -524,8 +527,8 @@ class GPUModelRunner(ModelRunnerBase):
         # 7. Updata 'infer_seed' and step_cuda()
         self.share_inputs["infer_seed"].add_(self.infer_seed_increment)
         self.share_inputs["infer_seed"][:] %= self.MAX_INFER_SEED
-        step_cuda(self.share_inputs, self.kv_cache_config.block_size,
-                  self.kv_cache_config.enc_dec_block_num)
+        step_cuda(self.share_inputs, self.parallel_config.block_size,
+                  self.parallel_config.enc_dec_block_num)
 
         return ModelRunnerOutput()
 
@@ -565,7 +568,7 @@ class GPUModelRunner(ModelRunnerBase):
 
         del self.share_inputs["block_tables"]
         self.share_inputs["block_tables"] = paddle.full(
-            [self.scheduler_config.max_num_seqs, self.num_gpu_blocks],
+            [self.parallel_config.max_num_seqs, self.num_gpu_blocks],
             -1,
             dtype="int32")
 
@@ -573,7 +576,7 @@ class GPUModelRunner(ModelRunnerBase):
         free_list = list(
             range(
                 self.num_gpu_blocks - 1,
-                int(self.num_gpu_blocks * self.kv_cache_config.kv_cache_ratio)
+                int(self.num_gpu_blocks * self.parallel_config.kv_cache_ratio)
                 - 1, -1))
         self.free_list_len = len(free_list)
         self.share_inputs.update({

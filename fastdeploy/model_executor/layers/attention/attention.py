@@ -80,8 +80,8 @@ class Attention(nn.Layer):
         self.qkv_scale = qkv_scale
         self._dtype = self._helper.get_default_dtype()
         self.out_scale = out_scale
-        if llm_config.kvcache_config is not None:
-            self.kvcache_quant_method = llm_config.kvcache_config.kvcache_quant_config.get_quant_method(
+        if llm_config.kv_cache_config is not None:
+            self.kvcache_quant_method = llm_config.kv_cache_config.kvcache_quant_config.get_quant_method(
                 self)
             self.kvcache_quant_method.create_weights(self)
         if llm_config.quant_config is not None:

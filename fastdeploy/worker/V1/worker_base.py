@@ -19,7 +19,6 @@ from typing import Optional
 from paddle import Tensor, nn
 
 from fastdeploy.config import LLMConfig
-from fastdeploy.scheduler.scheduler_batch import WorkerBatch
 from fastdeploy.worker.output import ModelRunnerOutput
 from fastdeploy.worker.V1.model_runner_base import ModelRunnerBase
 
@@ -47,8 +46,6 @@ class WorkerBase(ABC):
         # Set Configuration
         self.llm_config = llm_config
         self.model_config = llm_config.model_config
-        self.cache_config = llm_config.cache_config
-        self.lora_config = llm_config.lora_config
         self.load_config = llm_config.load_config
         self.parallel_config = llm_config.parallel_config
         self.device_config = llm_config.device_config
@@ -83,7 +80,9 @@ class WorkerBase(ABC):
 
     @abstractmethod
     def execute_model(
-            self, worker_batch: WorkerBatch) -> Optional[ModelRunnerOutput]:
+        self,
+        model_forward_batch=None,
+    ) -> Optional[ModelRunnerOutput]:
         """ """
         raise NotImplementedError
 

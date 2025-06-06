@@ -40,7 +40,7 @@ class GpuWorker(WorkerBase):
         local_rank: int,
         rank: int,
     ):
-        super.__init__(
+        super().__init__(
             llm_config=llm_config,
             local_rank=local_rank,
             rank=rank,
@@ -50,7 +50,7 @@ class GpuWorker(WorkerBase):
     def init_device(self):
         """ Initialize device and Construct model runner
         """
-        if self.device_config.device.type == "cuda" and paddle.device.is_compiled_with_cuda(
+        if self.device_config.device_type == "cuda" and paddle.device.is_compiled_with_cuda(
         ):
             # Set evironment variable
             self.device = f"gpu:{self.local_rank}"
@@ -128,7 +128,7 @@ class GpuWorker(WorkerBase):
         not_paddle_use_mem = after_run_meminfo.used - paddle_reserved_mem_after_run
         peak_memory = paddle_allocated_mem_after_run + not_paddle_use_mem
 
-        available_kv_cache_memory = after_run_meminfo.total * self.cache_config.gpu_memory_utilization - peak_memory
+        available_kv_cache_memory = after_run_meminfo.total * self.parallel_config.gpu_memory_utilization - peak_memory
 
         end_time = time.perf_counter()
         logger.info(

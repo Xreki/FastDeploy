@@ -22,13 +22,16 @@ import paddle
 import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
 
-from fastdeploy.config import LLMConfig
+from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
+                               KVCacheConfig, LLMConfig, ModelConfig,
+                               MoEConfig, ParallelConfig, SpeculativeConfig,
+                               TmpConfig)
 from fastdeploy.inter_communicator import EngineWorkerQueue as TaskQueue
 from fastdeploy.inter_communicator import IPCSignal
 from fastdeploy.utils import get_logger
 from fastdeploy.worker.V1.gpu_worker import GpuWorker
 
-logger = get_logger("worker_process", )
+logger = get_logger("worker_process", "worker_process.log")
 
 
 class PaddleDisWorkerProc():
@@ -48,6 +51,7 @@ class PaddleDisWorkerProc():
 
         # Initialize distributed enviroment
         (self.rank, self.local_rank) = self.init_distributed_enviroment()
+        self.llm_config.parallel_config.mp_size = self.rank
 
         # TODO(gongshaotian): Use worker factory to get worker
         self.worker = GpuWorker(llm_config=llm_config,
@@ -330,15 +334,22 @@ def parse_args():
     return args
 
 
-def run_worker_proc():
+def initialize_llm_config(args) -> LLMConfig:
+    """Initialize LLMConfig
+    TODO(gongshaotian): Unified all configs to LLMConfig
     """
-    start worker process
-    """
-    # Get args form Engine
-    args = parse_args()
-    # Initialize LLMConfig
-    # TODO(gongshaotian): Unified all configs to LLMConfig
     llm_config = LLMConfig()
+    llm_config.device_config = DeviceConfig()
+    llm_config.model_config = ModelConfig()
+    llm_config.kv_cache_config = KVCacheConfig()
+    llm_config.decoding_config = DecodingConfig()
+    llm_config.decoding_config = MoEConfig()
+    llm_config.tmp_config = TmpConfig()
+    llm_config.additional_config = AdditionalConfig()
+    llm_config.speculative_config = SpeculativeConfig()
+    llm_config.parallel_config = ParallelConfig()
+
+    # Update parallel config
     llm_config.parallel_config.engine_pid = args.engine_pid
     llm_config.parallel_config.model_name_or_path = args.model_name_or_path
     llm_config.parallel_config.max_num_seqs = args.max_num_seqs
@@ -362,6 +373,20 @@ def run_worker_proc():
     llm_config.parallel_config.attention_backend = args.attention_backend
     llm_config.parallel_config.speculate_max_draft_tokens = args.speculate_max_draft_tokens
 
+    return llm_config
+
+
+def run_worker_proc():
+    """
+    start worker process
+    """
+    # Get args form Engine
+    args = parse_args()
+
+    # Get llm_config
+    llm_config = initialize_llm_config(args)
+
+    # Start event loop
     worker_proc = PaddleDisWorkerProc(llm_config)
     worker_proc.init_device()
     if llm_config.parallel_config.do_profile:
