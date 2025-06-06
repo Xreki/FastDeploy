@@ -89,9 +89,10 @@ class FusedMoE(nn.Layer):
         self.num_experts = num_experts
         self.num_local_experts = self.num_experts // self.ep_size
 
-        logger.info(
-            f"MoE config is num_experts:{num_experts}, top_k:{top_k}, hidden_size:{self.hidden_size}, moe_intermediate_size:{moe_intermediate_size}"
-        )
+        logger.info(f'''MoE config is num_experts:{num_experts},
+             top_k:{top_k},
+             hidden_size:{self.hidden_size},
+             moe_intermediate_size:{moe_intermediate_size}''')
         logger.info(
             f"MoE is running on moe_quant_type: {self.moe_quant_type}, ep:{self.ep_size}, tp:{self.tp_size} mode"
         )
