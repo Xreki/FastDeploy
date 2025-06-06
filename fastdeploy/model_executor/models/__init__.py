@@ -39,7 +39,7 @@ def auto_models_registry():
                             ModelForCasualLM) and attr is not ModelForCasualLM:
                         ModelRegistry.register(attr)
             except ImportError:
-                continue
+                raise ImportError(f"{module_name=} import error")
 
 
 auto_models_registry()

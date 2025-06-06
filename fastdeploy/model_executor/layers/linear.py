@@ -63,9 +63,11 @@ class LinearBase(nn.Layer):
 
         self.llm_config = llm_config
         self.skip_quant = skip_quant
-        self.use_smooth_quant = llm_config.model_config.use_smooth_quant
-        self.weight_dtype = llm_config.model_config.weight_dtype
-        self.act_dtype = llm_config.model_config.act_dtype
+        # self.use_smooth_quant = llm_config.model_config.use_smooth_quant
+        self.use_smooth_quant = False
+        # self.weight_dtype = llm_config.model_config.weight_dtype
+        self.weight_dtype = "int8"
+        # self.act_dtype = llm_config.model_config.act_dtype
         self.input_size = input_size
         self.output_size = output_size
         self.with_bias = with_bias
@@ -77,7 +79,7 @@ class LinearBase(nn.Layer):
         self.shift_key = f"{prefix}.shift_bias"
         self.smooth_key = f"{prefix}.smooth_weight"
         self.out_scale_key = f"{prefix}.out_scale"
-        
+
         self._dtype = self._helper.get_default_dtype()
 
         if llm_config.quant_config:
@@ -477,15 +479,13 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
             if self.with_bias:
                 gate_bias_key = self.bias_key.replace("linear1", "gate_proj")
                 bias_tensor = get_tensor(state_dict.pop(gate_bias_key)).astype(
-                    paddle.get_default_dtype()
-                )
-                converted_bias_tensor = paddle.zeros(
-                    shape=list(bias_tensor.shape), dtype=bias_tensor.dtype
-                )
+                    paddle.get_default_dtype())
+                converted_bias_tensor = paddle.zeros(shape=list(
+                    bias_tensor.shape),
+                                                     dtype=bias_tensor.dtype)
                 if not self.use_fast_ffn:
                     converted_bias_tensor = paddle.concat(
-                        [bias_tensor[::2], bias_tensor[1::2]], axis=0
-                    )
+                        [bias_tensor[::2], bias_tensor[1::2]], axis=0)
                 else:
                     converted_bias_tensor = bias_tensor
                 state_dict[self.bias_key] = converted_bias_tensor
@@ -557,17 +557,12 @@ class QKVParallelLinear(ColumnParallelLinear):
             k_tensor = get_tensor(state_dict.pop(k_weight_key))
             v_tensor = get_tensor(state_dict.pop(v_weight_key))
             weight_tensor = paddle.concat([q_tensor, k_tensor, v_tensor],
-                                          axis=-1).transpose([1, 0])   
-            weight_tensor = weight_tensor.reshape(
-                    [
-                        (
-                            self.num_heads_per_rank
-                            + 2 * self.kv_num_heads_per_rank
-                        )
-                        * (self.head_dim),
-                        self.embed_dim,
-                    ]
-                )
+                                          axis=-1).transpose([1, 0])
+            weight_tensor = weight_tensor.reshape([
+                (self.num_heads_per_rank + 2 * self.kv_num_heads_per_rank) *
+                (self.head_dim),
+                self.embed_dim,
+            ])
             weight_tensor = paddle.transpose(weight_tensor, perm=[1, 0])
 
         if self.llm_config.quant_config:
@@ -649,9 +644,12 @@ class RowParallelLinear(LinearBase):
                          skip_quant=skip_quant)
         self.llm_config = llm_config
         self.skip_quant = False
-        self.use_smooth_quant = llm_config.model_config.use_smooth_quant
-        self.weight_dtype = llm_config.model_config.weight_dtype
-        self.act_dtype = llm_config.model_config.act_dtype
+        # self.use_smooth_quant = llm_config.model_config.use_smooth_quant
+        self.use_smooth_quant = False
+        # self.weight_dtype = llm_config.model_config.weight_dtype
+        self.weight_dtype = "int8"
+        # self.act_dtype = llm_config.model_config.act_dtype
+        self.act_dtype = "bfloat16"
         self.nranks = llm_config.parallel_config.mp_size
         self.embed_dim = llm_config.model_config.hidden_size
         self.head_dim = llm_config.model_config.hidden_size // llm_config.model_config.num_attention_heads

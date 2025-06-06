@@ -30,9 +30,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+
 import paddle
 
-from fastdeploy.worker.model_runner import ForwardMeta, ForwardMode
+from fastdeploy.worker.model_runner import ForwardMeta
 
 
 class AttentionBackend(ABC):
@@ -48,9 +49,9 @@ class AttentionBackend(ABC):
         q: paddle.Tensor,
         k: paddle.Tensor,
         v: paddle.Tensor,
+        qkv: paddle.Tensor,
         layer: paddle.nn.Layer,
         forward_meta: ForwardMeta,
-        **kwargs,
     ):
         """
         Run a forward.
@@ -66,27 +67,27 @@ class AttentionBackend(ABC):
                 q,
                 k,
                 v,
+                qkv,
                 layer,
                 forward_meta,
-                **kwargs,
             )
         elif forward_meta.forward_mode.is_decode():
             return self.forward_decode(
                 q,
                 k,
                 v,
+                qkv,
                 layer,
                 forward_meta,
-                **kwargs,
             )
         else:
             return self.forward_extend(
                 q,
                 k,
                 v,
+                qkv,
                 layer,
                 forward_meta,
-                **kwargs,
             )
 
     def forward_mixed(
@@ -94,6 +95,7 @@ class AttentionBackend(ABC):
         q: paddle.Tensor,
         k: paddle.Tensor,
         v: paddle.Tensor,
+        qkv: paddle.Tensor,
         layer: paddle.nn.Layer,
         forward_meta: ForwardMeta,
     ):
@@ -105,6 +107,7 @@ class AttentionBackend(ABC):
         q: paddle.Tensor,
         k: paddle.Tensor,
         v: paddle.Tensor,
+        qkv: paddle.Tensor,
         layer: paddle.nn.Layer,
         forward_meta: ForwardMeta,
     ):
@@ -116,6 +119,7 @@ class AttentionBackend(ABC):
         q: paddle.Tensor,
         k: paddle.Tensor,
         v: paddle.Tensor,
+        qkv: paddle.Tensor,
         layer: paddle.nn.Layer,
         forward_meta: ForwardMeta,
     ):

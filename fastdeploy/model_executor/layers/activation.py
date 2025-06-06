@@ -1,5 +1,5 @@
 """
-# Copyright (c) 2021 PaddlePaddle Authors. All Rights Reserved.
+# Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@
 from paddle import nn
 from paddle.incubate.nn.functional import fused_bias_act
 
+from fastdeploy.config import LLMConfig
 from fastdeploy.platforms import current_platform
 
 
@@ -28,7 +29,7 @@ class SiluAndMul(nn.Layer):
 
     def __init__(
         self,
-        inference_args,
+        llm_config: LLMConfig,
         bias=None,
         act_method="gelu",
         dequant_scales=None,
@@ -41,7 +42,7 @@ class SiluAndMul(nn.Layer):
         activation method, and more.
 
         Args:
-            inference_args (Any): Arguments related to inference, including quantization
+            llm_config (Any): Arguments related to inference, including quantization
                 settings.
             bias (Optional[Tensor]): Optional bias term to be added to the output.
             act_method (str, optional): Activation method to be applied.
@@ -73,9 +74,9 @@ class SiluAndMul(nn.Layer):
         self.shift = shift
         self.smooth = smooth
         self.quant_scale = quant_scale
-        self.quant_round_type = inference_args.quant_round_type
-        self.quant_max_bound = inference_args.quant_max_bound
-        self.quant_min_bound = inference_args.quant_min_bound
+        self.quant_round_type = llm_config.quant_config.quant_round_type
+        self.quant_max_bound = llm_config.quant_config.quant_max_bound
+        self.quant_min_bound = llm_config.quant_config.quant_min_bound
 
         self._dtype = self._helper.get_default_dtype()
         if self._dtype == "bfloat16":
@@ -89,10 +90,10 @@ class SiluAndMul(nn.Layer):
                     bfloat16 as default dtype, but received {self._dtype}")
 
         # fp8 is not support smooth quantization
-        if "float8" in inference_args.act_dtype:
-            self.dequant_scales = None
-            self.shift = None
-            self.smooth = None
+        # if "float8" in llm_config.model_config.act_dtype:
+        #     self.dequant_scales = None
+        #     self.shift = None
+        #     self.smooth = None
 
     def forward_cuda(self, x):
         """

@@ -199,6 +199,9 @@ def build_stream_line_model(
     tensor_parallel_rank, tensor_parallel_degree = llm_utils.init_dist_env()
     parallel_config.tensor_parallel_rank = tensor_parallel_rank
     parallel_config.tensor_parallel_degree = tensor_parallel_degree
+    parallel_config.mp_size = tensor_parallel_degree
+    parallel_config.ep_size = 1
+    parallel_config.column_cut = False
 
     speculative_config.is_mtp = draft_type in ["eagle", "mtp"]
     speculative_config.draft_type = draft_type
@@ -374,6 +377,7 @@ def build_stream_line_model(
     model_config.ffn_hidden_size = ffn_hidden_size
     model_config.max_seq_len = max_len
     model_config.num_layers = num_layers
+    model_config.prefix_name = "ernie"
     model_config.dtype = dtype
     model_config.export_model_type = export_model_type
     parallel_config.block_size = block_size
@@ -417,7 +421,7 @@ def build_stream_line_model(
     model_config.output_via_mq = output_via_mq
 
     moe_config.use_top_k = (top_k > 0)
-    moe_config.top_k = top_k
+    moe_config.top_k = 8
     decoding_config.bos_token_id = tokenizer.bos_token_id
     decoding_config.pad_token_id = tokenizer.pad_token_id
     decoding_config.temperature = temperature
@@ -430,6 +434,16 @@ def build_stream_line_model(
     speculative_config.speculate_max_candidate_len = speculate_max_candidate_len
     speculative_config.speculate_verify_window = speculate_verify_window
 
+    from ..layers.quantization import get_quantization_config
+    quant_cls = get_quantization_config("weight_only")
+    quant_config = quant_cls.from_config({
+        "weight_only_linear_arch": None,
+        "algo": "weight_only_int8"
+    })
+    quant_config.quant_max_bound = 0
+    quant_config.quant_min_bound = 0
+    quant_config.quant_round_type = 0
+
     llm_config = LLMConfig(
         model_config=model_config,
         parallel_config=parallel_config,
@@ -440,6 +454,7 @@ def build_stream_line_model(
         tmp_config=tmp_config,
         moe_config=moe_config,
         decoding_config=decoding_config,
+        quant_config=quant_config,
     )
 
     with context:
