@@ -26,7 +26,7 @@ from fastdeploy.model_executor.layers.embeddings import VocabParallelEmbedding
 from fastdeploy.model_executor.layers.linear import (
     MergedColumnParallelLinear, QKVParallelLinear, RowParallelLinear)
 from fastdeploy.model_executor.layers.lm_head import ParallelLMHead
-from fastdeploy.model_executor.layers.normalization import LayerNorm, RMSNorm
+from fastdeploy.model_executor.layers.normalization import RMSNorm
 from fastdeploy.model_executor.models.model_base import ModelForCasualLM
 from fastdeploy.worker.model_runner import ForwardMeta
 
@@ -103,11 +103,10 @@ class Qwen2Attention(nn.Layer):
             output_size=llm_config.model_config.hidden_size,
         )
 
-        self.attn = Attention(
-            llm_config=llm_config,
-            layer_id=layer_id,
-            prefix=prefix,
-        )
+        self.attn = Attention(llm_config=llm_config,
+                              layer_id=layer_id,
+                              prefix=prefix,
+                              use_neox_rotary_style=True)
 
     def load_state_dict(self, state_dict):
         """
@@ -242,12 +241,6 @@ class Qwen2Model(nn.Layer):
             for i in range(self.num_layers)
         ])
 
-        self.last_layernorm = LayerNorm(
-            llm_config,
-            prefix="",
-            hidden_size=llm_config.model_config.hidden_size,
-            eps=1e-6)
-
         self.norm = RMSNorm(
             llm_config,
             hidden_size=llm_config.model_config.hidden_size,
@@ -285,7 +278,7 @@ class Qwen2Model(nn.Layer):
             hidden_states, residual = self.layers[i](forward_meta,
                                                      hidden_states, residual)
 
-        hidden_states, _ = self.last_layernorm(hidden_states, residual)
+        hidden_states = hidden_states + residual
 
         out = self.norm(hidden_states)
 

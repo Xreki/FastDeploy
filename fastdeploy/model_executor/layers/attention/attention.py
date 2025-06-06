@@ -40,6 +40,7 @@ class Attention(nn.Layer):
         out_scale: float = -1.,
         linear_shift=None,
         linear_smooth=None,
+        use_neox_rotary_style=False,
     ) -> None:
         """
         Initializes `LMLayer` with the given parameters.
@@ -80,6 +81,7 @@ class Attention(nn.Layer):
         self.qkv_scale = qkv_scale
         self._dtype = self._helper.get_default_dtype()
         self.out_scale = out_scale
+        self.use_neox_rotary_style = use_neox_rotary_style
         if llm_config.kvcache_config is not None:
             self.kvcache_quant_method = llm_config.kvcache_config.kvcache_quant_config.get_quant_method(
                 self)

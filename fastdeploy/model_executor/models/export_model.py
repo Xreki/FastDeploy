@@ -28,7 +28,6 @@ from paddle.distributed import fleet
 from paddlenlp.trainer import RuntimeTimer
 from paddlenlp.transformers import AutoTokenizer
 from paddlenlp.transformers.configuration_utils import PretrainedConfig
-from paddlenlp.transformers.model_utils import load_tp_checkpoint
 from paddlenlp.trl import llm_utils
 from paddlenlp.utils.env import USE_FAST_TOKENIZER
 from paddlenlp.utils.log import logger
@@ -45,6 +44,11 @@ from .qwen2 import Qwen2Model
 from .tokenizer import ErnieBotTokenizer
 from .utils import (_vocab_size_with_padding, convert_ndarray_dtype,
                     load_checkpoint, parser_quant_type)
+
+model_classes_mapping = {
+    "ErnieForCausalLM": ErnieBotFusedModel,
+    "Qwen2ForCausalLM": Qwen2Model,
+}
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 grandparent_dir = os.path.abspath(
@@ -256,16 +260,11 @@ def build_stream_line_model(
         context = contextlib.nullcontext()
     elif use_safetensors:
         context = paddle.LazyGuard()
-        if "ErnieForCausalLM" in architectures:
-            state_dict = load_checkpoint(model_path,
-                                         ErnieBotFusedModel,
-                                         model_config,
-                                         return_numpy=True)
-        elif "Qwen2ForCausalLM" in architectures:
-            state_dict = load_checkpoint(model_path,
-                                         Qwen2Model,
-                                         model_config,
-                                         return_numpy=True)
+        model_class = model_classes_mapping[architectures[0]]
+        state_dict = load_checkpoint(model_path,
+                                     model_class,
+                                     model_config,
+                                     return_numpy=True)
 
     elif use_moe:
         tensor_parallel_degree = dist.get_world_size()
@@ -345,18 +344,12 @@ def build_stream_line_model(
             state_dict = paddle.load(model_state_path, return_numpy=True)
     else:
         context = paddle.LazyGuard()
-        if "ErnieForCausalLM" in architectures:
-            state_dict = load_tp_checkpoint(
-                model_path,
-                ErnieBotFusedModel,
-                model_config,
-                return_numpy=True,
-            )
-        elif "Qwen2ForCausalLM" in architectures:
-            state_dict = load_checkpoint(model_path,
-                                         Qwen2Model,
-                                         model_config,
-                                         return_numpy=True)
+        model_class = model_classes_mapping[architectures[0]]
+        state_dict = load_checkpoint(model_path,
+                                     model_class,
+                                     model_config,
+                                     return_numpy=True)
+
     if "ErnieForCausalLM" in architectures:
         use_rmsnorm = config.get("use_rmsnorm", False)
     else:

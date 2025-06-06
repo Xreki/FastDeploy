@@ -80,8 +80,6 @@ class AppendAttentionBackend(AttentionBackend):
         self.rope_theta = (10000.0 if model_runner.model_cfg.rope_theta is None
                            else model_runner.model_cfg.rope_theta)
         self.rope_3d = getattr(model_runner.model_cfg, "rope_3d", False)
-        self.use_neox_rotary_style = getattr(model_runner.model_cfg,
-                                             "use_neox_rotary_style", False)
         self.causal = getattr(model_runner.model_cfg, "causal", True)
         self.speculate_method = model_runner.args.speculate_method
         self.speculate_max_draft_token_num = model_runner.args.speculate_max_draft_tokens
@@ -198,7 +196,7 @@ class AppendAttentionBackend(AttentionBackend):
             None,  # kv_signal_data,
             metadata._fuse_kernel_compute_dtype,
             getattr(layer, "cache_quant_type_str", "none"),
-            self.use_neox_rotary_style,
+            layer.use_neox_rotary_style,
             self.rope_3d,
             self.max_seq_len,
             getattr(layer, "quant_max_bound", 0.0),
