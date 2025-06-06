@@ -323,18 +323,15 @@ class FusedTransformer(nn.Layer):
                         + ".{}.up_gate_proj.weight",
                         ffn2_expert_weight_key=f"ernie.layers.{i}.mlp.experts"
                         + ".{}.down_proj.weight",
-                        ffn1_expert_weight_scale_key=
-                        f"ernie.layers.{i}.mlp.experts" +
+                        ffn1_expert_weight_scale_key=f"ernie.layers.{i}.mlp.experts" +
                         ".{}.up_gate_proj.weight_quanter",
-                        ffn2_expert_weight_scale_key=
-                        f"ernie.layers.{i}.mlp.experts" +
+                        ffn2_expert_weight_scale_key=f"ernie.layers.{i}.mlp.experts" +
                         ".{}.down_proj.weight_quanter",
                         ffn1_expert_in_scale_key=f"ernie.layers.{i}.mlp.experts"
                         + ".{}.up_gate_proj.activation_quanter",
                         ffn2_expert_in_scale_key=f"ernie.layers.{i}.mlp.experts"
                         + ".{}.down_proj.activation_quanter",
-                        gate_correction_bias_key=
-                        f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
+                        gate_correction_bias_key=f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
                         ffn1_bias_key=None,
                         ffn2_bias_key=None,
                         ffn1_shared_weight_key=None,
