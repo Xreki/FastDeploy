@@ -371,9 +371,20 @@ class FusedTransformer(nn.Layer):
                 ] + [
                     FusedMoE(
                         llm_config=llm_config,
-                        moe_config=inference_args.moe_config,
-                        layer_name=f"moe_layers.{i}",
+                        moe_intermediate_size=inference_args.moe_config.moe_intermediate_size,
+                        num_experts = inference_args.moe_config.num_experts,
+                        top_k = inference_args.moe_config.top_k,
+                        moe_use_gate_correction_bias = inference_args.moe_config.moe_use_gate_correction_bias,
+                        moe_quant_type = inference_args.moe_config.moe_quant_type,
                         layer_idx=i,
+                        gate_weight_key=f"ernie.layers.{i}.mlp.gate.weight",
+                        gate_correction_bias_key=f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
+                        ffn1_expert_weight_key="ernie.layers.{}.mlp.experts.{}.up_gate_proj.quant_weight",
+                        ffn2_expert_weight_key="ernie.layers.{}.mlp.experts.{}.down_proj.quant_weight",
+                        moe_ffn1_weight_scale_keys="ernie.layers.{}.mlp.experts.{}.up_gate_proj.weight_quanter",
+                        moe_ffn2_weight_scale_keys = "ernie.layers.{}.mlp.experts.{}.down_proj.weight_quanter",
+                        moe_ffn1_in_scale_keys="ernie.layers.{}.mlp.experts.{}.up_gate_proj.activation_quanter",
+                        moe_ffn2_in_scale_keys="ernie.layers.{}.mlp.experts.{}.down_proj.activation_quanter",
                     ) for i in range(
                         self.inference_args.moe_config.moe_layer_start_index,
                         self.num_layers,
