@@ -120,8 +120,6 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
                         layer, scale_name,
                         layer.create_parameter(
                             shape=quanted_weight_scale.shape,
-                            attr=paddle.ParamAttr(
-                                name=f"{layer.layer_name}.{scale_name}"),
                             dtype=quanted_weight_scale.dtype,
                         ))
                     getattr(layer, scale_name).set_value(quanted_weight_scale)

@@ -549,33 +549,6 @@ class QKVParallelLinear(ColumnParallelLinear):
         # qkv fused in disk
         if self.weight_key in state_dict.keys():
             weight_tensor = get_tensor(state_dict.pop(self.weight_key))
-            if self.kv_num_heads <= 0:
-                weight_tensor = (
-                    weight_tensor
-                    .reshape(
-                        [
-                            self.embed_dim,
-                            self.num_heads,
-                            3,
-                            self.embed_dim // self.num_heads,
-                        ]
-                    )
-                    .transpose([2, 1, 3, 0])
-                    )
-            else:
-                # qkv_weight [hidden_size, num_head + 2 * num_key_value_head, dim_head]
-                # layout [q q q q k v] * num_key_value_head
-                weight_tensor = (
-                    weight_tensor
-                    .reshape(
-                        [
-                            self.embed_dim,
-                            self.num_heads + 2 * self.kv_num_heads,
-                            self.embed_dim // self.num_heads,
-                        ]
-                    )
-                    .transpose([1, 2, 0])
-                ).reshape([-1, self.embed_dim]) 
         else:
             q_weight_key = self.weight_key.replace("qkv_proj", "q_proj")
             k_weight_key = self.weight_key.replace("qkv_proj", "k_proj")
@@ -608,47 +581,6 @@ class QKVParallelLinear(ColumnParallelLinear):
                 bias_tensor = paddle.to_tensor(
                     get_tensor(state_dict.pop(self.bias_key)))
                 self.linear_bias.set_value(bias_tensor)
-                if self.inference_args.num_key_value_heads <= 0:
-                    qkv_bias = (
-                        get_tensor(state_dict.pop(self.bias_key))
-                        .reshape(
-                            [
-                                self.num_heads,
-                                3,
-                                self.embed_dim // self.inference_args.num_attention_heads,
-                            ]
-                        )
-                        .transpose([1, 0, 2])
-                    )
-                else:
-                    # GQA
-                    qkv_bias = get_tensor(state_dict.pop(self.bias_key)).reshape(
-                        [
-                            self.num_heads + 2 * self.kv_num_heads,
-                            self.embed_dim // self.inference_args.num_attention_heads,
-                        ]
-                    )
-                    single_qkv_biases = paddle.split(qkv_bias, self.kv_num_heads, axis=0)
-                    q_biases, k_biases, v_biases = [], [], []
-                    for single_qkv_bias in single_qkv_biases:
-                        q_bias, k_bias, v_bias = paddle.split(
-                            single_qkv_bias,
-                            [
-                                self.inference_args.num_attention_heads
-                                // self.inference_args.num_key_value_heads,
-                                1,
-                                1,
-                            ],
-                            axis=0,
-                        )
-                        q_biases.append(q_bias)
-                        k_biases.append(k_bias)
-                        v_biases.append(v_bias)
-                    q_bias = paddle.concat(q_biases, axis=0)
-                    k_bias = paddle.concat(k_biases, axis=0)
-                    v_bias = paddle.concat(v_biases, axis=0)
-                    qkv_bias = paddle.concat([q_bias, k_bias, v_bias], axis=0)
-                qkv_bias = qkv_bias.reshape([-1])
             else:
                 q_bias_key = self.bias_key.replace("qkv_proj", "q_proj")
                 k_bias_key = self.bias_key.replace("qkv_proj", "k_proj")

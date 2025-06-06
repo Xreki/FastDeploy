@@ -562,12 +562,6 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             ]
             fmt_keys.ffn2_bias_keys = [None for i in range(num_layers)]
 
-            # MoE keys
-            fmt_keys.moe_gate_weight_keys = "ernie.layers.{}.mlp.gate.weight"
-            fmt_keys.moe_gate_correction_bias_keys = "ernie.layers.{}.mlp.moe_statics.e_score_correction_bias"
-            fmt_keys.moe_ffn1_weight_keys = "ernie.layers.{}.mlp.experts.{}.up_gate_proj.weight"
-            fmt_keys.moe_ffn2_weight_keys = "ernie.layers.{}.mlp.experts.{}.down_proj.weight"
-
         else:
             fmt_keys.norm_before_qkv_weight_keys = [
                 f"{base_model_prefix}.decoder.layers.{i}.norm1.weight"
@@ -771,7 +765,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             llm_config,
             hidden_size=llm_config.model_config.hidden_size,
             eps=1e-5,
-            layer_name=f"{base_model_prefix}.decoder.norm",
+            prefix=f"{base_model_prefix}.norm",
         )
 
         if is_mtp:

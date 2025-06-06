@@ -19,6 +19,8 @@ import os
 
 from .model_base import ModelForCasualLM, ModelRegistry
 
+inference_runner_supported_models = ["ErnieForCausalLM", "Qwen2ForCausalLM"]
+
 
 def auto_models_registry():
     """

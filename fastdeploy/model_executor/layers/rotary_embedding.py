@@ -77,7 +77,7 @@ def get_rope(
     partial_rotary_factor=1,
     rope_scaling: Optional[dict[str, Any]] = None,
 ):
-    if int(os.getenv("TEST_QWEN", "1")) == 1:
+    if int(os.getenv("TEST_QWEN", "0")) == 1:
         head_dim = rotary_dim
         rope_theta = base
         bsz, max_seq_len = position_ids.shape[:2]
