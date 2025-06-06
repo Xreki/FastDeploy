@@ -26,7 +26,7 @@ from fastdeploy.config import LLMConfig
 from fastdeploy.inter_communicator import EngineWorkerQueue as TaskQueue
 from fastdeploy.inter_communicator import IPCSignal
 from fastdeploy.utils import get_logger
-from fastdeploy.worker.V1.GpuWorker import GpuWorker
+from fastdeploy.worker.V1.gpu_worker import GpuWorker
 
 logger = get_logger("worker_process", )
 

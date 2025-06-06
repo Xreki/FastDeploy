@@ -34,7 +34,6 @@ from fastdeploy.model_executor.model_loader import get_model
 from fastdeploy.model_executor.pre_and_post_process import (post_process,
                                                             pre_process,
                                                             step_cuda)
-from fastdeploy.scheduler.scheduler_batch import ModelForwardBatch
 from fastdeploy.utils import get_logger
 from fastdeploy.worker.forward_meta import ForwardMeta
 from fastdeploy.worker.output import ModelOutputData, ModelRunnerOutput
@@ -73,13 +72,14 @@ class GPUModelRunner(ModelRunnerBase):
         # In the future, we will expand it as a list.
         self.attn_backends: list[AttentionBackend] = []
         self.forward_meta: ForwardMeta = None
-        self.attn_metadata: list[AttentionMetadata] = []
+        self.attn_metadatas: list[AttentionMetadata] = []
         self.initialize_attn_backend()
 
         # Forward meta store the global meta information of the forward
         self.forward_meta: ForwardMeta = None
         # Initialize forward meta data
         self.initialize_forward_meta()
+
 
     def process_prefill_inputs(self, req_dicts: List[Request]):
         """ Process inputs for prefill tasks and update share_inputs buffer """
@@ -369,11 +369,15 @@ class GPUModelRunner(ModelRunnerBase):
 
     def initialize_forward_meta(self):
         """
-
+        Initialize forward meta and attention meta data
         """
         # Initialize forward meta
         self.forward_meta = ForwardMeta.init_forward_meta(
             self.share_inputs, self.attn_backend)
+
+        # Initialzie attention meta data
+        for attn_backend in self.attn_backends:
+            attn_backend.init_attention_metadata(self.forward_meta)
 
     def initialize_kv_cache(self,
                             kv_cache_config: KVCacheConfig = None) -> None:
@@ -396,27 +400,22 @@ class GPUModelRunner(ModelRunnerBase):
             kv_num_head = self.model_config.num_attention_heads // self.nranks
         self.model_config.kv_num_head = kv_num_head
 
+        kv_cache_shape = self.attn_backends[0].get_kv_cache_shape(
+            max_num_blocks=max_block_num,
+            block_size=self.parallel_config.block_size,
+            kv_num_head=kv_num_head,
+            head_dim=self.model_config.hidden_size //
+            self.model_config.num_attention_heads)
+
         for i in range(self.model_config.num_layers):
-            cache_type = self.kv_cache_config.dtype
+            cache_type = self.parallel_config.dtype
             cache_kvs["key_caches_{}".format(i)] = paddle.full(
-                shape=[
-                    max_block_num,
-                    kv_num_head,
-                    self.kv_cache_config.block_size,
-                    self.model_config.hidden_size //
-                    self.model_config.num_attention_heads,
-                ],
+                shape=kv_cache_shape,
                 fill_value=0,
                 dtype=cache_type,
             )
             cache_kvs["value_caches_{}".format(i)] = paddle.full(
-                shape=[
-                    max_block_num,
-                    kv_num_head,
-                    self.kv_cache_config.block_size,
-                    self.model_config.hidden_size //
-                    self.model_config.num_attention_heads,
-                ],
+                shape=kv_cache_shape,
                 fill_value=0,
                 dtype=cache_type,
             )
@@ -493,7 +492,7 @@ class GPUModelRunner(ModelRunnerBase):
 
     def execute_model(
         self,
-        model_forward_batch: Optional[List[Request], ModelForwardBatch],
+        model_forward_batch: Optional[List[Request]] = None,
     ) -> ModelRunnerOutput:
         """
         The Entrance of model execute.

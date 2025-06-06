@@ -23,7 +23,6 @@ import pynvml
 
 from fastdeploy.config import LLMConfig
 from fastdeploy.engine.request import Request
-from fastdeploy.scheduler.scheduler_batch import ModelForwardBatch
 from fastdeploy.utils import get_logger
 from fastdeploy.worker.output import ModelRunnerOutput
 from fastdeploy.worker.V1.gpu_model_runner import GPUModelRunner
@@ -159,7 +158,7 @@ class GpuWorker(WorkerBase):
 
     def execute_model(
         self,
-        model_forward_batch: Optional[List[Request], ModelForwardBatch],
+        model_forward_batch: Optional[List[Request]] = None,
     ) -> Optional[ModelRunnerOutput]:
         """ """
         output = self.model_runner.execute_model(model_forward_batch)
