@@ -850,6 +850,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         self.num_key_value_heads = num_key_value_heads
         self.cache_quant_dtype = cache_quant_dtype
         self.use_moe = use_moe
+        self.ernie_config = ernie_config
 
         if self.use_rmsnorm:
             self.norm_type = "rmsnorm"
@@ -1736,8 +1737,16 @@ class ErnieBotForGeneration(nn.Layer):
 
                 if is_vl:
                     # MoE experts mappings
+                    inter_val = moe_num_experts // 8
                     from itertools import chain
-                    for expert_idx in chain(range(16), range(32, 48), range(64, 80), range(96, 112)):
+
+                    def generate_ranges(start, end, step=16, take=8):
+                        """生成 [start, start+take), [start+step, start+step+take), ... 直到 end"""
+                        return chain(
+                            *(range(i, min(i + take, end))  # 防止越界
+                            for i in range(start, end, step)))
+
+                    for expert_idx in generate_ranges(0, 120, 16, 8):
                         for ph in place_holders:
                             # FFN1 (up_gate_proj)
                             ffn1_key = f"{infer_base_name}.moe_layers.{layer_idx}.text_moe_layer.moe_ffn1_weight"
@@ -1754,8 +1763,8 @@ class ErnieBotForGeneration(nn.Layer):
                             infer_to_train[ffn2_key].append(
                                 f"ernie.layers.{layer_idx}.mlp.experts.{expert_idx}.down_proj.{ph}"
                             )
-                    
-                    for expert_idx in chain(range(16, 32), range(48, 64), range(80, 96), range(112, 128)):
+
+                    for expert_idx in generate_ranges(8, 128, 16, 8):
                         for ph in place_holders:
                             # FFN1 (up_gate_proj)
                             ffn1_key = f"{infer_base_name}.moe_layers.{layer_idx}.image_moe_layer.moe_ffn1_weight"

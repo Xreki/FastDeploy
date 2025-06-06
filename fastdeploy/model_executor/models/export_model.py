@@ -227,10 +227,11 @@ def build_stream_line_model(
         moe_intermediate_size = moe_intermediate_size[0]
 
     if not use_ep and pad_vocab:
+        hcg = fleet.get_hybrid_communicate_group()
         config["vocab_size"] = _vocab_size_with_padding(
             config.get("vocab_size", tokenizer.vocab_size),
             config.pop("vocab_size_divisible_unit", 128),
-            paddle.distributed.get_world_size(),
+            hcg.get_model_parallel_world_size(),
         )
 
     group_size = config.get("group_size", -1)
