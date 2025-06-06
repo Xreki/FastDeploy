@@ -562,18 +562,6 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             ]
             fmt_keys.ffn2_bias_keys = [None for i in range(num_layers)]
 
-            # MoE keys
-            fmt_keys.moe_gate_weight_keys = "ernie.layers.{}.mlp.gate.weight"
-            fmt_keys.moe_gate_correction_bias_keys = "ernie.layers.{}.mlp.moe_statics.e_score_correction_bias"
-            fmt_keys.moe_ffn1_weight_keys = "ernie.layers.{}.mlp.experts.{}.up_gate_proj.weight"
-            fmt_keys.moe_ffn2_weight_keys = "ernie.layers.{}.mlp.experts.{}.down_proj.weight"
-            
-            # only w4a8 use these keys
-            # fmt_keys.moe_ffn1_weight_scale_keys = "ernie.layers.{}.mlp.experts.{}.up_gate_proj.weight_quanter"
-            # fmt_keys.moe_ffn2_weight_scale_keys = "ernie.layers.{}.mlp.experts.{}.down_proj.weight_quanter"
-            # fmt_keys.moe_ffn1_in_scale_keys = "ernie.layers.{}.mlp.experts.{}.up_gate_proj.activation_quanter"
-            # fmt_keys.moe_ffn2_in_scale_keys = "ernie.layers.{}.mlp.experts.{}.down_proj.activation_quanter"
-
         else:
             fmt_keys.norm_before_qkv_weight_keys = [
                 f"{base_model_prefix}.decoder.layers.{i}.norm1.weight"
