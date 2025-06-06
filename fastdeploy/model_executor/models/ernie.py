@@ -32,16 +32,16 @@ from fastdeploy.config import LLMConfig, ModelConfig, WeightKeys
 from fastdeploy.inference_args import GenerationPhase, InferenceArgs
 from fastdeploy.model_executor.ops.gpu import (
     beam_search_softmax, draft_model_update, extract_text_token_output,
-    get_padding_offset, get_token_penalty_multi_scores, mtp_save_first_token,
+    get_token_penalty_multi_scores, mtp_save_first_token,
     mtp_save_first_token_dynamic, save_output, save_output_dynamic,
     set_stop_value_multi_ends, set_stop_value_multi_seqs,
     set_value_by_flags_and_idx, speculate_clear_accept_nums,
-    speculate_get_output_padding_offset, speculate_get_padding_offset,
-    speculate_get_seq_lens_output, speculate_get_token_penalty_multi_scores,
-    speculate_rebuild_append_padding, speculate_save_output,
-    speculate_save_output_dynamic, speculate_set_stop_value_multi_seqs,
-    speculate_set_value_by_flags_and_idx, speculate_update_v3,
-    speculate_verify, top_p_candidates, update_inputs, update_inputs_beam)
+    speculate_get_output_padding_offset, speculate_get_seq_lens_output,
+    speculate_get_token_penalty_multi_scores, speculate_rebuild_append_padding,
+    speculate_save_output, speculate_save_output_dynamic,
+    speculate_set_stop_value_multi_seqs, speculate_set_value_by_flags_and_idx,
+    speculate_update_v3, speculate_verify, top_p_candidates, update_inputs,
+    update_inputs_beam)
 from fastdeploy.worker.model_runner import ForwardMeta
 
 from ..layers.embeddings import VocabParallelEmbedding
@@ -619,7 +619,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             embedding_dim=hidden_size,
             params_dtype=paddle.get_default_dtype,
             prefix=(f"{base_model_prefix}.embeddings.word_embeddings"
-                        if not use_moe else "ernie.embed_tokens"),
+                    if not use_moe else "ernie.embed_tokens"),
         )
 
         # get ring_id
@@ -793,57 +793,6 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
                 fuse_matmul_bias=True,
             )
 
-    def remove_padding(self, input_ids, seq_lens_this_time):
-        """
-        remove_padding
-        """
-        cum_offsets_now = paddle.cumsum(self.max_len - seq_lens_this_time)
-        token_num = paddle.sum(seq_lens_this_time)
-        (
-            ids_remove_padding,
-            cum_offsets,
-            padding_offset,
-            cu_seqlens_q,
-            cu_seqlens_k,
-        ) = get_padding_offset(input_ids, cum_offsets_now, token_num,
-                               seq_lens_this_time)
-        return (
-            ids_remove_padding,
-            padding_offset,
-            cum_offsets,
-            cu_seqlens_q,
-            cu_seqlens_k,
-        )
-
-    def speculate_remove_padding(self, input_ids, seq_lens_this_time,
-                                 draft_tokens, seq_lens_encoder):
-        """
-        remove_padding
-        """
-        cum_offsets_now = paddle.cumsum(self.max_len - seq_lens_this_time)
-        token_num = paddle.sum(seq_lens_this_time)
-        (
-            ids_remove_padding,
-            cum_offsets,
-            padding_offset,
-            cu_seqlens_q,
-            cu_seqlens_k,
-        ) = speculate_get_padding_offset(
-            input_ids,
-            draft_tokens,
-            cum_offsets_now,
-            token_num,
-            seq_lens_this_time,
-            seq_lens_encoder,
-        )
-        return (
-            ids_remove_padding,
-            padding_offset,
-            cum_offsets,
-            cu_seqlens_q,
-            cu_seqlens_k,
-        )
-
     def forward(
         self,
         input_ids,
@@ -902,6 +851,8 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             if image_mask.any():
                 embedding_output[image_mask] = image_features.cast(
                     embedding_output.dtype)
+
+        print("[debug4]\n", embedding_output)
 
         output = self.decoder(
             input_ids=input_ids,
@@ -967,9 +918,9 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             return out
 
 
-class ErnieForCausalLM(ModelForCasualLM):
+class x_ErnieForCausalLM(ModelForCasualLM):
     """
-    ErnieForCausalLM
+    x_ErnieForCausalLM
     """
 
     def __init__(self, llm_config):
@@ -983,7 +934,7 @@ class ErnieForCausalLM(ModelForCasualLM):
             ValueError: If norm_type is not 'layernorm' or 'rmsnorm'.
             ValueError: If use_cache_kv_int8 is True and use_fake_parameter is True.
         """
-        super(ErnieForCausalLM, self).__init__(llm_config)
+        super(x_ErnieForCausalLM, self).__init__(llm_config)
         self.configs = llm_config
         self.ernie = ErnieBotFusedModel(
             vocab_size=self.configs.model_config.vocab_size,
@@ -1126,31 +1077,17 @@ class ErnieForCausalLM(ModelForCasualLM):
         else:
             tie_word_embeddings = None
 
-        layer_prefix = None
-        if self.use_moe:
-            layer_prefix = "lm_head"
-        else:
-            layer_prefix = f"{self.base_model_prefix}"
-        if self.use_moe:
-            self.lm_head = ParallelLMHead(
-                llm_config=llm_config,
-                embedding_dim=self.hidden_size,
-                num_embeddings=self.ernie.vocab_size,
-                tie_word_embeddings=tie_word_embeddings,
-                prefix=layer_prefix,
-            )
-        else:
-            self.lm_head = ParallelLMHead(
-                llm_config=llm_config,
-                embedding_dim=self.hidden_size,
-                num_embeddings=self.ernie.vocab_size,
-                tie_word_embeddings=tie_word_embeddings,
-                prefix=layer_prefix,
-            )
+        self.lm_head = ParallelLMHead(
+            llm_config=llm_config,
+            embedding_dim=self.hidden_size,
+            num_embeddings=self.ernie.vocab_size,
+            tie_word_embeddings=tie_word_embeddings,
+            prefix="lm_head",
+        )
 
     @classmethod
     def name(self):
-        return "ErnieForCausalLM"
+        return "x_ErnieForCausalLM"
 
     @paddle.no_grad()
     def set_state_dict(self, state_dict: Dict[str, Union[np.ndarray,

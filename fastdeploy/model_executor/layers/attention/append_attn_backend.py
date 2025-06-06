@@ -148,14 +148,15 @@ class AppendAttentionBackend(AttentionBackend):
         return (max_num_blocks, self.kv_num_heads, self.block_size,
                 self.head_dim)
 
-    def forward_mixed(self,
-                      q,
-                      k,
-                      v,
-                      layer: Attention,
-                      forward_meta: ForwardMeta,
-                      qkv,
-                      kv_signal_data=None):
+    def forward_mixed(
+        self,
+        q,
+        k,
+        v,
+        qkv,
+        layer: Attention,
+        forward_meta: ForwardMeta,
+    ):
         """
         forward_mixed
         """
@@ -179,9 +180,11 @@ class AppendAttentionBackend(AttentionBackend):
             getattr(layer, "cache_k_out_scale", None),
             getattr(layer, "cache_v_out_scale", None),
             getattr(layer, "cache_k_zp", None),
-            getattr(layer, "cache_v_zp",
-                    None), layer.linear_shift, layer.linear_smooth,
-            kv_signal_data, metadata._fuse_kernel_compute_dtype,
+            getattr(layer, "cache_v_zp", None),
+            layer.linear_shift,
+            layer.linear_smooth,
+            None,  # kv_signal_data,
+            metadata._fuse_kernel_compute_dtype,
             getattr(layer, "cache_quant_type_str", "none"),
             self.use_neox_rotary_style, self.rope_3d, self.max_seq_len,
             getattr(layer, "quant_max_bound", 0.0),
@@ -189,7 +192,9 @@ class AppendAttentionBackend(AttentionBackend):
             getattr(layer, "out_scale", -1.0), metadata.encoder_block_shape_q,
             metadata.decoder_block_shape_q, metadata.max_partition_size,
             metadata.encoder_max_partition_size,
-            self.speculate_max_draft_token_num + 1, self.causal,
-            self.use_speculate)[0]
+            self.speculate_max_draft_token_num + 1,
+            self.causal,
+            self.speculate_method is not None,
+        )[0]
 
         return res

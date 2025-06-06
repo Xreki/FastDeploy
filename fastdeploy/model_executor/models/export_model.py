@@ -38,12 +38,13 @@ from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
                                ParallelConfig, SpeculativeConfig, TmpConfig)
 from fastdeploy.inference_args import GenerationPhase
 
+from ..layers.quantization import get_quantization_config
 from .ernie import ErnieBotFusedModel
 from .model_base import ModelRegistry
 from .qwen2 import Qwen2Model
 from .tokenizer import ErnieBotTokenizer
 from .utils import (_vocab_size_with_padding, convert_ndarray_dtype,
-                    load_checkpoint)
+                    load_checkpoint, parser_quant_type)
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 grandparent_dir = os.path.abspath(
@@ -199,6 +200,9 @@ def build_stream_line_model(
     tensor_parallel_rank, tensor_parallel_degree = llm_utils.init_dist_env()
     parallel_config.tensor_parallel_rank = tensor_parallel_rank
     parallel_config.tensor_parallel_degree = tensor_parallel_degree
+    parallel_config.mp_size = tensor_parallel_degree
+    parallel_config.ep_size = 1
+    parallel_config.column_cut = False
 
     speculative_config.is_mtp = draft_type in ["eagle", "mtp"]
     speculative_config.draft_type = draft_type
@@ -430,6 +434,76 @@ def build_stream_line_model(
     speculative_config.speculate_max_candidate_len = speculate_max_candidate_len
     speculative_config.speculate_verify_window = speculate_verify_window
 
+    weight_dtype, act_dtype, cachekv_dtype = parser_quant_type(
+        export_model_type)
+    logger.info(
+        f"quant_type: weight[{weight_dtype}], act[{act_dtype}], cachekv[{cachekv_dtype}]"
+    )
+    model_config.weight_dtype = weight_dtype
+    model_config.act_dtype = act_dtype
+
+    if weight_dtype == "int8" and act_dtype in ["bfloat16", "float16"]:
+        quant_cls = get_quantization_config("weight_only")
+        quant_config = quant_cls.from_config({
+            "weight_only_linear_arch": None,
+            "algo": "weight_only_int8"
+        })
+        quant_config.quant_max_bound = 0
+        quant_config.quant_min_bound = 0
+        quant_config.quant_round_type = 0
+        model_config.use_smooth_quant = False
+    elif weight_dtype == "int4" and act_dtype in ["bfloat16", "float16"]:
+        quant_cls = get_quantization_config("weight_only")
+        quant_config = quant_cls.from_config({
+            "weight_only_linear_arch": None,
+            "algo": "weight_only_int4"
+        })
+        quant_config.quant_max_bound = 0
+        quant_config.quant_min_bound = 0
+        quant_config.quant_round_type = 0
+        model_config.use_smooth_quant = False
+    elif tmp_config.weight_block_size[0] != -1:
+        quant_cls = get_quantization_config("block_wise")
+        quant_config = quant_cls.from_config(
+            {"weight_block_size": tmp_config.weight_block_size})
+        quant_config.quant_max_bound = 448
+        quant_config.quant_min_bound = -448
+        quant_config.quant_round_type = 1
+        model_config.use_smooth_quant = False
+    elif weight_dtype == "int4" and act_dtype == "float8_e4m3fn":
+        quant_cls = get_quantization_config("w4afp8")
+        quant_config = quant_cls.from_config({
+            "weight_scale_dict": {},
+            "act_scale_dict": {}
+        })
+        quant_config.quant_max_bound = 448
+        quant_config.quant_min_bound = -448
+        quant_config.quant_round_type = 1
+        model_config.use_smooth_quant = False
+    elif weight_dtype == "int8" and act_dtype == weight_dtype:
+        quant_cls = get_quantization_config("w8a8")
+        quant_config = quant_cls.from_config({
+            "weight_scale_dict": {},
+            "act_scale_dict": {},
+            "use_gemm_dequant": False
+        })
+        quant_config.quant_max_bound = 127
+        quant_config.quant_min_bound = -127
+        quant_config.quant_round_type = 0
+        model_config.use_smooth_quant = True
+    elif weight_dtype == "float8_e4m3fn" and act_dtype == weight_dtype:
+        quant_cls = get_quantization_config("wfp8afp8")
+        quant_config = quant_cls.from_config({
+            "weight_scale_dict": {},
+            "act_scale_dict": {}
+        })
+        quant_config.quant_max_bound = 448
+        quant_config.quant_min_bound = -448
+        quant_config.quant_round_type = 1
+        model_config.use_smooth_quant = False
+    else:
+        quant_config = None
+
     llm_config = LLMConfig(
         model_config=model_config,
         parallel_config=parallel_config,
@@ -440,6 +514,7 @@ def build_stream_line_model(
         tmp_config=tmp_config,
         moe_config=moe_config,
         decoding_config=decoding_config,
+        quant_config=quant_config,
     )
 
     with context:

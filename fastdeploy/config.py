@@ -641,8 +641,7 @@ class LLMConfig:
 
     model_config: ModelConfig = field(default=None, init=True)  # type: ignore
 
-    parallel_config: ParallelConfig = field(default_factory=ParallelConfig,
-                                            init=True)
+    parallel_config: ParallelConfig = field(default=None, init=True)
     speculative_config: SpeculativeConfig = field(default=None,
                                                   init=True)  # type: ignore
     device_config: DeviceConfig = field(default=None,
@@ -656,3 +655,5 @@ class LLMConfig:
     moe_config: MoEConfig = field(default=None, init=True)  # type: ignore
     decoding_config: DecodingConfig = field(default=None,
                                             init=True)  # type: ignore
+    kvcache_config: KVCacheConfig = field(default=None,
+                                          init=True)  # type: ignore

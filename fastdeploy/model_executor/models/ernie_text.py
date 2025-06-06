@@ -1,5 +1,5 @@
 """
-# Copyright (c) 2024 PaddlePaddle Authors. All Rights Reserved.
+# Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,6 +16,9 @@
 
 from __future__ import annotations
 
+from typing import Dict, Union
+
+import numpy as np
 import paddle
 from paddle import nn
 
@@ -26,12 +29,14 @@ from fastdeploy.model_executor.layers.embeddings import VocabParallelEmbedding
 from fastdeploy.model_executor.layers.linear import (
     MergedColumnParallelLinear, QKVParallelLinear, RowParallelLinear)
 from fastdeploy.model_executor.layers.lm_head import ParallelLMHead
+from fastdeploy.model_executor.layers.moe.moe import FusedMoE
 from fastdeploy.model_executor.layers.normalization import LayerNorm, RMSNorm
-from fastdeploy.model_executor.models.model_base import ModelForCasualLM
 from fastdeploy.worker.model_runner import ForwardMeta
 
+from .model_base import ModelForCasualLM
 
-class Qwen2MLP(nn.Layer):
+
+class Ernie45TMLP(nn.Layer):
     """
     """
 
@@ -61,40 +66,33 @@ class Qwen2MLP(nn.Layer):
 
         self.act_fn = SiluAndMul(
             llm_config=llm_config,
-            bias=getattr(self.gate_up_proj, "linear_bias", None),
+            bias=None,
             act_method=llm_config.model_config.hidden_act,
         )
 
     def load_state_dict(self, state_dict):
-        """
-        """
         self.gate_up_proj.load_state_dict(state_dict)
         self.down_proj.load_state_dict(state_dict)
 
-    def forward(self, x):
-        """
-        """
-        gate_up_out = self.gate_up_proj(x)
+    def forward(self, hidden_states: paddle.Tensor):
+        gate_up_out = self.gate_up_proj(hidden_states)
         act_out = self.act_fn(gate_up_out)
         down_out = self.down_proj(act_out)
         return down_out
 
 
-class Qwen2Attention(nn.Layer):
-    """
-    """
+class Ernie45TAttention(nn.Layer):
 
-    def __init__(self,
-                 llm_config: LLMConfig,
-                 layer_id: int,
-                 prefix: str = "") -> None:
+    def __init__(self, llm_config: LLMConfig, layer_id: int,
+                 prefix: str) -> None:
         super().__init__()
 
         nranks = llm_config.parallel_config.mp_size
 
-        self.qkv_proj = QKVParallelLinear(llm_config=llm_config,
-                                          prefix=f"{prefix}.qkv_proj",
-                                          with_bias=True)
+        self.qkv_proj = QKVParallelLinear(
+            llm_config=llm_config,
+            prefix=f"{prefix}.qkv_proj",
+        )
 
         self.o_proj = RowParallelLinear(
             llm_config=llm_config,
@@ -110,8 +108,6 @@ class Qwen2Attention(nn.Layer):
         )
 
     def load_state_dict(self, state_dict):
-        """
-        """
         self.qkv_proj.load_state_dict(state_dict)
         self.o_proj.load_state_dict(state_dict)
 
@@ -120,22 +116,19 @@ class Qwen2Attention(nn.Layer):
         forward_meta: ForwardMeta,
         hidden_states: paddle.Tensor,
     ):
-        """
-        """
         qkv_out = self.qkv_proj(hidden_states)
 
-        atten_out = self.attn(
+        attn_out = self.attn(
             qkv=qkv_out,
             forward_meta=forward_meta,
         )
 
-        output = self.o_proj(atten_out)
+        output = self.o_proj(attn_out)
+
         return output
 
 
-class Qwen2DecoderLayer(nn.Layer):
-    """
-    """
+class Ernie45TDecoderLayer(nn.Layer):
 
     def __init__(
         self,
@@ -145,34 +138,53 @@ class Qwen2DecoderLayer(nn.Layer):
         super().__init__()
         layer_id = int(prefix.split(sep='.')[-1])
 
-        self.self_attn = Qwen2Attention(
+        self.self_attn = Ernie45TAttention(
             llm_config=llm_config,
             layer_id=layer_id,
             prefix=f"{prefix}.self_attn",
         )
 
-        self.mlp = Qwen2MLP(
-            llm_config=llm_config,
-            prefix=f"{prefix}.mlp",
-        )
+        if (llm_config.moe_config.num_experts is not None
+                and layer_id >= llm_config.moe_config.moe_layer_start_index):
+            self.mlp = FusedMoE(
+                llm_config=llm_config,
+                moe_intermediate_size=llm_config.moe_config.
+                moe_intermediate_size,
+                num_experts=llm_config.moe_config.num_experts,
+                top_k=llm_config.moe_config.top_k,
+                moe_use_gate_correction_bias=llm_config.moe_config.
+                moe_use_gate_correction_bias,
+                moe_quant_type=llm_config.moe_config.moe_quant_type,
+                layer_idx=layer_id,
+                gate_weight_key=f"{prefix}.mlp.gate.weight",
+                gate_correction_bias_key=
+                f"{prefix}.mlp.moe_statics.e_score_correction_bias",
+                ffn1_expert_weight_key=
+                f"{prefix}.mlp.experts.{{}}.up_gate_proj.weight",
+                ffn2_expert_weight_key=
+                f"{prefix}.mlp.experts.{{}}.down_proj.weight",
+            )
+        else:
+            self.mlp = Ernie45TMLP(
+                llm_config=llm_config,
+                prefix=f"{prefix}.mlp",
+            )
 
         self.input_layernorm = RMSNorm(
             llm_config,
             hidden_size=llm_config.model_config.hidden_size,
-            eps=1e-6,
+            eps=1e-5,
             prefix=f"{prefix}.input_layernorm",
         )
 
         self.post_attention_layernorm = RMSNorm(
             llm_config,
             hidden_size=llm_config.model_config.hidden_size,
-            eps=1e-6,
+            eps=1e-5,
             prefix=f"{prefix}.post_attention_layernorm",
         )
 
     def load_state_dict(self, state_dict):
-        """
-        """
         self.self_attn.load_state_dict(state_dict)
         self.mlp.load_state_dict(state_dict)
         self.input_layernorm.load_state_dict(state_dict)
@@ -184,9 +196,6 @@ class Qwen2DecoderLayer(nn.Layer):
         hidden_states: paddle.Tensor,
         residual: paddle.Tensor = None,
     ):
-        """
-        """
-        # Self Attention
         if residual is None:
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)
@@ -199,7 +208,6 @@ class Qwen2DecoderLayer(nn.Layer):
             forward_meta=forward_meta,
         )
 
-        # Fully Connected
         hidden_states, residual = self.post_attention_layernorm(
             hidden_states, residual)
 
@@ -208,9 +216,7 @@ class Qwen2DecoderLayer(nn.Layer):
         return hidden_states, residual
 
 
-class Qwen2Model(nn.Layer):
-    """
-    """
+class Ernie45TModel(nn.Layer):
 
     def __init__(
         self,
@@ -225,7 +231,7 @@ class Qwen2Model(nn.Layer):
         super().__init__()
 
         self.num_layers = llm_config.model_config.num_layers
-        llm_config.model_config.prefix_name = "qwen2"
+        llm_config.model_config.prefix_name = "ernie"
 
         self.embeddings = VocabParallelEmbedding(
             llm_config=llm_config,
@@ -235,18 +241,18 @@ class Qwen2Model(nn.Layer):
             prefix=(f"{llm_config.model_config.prefix_name}.embed_tokens"),
         )
 
-        self.layers = nn.LayerList([
-            Qwen2DecoderLayer(
+        self.hidden_layers = [
+            Ernie45TDecoderLayer(
                 llm_config=llm_config,
                 prefix=f"{llm_config.model_config.prefix_name}.layers.{i}")
             for i in range(self.num_layers)
-        ])
+        ]
 
         self.last_layernorm = LayerNorm(
             llm_config,
             prefix="",
             hidden_size=llm_config.model_config.hidden_size,
-            eps=1e-6)
+            eps=1e-5)
 
         self.norm = RMSNorm(
             llm_config,
@@ -267,7 +273,7 @@ class Qwen2Model(nn.Layer):
         self.embeddings.load_state_dict(state_dict)
         self.norm.load_state_dict(state_dict)
         for i in range(self.num_layers):
-            self.layers[i].load_state_dict(state_dict)
+            self.hidden_layers[i].load_state_dict(state_dict)
 
     def forward(
         self,
@@ -280,10 +286,10 @@ class Qwen2Model(nn.Layer):
         hidden_states = self.embeddings(ids_remove_padding=ids_remove_padding)
 
         residual = None
-
         for i in range(self.num_layers):
-            hidden_states, residual = self.layers[i](forward_meta,
-                                                     hidden_states, residual)
+            hidden_states, residual = self.hidden_layers[i](forward_meta,
+                                                            hidden_states,
+                                                            residual)
 
         hidden_states, _ = self.last_layernorm(hidden_states, residual)
 
@@ -292,9 +298,9 @@ class Qwen2Model(nn.Layer):
         return out
 
 
-class Qwen2ForCausalLM(ModelForCasualLM):
+class ErnieForCausalLM(ModelForCasualLM):
     """
-    Qwen2ForCausalLM
+    ErnieForCausalLM
     """
 
     def __init__(self, llm_config: LLMConfig):
@@ -302,9 +308,9 @@ class Qwen2ForCausalLM(ModelForCasualLM):
         Args:
             llm_config (LLMConfig): Configurations for the LLM model.
         """
-        super(Qwen2ForCausalLM, self).__init__(llm_config)
+        super(ErnieForCausalLM, self).__init__(llm_config)
 
-        self.model = Qwen2Model(llm_config=llm_config)
+        self.model = Ernie45TModel(llm_config=llm_config)
 
         self.ori_vocab_size = llm_config.model_config.ori_vocab_size
 
@@ -317,12 +323,11 @@ class Qwen2ForCausalLM(ModelForCasualLM):
 
     @classmethod
     def name(self):
-        """
-        """
-        return "Qwen2ForCausalLM"
+        return "ErnieForCausalLM"
 
     @paddle.no_grad()
-    def set_state_dict(self, state_dict):
+    def set_state_dict(self, state_dict: Dict[str, Union[np.ndarray,
+                                                         paddle.Tensor]]):
         """
         Load model parameters from a given state dictionary.
 
@@ -335,8 +340,6 @@ class Qwen2ForCausalLM(ModelForCasualLM):
         self.lm_head.load_state_dict(state_dict)
 
     def compute_logits(self, hidden_states: paddle.Tensor):
-        """
-        """
         logits = self.lm_head(hidden_states)
         logits = paddle.cast(logits, paddle.float32)
         logits[:, self.ori_vocab_size:] = -float("inf")
@@ -348,8 +351,6 @@ class Qwen2ForCausalLM(ModelForCasualLM):
         ids_remove_padding: paddle.Tensor,
         forward_meta: ForwardMeta,
     ):
-        """
-        """
         hidden_states = self.model(ids_remove_padding, forward_meta)
 
         return hidden_states
