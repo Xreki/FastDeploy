@@ -51,13 +51,12 @@ class FusedMoE(nn.Layer):
     def __init__(
         self,
         llm_config,
-        moe_intermediate_size : int = -1,
-        num_experts : int = -1,
-        top_k : int = -1,
+        moe_intermediate_size: int = -1,
+        num_experts: int = -1,
+        top_k: int = -1,
         moe_use_gate_correction_bias: bool = False,
-        moe_quant_type : str = "weight_only_int4",
-        layer_idx : int = -1,
-
+        moe_quant_type: str = "weight_only_int4",
+        layer_idx: int = -1,
         gate_weight_key=None,
         gate_correction_bias_key=None,
         ffn1_expert_weight_key=None,
@@ -87,15 +86,16 @@ class FusedMoE(nn.Layer):
 
         self.hidden_size = llm_config.model_config.hidden_size
         self.moe_quant_type = moe_quant_type
-        logger.info(f"MoE is running in {self.moe_quant_type} mode")
         self.num_experts = num_experts
         self.num_local_experts = self.num_experts // self.ep_size
 
-        if self.ep_size >= 2:
-            logger.debug("MoE is running in ep mode")
-            self.moe_intermediate_size = moe_intermediate_size
-        else:
-            logger.debug(f"MoE is running in tp{self.tp_size} mode")
+        logger.info(
+            f"MoE config is num_experts:{num_experts}, top_k:{top_k}, hidden_size:{self.hidden_size}, moe_intermediate_size:{moe_intermediate_size}"
+        )
+        logger.info(
+            f"MoE is running on moe_quant_type: {self.moe_quant_type}, ep:{self.ep_size}, tp:{self.tp_size} mode"
+        )
+        if self.tp_size >= 2:
             self.moe_intermediate_size = moe_intermediate_size // self.tp_size
 
         self.gate_weight_key = gate_weight_key

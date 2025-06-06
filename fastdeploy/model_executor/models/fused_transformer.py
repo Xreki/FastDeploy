@@ -117,10 +117,10 @@ class FusedTransformer(nn.Layer):
             hidden_size=llm_config.model_config.hidden_size,
             eps=epsilon,
             prefix=llm_config.load_config.get_weight_key_by_layer_name(
-            f"{base_model_prefix}.decoder.layers.0.norm1").rpartition('.')[0],
+                f"{base_model_prefix}.decoder.layers.0.norm1").rpartition(
+                    '.')[0],
             quant_scale=llm_config.load_config.get_quant_scale_by_layer_name(
-            f"{base_model_prefix}.decoder.layers.0.norm1")
-        )
+                f"{base_model_prefix}.decoder.layers.0.norm1"))
 
         self.qkv_linear_layers = nn.LayerList([
             QKVParallelLinear(
@@ -147,19 +147,22 @@ class FusedTransformer(nn.Layer):
                 Attention(
                     llm_config=llm_config,
                     layer_id=i,
-                    qkv_bias=(None if not (inference_args.weight_dtype == "int8" and inference_args.act_dtype == "int8")
-                              else getattr(self.qkv_linear_layers[i], "qkv_bias", None)),
-                    qkv_scale=(getattr(self.qkv_linear_layers[i], "qkv_out_scale", None)
-                               if inference_args.weight_dtype == "int8" and inference_args.act_dtype == "int8"
-                               else None),
+                    qkv_bias=(None
+                              if not (inference_args.weight_dtype == "int8"
+                                      and inference_args.act_dtype == "int8")
+                              else getattr(self.qkv_linear_layers[i],
+                                           "qkv_bias", None)),
+                    qkv_scale=(
+                        getattr(self.qkv_linear_layers[i], "qkv_out_scale",
+                                None) if inference_args.weight_dtype == "int8"
+                        and inference_args.act_dtype == "int8" else None),
                     layer_name=(
                         f"ernie.layers.{i}.self_attn"
-                        if self.inference_args.moe_config.use_moe
-                        and self.inference_args.moe_config.moe_layer_start_index > 0
-                        else f"{base_model_prefix}.decoder.layers.{i}.self_attn"
-                    ),
-                )
-                for i in range(self.num_layers)
+                        if self.inference_args.moe_config.use_moe and
+                        self.inference_args.moe_config.moe_layer_start_index
+                        > 0 else
+                        f"{base_model_prefix}.decoder.layers.{i}.self_attn"),
+                ) for i in range(self.num_layers)
             ])
         else:
             from ..layers.attention.base import Attention
@@ -169,8 +172,9 @@ class FusedTransformer(nn.Layer):
                     layer_name=(
                         f"ernie.layers.{i}.self_attn"
                         if self.inference_args.moe_config.use_moe and
-                        self.inference_args.moe_config.moe_layer_start_index > 0
-                        else f"{base_model_prefix}.decoder.layers.{i}.self_attn"),
+                        self.inference_args.moe_config.moe_layer_start_index
+                        > 0 else
+                        f"{base_model_prefix}.decoder.layers.{i}.self_attn"),
                     rope_theta=rope_theta,
                     rope_3d=rope_3d,
                     use_neox_rotary_style=use_neox_rotary_style,
@@ -178,12 +182,12 @@ class FusedTransformer(nn.Layer):
                         f"{base_model_prefix}.decoder.layers.{i}.self_attn.out_proj.activation_quanter",
                         -1,
                     ),
-                    qkv_scale=getattr(self.qkv_linear_layers[i], "qkv_out_scale",
-                                      None),
-                    qkv_bias=getattr(
-                        self.qkv_linear_layers[i], "qkv_bias", None),
-                    linear_shift=getattr(self.out_linear_layers[i], "linear_shift",
-                                         None),
+                    qkv_scale=getattr(self.qkv_linear_layers[i],
+                                      "qkv_out_scale", None),
+                    qkv_bias=getattr(self.qkv_linear_layers[i], "qkv_bias",
+                                     None),
+                    linear_shift=getattr(self.out_linear_layers[i],
+                                         "linear_shift", None),
                     linear_smooth=getattr(self.out_linear_layers[i],
                                           "linear_smooth", None),
                 ) for i in range(self.num_layers)
@@ -195,9 +199,11 @@ class FusedTransformer(nn.Layer):
                 hidden_size=llm_config.model_config.hidden_size,
                 eps=epsilon,
                 prefix=llm_config.load_config.get_weight_key_by_layer_name(
-                f"{base_model_prefix}.decoder.layers.{i}.norm2").rpartition('.')[0],
-                quant_scale=llm_config.load_config.get_quant_scale_by_layer_name(
-                f"{base_model_prefix}.decoder.layers.{i}.norm2"),
+                    f"{base_model_prefix}.decoder.layers.{i}.norm2").
+                rpartition('.')[0],
+                quant_scale=llm_config.load_config.
+                get_quant_scale_by_layer_name(
+                    f"{base_model_prefix}.decoder.layers.{i}.norm2"),
                 linear_bias=getattr(self.out_linear_layers[i], "linear_bias",
                                     None),
             ) for i in range(self.num_layers)
@@ -264,11 +270,16 @@ class FusedTransformer(nn.Layer):
                         inference_args=inference_args,
                         moe_config=inference_args.moe_config,
                         layer_name=f"moe_layers.{i}",
-                        gate_weight_key=f"ernie.decoder.moe_layers.{i}.gate_weight",
-                        ffn1_expert_weight_key=f"ernie.decoder.moe_layers.{i}.moe_ffn1_weight",
-                        ffn2_expert_weight_key=f"ernie.decoder.moe_layers.{i}.moe_ffn2_weight",
-                        ffn1_bias_key=f"ernie.decoder.moe_layers.{i}.moe_ffn1_bias",
-                        ffn2_bias_key=f"ernie.decoder.moe_layers.{i}.moe_ffn2_bias",
+                        gate_weight_key=
+                        f"ernie.decoder.moe_layers.{i}.gate_weight",
+                        ffn1_expert_weight_key=
+                        f"ernie.decoder.moe_layers.{i}.moe_ffn1_weight",
+                        ffn2_expert_weight_key=
+                        f"ernie.decoder.moe_layers.{i}.moe_ffn2_weight",
+                        ffn1_bias_key=
+                        f"ernie.decoder.moe_layers.{i}.moe_ffn1_bias",
+                        ffn2_bias_key=
+                        f"ernie.decoder.moe_layers.{i}.moe_ffn2_bias",
                         layer_idx=i,
                     ) for i in range(self.num_layers)
                 ])
@@ -317,15 +328,18 @@ class FusedTransformer(nn.Layer):
                         + ".{}.up_gate_proj.weight",
                         ffn2_expert_weight_key=f"ernie.layers.{i}.mlp.experts"
                         + ".{}.down_proj.weight",
-                        ffn1_expert_weight_scale_key=f"ernie.layers.{i}.mlp.experts" +
+                        ffn1_expert_weight_scale_key=
+                        f"ernie.layers.{i}.mlp.experts" +
                         ".{}.up_gate_proj.weight_quanter",
-                        ffn2_expert_weight_scale_key=f"ernie.layers.{i}.mlp.experts" +
+                        ffn2_expert_weight_scale_key=
+                        f"ernie.layers.{i}.mlp.experts" +
                         ".{}.down_proj.weight_quanter",
                         ffn1_expert_in_scale_key=f"ernie.layers.{i}.mlp.experts"
                         + ".{}.up_gate_proj.activation_quanter",
                         ffn2_expert_in_scale_key=f"ernie.layers.{i}.mlp.experts"
                         + ".{}.down_proj.activation_quanter",
-                        gate_correction_bias_key=f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
+                        gate_correction_bias_key=
+                        f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
                         ffn1_bias_key=None,
                         ffn2_bias_key=None,
                         ffn1_shared_weight_key=None,
@@ -371,20 +385,22 @@ class FusedTransformer(nn.Layer):
                 ] + [
                     FusedMoE(
                         llm_config=llm_config,
-                        moe_intermediate_size=inference_args.moe_config.moe_intermediate_size,
-                        num_experts = inference_args.moe_config.num_experts,
-                        top_k = inference_args.moe_config.top_k,
-                        moe_use_gate_correction_bias = inference_args.moe_config.moe_use_gate_correction_bias,
-                        moe_quant_type = inference_args.moe_config.moe_quant_type,
+                        moe_intermediate_size=inference_args.moe_config.
+                        moe_intermediate_size,
+                        num_experts=inference_args.moe_config.num_experts,
+                        top_k=inference_args.moe_config.top_k,
+                        moe_use_gate_correction_bias=inference_args.moe_config.
+                        moe_use_gate_correction_bias,
+                        moe_quant_type=inference_args.moe_config.
+                        moe_quant_type,
                         layer_idx=i,
                         gate_weight_key=f"ernie.layers.{i}.mlp.gate.weight",
-                        gate_correction_bias_key=f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
-                        ffn1_expert_weight_key="ernie.layers.{}.mlp.experts.{}.up_gate_proj.quant_weight",
-                        ffn2_expert_weight_key="ernie.layers.{}.mlp.experts.{}.down_proj.quant_weight",
-                        moe_ffn1_weight_scale_keys="ernie.layers.{}.mlp.experts.{}.up_gate_proj.weight_quanter",
-                        moe_ffn2_weight_scale_keys = "ernie.layers.{}.mlp.experts.{}.down_proj.weight_quanter",
-                        moe_ffn1_in_scale_keys="ernie.layers.{}.mlp.experts.{}.up_gate_proj.activation_quanter",
-                        moe_ffn2_in_scale_keys="ernie.layers.{}.mlp.experts.{}.down_proj.activation_quanter",
+                        gate_correction_bias_key=
+                        f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
+                        ffn1_expert_weight_key=
+                        "ernie.layers.{}.mlp.experts.{}.up_gate_proj.weight",
+                        ffn2_expert_weight_key=
+                        "ernie.layers.{}.mlp.experts.{}.down_proj.weight",
                     ) for i in range(
                         self.inference_args.moe_config.moe_layer_start_index,
                         self.num_layers,
@@ -397,9 +413,11 @@ class FusedTransformer(nn.Layer):
                 hidden_size=llm_config.model_config.hidden_size,
                 eps=epsilon,
                 prefix=llm_config.load_config.get_weight_key_by_layer_name(
-                f"{base_model_prefix}.decoder.layers.{i + 1}.norm1").rpartition('.')[0],
-                quant_scale=llm_config.load_config.get_quant_scale_by_layer_name(
-                f"{base_model_prefix}.decoder.layers.{i + 1}.norm1"),
+                    f"{base_model_prefix}.decoder.layers.{i + 1}.norm1").
+                rpartition('.')[0],
+                quant_scale=llm_config.load_config.
+                get_quant_scale_by_layer_name(
+                    f"{base_model_prefix}.decoder.layers.{i + 1}.norm1"),
                 linear_bias=(getattr(self.ffn2_layers[i], "linear_bias", None)
                              if not inference_args.moe_config.use_moe else
                              None),
@@ -578,7 +596,7 @@ class FusedTransformer(nn.Layer):
              ffn2_out,
              self.micro_batch_control.micro_batches[micro_batch_id].
              residual_input,
-        )
+         )
         # qkv matmul
         qkv_out = self.qkv_linear_layers[layer_id](ln_out)
 
@@ -697,7 +715,7 @@ class FusedTransformer(nn.Layer):
                     recv_num_tokens_per_expert_list,
                     self.micro_batch_control.micro_batches[micro_batch_id].
                     handle,
-        )
+                )
         # record event
         self.micro_batch_control.micro_batches[
             micro_batch_id].compute_event = (deep_ep.utils.EventOverlap(
@@ -830,7 +848,8 @@ class FusedTransformer(nn.Layer):
                 )
             else:
                 attntion_meta = forward_meta.attn_backend.get_attntion_meta()
-                set_max_lengths = forward_meta.attn_backend.get_attntion_meta().set_max_lengths
+                set_max_lengths = forward_meta.attn_backend.get_attntion_meta(
+                ).set_max_lengths
             if self.use_fa3 == 1 and attntion_meta.set_max_lengths[1] > 0:
                 (
                     cu_seqlens_k,
@@ -897,8 +916,8 @@ class FusedTransformer(nn.Layer):
                 block_tables = attn_args.get("block_tables", None)
                 if self.use_micro_batch:
                     kv_batch_ids = attn_args.get("kv_batch_ids", None)
-                    kv_tile_ids_per_batch = attn_args.get("kv_tile_ids_per_batch",
-                                                          None)
+                    kv_tile_ids_per_batch = attn_args.get(
+                        "kv_tile_ids_per_batch", None)
                 else:
 
                     kv_batch_ids = attntion_meta.kv_batch_ids
@@ -972,8 +991,8 @@ class FusedTransformer(nn.Layer):
                         caches[2 * i + 1],  # value_cache
                         (pre_caches[2 * i]
                          if pre_caches is not None else None),  # pre_key_cache
-                        (pre_caches[2 * i + 1]
-                         if pre_caches is not None else None),  # pre_value_cache
+                        (pre_caches[2 * i + 1] if pre_caches is not None else
+                         None),  # pre_value_cache
                         pre_caches_length,
                         attn_mask,
                         kv_signal_data,
