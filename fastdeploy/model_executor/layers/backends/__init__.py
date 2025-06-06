@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
- !! This file will be deleted after the platform is fully functional
 """
 all backends methods
 """
