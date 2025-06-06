@@ -276,10 +276,8 @@ class FusedTransformer(nn.Layer):
                         f"ernie.decoder.moe_layers.{i}.moe_ffn1_weight",
                         ffn2_expert_weight_key=
                         f"ernie.decoder.moe_layers.{i}.moe_ffn2_weight",
-                        ffn1_bias_key=
-                        f"ernie.decoder.moe_layers.{i}.moe_ffn1_bias",
-                        ffn2_bias_key=
-                        f"ernie.decoder.moe_layers.{i}.moe_ffn2_bias",
+                        ffn1_bias_key=f"ernie.decoder.moe_layers.{i}.moe_ffn1_bias",
+                        ffn2_bias_key=f"ernie.decoder.moe_layers.{i}.moe_ffn2_bias",
                         layer_idx=i,
                     ) for i in range(self.num_layers)
                 ])
