@@ -387,12 +387,9 @@ class FusedTransformer(nn.Layer):
                         moe_quant_type,
                         layer_idx=i,
                         gate_weight_key=f"ernie.layers.{i}.mlp.gate.weight",
-                        gate_correction_bias_key=
-                        f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
-                        ffn1_expert_weight_key=
-                        "ernie.layers.{}.mlp.experts.{}.up_gate_proj.weight",
-                        ffn2_expert_weight_key=
-                        "ernie.layers.{}.mlp.experts.{}.down_proj.weight",
+                        gate_correction_bias_key=f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
+                        ffn1_expert_weight_key="ernie.layers.{}.mlp.experts.{}.up_gate_proj.weight",
+                        ffn2_expert_weight_key="ernie.layers.{}.mlp.experts.{}.down_proj.weight",
                     ) for i in range(
                         self.inference_args.moe_config.moe_layer_start_index,
                         self.num_layers,
