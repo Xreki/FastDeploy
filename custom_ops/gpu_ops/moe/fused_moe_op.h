@@ -1090,15 +1090,4 @@ template <typename T> struct finalize_moe_routing_kernelLauncher {
   }
 };
 
-template struct topk_gating_softmax_kernelLauncher<half, int32_t>;
-template struct initialize_moe_routing_kernelLauncher<half>;
-template struct finalize_moe_routing_kernelLauncher<half>;
-
-#ifdef PADDLE_CUDA_BF16
-template struct topk_gating_softmax_kernelLauncher<__nv_bfloat16, int32_t>;
-template struct initialize_moe_routing_kernelLauncher<__nv_bfloat16>;
-template struct initialize_moe_routing_kernelLauncher<__nv_bfloat16, int8_t>;
-template struct finalize_moe_routing_kernelLauncher<__nv_bfloat16>;
-#endif
-
 } // namespace phi
