@@ -270,12 +270,9 @@ class FusedTransformer(nn.Layer):
                         inference_args=inference_args,
                         moe_config=inference_args.moe_config,
                         layer_name=f"moe_layers.{i}",
-                        gate_weight_key=
-                        f"ernie.decoder.moe_layers.{i}.gate_weight",
-                        ffn1_expert_weight_key=
-                        f"ernie.decoder.moe_layers.{i}.moe_ffn1_weight",
-                        ffn2_expert_weight_key=
-                        f"ernie.decoder.moe_layers.{i}.moe_ffn2_weight",
+                        gate_weight_key=f"ernie.decoder.moe_layers.{i}.gate_weight",
+                        ffn1_expert_weight_key=f"ernie.decoder.moe_layers.{i}.moe_ffn1_weight",
+                        ffn2_expert_weight_key=f"ernie.decoder.moe_layers.{i}.moe_ffn2_weight",
                         ffn1_bias_key=f"ernie.decoder.moe_layers.{i}.moe_ffn1_bias",
                         ffn2_bias_key=f"ernie.decoder.moe_layers.{i}.moe_ffn2_bias",
                         layer_idx=i,
