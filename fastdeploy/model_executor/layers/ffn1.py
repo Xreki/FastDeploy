@@ -91,8 +91,7 @@ class FFN1(nn.Layer):
         self.bias_name = self.layer_name + ".bias"
         self.weight_only_scale_name = self.layer_name + ".weight_only_scale"
         self.out_scale_name = self.layer_name + ".out_scale"
-        self.use_offline_quant = inference_args.use_offline_quant
-
+        self.set_prequant_weight = inference_args.set_prequant_weight
         self._dtype = self._helper.get_default_dtype()
 
         if inference_args.use_weight_only:
@@ -313,13 +312,13 @@ class FFN1(nn.Layer):
             state_dict (dict): A dictionary containing the checkpoint weights and biases.
         """
         # weight
-        if self.use_offline_quant:
+        if self.set_prequant_weight:
             self.load_offline_quant_state_dict(
                 quant_weight=get_tensor(
                     state_dict.pop(self.weight_key + ".quant_weight")
                 ),
                 quant_scale=get_tensor(
-                    state_dict.pop(self.weight_key + ".quant_scale")
+                    state_dict.pop(self.weight_key + ".weight_quanter")
                 ),
             )
         else:

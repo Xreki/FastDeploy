@@ -21,6 +21,8 @@ from typing import Any, Dict, List, Optional
 from fastdeploy.engine.config import Config, ModelConfig, CacheConfig, TaskOption
 from fastdeploy.utils import FlexibleArgumentParser
 from fastdeploy.scheduler.config import SchedulerConfig
+from paddlenlp.trainer import strtobool
+
 
 
 def nullable_str(x: str) -> Optional[str]:

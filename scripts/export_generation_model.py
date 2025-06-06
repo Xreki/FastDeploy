@@ -169,13 +169,6 @@ def setup_args():
         type=strtobool,
         help="use image_features or not(only used in multi modal)",
     )
-    parser.add_argument(
-        "--use_offline_quant",
-        default="False",
-        type=strtobool,
-        help="The inference uses offline-quantized weights, \
-            and the script performs the offline quantization.",
-    )
     args = parser.parse_args()
     return args
 

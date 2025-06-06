@@ -399,13 +399,6 @@ def get_parser(add_input_output_file: bool = True):
         type=int,
         help="redundant experts num",
     )
-    parser.add_argument(
-        "--use_offline_quant",
-        default="False",
-        type=strtobool,
-        help="The inference uses offline-quantized weights,\
-             and the script performs the offline quantization.",
-    )
     return parser
 
 
@@ -619,7 +612,6 @@ class Predictor:
                 enable_redundant_experts=args.enable_redundant_experts,
                 redundant_experts_num=args.redundant_experts_num,
                 max_batch_size=max(args.batch_size, 128),
-                use_offline_quant=args.use_offline_quant,
             )
 
             model.eval()
