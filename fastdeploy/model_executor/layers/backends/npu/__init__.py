@@ -12,19 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
- !! This file will be deleted after the platform is fully functional
 """
-all backends methods
+npu backend methods
 """
-
-from .xpu import *
-from .npu import *
-
-__all__ = []
-from . import npu
-if hasattr(npu, '__all__'):
-    __all__.extend(npu.__all__)
-    
-from . import xpu
-if hasattr(xpu, '__all__'):
-    __all__.extend(xpu.__all__)

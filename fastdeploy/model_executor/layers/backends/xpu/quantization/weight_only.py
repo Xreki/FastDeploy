@@ -35,6 +35,9 @@ class XPUWeightOnlyLinearMethod(WeightOnlyLinearMethod):
         super().__init__(quant_config)
 
     def process_loaded_weights(self, layer, weight) -> None:
+        """
+        loaded_weights using xpu special quantization
+        """
         quanted_weight_tensor, weight_scale_tensor = xpu_quant_weight(
             weight.cpu().numpy())
         layer.linear_weight.set_value(quanted_weight_tensor)
