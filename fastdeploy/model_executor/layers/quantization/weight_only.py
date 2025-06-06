@@ -20,7 +20,6 @@ import paddle
 from paddle.nn.quant import weight_only_linear, weight_quantize
 
 from fastdeploy.platforms import current_platform
-from fastdeploy.platforms.utils import xpu_quant_weight
 
 from .quant_base import QuantConfigBase, QuantMethodBase
 
@@ -53,6 +52,7 @@ class WeightOnlyConfig(QuantConfigBase):
 
     def get_quant_method(self, layer) -> Optional[QuantMethodBase]:
         if current_platform.is_xpu():
+            from fastdeploy.model_executor.layers.backends import XPUWeightOnlyLinearMethod
             return XPUWeightOnlyLinearMethod(self)
         else:
             return GPUWeightOnlyLinearMethod(self)
@@ -120,25 +120,6 @@ class GPUWeightOnlyLinearMethod(WeightOnlyLinearMethod):
             arch=self.quant_config.weight_only_linear_arch,
         )
 
-        layer.linear_weight.set_value(quanted_weight_tensor)
-        layer.linear_weight_scale.set_value(
-            weight_scale_tensor.astype(paddle.get_default_dtype()))
-
-
-class XPUWeightOnlyLinearMethod(WeightOnlyLinearMethod):
-    """
-    Weight only quantization method for linear layer on XPU
-    """
-
-    def __init__(
-        self,
-        quant_config: WeightOnlyConfig,
-    ) -> None:
-        super().__init__(quant_config)
-
-    def process_loaded_weights(self, layer, weight) -> None:
-        quanted_weight_tensor, weight_scale_tensor = xpu_quant_weight(
-            weight.cpu().numpy())
         layer.linear_weight.set_value(quanted_weight_tensor)
         layer.linear_weight_scale.set_value(
             weight_scale_tensor.astype(paddle.get_default_dtype()))
