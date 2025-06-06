@@ -308,20 +308,20 @@ class LLMEngine(object):
                     if added_requests[request_id] == 0:
                         added_requests.pop(request_id)
 
-                if failed is None:
-                    continue
+                    if failed is None:
+                        continue
 
-                error_result = RequestOutput(request_id=request_id,
-                                             finished=True,
-                                             error_code=500,
-                                             error_msg=failed)
-                # Since the request is not in scheduler
-                # Send result by zmq directly
-                self.zmq_server.send_multipart(
-                    request.request_id, error_result)
+                    error_result = RequestOutput(request_id=request_id,
+                                                 finished=True,
+                                                 error_code=500,
+                                                 error_msg=failed)
+                    # Since the request is not in scheduler
+                    # Send result by zmq directly
+                    self.zmq_server.send_multipart(request_id, error_result)
             except Exception as e:
                 llm_logger.error(
-                    f"Error happend while receving new request from zmq, details={e}"
+                    f"Error happend while receving new request from zmq, details={e}, "
+                    f"traceback={traceback.format_exc()}"
                 )
 
     def add_requests(self, task, sampling_params=None):
