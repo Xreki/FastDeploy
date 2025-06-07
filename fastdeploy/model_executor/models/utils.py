@@ -1208,6 +1208,7 @@ def parser_quant_type(quant_type):
         cache_type = "fp8"
     elif "c4" in quant_type:
         cache_type = "int4"
+
     if "weight_only_int8" in quant_type or "wint8" in quant_type:
         return "int8", default_type, cache_type
     elif "weight_only_int4" in quant_type or "wint4" in quant_type:

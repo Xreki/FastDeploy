@@ -180,6 +180,7 @@ class LinearBase(nn.Layer):
 
         if "float8" in self.weight_dtype:
             return "float8_e4m3fn"
+
         return self.weight_dtype
 
     def load_state_dict(self, state_dict):

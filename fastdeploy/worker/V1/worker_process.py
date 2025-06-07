@@ -56,6 +56,7 @@ class PaddleDisWorkerProc():
         (self.rank, self.local_rank) = self.init_distributed_enviroment()
         self.llm_config.parallel_config.tensor_parallel_rank = self.local_rank
         self.llm_config.parallel_config.tensor_parallel_degree = self.rank
+        self.llm_config.model_config.tensor_parallel_degree = self.rank
         self.llm_config.parallel_config.mp_size = self.rank
         self.llm_config.parallel_config.ep_size = 1
         self.llm_config.parallel_config.column_cut = False
@@ -245,6 +246,10 @@ class PaddleDisWorkerProc():
         """ """
         self.worker.init_device()
 
+    def load_model(self):
+        """ """
+        self.worker.load_model()
+
 
 def parse_args():
     """
@@ -363,7 +368,6 @@ def initialize_llm_config(args) -> LLMConfig:
 
     # Note(tangbinhan): used for load_checkpoint
     model_config.tensor_parallel_rank = parallel_config.tensor_parallel_rank
-    model_config.tensor_parallel_degree = parallel_config.tensor_parallel_degree
     model_config.is_mtp = speculative_config.is_mtp
 
     group_size = config.get("group_size", -1)
@@ -422,8 +426,14 @@ def initialize_llm_config(args) -> LLMConfig:
     weight_dtype, act_dtype, cachekv_dtype = parser_quant_type(
         model_config.export_model_type)
     model_config.weight_dtype = weight_dtype
-    model_config.act_dtype = act_dtype
+    act_dtype = args.dtype if (act_dtype != args.dtype) else act_dtype
+    model_config.act_dtype = act_dtype  # set as args.dtype from engine
+    logger.info(
+        f"quant_type: weight[{weight_dtype}], act[{act_dtype}] -> act[{args.dtype}], cachekv[{cachekv_dtype}]"
+    )
 
+    print(f"weight dtype: {weight_dtype}")
+    print(f"act_dtype: {act_dtype}")
     if weight_dtype == "int8" and act_dtype in ["bfloat16", "float16"]:
         quant_cls = get_quantization_config("weight_only")
         quant_config = quant_cls.from_config({
@@ -505,6 +515,8 @@ def run_worker_proc():
     # Start event loop
     worker_proc = PaddleDisWorkerProc(llm_config)
     worker_proc.init_device()
+    worker_proc.load_model()
+
     if llm_config.parallel_config.do_profile:
         worker_proc.determine_num_available_blocks()
     worker_proc.event_loop_normal()

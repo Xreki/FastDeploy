@@ -55,7 +55,7 @@ class GpuWorker(WorkerBase):
             # Set evironment variable
             self.device = f"gpu:{self.local_rank}"
             paddle.device.set_device(self.device)
-            paddle.set_default_dtype(self.model_config.dtype)
+            paddle.set_default_dtype(self.parallel_config.dtype)
 
             # Get free memory info
             pynvml.nvmlInit()
@@ -100,8 +100,7 @@ class GpuWorker(WorkerBase):
             self.local_rank)  # not reserved
 
         pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(
-            int(self.device_ids[self.rank]))
+        handle = pynvml.nvmlDeviceGetHandleByIndex(self.local_rank)
         before_run_meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
         pynvml.nvmlShutdown()
 
@@ -123,8 +122,7 @@ class GpuWorker(WorkerBase):
             self.local_rank)
 
         pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(
-            int(self.device_ids[self.rank]))
+        handle = pynvml.nvmlDeviceGetHandleByIndex(self.local_rank)
         after_run_meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
         pynvml.nvmlShutdown()
 
@@ -146,9 +144,9 @@ class GpuWorker(WorkerBase):
 
         return available_kv_cache_memory  # return to caculate the block num in this device
 
-    def load_model(self) -> nn.Layer:
+    def load_model(self) -> None:
         """ """
-        pass
+        self.model_runner.load_model()
 
     def get_model(self) -> nn.Layer:
         """ """

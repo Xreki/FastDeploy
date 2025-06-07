@@ -367,7 +367,8 @@ class GPUModelRunner(ModelRunnerBase):
 
     def load_model(self) -> None:
         """ load or download model """
-        logger.info(f"Starting to load model {self.model_config.model}")
+        logger.info(
+            f"Starting to load model {self.model_config.architectures[0]}")
         time_before_load = time.perf_counter()
         # 1. Load original model
         self.model = get_model(llm_config=self.llm_config)

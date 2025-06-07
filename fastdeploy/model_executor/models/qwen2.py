@@ -16,10 +16,13 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 import paddle
 from paddle import nn
+from paddlenlp.transformers import PretrainedModel
 
-from fastdeploy.config import LLMConfig
+from fastdeploy.config import LLMConfig, ModelConfig
 from fastdeploy.model_executor.layers.activation import SiluAndMul
 from fastdeploy.model_executor.layers.attention import Attention
 from fastdeploy.model_executor.layers.embeddings import VocabParallelEmbedding
@@ -345,3 +348,79 @@ class Qwen2ForCausalLM(ModelForCasualLM):
         hidden_states = self.model(ids_remove_padding, forward_meta)
 
         return hidden_states
+
+
+class Qwen2PretrainedModel(PretrainedModel):
+    """
+    Qwen2PretrainedModel
+    """
+
+    config_class = LLMConfig
+
+    def _init_weight(self, layer):
+        """
+        _init_weight
+        """
+        return None
+
+    @classmethod
+    def _get_tensor_parallel_mappings(cls, config: ModelConfig, is_split=True):
+
+        from paddlenlp.transformers.conversion_utils import split_or_merge_func
+
+        fn = split_or_merge_func(
+            is_split=is_split,
+            tensor_parallel_degree=config.tensor_parallel_degree,
+            tensor_parallel_rank=config.tensor_parallel_rank,
+            num_attention_heads=config.num_attention_heads,
+        )
+
+        def get_tensor_parallel_split_mappings(num_layers):
+            final_actions = {}
+
+            base_actions = {
+                "lm_head.weight": partial(fn, is_column=True),
+                # Row Linear
+                "embed_tokens.weight": partial(fn, is_column=False),
+                "layers.0.self_attn.o_proj.weight": partial(fn,
+                                                            is_column=False),
+                "layers.0.mlp.down_proj.weight": partial(fn, is_column=False),
+            }
+
+            # Column Linear
+            if config.fuse_attention_qkv:
+                base_actions["layers.0.self_attn.qkv_proj.weight"] = partial(
+                    fn, is_column=True)
+            else:
+                base_actions["layers.0.self_attn.q_proj.weight"] = partial(
+                    fn, is_column=True)
+                base_actions["layers.0.self_attn.q_proj.bias"] = partial(
+                    fn, is_column=True)
+                # if we have enough num_key_value_heads to split, then split it.
+                if config.num_key_value_heads % config.tensor_parallel_degree == 0:
+                    base_actions["layers.0.self_attn.k_proj.weight"] = partial(
+                        fn, is_column=True)
+                    base_actions["layers.0.self_attn.v_proj.weight"] = partial(
+                        fn, is_column=True)
+                    base_actions["layers.0.self_attn.k_proj.bias"] = partial(
+                        fn, is_column=True)
+                    base_actions["layers.0.self_attn.v_proj.bias"] = partial(
+                        fn, is_column=True)
+
+            base_actions["layers.0.mlp.gate_proj.weight"] = partial(
+                fn, is_column=True)
+            base_actions["layers.0.mlp.up_proj.weight"] = partial(
+                fn, is_column=True)
+
+            for key, action in base_actions.items():
+                if "layers.0." in key:
+                    for i in range(num_layers):
+                        final_actions[key.replace("layers.0.",
+                                                  f"layers.{i}.")] = action
+                final_actions[key] = action
+
+            return final_actions
+
+        mappings = get_tensor_parallel_split_mappings(config.num_layers)
+
+        return mappings
