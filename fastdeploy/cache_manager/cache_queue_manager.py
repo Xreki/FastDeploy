@@ -33,52 +33,32 @@ logger = get_logger("cache_queue_manager", "cache_queue_manager.log")
 
 class QueueManager(BaseManager):
     """
-    基础类
+    BaseManager
     """
     pass
 
 class CacheQueueManager(object):
     """
-    用于Cache传输的多进程通信
+    multiprocessing manager for cache queue
     """
 
     def __init__(self, rank=0, mp_num=8, port=56666):
         """
-        初始化函数，用于创建对象时进行初始化操作。
+        init
         """
-        QueueManager.register("get_transfer_task_queue")  # 跨进程传递swap任务
-        QueueManager.register("get_tansfer_done_queue")  # 跨进程传递任务完成信号
-        QueueManager.register("get_cache_sync_value")  # 同步数据
+        QueueManager.register("get_transfer_task_queue") 
+        QueueManager.register("get_tansfer_done_queue") 
+        QueueManager.register("get_cache_sync_value") 
         QueueManager.register("get_transfer_task_lock")
         QueueManager.register("get_transfer_task_done_lock")
         QueueManager.register('get_barrier1')
         QueueManager.register('get_barrier2')
         QueueManager.register('get_barrier3')
-        QueueManager.register('get_ssd_task_barrier1')
-        QueueManager.register('get_ssd_task_barrier2')
-        QueueManager.register('get_ssd_task_barrier3')
         QueueManager.register('get_swap_to_cpu_barrier1')
         QueueManager.register('get_swap_to_cpu_barrier2')
         QueueManager.register('get_swap_to_gpu_barrier1')
         QueueManager.register('get_swap_to_gpu_barrier2')
-        QueueManager.register('get_read_ssd_barrier1')
-        QueueManager.register('get_read_ssd_barrier2')
-        QueueManager.register('get_write_ssd_barrier1')
-        QueueManager.register('get_write_ssd_barrier2')
 
-        QueueManager.register(
-            "get_ssd_task_queue")
-        QueueManager.register(
-            "get_ssd_task_done_queue",
-        )
-        QueueManager.register(
-            "get_ssd_task_lock")
-        QueueManager.register(
-            "get_ssd_task_done_lock"
-        )
-        QueueManager.register(
-            "get_ssd_sync_value",
-        )
 
         self.client_manager = QueueManager(
             address=("127.0.0.1", port), authkey=b"cache_queue_service"
@@ -99,23 +79,6 @@ class CacheQueueManager(object):
         self.barrier2 = self.client_manager.get_barrier2()
         self.barrier3 = self.client_manager.get_barrier3()
 
-        # SSD task
-        self.ssd_task_queue = self.client_manager.get_ssd_task_queue()
-        self.ssd_task_done_queue = self.client_manager.get_ssd_task_done_queue()
-        self.ssd_sync_value = self.client_manager.get_ssd_sync_value()
-        self.ssd_task_lock = self.client_manager.get_ssd_task_lock()
-        self.ssd_task_done_lock = self.client_manager.get_ssd_task_done_lock()
-        self.ssd_task_barrier1 = self.client_manager.get_ssd_task_barrier1()
-        self.ssd_task_barrier2 = self.client_manager.get_ssd_task_barrier2()
-        self.ssd_task_barrier3 = self.client_manager.get_ssd_task_barrier3()
-        self.swap_to_cpu_barrier1 = self.client_manager.get_swap_to_cpu_barrier1()
-        self.swap_to_cpu_barrier2 = self.client_manager.get_swap_to_cpu_barrier2()
-        self.swap_to_gpu_barrier1 = self.client_manager.get_swap_to_gpu_barrier1()
-        self.swap_to_gpu_barrier2 = self.client_manager.get_swap_to_gpu_barrier2()
-        self.read_ssd_barrier1 = self.client_manager.get_read_ssd_barrier1()
-        self.read_ssd_barrier2 = self.client_manager.get_read_ssd_barrier2()
-        self.write_ssd_barrier1 = self.client_manager.get_write_ssd_barrier1()
-        self.write_ssd_barrier2 = self.client_manager.get_write_ssd_barrier2()
         logger.info(f"init cache queue manager successful, rank: {rank}")
 
         # completion sync flags
@@ -123,7 +86,7 @@ class CacheQueueManager(object):
 
     def put_transfer_task(self, item):
         """
-        提交swap任务
+        put swap task
         """
         self.task_lock.acquire()
         if 0 < self.task_sync_value.get() < self.total_num:
@@ -138,7 +101,7 @@ class CacheQueueManager(object):
 
     def get_transfer_task(self):
         """
-        获取swap任务
+        get swap task
         """
         data = None
         read_finish = False
@@ -163,7 +126,7 @@ class CacheQueueManager(object):
 
     def put_transfer_done_signal(self, item):
         """
-        提交swap结果
+        put swap result
         """
         self.task_done_lock.acquire()
         self.tansfer_done_queue.append(item)
@@ -172,7 +135,7 @@ class CacheQueueManager(object):
 
     def get_transfer_done_signal(self):
         """
-        获取swap结果
+        get swap result
         """
         data = None
         self.task_done_lock.acquire()
@@ -184,7 +147,7 @@ class CacheQueueManager(object):
 
     def empty(self):
         """
-        暴露至推理端，用于判断队列是否为空
+        check if queue is empty
         """
         try:
             return len(self.transfer_task_queue) == 0
@@ -192,102 +155,18 @@ class CacheQueueManager(object):
             logger.error(f"empty function meets error: {e}")
             raise e
     
-    def put_ssd_task(self, item):
-        """
-        提交swap任务
-        """
-        self.ssd_task_lock.acquire()
-        if 0 < self.ssd_sync_value.get() < self.total_num:
-            self.ssd_task_lock.release()
-            while 0 < self.ssd_sync_value.get() < self.total_num:
-                time.sleep(0.001)
-            self.ssd_task_lock.acquire()
-        self.ssd_sync_value.set(0)
-        self.ssd_task_queue.append(item)
-        logger.info(f"put_ssd_task: put ssd task {item[-1]} to queue successful")
-        self.ssd_task_lock.release()
-    
-    def get_ssd_task(self):
-        """
-        获取swap任务
-        """
-        data = None
-        read_finish = False
-        self.ssd_task_lock.acquire()
-        if (
-            self.ssd_sync_value.get() & self.position == 0
-            and len(self.ssd_task_queue) > 0
-        ):
-            data = self.ssd_task_queue[0]
-            logger.debug(
-                f"get_ssd_task: Get {data} by {self.rank} from queue successful"
-            )
-            set_value = self.ssd_sync_value.get() | self.position
-            logger.info("get_ssd_task: rank: {0} set_value: {1}".format(self.rank, set_value))
-            if set_value >= self.total_num:
-                self.ssd_task_queue.pop(0)
-                set_value = 0
-                read_finish = True
-            self.ssd_sync_value.set(set_value)
-        self.ssd_task_lock.release()
-        return data, read_finish
-
-    def put_ssd_task_done_signal(self, item):
-        """
-        提交swap结果
-        """
-        self.ssd_task_done_lock.acquire()
-        self.ssd_task_done_queue.append(item)
-        self.ssd_task_done_lock.release()
-        logger.info(f"put_ssd_task_done_signal: put ssd task {item[0]} finished signal to queue successful")
-
-    def get_ssd_task_done_signal(self):
-        """
-        获取swap结果
-        """
-        data = None
-        self.ssd_task_done_lock.acquire()
-        if len(self.ssd_task_done_queue) > 0:
-            data = self.ssd_task_done_queue.pop(0)
-            logger.info(f"get_ssd_task_done_signal: Get ssd task {data[0]} finished signal from queue successful")
-        self.ssd_task_done_lock.release()
-        return data
-
-    def ssd_task_empty(self):
-        """
-        暴露至推理端，用于判断队列是否为空
-        """
-        try:
-            return len(self.ssd_task_queue) == 0
-        except Exception as e:
-            logger.error(f"ssd_task_empty function meets error: {e}")
-            raise e
-
 def launch_queue_service(port, num_workers):
     """
-    启动进程间通信队列服务
-
-    port: 监听端口号
+    launch_queue_service
     """
     try:
         logger.info(f"start to launch cache queue service, port:{port}")
-        # 下列数据结构用于cache transfer
-        cache_task_queue = list()  # 传递数据传输任务
-        cache_task_done_queue = list()  # 传递传输完成信号
-        cache_task_sync_lock = threading.Lock()  # 用于多rank同步获取数据
+        cache_task_queue = list()  
+        cache_task_done_queue = list() 
+        cache_task_sync_lock = threading.Lock() 
         cache_task_done_sync_lock = threading.Lock()
-        cache_sync_value = Value("i", 0)  # 用于多rank同步获取数据
+        cache_sync_value = Value("i", 0) 
 
-        ssd_task_queue = list()  # 传递数据传输任务
-        ssd_task_done_queue = list()  # 传递传输完成信号
-        ssd_task_sync_lock = threading.Lock()  # 用于多rank同步获取数据
-        ssd_task_done_sync_lock = threading.Lock()
-        ssd_task_sync_value = Value("i", 0)  # 用于多rank同步获取数据
-
-        ssd_read_completion_sync_value = Value("i", 0)
-        ssd_write_completion_sync_value = Value("i", 0)
-        swap_to_cpu_completion_sync_value = Value("i", 0)
-        swap_to_gpu_completion_sync_value = Value("i", 0)
 
         QueueManager.register(
             "get_transfer_task_queue",
@@ -311,27 +190,6 @@ def launch_queue_service(port, num_workers):
             proxytype=ValueProxy,
         )
 
-        QueueManager.register(
-            "get_ssd_task_queue",
-            callable=lambda: ssd_task_queue,
-            proxytype=ListProxy,
-        )
-        QueueManager.register(
-            "get_ssd_task_done_queue",
-            callable=lambda: ssd_task_done_queue,
-            proxytype=ListProxy,
-        )
-        QueueManager.register(
-            "get_ssd_task_lock", callable=lambda: ssd_task_sync_lock
-        )
-        QueueManager.register(
-            "get_ssd_task_done_lock", callable=lambda: ssd_task_done_sync_lock
-        )
-        QueueManager.register(
-            "get_ssd_sync_value",
-            callable=lambda: ssd_task_sync_value,
-            proxytype=ValueProxy,
-        )
 
         barrier1 = threading.Barrier(num_workers)
         QueueManager.register('get_barrier1', callable=lambda: barrier1)
@@ -340,12 +198,6 @@ def launch_queue_service(port, num_workers):
         barrier3 = threading.Barrier(num_workers)
         QueueManager.register('get_barrier3', callable=lambda: barrier3)
 
-        ssd_barrier1 = threading.Barrier(num_workers)
-        QueueManager.register('get_ssd_task_barrier1', callable=lambda: ssd_barrier1)
-        ssd_barrier2 = threading.Barrier(num_workers)
-        QueueManager.register('get_ssd_task_barrier2', callable=lambda: ssd_barrier2)
-        ssd_barrier3 = threading.Barrier(num_workers)
-        QueueManager.register('get_ssd_task_barrier3', callable=lambda: ssd_barrier3)
 
         swap_to_cpu_barrier1 = threading.Barrier(num_workers)
         QueueManager.register('get_swap_to_cpu_barrier1', callable=lambda: swap_to_cpu_barrier1)
@@ -355,14 +207,7 @@ def launch_queue_service(port, num_workers):
         QueueManager.register('get_swap_to_gpu_barrier1', callable=lambda: swap_to_gpu_barrier1)
         swap_to_gpu_barrier2 = threading.Barrier(num_workers)
         QueueManager.register('get_swap_to_gpu_barrier2', callable=lambda: swap_to_gpu_barrier2)
-        read_ssd_barrier1 = threading.Barrier(num_workers)
-        QueueManager.register('get_read_ssd_barrier1', callable=lambda: read_ssd_barrier1)
-        read_ssd_barrier2 = threading.Barrier(num_workers)
-        QueueManager.register('get_read_ssd_barrier2', callable=lambda: read_ssd_barrier2)
-        write_ssd_barrier1 = threading.Barrier(num_workers)
-        QueueManager.register('get_write_ssd_barrier1', callable=lambda: write_ssd_barrier1)
-        write_ssd_barrier2 = threading.Barrier(num_workers)
-        QueueManager.register('get_write_ssd_barrier2', callable=lambda: write_ssd_barrier2)
+
 
         m = QueueManager(address=("127.0.0.1", port), authkey=b"cache_queue_service")
         s = m.get_server()

@@ -41,24 +41,26 @@ class CacheMetrics:
      Cache Metrics used to record the cache hit time, token num, request num, etc.
     """
     def __init__(self):
-        self.total_match_time = 0.0  # 匹配时间的总和
-        self.avg_match_time = 0.0  # 匹配时间
+        self.total_match_time = 0.0 
+        self.avg_match_time = 0.0 
         self.min_match_time = 1e9
         self.max_match_time = 0.0
-        # 请求数角度
-        self.req_count = 0  # 请求的总数
-        self.hit_req_count = 0  # 能够命中缓存的请求数
-        self.hit_req_ratio = 0.0  # 请求命中率 = 命中请求数 / 请求总数
-        # token数角度
-        self.total_gpu_matched_token_num = 0  # gpu中命中的token数
-        self.total_cpu_matched_token_num = 0  # cpu中命中的token数
-        self.total_ssd_matched_token_num = 0  # ssd中命中的token数
-        self.matched_token_num = 0  # 命中的token数
-        self.total_token_num = 0  # 总token数
-        self.hit_token_ratio = 0.0  # 总token命中率 = 命中的token / 总token
+
+        # request level
+        self.req_count = 0 
+        self.hit_req_count = 0 
+        self.hit_req_ratio = 0.0  
+
+        # token level
+        self.total_gpu_matched_token_num = 0  
+        self.total_cpu_matched_token_num = 0
+
+        self.matched_token_num = 0
+        self.total_token_num = 0  
+        self.hit_token_ratio = 0.0 
         self.cpu_hit_token_ratio = 0.0
         self.gpu_hit_token_ratio = 0.0
-        self.ssd_hit_token_ratio = 0.0
+
 
     def _update_history_hit_metrics(self):
         """
@@ -72,18 +74,14 @@ class CacheMetrics:
         self.gpu_hit_token_ratio = (
             self.total_gpu_matched_token_num / self.total_token_num
         )
-        self.ssd_hit_token_ratio = (
-            self.total_ssd_matched_token_num / self.total_token_num
-        )
+
         logger.info(
             f"Metrics for all requests: req_count {self.req_count} hit_req_count {self.hit_req_count}"
             + f" hit_req_ratio {self.hit_req_ratio:.2f} hit_token_ratio {self.hit_token_ratio:.2f}"
             + f" gpu_hit_token_ratio {self.gpu_hit_token_ratio:.2f}"
             + f" cpu_hit_token_ratio {self.cpu_hit_token_ratio:.2f}"
-            + f" ssd_hit_token_ratio {self.ssd_hit_token_ratio:.2f}"
             + f" total_gpu_matched_token_num {self.total_gpu_matched_token_num}"
             + f" total_cpu_matched_token_num {self.total_cpu_matched_token_num}"
-            + f" total_ssd_matched_token_num {self.total_ssd_matched_token_num}"
             + f" total_matched_token_num {self.matched_token_num}"
             + f" total_token_num {self.total_token_num}"
         )
@@ -93,43 +91,41 @@ class CacheMetrics:
         req_id,
         current_query_cpu_match_token_num,
         current_query_gpu_match_token_num,
-        current_ssd_match_token_num,
         current_query_token_num,
     ):
         """
-        计算当前query命中率
+        calculate hit metrics for current query
         """
-        # 当前query的命中率
+        
         cpu_cache_match_ratio = (
             current_query_cpu_match_token_num / current_query_token_num
         )
         gpu_cache_match_ratio = (
             current_query_gpu_match_token_num / current_query_token_num
         )
-        ssd_cache_match_ratio = current_ssd_match_token_num / current_query_token_num
+
         total_match_ratio = (
-            cpu_cache_match_ratio + gpu_cache_match_ratio + ssd_cache_match_ratio
+            cpu_cache_match_ratio + gpu_cache_match_ratio
         )
 
-        # 计算历史累计指标
+        
         self.total_cpu_matched_token_num += (
-            current_query_cpu_match_token_num  # cpu中命中的token数
+            current_query_cpu_match_token_num  
         )
         self.total_gpu_matched_token_num += (
-            current_query_gpu_match_token_num  # gpu中命中的token数
+            current_query_gpu_match_token_num  
         )
-        self.total_ssd_matched_token_num += current_ssd_match_token_num
+
         self.matched_token_num += (
             current_query_cpu_match_token_num
             + current_query_gpu_match_token_num
-            + current_ssd_match_token_num
-        )  # 命中的token数
-        self.total_token_num += current_query_token_num  # 总token数
+        )  
+        self.total_token_num += current_query_token_num 
         logger.info(
             f"Metrics for req_id {req_id}: token_num {current_query_token_num}"
             + f" cpu_cache_match_ratio {cpu_cache_match_ratio}"
             + f" gpu_cache_match_ratio {gpu_cache_match_ratio}"
-            + f" ssd_cache_match_ratio {ssd_cache_match_ratio} total_match_ratio {total_match_ratio}"
+            + f" total_match_ratio {total_match_ratio}"
         )
 
 
@@ -137,12 +133,12 @@ class CacheMetrics:
 
 class PrefixCacheManager:
     """
-    管理复用system prompt
+    PrefixCacheManager is used to manage the prefix tree and the cache.
     """
 
     def __init__(self, cache_config, tensor_parallel_size, splitwise_role="mixed"):
         """
-        初始化前缀树管理类
+        initialize the PrefixCacheManager
         """
 
         self.metrics = CacheMetrics()
@@ -153,16 +149,16 @@ class PrefixCacheManager:
             self.enable_splitwise = 0
 
         self.cache_config = cache_config
-        # GPU和CPU的总block list
+
         self.num_gpu_blocks = cache_config.prefill_kvcache_block_num
         self.num_cpu_blocks = cache_config.num_cpu_blocks
         self.gpu_free_block_list = list(
             range(self.num_gpu_blocks - 1, -1, -1)
-        )  # 服务端管理的GPU上剩余的block id
+        ) 
         if self.num_cpu_blocks > 0:
             self.cpu_free_block_list = list(
                 range(self.num_cpu_blocks - 1, -1, -1)
-            )  # CPU上剩余的block id
+            )  
         else:
             self.cpu_free_block_list = []
         heapq.heapify(self.gpu_free_block_list)
@@ -171,44 +167,39 @@ class PrefixCacheManager:
             range(self.num_gpu_blocks + self.num_cpu_blocks)
         )
 
-        self.radix_tree_root = BlockNode(-1, [], 0, 0, -1, 0, None, None, None)  # 根节点
+        self.radix_tree_root = BlockNode(-1, [], 0, 0, -1, 0, None, None, None) 
 
-        # radix_tree_root中保留的Node要么是存在于GPU中，要么是存在于CPU中
-        # 如果CPU和GPU中都不存在，则代表节点需要从树中移除，这种情况一般发生在cpu上的cache已经满了，需要缓存新cache时候按照lru将旧cache移除
-        # 下列数据结构用于gpu缓存管理
-        self.gpu_lru_leaf_heap = []  # 保存gpu上叶子节点的堆
-        self.gpu_lru_leaf_set = set()  # 保存gpu上叶子节点的集合
+        # gpu cache data structure
+        self.gpu_lru_leaf_heap = [] 
+        self.gpu_lru_leaf_set = set()
 
-        # 下列数据结构用于cpu缓存管理
-        self.cpu_lru_leaf_heap = []  # 保存在cpu上叶子节点的lru堆
-        self.cpu_lru_leaf_set = set()  # 保存缓存在cpu上的lru堆
+        # cpu cache data structure
+        self.cpu_lru_leaf_heap = []  
+        self.cpu_lru_leaf_set = set()  
 
-        # 下列数据结构用于交换缓存管理
-        self.request_release_lock = Lock()  # 用于request和release过程的数据同步
-        self.task_swapping_event = {}  # 保存req_id 和 一个Event事件，用于同步
-        self.task_ssd_event = {}  # 保存ssd任务id和一个Event事件，用于同步
-        self.task_ssd_result = {}  # 保存ssd任务id和执行结果的返回值
+        # swap in/out data structure
+        self.request_release_lock = Lock() 
+        self.task_swapping_event = {} 
 
 
-        # 辅助数据结构
-        self.node_map = {}  # {node_id: Node}  保存node id和Node的映射关系
+        self.node_map = {}  
         self.req_leaf_map = (
             {}
-        )  # {request_id: leaf node}   保存任务req_id和对应radix tree中最末端节点node的映射关系
-        self.leaf_req_map = defaultdict(set)  # 保存最末端节点node和任务req_id的映射关系
+        )  # {request_id: leaf node}   
+        self.leaf_req_map = defaultdict(set) 
         self.unfilled_req_block_map = defaultdict(
             list
-        )  # 保存输入token数量小于block_size所分配的block id
+        )  
 
-        self.executor_pool = ThreadPoolExecutor(max_workers=1)  # 执行release异步操作的线程池
+        self.executor_pool = ThreadPoolExecutor(max_workers=1)
         self.free_gpu_executor_pool = ThreadPoolExecutor(
             max_workers=1
-        )  # 执行free gpu异步操作的线程池
+        )  
         self.free_cpu_executor_pool = ThreadPoolExecutor(
             max_workers=1
-        )  # 执行free cpu异步操作的线程池
-        self.gpu_free_task_future = None # 当前正在异步执行的swap out任务
-        self.cache_status_lock = Lock()  # 用于同步cache状态的锁
+        )  
+        self.gpu_free_task_future = None 
+        self.cache_status_lock = Lock()  
 
 
         logger.info(
@@ -328,7 +319,7 @@ class PrefixCacheManager:
 
     def _enable_cpu_cache(self, tensor_parallel_size):
         """
-        开启cpu缓存
+        _enable_cpu_cache function used to enable cpu cache.
         """
 
         ipc_cache_queue_port = self.cache_config.cache_queue_port
@@ -345,9 +336,7 @@ class PrefixCacheManager:
 
     def allocate_gpu_blocks(self, num_blocks):
         """
-        分配GPU上的block
-        参数：
-            num_blocks: 需要分配的block数量
+        allocate gpu blocks.
         """
         assert num_blocks <= len(
             self.gpu_free_block_list
@@ -362,9 +351,7 @@ class PrefixCacheManager:
 
     def recycle_gpu_blocks(self, gpu_block_ids):
         """
-        回收GPU上的block
-        参数：
-            gpu_block_ids: 需要回收的block id list
+        recycle gpu blocks.
         """
         logger.info(
             f"recycle_gpu_blocks: {gpu_block_ids}, len(self.gpu_free_block_list) {len(self.gpu_free_block_list)}"
@@ -377,9 +364,7 @@ class PrefixCacheManager:
 
     def allocate_cpu_blocks(self, num_blocks):
         """
-        分配CPU上的block
-        参数：
-            num_blocks: 需要分配的block数量
+        allocate cpu blocks.
         """
         assert num_blocks <= len(
             self.cpu_free_block_list
@@ -394,9 +379,7 @@ class PrefixCacheManager:
 
     def recycle_cpu_blocks(self, cpu_block_ids):
         """
-        回收CPU上的block
-        参数：
-            cpu_block_ids: 需要回收的block id list
+        recycle cpu blocks.
         """
         logger.info(
             f"recycle_cpu_blocks: {cpu_block_ids}, len(self.cpu_free_block_list) {len(self.cpu_free_block_list)}"
@@ -418,14 +401,14 @@ class PrefixCacheManager:
         is_sync=True,
     ):
         """
-        发起数据交换任务
-        参数：
-            transfer_task_id: 传输任务id
-            swap_node_ids:    待交换节点的node id list
-            gpu_block_ids:    待交换的gpu block id list
-            cpu_block_ids:    待交换的cpu block id list
-            event_type:       交换类型，CacheStatus.SWAP2GPU or CacheStatus.SWAP2CPU
-            is_sync:          是否同步等待数据传输完成
+        start data swap task
+        args:
+            transfer_task_id: transfer task id
+            swap_node_ids:    to swap node id list
+            gpu_block_ids:    to swap gpu block id list
+            cpu_block_ids:    to swap cpu block id list
+            event_type:       CacheStatus.SWAP2GPU or CacheStatus.SWAP2CPU
+            is_sync:          bool, whether to wait for the result of the swap task
         """
 
         self.task_swapping_event[transfer_task_id] = Event()
@@ -437,24 +420,21 @@ class PrefixCacheManager:
                 event_type,
                 transfer_task_id,
             )
-        )  # 发起数据传输任务
+        ) 
         if is_sync:
             self.sync_swap_task(transfer_task_id)
         return
 
     def sync_swap_task(self, transfer_task_id):
         """
-        同步数据交换任务
-        当issue_swap_task中设置is_sync为False时需主动调用该函数同步结果
+        sync swap task
         """
         self.task_swapping_event[transfer_task_id].wait()
         del self.task_swapping_event[transfer_task_id]
 
     def _check_validity(self, req_id, match_gpu_blocks_num, expected_block_num):
         """
-        检查是否有足够的GPU内存来分配cache
-        match_gpu_blocks_num: 在前缀树中命中的GPU block数量
-        expected_block_num:   请求需要的总GPU block数量
+        check enough gpu memory to allocate cache
         """
         if expected_block_num - match_gpu_blocks_num > len(self.gpu_free_block_list):
             msg = (
@@ -463,11 +443,11 @@ class PrefixCacheManager:
                 + f"{expected_block_num - match_gpu_blocks_num} > free block num: {len(self.gpu_free_block_list)}"
             )
             logger.info(msg)
-            raise Exception("Not enough GPU memory to allocate cache")  # 不够分配的情况下，报异常
+            raise Exception("Not enough GPU memory to allocate cache") 
 
     
     def _prepare_cpu_cache(self, req_id, swap_node_ids, gpu_recv_block_ids, \
-                cpu_recv_block_ids, match_cpu_block_ids, ssd_read_block_num):
+                cpu_recv_block_ids, match_cpu_block_ids):
         """
         将cpu cache转移到GPU
         """
@@ -479,12 +459,7 @@ class PrefixCacheManager:
             need_transfer_task_gpu_block_ids.append(tmp_gpu_block_id)
         for tmp_cpu_block_id in match_cpu_block_ids:
             need_transfer_task_cpu_block_ids.append(tmp_cpu_block_id)
-        if ssd_read_block_num > 0:
-            for tmp_cpu_block_id in cpu_recv_block_ids[:ssd_read_block_num]:
-                swap_node_ids.append(None)
-                need_transfer_task_cpu_block_ids.append(
-                    tmp_cpu_block_id
-                )
+
         assert len(need_transfer_task_gpu_block_ids) == len(
             need_transfer_task_cpu_block_ids
         )
@@ -503,25 +478,23 @@ class PrefixCacheManager:
     def _prepare_cache(self, req_id, input_ids, block_size, \
         expected_block_num, match_gpu_block_ids, match_cpu_block_ids, match_node_ids):
         """
-        准备可复用cache到GPU中
+        prepare cache for request
         """
-        ssd_read_block_num = 0
-        ssd_match_token_num = 0
+
         match_gpu_blocks_num = len(match_gpu_block_ids)
         match_cpu_blocks_num = len(match_cpu_block_ids)
         matched_block_num = match_gpu_blocks_num + match_cpu_blocks_num
         
-        cpu_recv_block_ids = []  # 用来接收ssd上缓存的cpu block
-        gpu_recv_block_ids = []  # 用来接收cpu上缓存的gpu block
+        cpu_recv_block_ids = []  
+        gpu_recv_block_ids = [] 
         gpu_extra_block_ids = []
         
-
-        # 分配用来接收cpu上匹配到的cache的gpu block
+        # allocate gpu cache for matched cpu blocks
         if match_cpu_blocks_num > 0:
             gpu_recv_block_ids = self.allocate_gpu_blocks(
                 match_cpu_blocks_num
             )
-        # 分配用来接收未匹配到的部分的block
+        # allocate gpu cache 
         gpu_extra_block_num = expected_block_num - matched_block_num
         if gpu_extra_block_num > 0:
             gpu_extra_block_ids = self.allocate_gpu_blocks(
@@ -529,31 +502,31 @@ class PrefixCacheManager:
             )
 
         if len(gpu_recv_block_ids) > 0:
-            # 发起swap操作
             self._prepare_cpu_cache(req_id, match_node_ids, gpu_recv_block_ids, \
-                        cpu_recv_block_ids, match_cpu_block_ids, ssd_read_block_num)
+                        cpu_recv_block_ids, match_cpu_block_ids)
         
-        return gpu_recv_block_ids, gpu_extra_block_ids, ssd_match_token_num
+        return gpu_recv_block_ids, gpu_extra_block_ids
         
 
     def request_block_ids(self, task, block_size, dec_token_num, *args):
         """
-        为任务申请block。
-        该接口为同步接口，如果发生cpu到gpu的数据交换，则会阻塞等待数据同步完成。调用方如果需要实现异步效果，请使用线程池来调用。
-        参数：
-            task: 任务的dict
-            block_size: 每个block的大小
-            dec_token_num: 在server侧给解码预留的token数量
-        返回：
-            common_block_ids: 匹配上的公共block list
-            unique_block_ids: 单独分配的block list
+            Allocate blocks for a task.  
+            This is a synchronous interface. If CPU-to-GPU data transfer occurs, it will block until synchronization completes. Callers requiring asynchronous behavior should invoke this via a thread pool.  
+
+            Parameters:  
+            - task: Task dictionary  
+            - block_size: Size per block (in tokens)  
+            - dec_token_num: Number of tokens reserved for decoding on the server side  
+
+            Returns:  
+            - common_block_ids: List of matched shared blocks  
+            - unique_block_ids: List of exclusively allocated blocks  
         """
         with self.request_release_lock:
             try:
                 hit_info = {}
                 hit_info["gpu_cache_blocks"] = 0
                 hit_info["cpu_cache_blocks"] = 0
-                hit_info["ssd_cache_blocks"] = 0
                 self.metrics.req_count += 1
                 input_ids = task.prompt_token_ids
                 req_id = task.request_id
@@ -563,7 +536,7 @@ class PrefixCacheManager:
                 input_token_num = len(input_ids)  
                 common_block_ids = []
                 unique_block_ids = []
-                # 1. 匹配可复用的block
+                # 1. match block
                 (
                     match_gpu_block_ids,
                     match_cpu_block_ids,
@@ -576,22 +549,22 @@ class PrefixCacheManager:
                 match_cpu_blocks_num = len(match_cpu_block_ids)
                 matched_block_num = match_gpu_blocks_num + match_cpu_blocks_num
                 matched_token_num_in_cpu_and_gpu = gpu_match_token_num + cpu_match_token_num
-                # 检查合法性
+                # check enough gpu memory to allocate cache
                 block_num = (
                     input_token_num + block_size - 1 + dec_token_num
                 ) // block_size
                 self._check_validity(req_id, matched_block_num, block_num)
-                # 更新共享节点的信息
+                # update matched node info
                 current_time = time.time()
                 self._update_matched_node_info(req_id, match_block_node, current_time)
-                # 将可复用的cache移到GPU
-                gpu_recv_block_ids, gpu_extra_block_ids, ssd_match_token_num = self._prepare_cache(req_id, \
+                # 2. prepare cache
+                gpu_recv_block_ids, gpu_extra_block_ids,  = self._prepare_cache(req_id, \
                     input_ids, block_size, block_num, match_gpu_block_ids, match_cpu_block_ids, swap_node_ids)
-                # 更新matched_block_num （加上ssd读取到的部分）
+                # update matched token num
                 matched_block_num = (
-                    gpu_match_token_num + cpu_match_token_num + ssd_match_token_num
+                    gpu_match_token_num + cpu_match_token_num 
                 )
-                # 2. 为不在前缀树中的token分配node
+
                 common_block_ids = match_gpu_block_ids + gpu_recv_block_ids
                 unique_block_ids = gpu_extra_block_ids
                 
@@ -610,27 +583,25 @@ class PrefixCacheManager:
                     block_size,
                     match_block_node,
                     dec_block_num
-                )  # 建立剩余节点的路径，返回叶子节点
+                )  
                 self.req_leaf_map[
                     req_id
-                ] = leaf_node  # 申请block的时候，创建好当前的req_id 和 叶子节点的映射关系，由于有block没有在树中展开，后续匹配的时候如果展开了节点这一关系需要发生更新
+                ] = leaf_node  
                 self.leaf_req_map[leaf_node].add(req_id)
-                # 3. 更新统计指标
+                # 3. update metrics
                 if matched_block_num > 0:
                     self.metrics.hit_req_count += 1
                 self.metrics.calculate_hit_metrics(
                     req_id,
                     cpu_match_token_num,
                     gpu_match_token_num,
-                    ssd_match_token_num,
                     input_token_num,
                 )
                 hit_info["gpu_cache_blocks"] = gpu_match_token_num // block_size
                 hit_info["cpu_cache_blocks"] = cpu_match_token_num // block_size
-                hit_info["ssd_cache_blocks"] = ssd_match_token_num // block_size
                 self.metrics._update_history_hit_metrics()
                 if self.metrics.req_count % 10000 == 0:
-                    self.metrics._init_histroy_hit_metrics()  # 每10000个请求重置一次指标计算
+                    self.metrics._init_histroy_hit_metrics()  
                 logger.info(
                     f"request_block_ids: request block for req_id {req_id}: common_block_ids "
                     + f"{common_block_ids}, unique_block_ids {unique_block_ids}"
@@ -642,21 +613,18 @@ class PrefixCacheManager:
 
     def release_block_ids_async(self, task):
         """
-        异步接口
+        async release block ids
         """
         return self.executor_pool.submit(self.release_block_ids, task)
 
     def release_block_ids(self, task):
         """
-        释放任务的block。该函数只负责降低节点的共享计数。
-        shared_count是0时候，叶子节点可以放入gpu lru。
-        参数：
-            task: 任务的dict
+        release block ids
         """
         with self.request_release_lock:
             try:
                 req_id = task.request_id
-                leaf_node = self.req_leaf_map.pop(req_id)  # 找到当前req_id对应的叶子节点
+                leaf_node = self.req_leaf_map.pop(req_id) 
                 if leaf_node in self.leaf_req_map:
                     self.leaf_req_map[leaf_node].remove(req_id)
                     if not (self.leaf_req_map[leaf_node]):
@@ -664,7 +632,6 @@ class PrefixCacheManager:
                 node = leaf_node
                 while node != self.radix_tree_root:
                     if req_id in node.req_id_set:
-                        # 适配decoding加速
                         node.req_id_set.remove(req_id)
                     node.decrement_shared_count()
                     node = node.parent
@@ -672,13 +639,12 @@ class PrefixCacheManager:
                 logger.info(f"release_block_ids: req_id {req_id} leaf_node {leaf_node}")
 
                 if leaf_node == self.radix_tree_root:
-                    # 直接回收block id
                     self.recycle_gpu_blocks(self.unfilled_req_block_map[req_id])
                     del self.unfilled_req_block_map[req_id]
                     return
 
-                # 已经结束的任务放入lru中，等待后续被free
-                if leaf_node in self.gpu_lru_leaf_set:  # 已经存在了
+
+                if leaf_node in self.gpu_lru_leaf_set: 
                     return
                 if (
                     leaf_node.shared_count == 0
@@ -698,17 +664,17 @@ class PrefixCacheManager:
     
     def _handle_free_gpu_node_without_cpu(self, node):
         """
-        单级缓存下驱逐gpu node
+        GPU node eviction
         """
-        node.cache_status = CacheStatus.CPU  # 更改node状态
-        # 回收当前节点的node_id
+        node.cache_status = CacheStatus.CPU 
+
         self.node_id_pool.append(node.node_id)
         if node.node_id in self.node_map:
             del self.node_map[node.node_id]
         logger.info(
             f"free_block_ids_async: free node {node}"
         )
-        # 回收分配出去的block id
+
         self.recycle_gpu_blocks(node.reverved_dec_block_ids)
         node.reverved_dec_block_ids = []
         self.recycle_gpu_blocks(node.block_id)
@@ -716,14 +682,13 @@ class PrefixCacheManager:
     def _handle_free_gpu_node_with_cpu(self, node, hash_value_input_ids_map, \
         hash_value_depth_map, need_recycle_gpu_block_ids, hash_value_gpu_block_ids_map, hash_value_swap_node_ids_map):
         """
-        多级缓存下驱逐gpu node
+        GPU node eviction in hierarchical cache layers  
         """
 
-        # 给dec预留的block直接回收
+        
         self.recycle_gpu_blocks(node.reverved_dec_block_ids)
         node.reverved_dec_block_ids = []
 
-        # 准备数据传输任务
         need_recycle_gpu_block_ids.append(node.block_id)
         hash_value_gpu_block_ids_map[node.input_hash_value].append(
             node.block_id
@@ -736,17 +701,17 @@ class PrefixCacheManager:
         hash_value_gpu_block_ids_map, hash_value_block_ids_map, \
         hash_value_swap_node_ids_map, hash_value_input_ids_map, hash_value_depth_map):
         """
-        异步执行GPU->CPU的swap out
+        evict cache async (GPU --> CPU)
         """
         if future is not None:
-            future.result()  # 等待cpu上驱逐任务结束（cpu->ssd)
+            future.result()  
         transfer_task_id = str(
             uuid.uuid4()
-        )  # 因为free时没有req_id, 生成一个唯一id作为传输任务的唯一id
+        ) 
         swap_node_ids = []
         need_transfer_task_gpu_block_ids = []
         need_transfer_task_cpu_block_ids = []
-        cpu_block_ids = self.allocate_cpu_blocks(total_gpu_free_count)
+        cpu_block_ids = self.allocate_cpu_blocks(min(total_gpu_free_count, len(self.cpu_free_block_list)))
         for input_hash_value in hash_value_gpu_block_ids_map.keys():
             need_transfer_task_gpu_block_ids.extend(
                 reversed(hash_value_gpu_block_ids_map[input_hash_value])
@@ -790,11 +755,9 @@ class PrefixCacheManager:
 
     def free_block_ids_async(self, need_block_num):
         """
-        异步清理已经分配出去的block，清理最多need_block_num个gpu block
-        参数：
-            need_query_block_num: 需要驱逐的gpu block数量
-        返回：
-            Event
+        free block ids async
+        args：
+            need_query_block_num: max number of gpu blocks to free
         """
         with self.request_release_lock:
             if self.gpu_free_task_future is not None:
@@ -809,34 +772,31 @@ class PrefixCacheManager:
                 hash_value_input_ids_map = {}
                 hash_value_block_ids_map = defaultdict(list)
                 hash_value_depth_map = {}
-                # 用于加速swap，将连续的block id尽可能放到一起
+                
                 hash_value_swap_node_ids_map = defaultdict(list)
                 hash_value_gpu_block_ids_map = defaultdict(list)
                 total_gpu_free_count = 0
 
-                # 清理lru中未被使用的节点，清理need_block_num个block
+                
                 while True:
                     if len(self.gpu_lru_leaf_heap) == 0:
-                        # 没有可以被删除的路径了
                         break
                     if total_gpu_free_count >= need_block_num:
                         break
-                    # 弹出lru的叶子节点
                     node = heapq.heappop(self.gpu_lru_leaf_heap)
                     self.gpu_lru_leaf_set.remove(node)
                     if (
-                        not self.cache_config.enable_hierarchical_cache
-                    ):  # 没开多级cache存储，直接回收block
+                        not self.cache_config.enable_hierarchical_cache or len(self.cpu_free_block_list) < need_block_num
+                    ):  
                         if node.shared_count == 0 and node.is_gpu_leaf_node:  # 直接回收
                             self._handle_free_gpu_node_without_cpu(node)
                             total_gpu_free_count += 1
                             cur_node = node
                             node = node.parent
                             if cur_node.hash_value in node.children:
-                                del node.children[cur_node.hash_value]  # 父节点中删除当前子节点
-                            if not node.children:  # 没有孩子节点了，是新的叶子节点
-                                # 将新的叶子节点入堆
-                                if node in self.gpu_lru_leaf_set:  # 已经存在了
+                                del node.children[cur_node.hash_value] 
+                            if not node.children: 
+                                if node in self.gpu_lru_leaf_set:
                                     continue
                                 if (
                                     node != self.radix_tree_root
@@ -849,18 +809,18 @@ class PrefixCacheManager:
                         else:
                             continue
                     else:
-                        if node.shared_count == 0 and node.is_gpu_leaf_node:  # 可以被调度出去
-                            node.cache_status = CacheStatus.SWAP2CPU  # 更改node状态
-                        else:  # 有引用，不能被调度出去
+                        if node.shared_count == 0 and node.is_gpu_leaf_node: 
+                            node.cache_status = CacheStatus.SWAP2CPU  
+                        else:  
                             continue
                         self._handle_free_gpu_node_with_cpu(node, hash_value_input_ids_map, \
                             hash_value_depth_map, need_recycle_gpu_block_ids, \
                             hash_value_gpu_block_ids_map, hash_value_swap_node_ids_map)
                         total_gpu_free_count += 1
                         
-                        # 将新的gpu节点入堆
+                        
                         node = node.parent
-                        if node in self.gpu_lru_leaf_set:  # 已经存在了
+                        if node in self.gpu_lru_leaf_set: 
                             continue
                         if (
                             node != self.radix_tree_root
@@ -871,12 +831,10 @@ class PrefixCacheManager:
                             heapq.heappush(self.gpu_lru_leaf_heap, node)
                             self.gpu_lru_leaf_set.add(node)
 
-                # 2. 发起异步GPU->CPU的驱逐任务
+                # swap cache to cpu
                 if hash_value_gpu_block_ids_map:
-                    # 1. 判断需要转移的节点，是否cpu缓存空间足够
                     cpu_free_future = None
                     if total_gpu_free_count > len(self.cpu_free_block_list):
-                        # 需要释放部分cpu缓存空间
                         cpu_free_count = total_gpu_free_count
                         if cpu_free_count < need_block_num:
                             cpu_free_count = need_block_num
@@ -896,11 +854,12 @@ class PrefixCacheManager:
 
     def free_cpu_block_ids(self, need_block_num):
         """
-        驱逐cpu block，至少need_block_num个block
-        参数：
-            need_block_num: 需要驱逐的cpu block数量
-        返回：
-            freed_block_num: 驱逐的cpu block数量
+            Evict CPU blocks (at least need_block_num blocks)  
+            Parameters:  
+            - need_block_num: Number of CPU blocks required to evict  
+
+            Returns:  
+            - freed_block_num: Number of CPU blocks successfully evicted  
         """
         hash_value_input_ids_map = {}
         hash_value_block_ids_map = defaultdict(list)
@@ -910,11 +869,10 @@ class PrefixCacheManager:
         with self.request_release_lock:
             while True:
                 if len(self.cpu_lru_leaf_heap) == 0:
-                    # 没有可以被删除的节点了
                     break
                 if total_cpu_free_count >= need_block_num:
                     break
-                # 弹出lru的叶子节点
+
                 node = heapq.heappop(self.cpu_lru_leaf_heap)
                 self.cpu_lru_leaf_set.remove(node)
                 tmp_block_ids = []
@@ -923,20 +881,13 @@ class PrefixCacheManager:
                     and node.cache_status == CacheStatus.CPU
                     and node.is_cpu_leaf_node
                 ):
-                    if self.cache_config.enable_ssd_cache:
-                        tmp_block_ids.append(node.block_id)
-                        hash_value_input_ids_map[node.input_hash_value] = node.input_ids
-                        hash_value_depth_map[
-                            node.input_hash_value
-                        ] = node.depth  # 最后更新的是越靠近树根的节点
-                        need_recycle_cpu_block_ids.append(node.block_id)
-                    else:
-                        self.recycle_cpu_blocks(node.block_id)
+
+                    self.recycle_cpu_blocks(node.block_id)
                     hash_value_block_ids_map[node.input_hash_value].extend(
                         reversed(tmp_block_ids)
-                    )  # 从叶子到树根的节点
+                    )  
                     logger.info(f"free_cpu_block_ids: free node {node}")
-                    # 回收当前节点的node_id
+
                     self.node_id_pool.append(node.node_id)
                     total_cpu_free_count += 1
                     if node.node_id in self.node_map:
@@ -944,11 +895,10 @@ class PrefixCacheManager:
                     cur_node = node
                     node = node.parent
                     if cur_node.hash_value in node.children:
-                        del node.children[cur_node.hash_value]  # 父节点中删除当前子节点
-                    if not node.children:  # 没有孩子节点了，是新的叶子节点
-                        if node in self.cpu_lru_leaf_set:  # 已经存在了（可能是从别的路径放入的）
+                        del node.children[cur_node.hash_value] 
+                    if not node.children:  
+                        if node in self.cpu_lru_leaf_set:  
                             continue
-                        # 将新的叶子节点入堆
                         if (
                             node != self.radix_tree_root
                             and node.shared_count == 0
@@ -965,24 +915,24 @@ class PrefixCacheManager:
 
     def cal_block_hash(self, block):
         """
-        block: input_ids组成的block
+        calculate hash value of a block
         """
         return hash(tuple(block))
 
     def match_block(self, req_id, input_ids, block_size):
         """
-        匹配input_ids在前缀树里的公共部分
-        参数：
-            req_id: 任务的req_id
-            input_ids: 输入的token ids
-            block_size: 每个block的大小
-        返回：
-            match_gpu_block_ids:   匹配到的公共gpu block id list
-            match_cpu_block_ids:   匹配到的公共cpu block id list
-            swap_node_ids: 需要做swap交换的node id list
-            match_block_node: 匹配到的最后一个节点
-            gpu_match_token_num: gpu匹配到的token数
-            cpu_match_token_num: cpu匹配到的token数
+            Args:
+                req_id: Task request ID
+                input_ids: Input token IDs
+                block_size: Size of each block
+
+            Returns:
+                match_gpu_block_ids: List of matched GPU block IDs
+                match_cpu_block_ids: List of matched CPU block IDs
+                swap_node_ids: List of node IDs requiring swap operations
+                match_block_node: Last matched node in the path
+                gpu_match_token_num: Number of tokens matched in GPU blocks
+                cpu_match_token_num: Number of tokens matched in CPU blocks
         """
 
         total_token_num = len(input_ids)
@@ -1005,45 +955,45 @@ class PrefixCacheManager:
                 if token_num != block_size:
                     break
                 hash_value = self.cal_block_hash(token_block)
-                if hash_value in current_match_node.children:  # 匹配上节点
+                if hash_value in current_match_node.children:  
                     child = current_match_node.children[hash_value]
                     matche_nodes.append(child)
                     match_node_ids.append(child.node_id)
                     if (
                         child in self.gpu_lru_leaf_set
-                    ):  # 之前在lru中的叶子节点匹配上了，删掉lru中的这个node, 因为它肯定不会是叶子节点了
+                    ):  
                         self.gpu_lru_leaf_set.remove(child)
                         self.gpu_lru_leaf_heap.remove(child)
                         has_modified_gpu_lru_leaf_heap = True
                     elif (
                         child in self.cpu_lru_leaf_set
-                    ):  # 之前在lru中的叶子节点匹配上了，删掉lru中的这个node, 因为它肯定不会是叶子节点了
+                    ): 
                         self.cpu_lru_leaf_set.remove(child)
                         self.cpu_lru_leaf_heap.remove(child)
                         has_modified_cpu_lru_leaf_heap = True
-                    if child.has_in_gpu:  # 在gpu上
+                    if child.has_in_gpu:  
                         match_gpu_block_ids.append(child.block_id)
                         gpu_match_token_num += block_size
                     else:
-                        if child.cache_status == CacheStatus.SWAP2CPU:  # 在从GPU到CPU转移
+                        if child.cache_status == CacheStatus.SWAP2CPU: 
                             logger.info(f"match_block: req_id {req_id} matched node"
                                          + f" {child.node_id} which is being SWAP2CPU")
-                            child.cache_status = CacheStatus.GPU  # 状态置为GPU
+                            child.cache_status = CacheStatus.GPU 
                             match_gpu_block_ids.append(child.block_id)
                             gpu_match_token_num += block_size
-                        elif child.cache_status == CacheStatus.CPU:  # 在cpu上
+                        elif child.cache_status == CacheStatus.CPU:
                             child.cache_status = CacheStatus.SWAP2GPU
                             match_cpu_block_ids.append(child.block_id)
                             cpu_match_token_num += block_size
                             swap_node_ids.append(child.node_id)
-                    match_token_num = match_token_num + block_size  # 当前匹配都的token数
+                    match_token_num = match_token_num + block_size
                     current_match_node = child
-                else:  # 没有匹配的节点了
+                else:
                     break
 
-        if has_modified_gpu_lru_leaf_heap:  # 重新构建gpu lru heap
-            heapq.heapify(self.gpu_lru_leaf_heap)  # 重新构建堆
-        if has_modified_cpu_lru_leaf_heap:  # 重新构建cpu lru heap
+        if has_modified_gpu_lru_leaf_heap:  
+            heapq.heapify(self.gpu_lru_leaf_heap) 
+        if has_modified_cpu_lru_leaf_heap: 
             heapq.heapify(self.cpu_lru_leaf_heap)
         
         logger.info(f"match_block: req_id {req_id} matched nodes: {match_node_ids}")
@@ -1058,7 +1008,7 @@ class PrefixCacheManager:
 
     def _update_matched_node_info(self, req_id, last_node, current_time):
         """
-        更新匹配节点的信息
+        Update the shared count and last used time of the matched nodes  
         """
         node = last_node
         while node != self.radix_tree_root:
@@ -1080,16 +1030,17 @@ class PrefixCacheManager:
         reverved_dec_block_num
     ):
         """
-        公共前缀之外的block建立路径
-        参数:
-            req_id: 任务的req_id
-            left_input_ids: 剩下的没在前缀树中的输入
-            gpu_block_ids:  构建新路径时候可供新节点分配的gpu block id列表
-            block_size: 每个block的token数
-            last_node: 最后一个匹配成功的节点
-            reverved_dec_block_num: 预留给解码的block数量
-        返回：
-            leaf_node: 叶子节点
+        Build path for blocks beyond the common prefix  
+            Parameters:  
+            - req_id: Request ID of the task  
+            - left_input_ids: Remaining input tokens not found in the prefix tree  
+            - gpu_block_ids: List of available GPU block IDs for new node allocation  
+            - block_size: Token capacity per block  
+            - last_node: Last successfully matched node  
+            - reserved_dec_block_num: Number of blocks reserved for decoding  
+
+            Returns:  
+            - leaf_node: The constructed leaf node  
         """
         gpu_block_ids = gpu_block_ids.copy()
         node = last_node
@@ -1097,7 +1048,7 @@ class PrefixCacheManager:
         input_hash_value = self.cal_block_hash(input_ids)
         logger.info(f"{gpu_block_ids} {input_hash_value}")
         
-        # 为剩余token 分配节点、建立路径：填充hash值、时间戳
+        
         token_num = len(left_input_ids)
         if token_num == 0:
             for i in range(reverved_dec_block_num):
@@ -1137,18 +1088,17 @@ class PrefixCacheManager:
                 node.children[hash_value] = new_last_node
                 node = new_last_node
         if has_unfilled_block is True:
-            reverved_dec_block_ids.append(gpu_block_ids.pop(0))  # 最后一个未填满的block
-        # 给解码分配block
+            reverved_dec_block_ids.append(gpu_block_ids.pop(0)) 
+
         for i in range(reverved_dec_block_num):
             reverved_dec_block_ids.append(gpu_block_ids.pop(0))
-        if new_last_node == self.radix_tree_root:  # 输入token数量就小于block size
+        if new_last_node == self.radix_tree_root: 
             self.unfilled_req_block_map[req_id] = reverved_dec_block_ids
         else:
             new_last_node.reverved_dec_block_ids.extend(reverved_dec_block_ids)
         logger.info(
             f"build_path: allocate unique node ids {unique_node_ids} for req_id {req_id}"
         )
-        # 3. 返回叶子节点
         return new_last_node
 
 
@@ -1156,28 +1106,25 @@ class PrefixCacheManager:
         self, swap_node_id, task_gpu_block_id, task_cpu_block_id, event_type
     ):
         """
-        处理swap后的结果
+        handle swap resuha
         """
-        if swap_node_id is None:  # 是None的时候，说明不需要处理Node，只单纯做block的swap
+        if swap_node_id is None: 
             return
         with self.cache_status_lock:
             if (
                 event_type.value == CacheStatus.SWAP2CPU.value
-            ):  # 只有在请求处理完毕的时候可能会触发GPU->CPU
-                # block转变成存储到CPU
-                # 1. 找到该节点
+            ):  
                 gpu_block_id = task_gpu_block_id
                 cpu_block_id = task_cpu_block_id
                 node = self.node_map[swap_node_id]
-                if node.cache_status.value == CacheStatus.GPU.value: # 在SWAP2CPU时，节点被新进来的query复用
-                    # 回收cpu block id
+                if node.cache_status.value == CacheStatus.GPU.value:
+                   
                     logger.info(f"recv_data_transfer_result: node {node.node_id} "
                                     + f"has been reused when SWAP2CPU, recycle cpu block id {cpu_block_id}")
-                    self.recycle_cpu_blocks(cpu_block_id)  # 回收分配的cpu block id
+                    self.recycle_cpu_blocks(cpu_block_id) 
                 else:
-                    node.cache_status = CacheStatus.CPU  # 代表已在CPU上
-                    node.block_id = cpu_block_id  # 记录为cpu的block id
-                    # 将新的叶子节点入堆
+                    node.cache_status = CacheStatus.CPU
+                    node.block_id = cpu_block_id 
                     if (
                         node != self.radix_tree_root
                         and node.shared_count == 0
@@ -1187,7 +1134,7 @@ class PrefixCacheManager:
                         if node not in self.cpu_lru_leaf_set:
                             heapq.heappush(self.cpu_lru_leaf_heap, node)
                             self.cpu_lru_leaf_set.add(node)
-                    # 回收gpu block id
+
                     self.recycle_gpu_blocks(gpu_block_id)
                     logger.info(
                         f"recv_data_transfer_result: after SWAP2CPU, node {node}"
@@ -1195,15 +1142,14 @@ class PrefixCacheManager:
 
             elif (
                 event_type.value == CacheStatus.SWAP2GPU.value
-            ):  # 只有在请求打进来的时候可能会触发CPU->GPU
-                # block转变成存储到GPU
+            ):  
                 gpu_block_id = task_gpu_block_id
                 cpu_block_id = task_cpu_block_id
-                # 1. 找到该节点
+
                 node = self.node_map[swap_node_id]
-                node.cache_status = CacheStatus.GPU  # 代表已在GPU上
-                node.block_id = gpu_block_id  # 记录为gpu的block id
-                # 回收cpu block id
+                node.cache_status = CacheStatus.GPU
+                node.block_id = gpu_block_id
+
                 self.recycle_cpu_blocks(cpu_block_id)
                 logger.info(f"recv_data_transfer_result: after SWAP2GPU, node {node}")
             else:
@@ -1214,12 +1160,10 @@ class PrefixCacheManager:
 
     def recv_data_transfer_result(self):
         """
-        接收数据的传输结果
+        recv data transfer result 
         """
         while True:
-            # 异步资源管理的原则
-            # 1. 如果是需要分配资源，在异步传输之前分配
-            # 2. 如果是需要回收资源，在异步传输完成后回收
+
             try:
                 data = self.cache_task_queue.get_transfer_done_signal()
                 if data is None:
@@ -1254,7 +1198,7 @@ class PrefixCacheManager:
 
 class BlockNode:
     """
-    BlockNode类，用于存储每个节点的信息
+    BlockNode: store the information of a block node
     """
     def __init__(
         self,
@@ -1274,21 +1218,21 @@ class BlockNode:
         persistent_shared_count=0,
     ):
         """
-        参数:
-            node_id: 节点的标识符
-            depth: 节点的深度
-            block_id: 分配的block id (在cpu上则为cpu block id, 在gpu上则为gpu block id)
-            token_num: 当前block的token数目
-            hash_value: 当前block的hash值
-            last_used_time: 最后一次使用的时间戳
-            parent: 父节点
-            shared_count: 该节点正在被使用中的请求计数
-            reverved_dec_block_ids: 预分配保留给解码的block, 格式为[block_id, block_id,...]
-            cache_status: 当前cache的状态，包括USING, SWAP2CPU, SWAP2GPU, FREE
-            is_persistent: 是否是持久化存储的节点
-            persistent_shared_count: 被持久化cache请求的计数
+        Args:
+            node_id: Unique identifier of the node  
+            depth: Depth of the node  
+            block_id: Assigned block ID (CPU block ID if on CPU, GPU block ID if on GPU)  
+            token_num: Number of tokens in the current block  
+            hash_value: Hash value of the current block  
+            last_used_time: Timestamp of last usage  
+            parent: Parent node  
+            shared_count: Reference count of requests currently using this node  
+            reserved_dec_block_ids: Pre-allocated block IDs reserved for decoding, formatted as [block_id, block_id,...]  
+            cache_status: Current cache state (USING, SWAP2CPU, SWAP2GPU, FREE)  
+            is_persistent: Whether the node is persistently stored  
+            persistent_shared_count: Reference count of persistent cache requests  
         """
-        # 不可修改属性
+        
         self.node_id = node_id
         self.depth = depth
         self.parent = parent
@@ -1297,31 +1241,31 @@ class BlockNode:
         self.input_ids = input_ids
         self.input_hash_value = input_hash_value
 
-        # 可修改属性
-        self.children = {}  # hash_value: node，保存子节点的hash值 和 对应的节点，方便匹配
-        self.shared_count = shared_count  # 当请求进来匹配到时，+1， 当请求结束时 -1
-        self.last_used_time = last_used_time  # 当请求进来匹配到时，更新时间戳
-        self.block_id = block_id  # 在cpu上时，表示cpu的block id。在gpu上时，表示gpu的block id
-        self.reverved_dec_block_ids = reverved_dec_block_ids  # 在GPU上时，保留给解码的block ids
-        self.cache_status = cache_status  # 节点的状态，包括USING, SWAP2CPU, SWAP2GPU, FREE
-        self.is_persistent = is_persistent  # 是否是持久化存储的节点
-        self.persistent_shared_count = persistent_shared_count  # cache被持久化prompt引用的计数
-        self.req_id_set = set()  # 记录该Node被哪些请求引用，可用于decoding加速
+
+        self.children = {}
+        self.shared_count = shared_count
+        self.last_used_time = last_used_time
+        self.block_id = block_id
+        self.reverved_dec_block_ids = reverved_dec_block_ids 
+        self.cache_status = cache_status
+        self.is_persistent = is_persistent
+        self.persistent_shared_count = persistent_shared_count 
+        self.req_id_set = set()
 
     def __lt__(self, other):
         """
-        <支持，因为会放入堆中, 要支持比较
+        override the less than operator
         """
         if self.last_used_time < other.last_used_time:
             return True
         elif self.last_used_time > other.last_used_time:
             return False
         else:
-            return self.depth > other.depth  # block数量多的放前面
+            return self.depth > other.depth  
 
     def __str__(self):
         """
-        返回描述节点的字符串信息
+        return node info
         """
         if self.parent is not None:
             parent_node_id = self.parent.node_id
@@ -1339,27 +1283,26 @@ class BlockNode:
     @property
     def has_in_gpu(self):
         """
-        是否在gpu上
-        除了GPU状态，其余状态has_in_gpu都表示为False
+        check if the node has been allocated in GPU
         """
         return self.cache_status == CacheStatus.GPU
 
     def increment_shared_count(self):
         """
-        增加共享计数
+        increment shared count
         """
         self.shared_count += 1
 
     def decrement_shared_count(self):
         """
-        减少共享计数
+        decrement shared count
         """
         self.shared_count -= 1
 
     @property
     def is_cpu_leaf_node(self):
         """
-        是否是cpu上的叶子节点
+        check if the node is a leaf node in CPU
         """
         if (self.cache_status == CacheStatus.CPU) and (len(self.children) == 0):
             return True
@@ -1368,14 +1311,14 @@ class BlockNode:
     @property
     def is_gpu_leaf_node(self):
         """
-        是否是gpu上的叶子节点
+        check if the node is a leaf node in GPU
         """
         if self.has_in_gpu is False:
             return False
         else:
-            if len(self.children) == 0:  # 没有子节点
+            if len(self.children) == 0:
                 return True
             for child in self.children.values():
-                if child.has_in_gpu is True:  # 存在gpu
+                if child.has_in_gpu is True:
                     return False
             return True

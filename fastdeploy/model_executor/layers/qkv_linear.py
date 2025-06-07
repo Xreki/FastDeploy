@@ -257,7 +257,7 @@ class QKVLinear(nn.Layer):
                     [
                         self.num_heads,
                         3,
-                        self.embed_dim // self.inference_args.num_attention_heads,
+                        self.head_dim,
                     ]
                 )
                 .transpose((1, 0, 2))
@@ -271,7 +271,7 @@ class QKVLinear(nn.Layer):
                 .reshape(
                     [
                         self.num_heads + 2 * self.kv_num_heads,
-                        self.embed_dim // self.inference_args.num_attention_heads,
+                        self.head_dim,
                     ]
                 )
                 .astype("float32")
@@ -496,7 +496,7 @@ class QKVLinear(nn.Layer):
                             self.embed_dim,
                             self.num_heads,
                             3,
-                            self.embed_dim // self.inference_args.num_attention_heads,
+                            self.head_dim,
                         ]
                     )
                     .transpose([2, 1, 3, 0])
@@ -510,7 +510,7 @@ class QKVLinear(nn.Layer):
                         [
                             self.embed_dim,
                             self.num_heads + 2 * self.kv_num_heads,
-                            self.embed_dim // self.inference_args.num_attention_heads,
+                            self.head_dim,
                         ]
                     )
                     .transpose([1, 2, 0])
@@ -557,7 +557,7 @@ class QKVLinear(nn.Layer):
                         [
                             self.num_heads,
                             3,
-                            self.embed_dim // self.inference_args.num_attention_heads,
+                            self.head_dim,
                         ]
                     )
                     .transpose([1, 0, 2])
@@ -567,7 +567,7 @@ class QKVLinear(nn.Layer):
                 qkv_bias = get_tensor(state_dict.pop(self.bias_key)).reshape(
                     [
                         self.num_heads + 2 * self.kv_num_heads,
-                        self.embed_dim // self.inference_args.num_attention_heads,
+                        self.head_dim,
                     ]
                 )
                 single_qkv_biases = paddle.split(qkv_bias, self.kv_num_heads, axis=0)

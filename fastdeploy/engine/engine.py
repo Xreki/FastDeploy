@@ -332,20 +332,20 @@ class LLMEngine(object):
                     if added_requests[request_id] == 0:
                         added_requests.pop(request_id)
 
-                if failed is None:
-                    continue
+                    if failed is None:
+                        continue
 
-                error_result = RequestOutput(request_id=request_id,
-                                             finished=True,
-                                             error_code=500,
-                                             error_msg=failed)
-                # Since the request is not in scheduler
-                # Send result by zmq directly
-                self.zmq_server.send_multipart(
-                    request.request_id, error_result)
+                    error_result = RequestOutput(request_id=request_id,
+                                                 finished=True,
+                                                 error_code=500,
+                                                 error_msg=failed)
+                    # Since the request is not in scheduler
+                    # Send result by zmq directly
+                    self.zmq_server.send_multipart(request_id, error_result)
             except Exception as e:
                 llm_logger.error(
-                    f"Error happend while receving new request from zmq, details={e}"
+                    f"Error happend while receving new request from zmq, details={e}, "
+                    f"traceback={traceback.format_exc()}"
                 )
 
     def add_requests(self, task, sampling_params=None):
@@ -494,6 +494,7 @@ class LLMEngine(object):
                 del self.resource_manager.req_dict[task.request_id]
                 cur_task = self.resource_manager.tasks_list[cur_task_idx]
                 cur_task.prompt_token_ids[0] = task.outputs.token_ids[0]
+                self.token_processor.tokens_counter[task.request_id] = 1
                 current_tasks.append(cur_task)
             self.engine_worker_queue.put_tasks((current_tasks, self.resource_manager.real_bsz))
             return True

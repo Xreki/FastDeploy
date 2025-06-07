@@ -133,7 +133,7 @@ class EngineArgs:
     """
     engine_worker_queue_port: int = 8002
     """
-    Port for engine worker queue.
+    Port for worker queue communication.
     """
 
     splitwise_role: str = "mixed"
@@ -162,49 +162,42 @@ class EngineArgs:
     """
     For chunked prefill, a request is considered long if the prompt is longer than this number of tokens.
     """
-
-
-    # Scheduler configuration parameters
+    scheduler_name: str = "local"
     """
     Scheduler name to be used
     """
-    scheduler_name: str = "local"
+    scheduler_max_size: int = -1
     """
     Size of scheduler
     """
-    scheduler_max_size: int = -1
+    scheduler_ttl: float = 900
     """
     TTL of request
     """
-    scheduler_ttl: int = 900
-    """
-    Timeout for waiting for response
-    """
-    scheduler_wait_response_timeout: float = 0.001
+    scheduler_host: str = "127.0.0.1"
     """
     Host of redis
     """
-    scheduler_host: str = "127.0.0.1"
+    scheduler_port: int = 6379
     """
     Port of redis
     """
-    scheduler_port: int = 6379
+    scheduler_db: int = 0
     """
     DB of redis
     """
-    scheduler_db: int = 0
+    scheduler_password: Optional[str] = None
     """
     Password of redis
     """
-    scheduler_password: Optional[str] = None
+    scheduler_topic: str = "default"
     """
     Topic of scheduler
     """
-    scheduler_topic: str = "default"
+    scheduler_min_load_score: float = 1
     """
-    Max write time of redis
+    Minimum load score for task assignment
     """
-    scheduler_remote_write_time: int = 3
 
     def __post_init__(self):
         """
@@ -437,16 +430,9 @@ class EngineArgs:
         )
         scheduler_group.add_argument(
             "--scheduler-ttl",
-            type=int,
+            type=float,
             default=EngineArgs.scheduler_ttl,
             help=f"TTL of request. Default is {EngineArgs.scheduler_ttl} seconds. (local,global)"
-        )
-        scheduler_group.add_argument(
-            "--scheduler-wait-response-timeout",
-            type=float,
-            default=EngineArgs.scheduler_wait_response_timeout,
-            help=("Timeout for waiting for response. Default is "
-                  f"{EngineArgs.scheduler_wait_response_timeout} seconds. (local,global)")
         )
         scheduler_group.add_argument(
             "--scheduler-host",
@@ -476,10 +462,10 @@ class EngineArgs:
             help=f"Topic of scheduler. Defaule is {EngineArgs.scheduler_topic}. (global)"
         )
         scheduler_group.add_argument(
-            "--scheduler-remote-write-time",
-            type=int,
-            default=EngineArgs.scheduler_remote_write_time,
-            help=f"Max write time of redis. Default is {EngineArgs.scheduler_remote_write_time} seconds (global)"
+            "--scheduler-min-load-score",
+            type=float,
+            default=EngineArgs.scheduler_min_load_score,
+            help=f"Minimum load score for task assignment. Default is {EngineArgs.scheduler_min_load_score} (global)"
         )
 
         return parser

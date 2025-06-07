@@ -194,6 +194,9 @@ def build_stream_line_model(
         tokenizer = ErnieBotTokenizer.from_pretrained(model_path)
 
     config, _ = PretrainedConfig.get_config_dict(model_path)
+    config["head_dim"] = config.get(
+        "head_dim", config["hidden_size"] // config["num_attention_heads"]
+    )
     ernie_config = ErnieBotConfig.from_dict(config)
     tensor_parallel_rank, tensor_parallel_degree = llm_utils.init_dist_env()
     ernie_config.tensor_parallel_rank = tensor_parallel_rank
@@ -224,10 +227,11 @@ def build_stream_line_model(
         moe_intermediate_size = moe_intermediate_size[0]
 
     if not use_ep and pad_vocab:
+        hcg = fleet.get_hybrid_communicate_group()
         config["vocab_size"] = _vocab_size_with_padding(
             config.get("vocab_size", tokenizer.vocab_size),
             config.pop("vocab_size_divisible_unit", 128),
-            paddle.distributed.get_world_size(),
+            hcg.get_model_parallel_world_size(),
         )
 
     group_size = config.get("group_size", -1)
@@ -284,6 +288,7 @@ def build_stream_line_model(
 
         ErnieBotBaseModel = ErnieBotToyFusedModel
         ErnieBotGenModel = ErnieBotToyForGeneration
+        use_safetensors = True
     else:
         ErnieBotBaseModel = ErnieBotFusedModel
         ErnieBotGenModel = ErnieBotForGeneration
@@ -543,6 +548,7 @@ def build_stream_line_model(
         "pad_token_id": tokenizer.pad_token_id,
         "hidden_size": config["hidden_size"],
         "num_attention_heads": config["num_attention_heads"],
+        "head_dim": ernie_config.head_dim,
         "vocab_size": config["vocab_size"],
         "ori_vocab_size": ori_vocab_size,
         "hidden_act": config["hidden_act"],
@@ -696,7 +702,7 @@ def export_efficientllm_model(args):
         num_key_value_heads = num_attention_heads
 
     hidden_size = model_config["hidden_size"]
-    head_dim = hidden_size // num_attention_heads
+    head_dim = model_config.get("head_dim", hidden_size // num_attention_heads)
     if use_cache_kv_int4:
         cur_head_dim = head_dim // 2
     else:

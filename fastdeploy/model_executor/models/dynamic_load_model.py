@@ -147,53 +147,56 @@ class DynamicLoadModel(nn.Layer):
         self.tokenizer = tokenizer
 
         vision_model_name_or_path = f"{os.path.dirname(self.model_path)}/DFNRopeVisionTransformer"
-        config = ErnieBotMoEVLConfig.from_pretrained(
-            self.model_path,
-            tensor_parallel_degree=self.nranks,
-            tensor_parallel_rank=self.rank,
-            moe_group="dummy",
-        )
-        vision_config = DFNRopeVisionTransformerConfig.from_pretrained(
-            vision_model_name_or_path,
-            tensor_parallel_degree=1,
-            tensor_parallel_rank=0,
-            attn_sep=False,
-            dtype="bfloat16",
-        )
-        config.vision_config = vision_config
-        config.pixel_hidden_size = config.vision_config.hidden_size
+        context = paddle.LazyGuard()
+        with context:
+            config = ErnieBotMoEVLConfig.from_pretrained(
+                self.model_path,
+                tensor_parallel_degree=self.nranks,
+                tensor_parallel_rank=self.rank,
+                moe_group="dummy",
+            )
+            vision_config = DFNRopeVisionTransformerConfig.from_pretrained(
+                vision_model_name_or_path,
+                tensor_parallel_degree=1,
+                tensor_parallel_rank=0,
+                attn_sep=False,
+                dtype="bfloat16",
+            )
+            config.vision_config = vision_config
+            config.pixel_hidden_size = config.vision_config.hidden_size
 
-        config.tensor_parallel_output = False
-        config.sequence_parallel = False
+            config.tensor_parallel_output = False
+            config.sequence_parallel = False
 
-        vision_model = DFNRopeVisionTransformerPretrainedModel.from_pretrained(
-            vision_model_name_or_path, config=config.vision_config)
-        vision_model = paddle.amp.decorate(models=vision_model,
-                                           level="O2",
-                                           dtype="bfloat16")
+            vision_model = DFNRopeVisionTransformerPretrainedModel.from_config(
+                config=config.vision_config)
 
-        resampler_model = VariableResolutionResamplerModel(
-            config.pixel_hidden_size,
-            config.hidden_size,
-            config.spatial_conv_size,
-            config.temporal_conv_size,
-            config=config,
-        )
-        resampler_model = paddle.amp.decorate(models=resampler_model,
-                                              level="O2",
-                                              dtype="bfloat16")
+            vision_model = paddle.amp.decorate(models=vision_model,
+                                            level="O2",
+                                            dtype="bfloat16")
 
-        vision_model.eval()
-        resampler_model.eval()
-        self.vision_model = vision_model
-        self.resampler_model = resampler_model
-        logger.info("inject vision model successfully")
+            resampler_model = VariableResolutionResamplerModel(
+                config.pixel_hidden_size,
+                config.hidden_size,
+                config.spatial_conv_size,
+                config.temporal_conv_size,
+                config=config,
+            )
+            resampler_model = paddle.amp.decorate(models=resampler_model,
+                                                level="O2",
+                                                dtype="bfloat16")
+
+            vision_model.eval()
+            resampler_model.eval()
+            self.vision_model = vision_model
+            self.resampler_model = resampler_model
+            logger.info("inject vision model successfully")
 
     def _build_model(self) -> paddle.nn.Layer:
         """Build the EfficientLLM model architecture."""
         from .export_model import build_stream_line_model
 
-        _, _, model = build_stream_line_model(
+        _, _, model, _ = build_stream_line_model(
             self.model_cfg,
             self.model_path,
             self.dtype,
@@ -313,7 +316,7 @@ class DynamicLoadModel(nn.Layer):
                 replace_name = name.replace("gpt.", "ernie.")
                 for model_state_dict in model_state_dicts:
                     if replace_name in model_state_dict:
-                        logger.info(f"Updating model parameter: {name}")
+                        logger.info(f"Updating model parameter: {name}, shape : {param.shape}")
                         update_param = model_state_dict[replace_name]
 
                         if update_param.dtype != param.dtype:

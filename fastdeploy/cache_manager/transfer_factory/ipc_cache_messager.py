@@ -41,24 +41,21 @@ if use_pip_eff_llm is None:
     from fastdeploy.model_executor.ops.gpu import ipc_sent_key_value_cache_by_remote_ptr
     from fastdeploy.model_executor.ops.gpu import ipc_sent_key_value_cache_by_remote_ptr_block_sync
 else:
-    from efficientllm.gpu import get_data_ptr_ipc
-    from efficientllm.gpu import ipc_sent_key_value_cache_by_remote_ptr
-    from efficientllm.gpu import ipc_sent_key_value_cache_by_remote_ptr_block_sync
+    from efficientllm.ops.gpu import get_data_ptr_ipc
+    from efficientllm.ops.gpu import ipc_sent_key_value_cache_by_remote_ptr
+    from efficientllm.ops.gpu import ipc_sent_key_value_cache_by_remote_ptr_block_sync
 
 
 logger = get_logger(f"cache_messager", f"cache_messager.log")
 class IPCConnect:
     """
-    IPC连接类，用于初始化ipc传输流
+    IPC communication class.
     """
     def __init__(self, rank_id_, remote_gpu_id_, layer_num, local_gpu_id_):
         """
-        初始化类实例。
-        
         Args:
-            rank_id_ (int): 进程标识号。
-            remote_gpu_id_ (int): 远程GPU的标识号。
-            layer_num (int): 层数。
+        rank_id_: rank id
+        remote_gpu_id_: remote gpu id
         
         """
         self.remote_key_tensor_ptr_list = []
@@ -123,15 +120,15 @@ class IPCCommManager:
         if not self.is_connected(remote_gpu_id):
             self.connect(remote_gpu_id)
         comm = self.comm_map[remote_gpu_id]
-        # block 
+
         with paddle.device.stream_guard(comm.write_stream):
             ipc_sent_key_value_cache_by_remote_ptr(
-                self.local_key_cache_tensor_list[layer_idx],  #tensor
-                self.local_value_cache_tensor_list[layer_idx], #tensor
-                local_block_ids,    # tensor cpu
-                remote_block_ids,   # tensor cpu
-                comm.remote_key_tensor_ptr_list[layer_idx], # ptr int64_t
-                comm.remote_value_tensor_ptr_list[layer_idx], # ptr int64_t
+                self.local_key_cache_tensor_list[layer_idx],  
+                self.local_value_cache_tensor_list[layer_idx], 
+                local_block_ids, 
+                remote_block_ids, 
+                comm.remote_key_tensor_ptr_list[layer_idx],
+                comm.remote_value_tensor_ptr_list[layer_idx],
                 block_num,
                 self.gpu_idx,
                 comm.remote_gpu_id,
@@ -189,9 +186,9 @@ class IPCCacheMessager(object):
                                     cache_v,
                                     )
             logger.info(f"done create ipc_comm with local_device_id:{local_device_id}, ")
-            # 引擎触发传输的信号
             
-            self.cache_info = dict()      # [{'ip': 'xxx', 'port': xx, 'src_block_ids': [xxx], 'dest_block_ids': [xxx]}]
+            
+            self.cache_info = dict()     
             self.last_step_idx = -1
             layerwise_send_cache_thread = threading.Thread(target=self._prefill_layerwise_send_cache_thread)
             layerwise_send_cache_thread.daemon = True

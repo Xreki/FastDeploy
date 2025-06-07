@@ -260,10 +260,9 @@ class ResourceManager(object):
                         cache_block_num = len(common_block_ids)
                         no_cache_block_num = math.ceil(len(task.prompt_token_ids) / self.cfg.block_size \
                                             - cache_block_num)
-                        task.cache_token_num = cache_block_num * self.cfg.block_size
+                        task.num_cached_tokens = cache_block_num * self.cfg.block_size
                         task.gpu_cache_token_num = hit_info["gpu_cache_blocks"] * self.cfg.block_size
                         task.cpu_cache_token_num = hit_info["cpu_cache_blocks"] * self.cfg.block_size
-                        task.ssd_cache_token_num = hit_info["ssd_cache_blocks"] * self.cfg.block_size
                         task.cache_info = (cache_block_num, no_cache_block_num)
 
                         cache_prepare_time = time.time() - cache_prepare_time                               
