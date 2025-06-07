@@ -266,7 +266,6 @@ def build_stream_line_model(
                                          Qwen2Model,
                                          model_config,
                                          return_numpy=True)
-
     elif use_moe:
         tensor_parallel_degree = dist.get_world_size()
         if tensor_parallel_degree > 1:

@@ -103,7 +103,7 @@ class ModelConfig(PretrainedConfig):
         initializer_range: float = 0.02,
         type_vocab_size: int = 4,
         use_rope=True,
-        use_rmsnorm=False,
+        use_rmsnorm=True,
         weight_sharing=True,
         weight_sharing_add_bias=False,
         sequence_parallel=False,
@@ -129,7 +129,7 @@ class ModelConfig(PretrainedConfig):
         use_moe=False,
         ffn_hidden_size: Optional[int] = None,
         dtype=None,
-        export_model_type: str = "default",
+        export_model_type: str = "weight_only_int8",
         use_stop_seqs: bool = False,
         return_all_hidden_states: bool = False,
         start_layer_index: int = 0,
@@ -265,7 +265,7 @@ class MoEConfig:
     use_moe: bool = False
     num_experts: int = -1
     use_top_k: bool = True
-    top_k: int = -1
+    top_k: int = 8
     moe_intermediate_size: int = -1
     num_experts_per_rank: int = -1
     num_experts_start_offset: int = -1
@@ -278,7 +278,7 @@ class MoEConfig:
     moe_layer_start_index = 0
     moe_use_ffn_shared_weight_and_bias = (False, )
     moe_group = (False, )
-    moe_quant_type = "default"
+    moe_quant_type = "weight_only_int8"
     num_max_dispatch_tokens_per_rank = 256
 
     has_multimodality: bool = False
@@ -294,7 +294,7 @@ class ParallelConfig:
     sequence_parallel = False,  # Whether to enable sequence parallelism.
     use_ep = False,  # Whether to enable Expert Parallelism
     moe_group = False,  # Whether to enable moe group
-    msg_queue_id = None,  # mesage queue id
+    msg_queue_id = 1,  # mesage queue id
     use_micro_batch = False,  # Whether to enable micro batch
     tensor_parallel_rank = None,  # TP rank ID
     tensor_parallel_degree = None,  # TP degree
@@ -314,7 +314,7 @@ class ParallelConfig:
     # Engine worker queue port
     engine_worker_queue_port: int = 9923
     # Max model len
-    max_model_len: int = 3072
+    max_model_len: int = 3072  # max_seq_len
     # cuda visible devices
     device_ids: str = "0"
     # Input dtype
@@ -363,7 +363,8 @@ class SpeculativeConfig:
     Configuration for speculative decoding.
     """
     speculate_method = None  # speculate method
-    speculate_max_draft_token_num = 1  # the max length of draft tokens for speculate method
+    # the max length of draft tokens for speculate method
+    speculate_max_draft_token_num = 1  # speculate_max_draft_tokens
     draft_type = "None"  # draft type
     is_mtp = False  # is mtp
     speculate_max_candidate_len = 5  # the max length of candidate tokens for speculate method
@@ -652,7 +653,6 @@ class LLMConfig:
     The configuration class which contains all fastdeploy-related configuration. This
     simplifies passing around the distinct configurations in the codebase.
     """
-
     model_config: ModelConfig = field(default=None, init=True)  # type: ignore
 
     parallel_config: ParallelConfig = field(default=None, init=True)
