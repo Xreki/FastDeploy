@@ -1,8 +1,8 @@
 # DeepGEMM
 
-EfficientLLM DeepGEMM 安装流程
+DeepGEMM 安装流程
 
-### Installation
+## Installation
 
 首先安装自定义算子，确保cutlass已经`git clone`到[custom_ops/third_party/cutlass](../../third_party/cutlass)
 

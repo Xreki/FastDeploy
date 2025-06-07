@@ -3,7 +3,6 @@
 ## 1. 使用方式
 通过FastDeploy离线推理，可支持本地加载ERNIE-4.5-Turbo模型，并处理用户数据，使用方式如下，
 
-
 ```python
 from fastdeploy import LLM, SamplingParams
 
@@ -69,7 +68,7 @@ for output in outputs:
 ### 2.3 fastdeploy.SamplingParams
 
 * presence_penalty(float): 控制模型生成重复内容的惩罚系数，正值降低重复话题出现的概率
-* frequence_penalty(float): 控制重复token的惩罚力度，比presence_penalty更严格，会惩罚高频重复
+* frequency_penalty(float): 控制重复token的惩罚力度，比presence_penalty更严格，会惩罚高频重复
 * repetition_penalty(float): 直接对重复生成的token进行惩罚的系数（>1时惩罚重复，<1时鼓励重复）
 * temperature(float): 控制生成随机性的参数，值越高结果越随机，值越低结果越确定
 * top_p(float): 概率累积分布截断阈值，仅考虑累计概率达到此阈值的最可能token集合
