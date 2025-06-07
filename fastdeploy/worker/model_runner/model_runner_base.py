@@ -15,18 +15,17 @@
 """
 
 from abc import ABC, abstractmethod
+
+import paddle
 import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
-import paddle
+
 from fastdeploy.utils import get_logger
-from fastdeploy.model_executor.layers.attention import get_attention_backend
-from fastdeploy.worker.model_runner.forward_meta import ForwardMeta
 
 logger = get_logger("worker", "worker.log")
 
 
 class ModelRunnerBase(ABC):
-
     """
         Initializes the model and sets up necessary parameters.
 
@@ -52,33 +51,19 @@ class ModelRunnerBase(ABC):
         self.init_rotary_position_embedding(args.max_model_len)
         self.num_gpu_blocks = args.max_block_num
         self._load_model(config.model_name_or_path, args.dynamic_load_weight)
-        self._init_attn_backend()
-        self._init_kvcache()
-        self.forward_meta = None
-        self.attn_backend = None
-
-    def _init_attn_backend(self):
-        self.attn_backend_cls = get_attention_backend(
-            self.args.attention_backend)
-
-    def _init_forward_meta(self):
-        self.forward_meta = ForwardMeta.init_forward_mata(self)
-        self.share_inputs["forward_meta"] = self.forward_meta
 
     def _log_memory_usage(self, context: str = "") -> None:
         """Log current GPU memory usage."""
-        max_alloc = paddle.device.cuda.max_memory_allocated() / (1024 ** 3)
-        max_reserved = paddle.device.cuda.max_memory_reserved() / (1024 ** 3)
-        curr_alloc = paddle.device.cuda.memory_allocated() / (1024 ** 3)
-        curr_reserved = paddle.device.cuda.memory_reserved() / (1024 ** 3)
+        max_alloc = paddle.device.cuda.max_memory_allocated() / (1024**3)
+        max_reserved = paddle.device.cuda.max_memory_reserved() / (1024**3)
+        curr_alloc = paddle.device.cuda.memory_allocated() / (1024**3)
+        curr_reserved = paddle.device.cuda.memory_reserved() / (1024**3)
 
         logger.info(f"GPU memory usage {context}:")
-        logger.warning(
-            f"max_allocated: {max_alloc:.2f}GB\n"
-            f"max_reserved: {max_reserved:.2f}GB\n"
-            f"current_allocated: {curr_alloc:.2f}GB\n"
-            f"current_reserved: {curr_reserved:.2f}GB"
-        )
+        logger.warning(f"max_allocated: {max_alloc:.2f}GB\n"
+                       f"max_reserved: {max_reserved:.2f}GB\n"
+                       f"current_allocated: {curr_alloc:.2f}GB\n"
+                       f"current_reserved: {curr_reserved:.2f}GB")
 
     def init_dist_env(self, seed=20):
         """
@@ -103,10 +88,12 @@ class ModelRunnerBase(ABC):
         """
         initialize model config from config file
         """
+
         def _get_attr(key, default=None):
             if hasattr(self.model_cfg, key):
                 return getattr(self.model_cfg, key)
             return default
+
         self.top_p = _get_attr("top_p", 0.0)
         self.temperature = _get_attr("temperature", 1.0)
         self.rope_theta = _get_attr("rope_theta", 10000.0)
@@ -138,69 +125,114 @@ class ModelRunnerBase(ABC):
 
         # 批量初始化张量
         self.share_inputs.update({
-            "pre_ids": paddle.full([max_num_seqs, self.max_length], -1, **int64_config),
-            "input_ids": paddle.full([max_num_seqs, self.args.max_model_len], self.args.pad_token_id, **int64_config),
-            "eos_token_id": paddle.full([self.args.eos_tokens_lens, 1], 0, **int64_config),
-            "top_p": paddle.full([max_num_seqs, 1], self.top_p, **float32_config),
-            "temperature": paddle.full([max_num_seqs, 1], self.temperature, **float32_config),
-            "penalty_score": paddle.full([max_num_seqs, 1], self.penalty_score, **float32_config),
-            "frequency_score": paddle.full([max_num_seqs, 1], self.frequency_score, **float32_config),
-            "presence_score": paddle.full([max_num_seqs, 1], self.presence_score, **float32_config),
+            "pre_ids":
+            paddle.full([max_num_seqs, self.max_length], -1, **int64_config),
+            "input_ids":
+            paddle.full([max_num_seqs, self.args.max_model_len],
+                        self.args.pad_token_id, **int64_config),
+            "eos_token_id":
+            paddle.full([self.args.eos_tokens_lens, 1], 0, **int64_config),
+            "top_p":
+            paddle.full([max_num_seqs, 1], self.top_p, **float32_config),
+            "temperature":
+            paddle.full([max_num_seqs, 1], self.temperature, **float32_config),
+            "penalty_score":
+            paddle.full([max_num_seqs, 1], self.penalty_score,
+                        **float32_config),
+            "frequency_score":
+            paddle.full([max_num_seqs, 1], self.frequency_score,
+                        **float32_config),
+            "presence_score":
+            paddle.full([max_num_seqs, 1], self.presence_score,
+                        **float32_config),
             # TODO 名称统一
-            "min_dec_len": paddle.full([max_num_seqs, 1], self.min_length, **int64_config),
-            "max_dec_len": paddle.full([max_num_seqs, 1], self.max_length, **int64_config),
-            "min_length": paddle.full([max_num_seqs, 1], self.min_length, **int64_config),
-            "max_length": paddle.full([max_num_seqs, 1], self.max_length, **int64_config),
-            "seq_lens_this_time": paddle.full(max_num_seqs, 0, **int32_config),
-            "seq_lens_encoder": paddle.full([max_num_seqs, 1], 0, **int32_config),
-            "step_seq_lens_encoder": paddle.full([max_num_seqs, 1], 0, **int32_config),
-            "seq_lens_decoder": paddle.full([max_num_seqs, 1], 0, **int32_config),
-            "step_idx": paddle.full([max_num_seqs, 1], 0, **int64_config),
-            "not_need_stop": paddle.full([1], False, **bool_config).cpu(),
-            "stop_flags": paddle.full([max_num_seqs, 1], True, **bool_config),
-            "stop_nums": paddle.full([1], max_num_seqs, **int64_config),
-            "bad_tokens": paddle.full([1], -1, **int64_config),
-            "next_tokens": paddle.full([max_num_seqs, 1], -1, **int64_config),
-            "is_block_step": paddle.full([max_num_seqs], False, **bool_config),
-            "encoder_block_lens": paddle.full([max_num_seqs], 0, **int32_config),
-            "step_block_list": paddle.full([max_num_seqs], -1, **int32_config),
-            "step_lens": paddle.full([1], 0, **int32_config),
-            "recover_block_list": paddle.full([max_num_seqs], -1, **int32_config),
-            "recover_lens": paddle.full([1], 0, **int32_config),
-            "need_block_list": paddle.full([max_num_seqs], -1, **int32_config),
-            "need_block_len": paddle.full([1], 0, **int32_config),
-            "used_list_len": paddle.full([max_num_seqs], 0, **int32_config),
-            "infer_seed": paddle.full([max_num_seqs, 1], 0, **int64_config),
-            "first_token_ids": paddle.full([max_num_seqs, 1], -1, **int64_config),
-            "ori_seq_lens_encoder": paddle.full([max_num_seqs, 1], 0, **int32_config),
-            "system_lens": paddle.full([max_num_seqs, 1], 0, **int32_config),
-            "system_ids": paddle.full([max_num_seqs, 1], -1, **int32_config),
+            "min_dec_len":
+            paddle.full([max_num_seqs, 1], self.min_length, **int64_config),
+            "max_dec_len":
+            paddle.full([max_num_seqs, 1], self.max_length, **int64_config),
+            "min_length":
+            paddle.full([max_num_seqs, 1], self.min_length, **int64_config),
+            "max_length":
+            paddle.full([max_num_seqs, 1], self.max_length, **int64_config),
+            "seq_lens_this_time":
+            paddle.full(max_num_seqs, 0, **int32_config),
+            "seq_lens_encoder":
+            paddle.full([max_num_seqs, 1], 0, **int32_config),
+            "step_seq_lens_encoder":
+            paddle.full([max_num_seqs, 1], 0, **int32_config),
+            "seq_lens_decoder":
+            paddle.full([max_num_seqs, 1], 0, **int32_config),
+            "step_idx":
+            paddle.full([max_num_seqs, 1], 0, **int64_config),
+            "not_need_stop":
+            paddle.full([1], False, **bool_config).cpu(),
+            "stop_flags":
+            paddle.full([max_num_seqs, 1], True, **bool_config),
+            "stop_nums":
+            paddle.full([1], max_num_seqs, **int64_config),
+            "bad_tokens":
+            paddle.full([1], -1, **int64_config),
+            "next_tokens":
+            paddle.full([max_num_seqs, 1], -1, **int64_config),
+            "is_block_step":
+            paddle.full([max_num_seqs], False, **bool_config),
+            "encoder_block_lens":
+            paddle.full([max_num_seqs], 0, **int32_config),
+            "step_block_list":
+            paddle.full([max_num_seqs], -1, **int32_config),
+            "step_lens":
+            paddle.full([1], 0, **int32_config),
+            "recover_block_list":
+            paddle.full([max_num_seqs], -1, **int32_config),
+            "recover_lens":
+            paddle.full([1], 0, **int32_config),
+            "need_block_list":
+            paddle.full([max_num_seqs], -1, **int32_config),
+            "need_block_len":
+            paddle.full([1], 0, **int32_config),
+            "used_list_len":
+            paddle.full([max_num_seqs], 0, **int32_config),
+            "infer_seed":
+            paddle.full([max_num_seqs, 1], 0, **int64_config),
+            "first_token_ids":
+            paddle.full([max_num_seqs, 1], -1, **int64_config),
+            "ori_seq_lens_encoder":
+            paddle.full([max_num_seqs, 1], 0, **int32_config),
+            "system_lens":
+            paddle.full([max_num_seqs, 1], 0, **int32_config),
+            "system_ids":
+            paddle.full([max_num_seqs, 1], -1, **int32_config),
         })
 
         # 计算block tables相关参数
         pre_max_block_num = (
-            self.args.max_model_len + self.args.block_size - 1
-        ) // self.args.block_size + self.args.enc_dec_block_num
+            self.args.max_model_len + self.args.block_size -
+            1) // self.args.block_size + self.args.enc_dec_block_num
         self.share_inputs["block_tables"] = paddle.full(
-            [max_num_seqs, pre_max_block_num], -1, **int32_config
-        )
+            [max_num_seqs, pre_max_block_num], -1, **int32_config)
 
         # 初始化free list
         free_list = list(
-            range(self.args.max_block_num - 1, int(self.args.max_block_num * self.args.kv_cache_ratio) - 1, -1)
-        )
+            range(self.args.max_block_num - 1,
+                  int(self.args.max_block_num * self.args.kv_cache_ratio) - 1,
+                  -1))
         self.free_list_len = len(free_list)
         self.share_inputs.update({
-            "free_list": paddle.to_tensor(free_list, dtype="int32"),
-            "free_list_len": paddle.full([1], self.free_list_len, **int32_config),
+            "free_list":
+            paddle.to_tensor(free_list, dtype="int32"),
+            "free_list_len":
+            paddle.full([1], self.free_list_len, **int32_config),
         })
 
         # 初始化stop seqs
         self.share_inputs.update({
-            "stop_seqs_len": paddle.full([self.model_cfg.max_stop_seqs_num], 0, **int32_config),
-            "stop_seqs": paddle.full(
-                [self.model_cfg.max_stop_seqs_num, self.model_cfg.stop_seqs_max_len], -1, **int64_config
-            ),
+            "stop_seqs_len":
+            paddle.full([self.model_cfg.max_stop_seqs_num], 0, **int32_config),
+            "stop_seqs":
+            paddle.full([
+                self.model_cfg.max_stop_seqs_num,
+                self.model_cfg.stop_seqs_max_len
+            ], -1, **int64_config),
         })
 
     @abstractmethod

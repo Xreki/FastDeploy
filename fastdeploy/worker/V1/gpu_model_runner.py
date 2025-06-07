@@ -288,6 +288,12 @@ class GPUModelRunner(ModelRunnerBase):
         self.share_inputs["system_ids"] = paddle.full([max_num_seqs, 1],
                                                       -1,
                                                       dtype='int32')
+        self.share_inputs["ids_remove_padding"] = None
+        self.share_inputs["padding_offset"] = None
+        self.share_inputs["cu_seqlens_q"] = None
+        self.share_inputs["cu_seqlens_k"] = None
+        self.share_inputs["cum_offsets"] = None
+        self.share_inputs["caches"] = None
 
         # Initialize rotary position embedding
         tmp_position_ids = paddle.arange(
@@ -440,9 +446,10 @@ class GPUModelRunner(ModelRunnerBase):
         assert len(self.attn_backends) == 0
 
         # TODO(gongshaotian): Get rank from config
-        self.model_config.kv_num_heads = self.model_config.num_attention_heads // self.parallel_config.mp_size
-        num_heads = int(self.model_config.num_key_value_heads
-                        ) // self.parallel_config.mp_size
+        num_heads = self.model_config.num_attention_heads // self.parallel_config.mp_size
+        self.model_config.kv_num_heads = int(
+            self.model_config.num_key_value_heads
+        ) // self.parallel_config.mp_size
         head_dim = self.model_config.hidden_size // self.model_config.num_attention_heads
 
         # Get the attention backend

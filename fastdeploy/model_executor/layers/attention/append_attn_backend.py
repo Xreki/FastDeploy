@@ -212,5 +212,4 @@ class AppendAttentionBackend(AttentionBackend):
             self.causal,
             self.speculate_method is not None,
         )[0]
-
         return res

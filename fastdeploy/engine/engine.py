@@ -543,9 +543,9 @@ class LLMEngine(object):
         uncache_worker_stdout = "" if os.getenv("UNCACHE_WORKER_STDOUT",
                                                 "0") == 1 else "-u"
         pd_cmd = f"{command_prefix} {sys.executable} {uncache_worker_stdout} -m paddle.distributed.launch "
-        # py_script = os.path.join(current_dir_path, "../worker/worker.py")
-        py_script = os.path.join(current_dir_path,
-                                 "../worker/V1/worker_process.py")
+        py_script = os.path.join(current_dir_path, "../worker/worker.py")
+        # py_script = os.path.join(current_dir_path,
+        #                          "../worker/V1/worker_process.py")
         arguments = (
             f" --nnodes {str(self.cfg.nnode)}"
             f" --devices {self.cfg.device_ids} {py_script}"

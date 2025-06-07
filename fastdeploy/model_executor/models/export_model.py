@@ -34,8 +34,9 @@ from paddlenlp.utils.env import USE_FAST_TOKENIZER
 from paddlenlp.utils.log import logger
 
 from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
-                               LLMConfig, LoadConfig, ModelConfig, MoEConfig,
-                               ParallelConfig, SpeculativeConfig, TmpConfig)
+                               KVCacheConfig, LLMConfig, LoadConfig,
+                               ModelConfig, MoEConfig, ParallelConfig,
+                               SpeculativeConfig, TmpConfig)
 from fastdeploy.inference_args import GenerationPhase
 
 from ..layers.quantization import get_quantization_config
@@ -104,45 +105,45 @@ def load_tensor_from_ipc_meta(state_dict):
 
 
 def build_stream_line_model(
-    config_path,
-    model_path,
-    dtype,
-    block_size,
-    max_len,
-    stage_flag,
-    min_dec_len=1,
-    max_dec_len=128,
-    temperature=1,
-    top_k=8,
-    top_p=0.8,
-    pre_caches_length=0,
-    export_model_type="default",
-    use_stop_seqs=False,
-    use_fake_parameter=False,
-    show_topk: int = 0,
-    msg_queue_id=None,
-    pad_vocab=True,
-    tokenizer=None,
-    cache_quant_dtype="default",
-    use_beam_search: bool = False,
-    enf_gen: bool = False,
-    speculate_method=None,
-    speculate_max_draft_token_num: int = 1,
-    speculate_max_candidate_len: int = 5,
-    speculate_verify_window: int = 2,
-    return_all_hidden_states: bool = False,
-    draft_type: str = "None",
-    start_layer_index: int = 0,
-    moe_quant_type: str = "default",
-    use_ep: bool = False,
-    ep_just_for_test: bool = False,
-    generation_phase: GenerationPhase = GenerationPhase.PREFILL,
-    use_micro_batch: bool = False,
-    fake_server_p: bool = False,
-    scale_dir: str = "None",
-    output_via_mq: bool = True,
-    use_safetensors: bool = False,
-):
+        config_path,
+        model_path,
+        dtype,
+        block_size,
+        max_len,
+        stage_flag,
+        min_dec_len=1,
+        max_dec_len=128,
+        temperature=1,
+        top_k=8,
+        top_p=0.8,
+        pre_caches_length=0,
+        export_model_type="default",
+        use_stop_seqs=False,
+        use_fake_parameter=False,
+        show_topk: int = 0,
+        msg_queue_id=None,
+        pad_vocab=True,
+        tokenizer=None,
+        cache_quant_dtype="default",
+        use_beam_search: bool = False,
+        enf_gen: bool = False,
+        speculate_method=None,
+        speculate_max_draft_token_num: int = 1,
+        speculate_max_candidate_len: int = 5,
+        speculate_verify_window: int = 2,
+        return_all_hidden_states: bool = False,
+        draft_type: str = "None",
+        start_layer_index: int = 0,
+        moe_quant_type: str = "default",
+        use_ep: bool = False,
+        ep_just_for_test: bool = False,
+        generation_phase: GenerationPhase = GenerationPhase.PREFILL,
+        use_micro_batch: bool = False,
+        fake_server_p: bool = False,
+        scale_dir: str = "None",
+        output_via_mq: bool = True,
+        use_safetensors: bool = False,
+        return_llm_config: bool = False):
     """
     Build a fused inference model
 
@@ -201,6 +202,7 @@ def build_stream_line_model(
     tmp_config = TmpConfig()
     moe_config = MoEConfig()
     decoding_config = DecodingConfig()
+    kv_cache_config = KVCacheConfig()
 
     tensor_parallel_rank, tensor_parallel_degree = llm_utils.init_dist_env()
     parallel_config.tensor_parallel_rank = tensor_parallel_rank
@@ -509,6 +511,7 @@ def build_stream_line_model(
         moe_config=moe_config,
         decoding_config=decoding_config,
         quant_config=quant_config,
+        kv_cache_config=kv_cache_config,
     )
 
     with context:
@@ -518,7 +521,10 @@ def build_stream_line_model(
     model.eval()
 
     if use_fake_parameter:
-        return config, tokenizer, model
+        if return_llm_config:
+            return llm_config, tokenizer, model
+        else:
+            return config, tokenizer, model
     elif not use_moe:
         for k, v in state_dict.items():
             if convert_dtype(v.dtype) == dtype:
@@ -534,4 +540,7 @@ def build_stream_line_model(
         reconstruct_memory(model)
     logger.info(f"{runtime_timer.log()}")
 
-    return config, tokenizer, model
+    if return_llm_config:
+        return llm_config, tokenizer, model
+    else:
+        return config, tokenizer, model

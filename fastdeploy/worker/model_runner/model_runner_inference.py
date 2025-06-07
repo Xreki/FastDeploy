@@ -13,15 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-import json
 import os
 import random
 
 import numpy as np
 import paddle
 
+from fastdeploy.model_executor.layers.attention import get_attention_backend
 from fastdeploy.model_executor.layers.rotary_embedding import get_rope
 from fastdeploy.platforms import current_platform
+from fastdeploy.worker.model_runner.forward_meta import ForwardMeta
 from fastdeploy.worker.model_runner.model_runner_base import ModelRunnerBase
 
 if current_platform.is_cuda() and current_platform.available():
@@ -40,6 +41,7 @@ class ModelRunner(ModelRunnerBase):
     def __init__(self, config, args, nranks, rank):
         self.nranks = nranks
         self.rank = rank
+        self.config = config
         super().__init__(config, args)
         self._reset_paddle_env()
         self.sampler = Sampler()
@@ -92,7 +94,7 @@ class ModelRunner(ModelRunnerBase):
                     break
             self.args.speculate_max_draft_tokens = 5
 
-            config, tokenizer, model = build_stream_line_model(
+            llm_config, tokenizer, model = build_stream_line_model(
                 os.path.join(self.args.model_name_or_path,
                              os.getenv("CONFIG_JSON_FILE", "config.json")),
                 self.args.model_name_or_path,
@@ -110,21 +112,33 @@ class ModelRunner(ModelRunnerBase):
                 return_all_hidden_states=False,
                 moe_quant_type="weight_only_int4",
                 use_safetensors=True,
-            )
+                return_llm_config=True)
             model.eval()
+            llm_config.parallel_config.max_model_len = llm_config.model_config.max_seq_len
+            self.llm_config = llm_config
             self.model = model
+            attn_backend_cls = get_attention_backend(
+                self.args.attention_backend)
+            num_heads = self.llm_config.model_config.num_attention_heads // self.llm_config.parallel_config.mp_size
+            self.llm_config.model_config.kv_num_heads = int(
+                self.llm_config.model_config.num_key_value_heads
+            ) // self.llm_config.parallel_config.mp_size
+            head_dim = self.llm_config.model_config.hidden_size // self.llm_config.model_config.num_attention_heads
+            self.attn_backend = attn_backend_cls(
+                self.llm_config,
+                kv_num_heads=self.llm_config.model_config.kv_num_heads,
+                num_heads=num_heads,
+                head_dim=head_dim)
+            self._init_kvcache()
 
     def init_rotary_position_embedding(self, max_model_len):
-        config_path = os.path.join(self.args.model_name_or_path, "config.json")
-        with open(config_path, "r") as f:
-            model_config = json.load(f)
         tmp_position_ids = paddle.arange(max_model_len).reshape((1, -1))
         self.share_inputs["rope_emb"] = get_rope(
             rotary_dim=self.model_cfg.hidden_size //
             self.model_cfg.num_attention_heads,
             position_ids=tmp_position_ids,
             base=self.rope_theta,
-            model_config=model_config)
+            model_config=self.config)
 
     def _init_kvcache(self):
         """
@@ -143,12 +157,8 @@ class ModelRunner(ModelRunnerBase):
         else:
             kv_num_head = self.model_cfg.num_attention_heads // self.nranks
         self.model_cfg.kv_num_head = kv_num_head
-        kv_cache_shape = self.attn_backend_cls.get_kv_cache_shape(
-            max_num_blocks=max_block_num,
-            block_size=self.args.block_size,
-            kv_num_head=kv_num_head,
-            head_dim=self.model_cfg.hidden_size //
-            self.model_cfg.num_attention_heads)
+        kv_cache_shape = self.attn_backend.get_kv_cache_shape(
+            max_num_blocks=max_block_num)
 
         for i in range(self.model_cfg.num_layers):
             cache_type = self.args.dtype
@@ -266,10 +276,14 @@ class ModelRunner(ModelRunnerBase):
         self.share_inputs["cum_offsets"] = cum_offsets
         self.share_inputs["cu_seqlens_q"] = cu_seqlens_q
         self.share_inputs["cu_seqlens_k"] = cu_seqlens_k
-        #init attn_backend
-        self.attn_backend = self.attn_backend_cls(self)
-        self._init_forward_meta()
+
+        # initialize_forward_meta
+        self.forward_meta = ForwardMeta.init_forward_meta(
+            self.share_inputs, self.attn_backend)
+
         self.attn_backend.init_attention_metadata(self.forward_meta)
+
+        self.share_inputs["forward_meta"] = self.forward_meta
 
         self.sampling_metadata = SamplingMetadata(
             temperature=self.share_inputs["temperature"],
