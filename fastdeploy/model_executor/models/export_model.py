@@ -39,12 +39,17 @@ from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
 from fastdeploy.inference_args import GenerationPhase
 
 from ..layers.quantization import get_quantization_config
-from .ernie import ErnieBotFusedModel
+from .ernie import ErnieBotPretrainedModel
 from .model_base import ModelRegistry
 from .qwen2 import Qwen2Model
 from .tokenizer import ErnieBotTokenizer
 from .utils import (_vocab_size_with_padding, convert_ndarray_dtype,
                     load_checkpoint, parser_quant_type)
+
+model_classes_mapping = {
+    "ErnieForCausalLM": ErnieBotPretrainedModel,
+    "Qwen2ForCausalLM": Qwen2Model,
+}
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 grandparent_dir = os.path.abspath(
@@ -108,7 +113,7 @@ def build_stream_line_model(
     min_dec_len=1,
     max_dec_len=128,
     temperature=1,
-    top_k=0,
+    top_k=8,
     top_p=0.8,
     pre_caches_length=0,
     export_model_type="default",
@@ -256,16 +261,12 @@ def build_stream_line_model(
         context = contextlib.nullcontext()
     elif use_safetensors:
         context = paddle.LazyGuard()
-        if "ErnieForCausalLM" in architectures:
-            state_dict = load_checkpoint(model_path,
-                                         ErnieBotFusedModel,
-                                         model_config,
-                                         return_numpy=True)
-        elif "Qwen2ForCausalLM" in architectures:
-            state_dict = load_checkpoint(model_path,
-                                         Qwen2Model,
-                                         model_config,
-                                         return_numpy=True)
+        model_class = model_classes_mapping[architectures[0]]
+        state_dict = load_checkpoint(model_path,
+                                     model_class,
+                                     model_config,
+                                     return_numpy=True)
+
     elif use_moe:
         tensor_parallel_degree = dist.get_world_size()
         if tensor_parallel_degree > 1:
@@ -344,18 +345,12 @@ def build_stream_line_model(
             state_dict = paddle.load(model_state_path, return_numpy=True)
     else:
         context = paddle.LazyGuard()
-        if "ErnieForCausalLM" in architectures:
-            state_dict = load_tp_checkpoint(
-                model_path,
-                ErnieBotFusedModel,
-                model_config,
-                return_numpy=True,
-            )
-        elif "Qwen2ForCausalLM" in architectures:
-            state_dict = load_checkpoint(model_path,
-                                         Qwen2Model,
-                                         model_config,
-                                         return_numpy=True)
+        model_class = model_classes_mapping[architectures[0]]
+        state_dict = load_tp_checkpoint(model_path,
+                                        model_class,
+                                        model_config,
+                                        return_numpy=True)
+
     if "ErnieForCausalLM" in architectures:
         use_rmsnorm = config.get("use_rmsnorm", False)
     else:

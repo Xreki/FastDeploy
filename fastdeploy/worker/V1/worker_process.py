@@ -30,7 +30,7 @@ from fastdeploy.inter_communicator import EngineWorkerQueue as TaskQueue
 from fastdeploy.inter_communicator import IPCSignal
 from fastdeploy.model_executor.layers.quantization import \
     get_quantization_config
-from fastdeploy.model_executor.model.utils import parser_quant_type
+from fastdeploy.model_executor.models.utils import parser_quant_type
 from fastdeploy.utils import get_logger
 from fastdeploy.worker.V1.gpu_worker import GpuWorker
 
@@ -446,6 +446,11 @@ def initialize_llm_config(args) -> LLMConfig:
         model_config.use_smooth_quant = False
     else:
         quant_config = None
+
+    if "ErnieForCausalLM" in model_config.architectures:
+        model_config.use_neox_rotary_style = False
+    else:
+        model_config.use_neox_rotary_style = True
 
     # Update parallel config
     parallel_config.engine_pid = args.engine_pid

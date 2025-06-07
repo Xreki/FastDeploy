@@ -19,8 +19,6 @@ import os
 import paddle
 import paddle.distributed as dist
 from paddle import nn
-from paddle.distributed import fleet
-from paddle.framework import in_dynamic_mode
 from paddle.incubate.nn.functional import blha_get_max_len
 from paddlenlp.utils.log import logger
 
@@ -1004,16 +1002,6 @@ class FusedTransformer(nn.Layer):
             # out_linear
             out_linear_out = self.out_linear_layers[i](atten_out)
 
-            # all_reduce
-            if self.nranks > 1 and (not self.inference_args.use_ep):
-                # if in_dynamic_or_pir_mode():
-                if in_dynamic_mode():
-                    hcg = fleet.get_hybrid_communicate_group()
-                    mp_group = hcg.get_model_parallel_group()
-                    dist.all_reduce(out_linear_out, group=mp_group)
-                else:
-                    dist.all_reduce(out_linear_out)
-
             # ffn layernorm
             tmp_out, residual_input = self.ffn_layernorm_layers[i](
                 out_linear_out, residual_input)
@@ -1035,8 +1023,6 @@ class FusedTransformer(nn.Layer):
                 tmp_out, residual_input = _compute_attn(
                     src, residual_input, i, **kwargs)
 
-                print("[debug5]\n", tmp_out)
-
                 if (self.inference_args.moe_config.use_moe
                         and not self.inference_args.moe_config.
                         moe_use_ffn_shared_weight_and_bias):
@@ -1054,17 +1040,6 @@ class FusedTransformer(nn.Layer):
                         ffn1_out = self.bias_act_layers[i](ffn1_out)
                     # ffn2 matmul
                     ffn2_out = self.ffn2_layers[i](ffn1_out)
-                print("[debug5.5]\n", ffn2_out)
-
-                # all_reduce
-                if self.nranks > 1 and (not self.inference_args.use_ep):
-                    # if in_dynamic_or_pir_mode():
-                    if in_dynamic_mode():
-                        hcg = fleet.get_hybrid_communicate_group()
-                        mp_group = hcg.get_model_parallel_group()
-                        dist.all_reduce(ffn2_out, group=mp_group)
-                    else:
-                        dist.all_reduce(ffn2_out)
 
                 if (self.inference_args.moe_config.use_moe
                         and self.inference_args.moe_config.
@@ -1236,7 +1211,6 @@ class FusedTransformer(nn.Layer):
                     tmp_out = paddle.concat(outputs, axis=0)
 
             src = tmp_out
-            print("[debug6]\n", tmp_out)
 
         kwargs["multi_block_output"] = tmp_out
         kwargs["input_ids"] = input_ids

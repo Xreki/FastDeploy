@@ -21,6 +21,7 @@ from typing import Dict, Union
 import numpy as np
 import paddle
 from paddle import nn
+from paddlenlp.utils.log import logger
 
 from fastdeploy.config import LLMConfig
 from fastdeploy.model_executor.layers.activation import SiluAndMul
@@ -223,7 +224,7 @@ class Ernie45TModel(nn.Layer):
         llm_config: LLMConfig = None,
     ):
         """
-        Initializer for the ErnieBotFusedModel class.
+        Initializer for the Ernie45TModel class.
 
         Args:
 
@@ -273,6 +274,7 @@ class Ernie45TModel(nn.Layer):
         self.embeddings.load_state_dict(state_dict)
         self.norm.load_state_dict(state_dict)
         for i in range(self.num_layers):
+            logger.info(f"Start load layer {i}")
             self.hidden_layers[i].load_state_dict(state_dict)
 
     def forward(

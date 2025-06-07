@@ -50,7 +50,6 @@ class ModelForCasualLM(nn.Layer, ABC):
     def __init__(self, configs):
         """
         Args:
-            gpt (ErnieBotFusedModel): ErnieBotFusedModel model used for generation.
             configs (dict): Configurations including parameters such as max_dec_len, min_dec_len, decode_strategy,
                 ori_vocab_size, use_topp_sampling, use_top_k, etc.
         """

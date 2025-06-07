@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
+import json
 import os
 import random
 
@@ -114,12 +115,16 @@ class ModelRunner(ModelRunnerBase):
             self.model = model
 
     def init_rotary_position_embedding(self, max_model_len):
+        config_path = os.path.join(self.args.model_name_or_path, "config.json")
+        with open(config_path, "r") as f:
+            config = json.load(f)
         tmp_position_ids = paddle.arange(max_model_len).reshape((1, -1))
         self.share_inputs["rope_emb"] = get_rope(
             rotary_dim=self.model_cfg.hidden_size //
             self.model_cfg.num_attention_heads,
             position_ids=tmp_position_ids,
-            base=self.rope_theta)
+            base=self.rope_theta,
+            rope_scaling=config)
 
     def _init_kvcache(self):
         """

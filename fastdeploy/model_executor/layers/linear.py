@@ -708,3 +708,16 @@ class RowParallelLinear(LinearBase):
                 dtype=self._dtype,
                 is_bias=False,
             )
+
+    def forward_cuda(self, x):
+        if self.llm_config.quant_config:
+            out = self.quant_method.apply(self, x)
+        else:
+            out = paddle.matmul(x, self.linear_weight)
+
+        if self.nranks > 1:
+            from fastdeploy.distributed.communication_op import \
+                tensor_model_parallel_all_reduce
+            tensor_model_parallel_all_reduce(out)
+
+        return out
