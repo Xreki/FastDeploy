@@ -128,6 +128,7 @@ std::vector<paddle::Tensor> MoeExpertDispatch(
     const paddle::Tensor& input,
     const paddle::Tensor& gating_output,
     const paddle::optional<paddle::Tensor>& gating_correction_bias,
+    const paddle::optional<paddle::Tensor> &w4a8_in_scale,
     const int moe_topk,
     const bool group_moe,
     const bool topk_only_mode);

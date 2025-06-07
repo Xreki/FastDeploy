@@ -14,6 +14,7 @@
 # limitations under the License.
 """
 
+import os
 import argparse
 import time
 
@@ -51,8 +52,8 @@ class Worker:
 
         from fastdeploy.model_executor.models import \
             inference_runner_supported_models
-        if self.model_cfg.architectures[
-                0] in inference_runner_supported_models:
+
+        if self.model_cfg.architectures in inference_runner_supported_models:
             from fastdeploy.worker.model_runner.model_runner_inference import \
                 ModelRunner
         elif "ErnieMoEVLForCausalLM" in self.model_cfg.architectures:
@@ -163,7 +164,10 @@ class Worker:
         """
         step cuda
         """
-        if "ErnieForCausalLM" in self.model_cfg.architectures:
+        from fastdeploy.model_executor.models import \
+            inference_runner_supported_models
+
+        if self.model_cfg.architectures in inference_runner_supported_models:
             if os.getenv('USE_PIP_EFF_LLM'):
                 from efficientllm.gpu import step_paddle
             else:

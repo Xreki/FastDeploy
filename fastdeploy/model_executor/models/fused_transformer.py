@@ -147,14 +147,7 @@ class FusedTransformer(nn.Layer):
             ) for i in range(self.num_layers)
         ])
         if not self.use_micro_batch:
-            from fastdeploy.model_executor.layers.attention import Attention
-
-            if draft_type in ["mtp", "eagle"]:
-                attn_layer_name = f"ernie.mtp_block.{i}.self_attn"
-            elif self.inference_args.moe_config.use_moe and self.num_dense_layers > 0:
-                attn_layer_name = f"ernie.layers.{i}.self_attn"
-            else:
-                attn_layer_name = f"{base_model_prefix}.decoder.layers.{i}.self_attn"                
+            from fastdeploy.model_executor.layers.attention import Attention              
 
             self.attn_layers = nn.LayerList([
                 Attention(
@@ -169,7 +162,11 @@ class FusedTransformer(nn.Layer):
                         getattr(self.qkv_linear_layers[i], "qkv_out_scale",
                                 None) if inference_args.weight_dtype == "int8"
                         and inference_args.act_dtype == "int8" else None),
-                    layer_name=attn_layer_name,
+                    layer_name=(f"ernie.mtp_block.{i}.self_attn" 
+                                if draft_type in ["mtp", "eagle"]
+                                else f"ernie.mtp_block.{i}.self_attn" 
+                                if self.inference_args.moe_config.use_moe and self.num_dense_layers > 0
+                                else f"{base_model_prefix}.decoder.layers.{i}.self_attn")
                 )
                 for i in range(self.num_layers)
             ])

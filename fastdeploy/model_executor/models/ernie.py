@@ -1053,7 +1053,7 @@ class ErnieForCausalLM(ModelForCasualLM):
             moe_use_gate_correction_bias=self.configs.moe_config.
             moe_use_gate_correction_bias,
             moe_every2=self.configs.moe_config.moe_every2,
-            moe_topk=self.configs.moe_config.moe_topk,
+            moe_topk=self.configs.moe_config.top_k,
             moe_num_shared_experts=self.configs.moe_config.
             moe_num_shared_experts,
             moe_layer_start_index=self.configs.moe_config.

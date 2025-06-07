@@ -464,18 +464,7 @@ def build_stream_line_model(
     else:
         state_dict = sharing_state_dicts
         context = paddle.LazyGuard()
-        if "ErnieForCausalLM" in architectures:
-            state_dict = load_tp_checkpoint(
-                model_path,
-                ErnieBotFusedModel,
-                model_config,
-                return_numpy=True,
-            )
-        elif "Qwen2ForCausalLM" in architectures:
-            state_dict = load_checkpoint(model_path,
-                                         Qwen2Model,
-                                         model_config,
-                                         return_numpy=True)
+
     if "ErnieForCausalLM" in architectures:
         use_rmsnorm = config.get("use_rmsnorm", False)
     else:
