@@ -50,7 +50,7 @@ from fastdeploy.inference_args import GenerationPhase
 from ..layers.quantization import get_quantization_config
 from .ernie import ErnieBotPretrainedModel
 from .model_base import ModelRegistry
-from .qwen2 import Qwen2Model
+from .qwen2 import Qwen2PretrainedModel
 from .tokenizer import ErnieBotTokenizer
 from .utils import (_vocab_size_with_padding, convert_ndarray_dtype,
                     load_checkpoint, parser_quant_type)
@@ -58,7 +58,7 @@ from paddlenlp.transformers.configuration_utils import PretrainedConfig
 from paddlenlp.trl import llm_utils
 model_classes_mapping = {
     "ErnieForCausalLM": ErnieBotPretrainedModel,
-    "Qwen2ForCausalLM": Qwen2Model,
+    "Qwen2ForCausalLM": Qwen2PretrainedModel,
 }
 
 current_dir = os.path.dirname(os.path.abspath(__file__))

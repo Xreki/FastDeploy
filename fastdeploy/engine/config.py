@@ -350,7 +350,9 @@ class Config:
         if len(self.device_ids.split(',')) > self.tensor_parallel_size:
             self.device_ids = ",".join(
                 self.device_ids.split(',')[:self.tensor_parallel_size:])
-        assert len(self.device_ids.split(',')) == self.tensor_parallel_size
+        assert len(
+            self.device_ids.split(',')
+        ) == self.tensor_parallel_size, f"The number of available GPUs is {len(self.device_ids.split(','))}, which is less than the tensor parallel required {self.tensor_parallel_size}."
 
         assert self.tensor_parallel_size % self.nnode == 0, f"tensor_parallel_size: {self.tensor_parallel_size} should be divisible by nnode: {self.nnode}"
         self.tp_num_per_node = self.tensor_parallel_size // self.nnode
