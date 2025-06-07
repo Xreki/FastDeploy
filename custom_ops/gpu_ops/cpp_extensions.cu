@@ -302,7 +302,7 @@ std::vector<paddle::Tensor> MoEDeepGEMMDePermute(
 
 
 
-PYBIND11_MODULE(efficientllm_ops, m) {
+PYBIND11_MODULE(fastdeploy_ops, m) {
 
       m.def("get_expert_token_num", &GetExpertTokenNum,
             py::arg("topk_ids"), py::arg("num_experts"),

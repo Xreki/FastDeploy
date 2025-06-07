@@ -458,8 +458,8 @@ class FusedTransformer(nn.Layer):
         """
         import threading
 
-        enable_efficientllm_load_model_concurrency = int(
-            os.getenv("ENABLE_EFFICIENTLLM_LOAD_MODEL_CONCURRENCY", "1"))
+        enable_fastdeploy_load_model_concurrency = int(
+            os.getenv("ENABLE_FASTDEPLOY_LOAD_MODEL_CONCURRENCY", "1"))
 
         self.norm_before_qkv.load_state_dict(state_dict)
 
@@ -493,7 +493,7 @@ class FusedTransformer(nn.Layer):
             current_end_layer = min((wave + 1) * wave_size, self.num_layers)
             for i in range(current_start_layer, current_end_layer):
                 logger.info(f"Start load layer {i}")
-                if enable_efficientllm_load_model_concurrency:
+                if enable_fastdeploy_load_model_concurrency:
                     thread = threading.Thread(target=load_layer_state_dict,
                                               args=(i, ))
                     threads.append(thread)
@@ -522,8 +522,8 @@ class FusedTransformer(nn.Layer):
 
         import threading
 
-        enable_efficientllm_load_model_concurrency = int(
-            os.getenv("ENABLE_EFFICIENTLLM_LOAD_MODEL_CONCURRENCY", "1")
+        enable_fastdeploy_load_model_concurrency = int(
+            os.getenv("ENABLE_FASTDEPLOY_LOAD_MODEL_CONCURRENCY", "1")
         )
 
         def load_layer_state_dict(i):
@@ -546,7 +546,7 @@ class FusedTransformer(nn.Layer):
             )
             for i in range(current_start_layer, current_end_layer):
                 logger.info(f"Start update layer {i}")
-                if enable_efficientllm_load_model_concurrency:
+                if enable_fastdeploy_load_model_concurrency:
                     thread = threading.Thread(target=load_layer_state_dict, args=(i,))
                     threads.append(thread)
                     thread.start()
@@ -568,10 +568,10 @@ class FusedTransformer(nn.Layer):
 
     def post_process(self, **kwargs):
         """
-            Rebuild padding for the output of EfficientLLM.
+            Rebuild padding for the output of fastdeploy.
 
         Args:
-            multi_block_output (Tensor, optional): Output from EfficientLLM. Defaults to None.
+            multi_block_output (Tensor, optional): Output from fastdeploy. Defaults to None.
             cum_offsets (Tensor, optional): Cumulative offsets for each block in the input sequence. Defaults to None.
             seq_lens_encoder (Tensor, optional): Sequence lengths of encoder inputs. Defaults to None.
             seq_lens_decoder (Tensor, optional): Sequence lengths of decoder inputs. Defaults to None.

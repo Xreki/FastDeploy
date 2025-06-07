@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-""" setup for EfficientLLM custom ops """
+""" setup for FastDeploy custom ops """
 import os
 import shutil
 import json
@@ -129,7 +129,7 @@ if paddle.is_compiled_with_rocm():
     # NOTE(@duanyanhui): paddle.is_compiled_with_cuda() returns True when paddle compiled with rocm.
     # so we need to check if paddle compiled with rocm at first.
     setup(
-        name="efficientllm_ops",
+        name="fastdeploy_ops",
         ext_modules=CUDAExtension(
             sources=[
                 "gpu_ops/save_with_output.cc",
@@ -332,7 +332,7 @@ elif paddle.is_compiled_with_cuda():
         )
 
     setup(
-        name="efficientllm_ops",
+        name="fastdeploy_ops",
         ext_modules=CUDAExtension(
             sources=sources,
             extra_compile_args={"nvcc": nvcc_compile_args},
@@ -352,7 +352,7 @@ elif paddle.is_compiled_with_cuda():
 elif paddle.is_compiled_with_xpu():
     # TODO zhangsishuai@baidu.com to add xpu ops
     setup(
-        name="efficientllm_ops",
+        name="fastdeploy_ops",
         ext_modules=CUDAExtension(
             sources=[
                 "xpu_ops/set_mask_value.cu",
@@ -450,7 +450,7 @@ else:
                 if os.path.isfile(lib_file):
                     so_files.append(lib_file)
     setup(
-        name="efficientllm_cpu_ops",
+        name="fastdeploy_cpu_ops",
         ext_modules=CppExtension(
             sources=[
                 "cpu_ops/simd_sort.cc",
@@ -474,6 +474,6 @@ else:
         ),
         packages=find_namespace_packages(where="third_party"),
         package_dir={"": "third_party"},
-        package_data={"efficientllm_cpu_ops": include_files + so_files},
+        package_data={"fastdeploy_cpu_ops": include_files + so_files},
         include_package_data=True,
     )

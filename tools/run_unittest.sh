@@ -1,7 +1,7 @@
 #!/bin/bash
 set -x
 set -e
-cd EfficientLLM
+cd FastDeploy
 
 export no_proxy=agent.baidu.com:8118,localhost,127.0.0.1,localaddress,.localdomain.com,.cdn.bcebos.com,.baidu.com,bcebos.com
 export https_proxy=
@@ -15,7 +15,7 @@ ldconfig
 python -V
 pwd
 
-git config --global --add safe.directory /workspace1/EfficientLLM
+git config --global --add safe.directory /workspace1/FastDeploy
 
 python -m pip install --force-reinstall --pre paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/packages/nightly/cu126/
 python -m pip install --upgrade --force-reinstall -r requirements/unittest/requirements.txt

@@ -25,4 +25,4 @@ export MAX_DEC_LEN=64
 mpirun \
 -x EP_DECODER_PERF_TEST -x USE_CACHE_KV_INT8 -x MAX_SEQ_LEN -x MAX_DEC_LEN \
 --host $IP_LIST  \
-bash run_prediction_efficientllm_ep_decoder.sh ${1} ${2} ${BATCH_SIZE:-92} ${USE_MICRO_BATCH:-"False"} $IP_LIST
+bash run_prediction_ep_decoder.sh ${1} ${2} ${BATCH_SIZE:-92} ${USE_MICRO_BATCH:-"False"} $IP_LIST

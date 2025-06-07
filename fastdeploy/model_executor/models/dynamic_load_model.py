@@ -38,7 +38,7 @@ from fastdeploy.model_executor.models.ernie_vl.modeling_resampler import Variabl
 
 
 class DynamicLoadModel(nn.Layer):
-    """EfficientLLM model"""
+    """FastDeploy model"""
 
     def __init__(
         self,
@@ -46,7 +46,7 @@ class DynamicLoadModel(nn.Layer):
         dtype: str = "bfloat16",
         block_size: int = 64,
         max_len: int = 8192,
-        stage_flag: str = "EfficientLLM-Inference",
+        stage_flag: str = "FastDeploy-Inference",
         model_path: Optional[str] = None,
         ori_vocab_size: Optional[int] = None,
         draft_type: str = "None",
@@ -69,14 +69,14 @@ class DynamicLoadModel(nn.Layer):
         **kwargs,
     ):
         """
-        Initialize EfficientLLM model with configuration and build model immediately.
+        Initialize FastDeploy model with configuration and build model immediately.
 
         Args:
             config: Model configuration dictionary
             dtype: Data type for model parameters
             block_size: Block size for attention
             max_seq_len: Maximum sequence length
-            stage_flag: Stage flag for EfficientLLM
+            stage_flag: Stage flag for FastDeploy
             model_path: Path to model weights
             ori_vocab_size: Original vocabulary size
             **kwargs: Additional arguments for model configuration
@@ -127,7 +127,7 @@ class DynamicLoadModel(nn.Layer):
             self.update_parameters()
 
         logger.info(
-            "EfficientLLM model built successfully by DynamicLoadModel")
+            "FastDeploy model built successfully by DynamicLoadModel")
 
     def inject_pp_vision_model(self):
         """
@@ -177,7 +177,7 @@ class DynamicLoadModel(nn.Layer):
         logger.info("inject vision model successfully")
 
     def _build_model(self) -> paddle.nn.Layer:
-        """Build the EfficientLLM model architecture."""
+        """Build the FastDeploy model architecture."""
         from .export_model import build_stream_line_model
 
         _, _, model, _ = build_stream_line_model(

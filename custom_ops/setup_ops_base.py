@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-""" setup for EfficientLLM base ops """
+""" setup for FASTDEPLOY base ops """
 
 from paddle.utils.cpp_extension import setup, CppExtension
 
 setup(
-    name="efficientllm_base_ops",
+    name="fastdeploy_base_ops",
     ext_modules=CppExtension(
         sources=[
             "gpu_ops/save_with_output_msg.cc",

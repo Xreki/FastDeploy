@@ -11,10 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""efficientllm xpu ops"""
+"""fastdeploy xpu ops"""
 
 from fastdeploy.import_ops import import_custom_ops
 
 PACKAGE = "fastdeploy.model_executor.ops.xpu"
 
-import_custom_ops(PACKAGE, ".efficientllm_ops", globals())
+import_custom_ops(PACKAGE, ".fastdeploy_ops", globals())
