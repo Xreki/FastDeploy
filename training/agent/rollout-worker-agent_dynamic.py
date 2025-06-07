@@ -252,7 +252,8 @@ def cleanup_worker(job_id):
             os.kill(p.pid, signal.SIGKILL)
     logging.info("Killing update worker process")
 
-def background_start(job_id: str, model_path: str, model_version: str, modify_max_model_len_or_batch_size: bool) -> None:
+def background_start(job_id: str, model_path: str, model_version: str,
+                     modify_max_model_len_or_batch_size: bool) -> None:
     """Start worker by calling downstream HTTP APIs"""
     global start_cmd_executed
     try:
