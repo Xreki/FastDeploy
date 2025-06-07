@@ -168,7 +168,7 @@ class ModelRunner(ModelRunnerBase):
                 speculate_max_draft_tokens,
                 return_all_hidden_states=False,
                 moe_quant_type="weight_only_int4",
-                use_safetensors=False,
+                use_safetensors=True,
             )
             model.eval()
             self.model = model

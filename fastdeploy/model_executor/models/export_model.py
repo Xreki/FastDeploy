@@ -463,13 +463,6 @@ def build_stream_line_model(
             logger.info(f"start to loading weight: {model_state_path}")
             if os.path.exists(model_state_path):
                 state_dict = paddle.load(model_state_path, return_numpy=True)
-        else:
-            context = paddle.LazyGuard()
-            model_class = model_classes_mapping[architectures[0]]
-            state_dict = load_tp_checkpoint(model_path,
-                                            model_class,
-                                            model_config,
-                                            return_numpy=True)
     else:
         state_dict = sharing_state_dicts
         context = paddle.LazyGuard()
