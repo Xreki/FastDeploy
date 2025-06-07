@@ -29,8 +29,10 @@ from fastdeploy.model_executor.layers.attention import get_attention_backend
 from fastdeploy.model_executor.layers.attention.base_attention_backend import \
     AttentionBackend
 from fastdeploy.model_executor.layers.rotary_embedding import get_rope
+from fastdeploy.model_executor.layers.sample.meta_data import SamplingMetadata
 from fastdeploy.model_executor.layers.sample.sampler import Sampler
 from fastdeploy.model_executor.model_loader import get_model
+from fastdeploy.model_executor.ops.gpu import rebuild_padding
 from fastdeploy.model_executor.pre_and_post_process import (post_process,
                                                             pre_process,
                                                             step_cuda)
@@ -45,8 +47,11 @@ logger = get_logger("gpu_model_runner", "gpu_model_runner.log")
 class GPUModelRunner(ModelRunnerBase):
     """ """
 
-    def __init__(self, llm_config: LLMConfig, device: str):
+    def __init__(self, llm_config: LLMConfig, device: str, rank: int,
+                 local_rank: int):
         super().__init__(llm_config=llm_config, device=device)
+        self.rank = rank
+        self.local_rank = local_rank
 
         #  Sampler
         self.sampler = Sampler()
@@ -76,8 +81,6 @@ class GPUModelRunner(ModelRunnerBase):
 
         # Forward meta store the global meta information of the forward
         self.forward_meta: ForwardMeta = None
-        # Initialize forward meta data
-        self.initialize_forward_meta()
 
     def process_prefill_inputs(self, req_dicts: List[Request]):
         """ Process inputs for prefill tasks and update share_inputs buffer """
@@ -289,11 +292,13 @@ class GPUModelRunner(ModelRunnerBase):
         # Initialize rotary position embedding
         tmp_position_ids = paddle.arange(
             self.parallel_config.max_model_len).reshape((1, -1))
+        # TODO(gongshaotian): move to models
         self.share_inputs["rope_emb"] = get_rope(
             rotary_dim=self.model_config.hidden_size //
             self.model_config.num_attention_heads,
             position_ids=tmp_position_ids,
-            base=self.model_config.rope_theta)
+            base=self.model_config.rope_theta,
+            model_config=self.model_config)
 
         # Set block tables
         pre_max_block_num = (
@@ -328,7 +333,7 @@ class GPUModelRunner(ModelRunnerBase):
 
     def _prepare_inputs(self):
         """ prepare the model inputs """
-
+        # Remove padding
         (
             ids_remove_padding,
             cum_offsets,
@@ -339,13 +344,25 @@ class GPUModelRunner(ModelRunnerBase):
                         self.share_inputs["input_ids"],
                         self.share_inputs["seq_lens_this_time"],
                         use_speculate_method=False)
-
-        return (
-            ids_remove_padding,
-            cum_offsets,
-            padding_offset,
-            cu_seqlens_q,
-            cu_seqlens_k,
+        # Initialize forward meta data
+        self.share_inputs["ids_remove_padding"] = ids_remove_padding
+        self.share_inputs["cum_offsets"] = cum_offsets
+        self.share_inputs["padding_offset"] = padding_offset
+        self.share_inputs["cu_seqlens_q"] = cu_seqlens_q
+        self.share_inputs["cu_seqlens_k"] = cu_seqlens_k
+        self.initialize_forward_meta()
+        # Get sampling metadata
+        self.sampling_metadata = SamplingMetadata(
+            temperature=self.share_inputs["temperature"],
+            top_p=self.share_inputs["top_p"],
+            step_idx=self.share_inputs["step_idx"],
+            prompt_token_ids=self.share_inputs["input_ids"],
+            frequency_penalties=self.share_inputs["frequency_score"],
+            presence_penalties=self.share_inputs["presence_score"],
+            repetition_penalties=self.share_inputs["penalty_score"],
+            min_dec_lens=self.share_inputs["min_dec_len"],
+            bad_words_token_ids=self.share_inputs["bad_tokens"],
+            eos_token_ids=self.share_inputs["eos_token_id"],
         )
 
     def load_model(self) -> None:
@@ -373,7 +390,7 @@ class GPUModelRunner(ModelRunnerBase):
         """
         # Initialize forward meta
         self.forward_meta = ForwardMeta.init_forward_meta(
-            self.share_inputs, self.attn_backend)
+            self.share_inputs, self.attn_backends)
 
         # Initialzie attention meta data
         for attn_backend in self.attn_backends:
@@ -502,26 +519,44 @@ class GPUModelRunner(ModelRunnerBase):
             intermediate_tensors:
         """
         # 1. Prepare inputs of model and decoder.
-        (
-            ids_remove_padding,
-            cum_offsets,
-            padding_offset,
-            cu_seqlens_q,
-            cu_seqlens_k,
-        ) = self._prepare_inputs()
+        self._prepare_inputs()
 
         # 2. Padding inputs for cuda grph
 
         # 3. Execute model
-        self.model(**self.share_inputs)
-
+        hiddden_states = self.model(self.share_inputs["ids_remove_padding"],
+                                    self.forward_meta)
+        hiddden_states = rebuild_padding(
+            hiddden_states,
+            self.share_inputs["cum_offsets"],
+            self.share_inputs["seq_lens_this_time"],
+            self.share_inputs["seq_lens_decoder"],
+            self.share_inputs["seq_lens_encoder"],
+            self.share_inputs["padding_offset"],
+            self.args.max_model_len,
+        )
         # 4. Compute logits, Sample
-        self.sampler()
+        logits = self.model.compute_logits(hiddden_states)
+        next_tokens = self.sampler(logits, self.sampling_metadata)
 
         # 5. Speculative decode
 
         # 6. Post Process
-        model_output_data = ModelOutputData()
+        model_output_data = ModelOutputData(
+            next_tokens=next_tokens,
+            stop_flags=self.share_inputs["stop_flags"],
+            step_idx=self.share_inputs["step_idx"],
+            max_dec_len=self.share_inputs["max_dec_len"],
+            pre_ids=self.share_inputs["pre_ids"],
+            seq_lens_this_time=self.share_inputs["seq_lens_this_time"],
+            not_need_stop=self.share_inputs["not_need_stop"],
+            seq_lens_encoder=self.share_inputs["seq_lens_encoder"],
+            seq_lens_decoder=self.share_inputs["seq_lens_decoder"],
+            is_block_step=self.share_inputs["is_block_step"],
+            output_via_mq=self.model_config.output_via_mq,
+            msg_queue_id=self.model_config.msg_queue_id,
+            mp_rank=self.local_rank,
+            use_ep=self.parallel_config.use_ep)
         post_process(model_output_data)
 
         # 7. Updata 'infer_seed' and step_cuda()

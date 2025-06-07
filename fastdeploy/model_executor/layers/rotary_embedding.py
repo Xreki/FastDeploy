@@ -18,6 +18,8 @@ from typing import Any, Optional
 
 import paddle
 
+from fastdeploy.config import ModelConfig
+
 
 class ErnieRotaryEmbedding:
 
@@ -108,11 +110,11 @@ def get_rope(
     rotary_dim: int,
     base: 10000.0,
     position_ids,
+    model_config: ModelConfig,
     partial_rotary_factor=1,
-    rope_scaling: Optional[dict[str, Any]] = None,
 ):
-    rope_type = rope_scaling.get("architectures", None)
-    if "Qwen2ForCausalLM" in rope_type:
+    rope_scaling = model_config
+    if "Qwen2ForCausalLM" in model_config.architectures:
         rotary_emb_layer = QwenRotaryEmbedding(rotary_dim, base,
                                                partial_rotary_factor,
                                                rope_scaling)

@@ -350,7 +350,7 @@ def initialize_llm_config(args) -> LLMConfig:
     model_config = ModelConfig.from_dict(config)
 
     device_config = DeviceConfig()
-    model_config = ModelConfig()
+    # model_config = ModelConfig()
     kv_cache_config = KVCacheConfig()
     decoding_config = DecodingConfig()
     decoding_config = MoEConfig()

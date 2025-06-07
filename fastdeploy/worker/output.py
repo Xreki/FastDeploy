@@ -46,9 +46,6 @@ class ModelOutputData:
     # Sequence lengths for this step
     seq_lens_this_time: paddle.Tensor
 
-    #  Lengths of the stop sequences
-    stop_seqs_len: paddle.Tensor
-
     #  Indicates if stopping conditions should be ignored
     not_need_stop: bool
 

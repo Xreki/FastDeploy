@@ -72,7 +72,10 @@ class GpuWorker(WorkerBase):
 
         # Construct model runner
         self.model_runner: GPUModelRunner = GPUModelRunner(
-            self.llm_config, self.device)
+            llm_config=self.llm_config,
+            device=self.device,
+            rank=self.rank,
+            local_rank=self.local_rank)
 
     def determine_available_memory(self) -> int:
         """
