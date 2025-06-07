@@ -13,7 +13,6 @@ export CUDA_VISIBLE_DEVICES=$4
 export INFERENCE_MSG_QUEUE_ID=$4 # 随便给个名字
 export FD_LOG_DIR="./log_${INFERENCE_MSG_QUEUE_ID}" #不同实例的log路径
 export FD_MODEL_NAME="eb45t_vl"
-export RUN_MODE="test"
 
 # 注意调整 tensor-parallel-size
 python fastdeploy/entrypoints/openai/api_server.py --config training/agent_work_45T_vl.yaml --tensor-parallel-size $5 --port $2 --engine-worker-queue-port $3 --metrics-port $6 1>> $4-stdout.log 2>> $4-stderr.log

@@ -252,12 +252,12 @@ def cleanup_worker(job_id):
             os.kill(p.pid, signal.SIGKILL)
     logging.info("Killing update worker process")
 
-def background_start(job_id: str, model_path: str, model_version: str, modify_max_model_len: bool) -> None:
+def background_start(job_id: str, model_path: str, model_version: str, modify_max_model_len_or_batch_size: bool) -> None:
     """Start worker by calling downstream HTTP APIs"""
     global start_cmd_executed
     try:
         #  如果max_model_len被修改，需要重启进程
-        if modify_max_model_len and start_cmd_executed:
+        if modify_max_model_len_or_batch_size and start_cmd_executed:
             cleanup_worker(job_id)
             start_cmd_executed = False
     except Exception as e:
@@ -361,14 +361,14 @@ def start() -> str:
     info = json.loads(req.decode('utf-8'))
 
     logging.info(f"receive start request: {info}")
-    modify_max_model_len = False
+    modify_max_model_len_or_batch_size = False
     try:
         global max_model_len, max_num_seqs
         new_max_model_len = int(info["max_model_len"])
         new_max_num_seqs = int(info["max_num_seqs"])
         if max_model_len != new_max_model_len or max_num_seqs != new_max_num_seqs:
             set_max_model_len(new_max_model_len, new_max_num_seqs)
-            modify_max_model_len = True
+            modify_max_model_len_or_batch_size = True
             max_model_len = new_max_model_len
             max_num_seqs = new_max_num_seqs
     except Exception as e:
@@ -380,7 +380,7 @@ def start() -> str:
             "job_id": str(info["job_id"]),
             "model_path": str(info["model_info"]["local_path"]),
             "model_version": str(info["model_info"]["model_version"]),
-            "modify_max_model_len": modify_max_model_len
+            "modify_max_model_len_or_batch_size": modify_max_model_len_or_batch_size
         }
     )
     thread.start()
