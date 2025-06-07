@@ -20,7 +20,7 @@
 |         pod_ips         |   str   |                   各个节点的ip                   |    否    |    None    |
 |       use_warmup       |   bool   |                   是否进行预热                   |    否    |    False    |
 |  enable_prefix_caching  |   bool   |                 是否开启前缀缓存                 |    否    |    False    |
-|       enabe_mm          |   bool   |                 是否开启多模态缓存                 |    否    |    False    |
+|       enabe_mm          |   bool   |                 是否开启多模态                 |    否    |    False    |
 
 ## 请求参数
 
@@ -39,7 +39,6 @@
 |        preprocess_start_time        |   float   |                     预处理开始时间                     |    否    |  None  |
 |        preprocess_end_time        |   float   |                     预处理结束时间                     |    否    |  None  |
 |        multi_modal_inputs        |   dict   |                     多模态输入  （目前不支持）                   |    否    |  None  |
-|        raw_request        |   bool   |                     是否适配训练                     |    是    |  True  |
 
 ### 推理参数Sampling Parameters
 
