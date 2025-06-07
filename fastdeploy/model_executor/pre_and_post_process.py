@@ -25,10 +25,12 @@ from fastdeploy.model_executor.ops.gpu import (get_padding_offset,
 from fastdeploy.worker.output import ModelOutputData
 
 
-def pre_process(max_len: int, input_ids: paddle.Tensor,
-                seq_lens_this_time: int, use_speculate_method: bool,
-                draft_tokens: Optional[paddle.Tensor],
-                seq_lens_encoder: Optional[paddle.Tensor]):
+def pre_process(max_len: int,
+                input_ids: paddle.Tensor,
+                seq_lens_this_time: int,
+                use_speculate_method: bool,
+                draft_tokens: Optional[paddle.Tensor] = None,
+                seq_lens_encoder: Optional[paddle.Tensor] = None):
     """
     Preprocessing before embedding.
     Args:
@@ -81,7 +83,8 @@ def pre_process(max_len: int, input_ids: paddle.Tensor,
     )
 
 
-def post_process(tokens: paddle.Tensor, model_output: ModelOutputData) -> None:
+def post_process(sampled_token_ids: paddle.Tensor,
+                 model_output: ModelOutputData) -> None:
     """ Post-processing steps after completing a single token generation. """
     # 1. Set stop value
     paddle.assign(
@@ -100,7 +103,7 @@ def post_process(tokens: paddle.Tensor, model_output: ModelOutputData) -> None:
     )
 
     set_stop_value_multi_ends(
-        tokens,
+        sampled_token_ids,
         model_output.stop_flags,
         model_output.seq_lens_this_time,
         model_output.eos_token_id,
@@ -118,13 +121,13 @@ def post_process(tokens: paddle.Tensor, model_output: ModelOutputData) -> None:
             model_output.seq_lens_decoder,
             model_output.input_ids,
             model_output.stop_nums,
-            tokens,
+            sampled_token_ids,
             model_output.is_block_step,
         )
     # 3. Transmit the model's output and stop generation signal via message queue.
     #    In the future, we will abandon this approach.
     save_output_dynamic(
-        tokens,
+        sampled_token_ids,
         model_output.not_need_stop,
         model_output.mp_rank,
         model_output.msg_queue_id,

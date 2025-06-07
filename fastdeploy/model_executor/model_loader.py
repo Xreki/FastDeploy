@@ -28,7 +28,7 @@ from fastdeploy.model_executor.models.utils import (convert_ndarray_dtype,
 
 
 # TODO(gongshaotian): implement real interface to replace this
-def get_model(llm_config: LLMConfig) -> nn.Layer:
+def get_model_from_loader(llm_config: LLMConfig) -> nn.Layer:
     """ load or download model """
     model_loader = DefaultModelLoader(llm_config.load_config)
     model = model_loader.load_model(llm_config)
@@ -85,3 +85,5 @@ class DefaultModelLoader(BaseModelLoader):
             state_dict[k] = convert_ndarray_dtype(
                 v, llm_config.parallel_config.dtype)
         model.set_state_dict(state_dict)
+
+        return model

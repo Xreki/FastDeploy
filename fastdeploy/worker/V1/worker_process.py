@@ -142,7 +142,7 @@ class PaddleDisWorkerProc():
         self.nnode = 1
 
         while True:
-            if self.ranks > 1:
+            if self.rank > 1:
                 # Synchronize before updating weights
                 paddle.distributed.barrier()
 
@@ -170,7 +170,7 @@ class PaddleDisWorkerProc():
                 tasks, read_finish = self.task_queue.get_tasks()
                 if read_finish:
                     # Ensure that every worker get the task
-                    self.task_queue.value[0] = 0
+                    self.exist_task_signal.value[0] = 0
                     self.task_queue.read_finish_flag.set(0)
 
                 req_dicts = []

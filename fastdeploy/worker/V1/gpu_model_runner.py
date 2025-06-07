@@ -31,7 +31,7 @@ from fastdeploy.model_executor.layers.attention.base_attention_backend import \
 from fastdeploy.model_executor.layers.rotary_embedding import get_rope
 from fastdeploy.model_executor.layers.sample.meta_data import SamplingMetadata
 from fastdeploy.model_executor.layers.sample.sampler import Sampler
-from fastdeploy.model_executor.model_loader import get_model
+from fastdeploy.model_executor.model_loader import get_model_from_loader
 from fastdeploy.model_executor.ops.gpu import rebuild_padding
 from fastdeploy.model_executor.pre_and_post_process import (post_process,
                                                             pre_process,
@@ -145,16 +145,15 @@ class GPUModelRunner(ModelRunnerBase):
                     request.get("stop_token_ids")[0])] = np.array(
                         request.get("stop_token_ids"), dtype="int64")
 
-    def _dummy_prefill_inputs(self, num_total_tokens: int,
-                              number_of_tasks: int):
-        """ Set dummy prefill inputs to share inputs"""
-        full_length = num_total_tokens // number_of_tasks
+    def _dummy_prefill_inputs(self, num_tokens: int, batch_size: int):
+        """ Set dummy prefill inputs to share_inputs """
+        full_length = num_tokens // batch_size
         input_length = int(full_length * self.parallel_config.kv_cache_ratio)
         block_num = (input_length + self.parallel_config.block_size - 1 +
                      self.parallel_config.enc_dec_block_num
                      ) // self.parallel_config.block_size
 
-        for i in range(number_of_tasks):
+        for i in range(batch_size):
             idx = i
             self.share_inputs["input_ids"][idx:idx +
                                            1, :input_length] = np.array(
@@ -224,7 +223,6 @@ class GPUModelRunner(ModelRunnerBase):
             [max_num_seqs, 1], self.model_config.min_length, dtype='int64')
         self.share_inputs["max_length"] = paddle.full(
             [max_num_seqs, 1], self.model_config.max_length, dtype='int64')
-
         self.share_inputs["seq_lens_this_time"] = paddle.full(max_num_seqs,
                                                               0,
                                                               dtype='int32')
@@ -234,6 +232,8 @@ class GPUModelRunner(ModelRunnerBase):
         self.share_inputs["seq_lens_decoder"] = paddle.full([max_num_seqs, 1],
                                                             0,
                                                             dtype='int32')
+        self.share_inputs["step_seq_lens_encoder"] = paddle.full(
+            [max_num_seqs, 1], 0, dtype='int32')
         self.share_inputs["step_idx"] = paddle.full([max_num_seqs, 1],
                                                     0,
                                                     dtype='int64')
@@ -331,7 +331,7 @@ class GPUModelRunner(ModelRunnerBase):
                                                      -1,
                                                      dtype="int32")
 
-    def _prepare_inputs(self):
+    def _prepare_inputs(self) -> None:
         """ prepare the model inputs """
         # Remove padding
         (
@@ -340,7 +340,7 @@ class GPUModelRunner(ModelRunnerBase):
             padding_offset,
             cu_seqlens_q,
             cu_seqlens_k,
-        ) = pre_process(self.share_inputs["max_length"],
+        ) = pre_process(self.parallel_config.max_model_len,
                         self.share_inputs["input_ids"],
                         self.share_inputs["seq_lens_this_time"],
                         use_speculate_method=False)
@@ -371,7 +371,7 @@ class GPUModelRunner(ModelRunnerBase):
             f"Starting to load model {self.model_config.architectures[0]}")
         time_before_load = time.perf_counter()
         # 1. Load original model
-        self.model = get_model(llm_config=self.llm_config)
+        self.model = get_model_from_loader(llm_config=self.llm_config)
 
         # 2. Load lora model
 
@@ -391,7 +391,7 @@ class GPUModelRunner(ModelRunnerBase):
         """
         # Initialize forward meta
         self.forward_meta = ForwardMeta.init_forward_meta(
-            self.share_inputs, self.attn_backends)
+            self.share_inputs, self.attn_backends[0])
 
         # Initialzie attention meta data
         for attn_backend in self.attn_backends:
@@ -458,38 +458,57 @@ class GPUModelRunner(ModelRunnerBase):
             )
         self.attn_backends.append(attn_backend)
 
-    def _dummy_run(self, num_tokens) -> paddle.Tensor:
+    def _dummy_run(self, num_tokens, batch_size) -> paddle.Tensor:
         """
         Use dummy inputs to run before formal execution.
         Args:
             num_tokens: Expected number of tokens generated
         """
-
         # 1. Compute real num_tokens
-        self._dummy_prefill_inputs(self.parallel_config.max_model_len,
-                                   self.parallel_config.max_num_seqs)
-        (
-            ids_remove_padding,
-            cum_offsets,
-            padding_offset,
-            cu_seqlens_q,
-            cu_seqlens_k,
-        ) = self._prepare_inputs()
+        self._dummy_prefill_inputs(num_tokens, batch_size)
+
+        self._prepare_inputs()
 
         # 2. Initialize attention backend and forward meta data
 
         # 3. Prepare lora
 
         # 4. Run model
-        self.model(**self.share_inputs)
+        model_output = self.model(self.share_inputs["ids_remove_padding"],
+                                  self.forward_meta)
+        hiddden_states = rebuild_padding(
+            model_output,
+            self.share_inputs["cum_offsets"],
+            self.share_inputs["seq_lens_this_time"],
+            self.share_inputs["seq_lens_decoder"],
+            self.share_inputs["seq_lens_encoder"],
+            self.share_inputs["padding_offset"],
+            self.parallel_config.max_model_len,
+        )
 
         # 5. Execute spec decode
-        self._dummy_sampler_run()
-        pass
+        logits = self.model.compute_logits(hiddden_states)
+        sampled_token_ids = self.sampler(logits, self.sampling_metadata)
+        # self._dummy_sampler_run()
 
         # 6. post process
-        model_output_data = ModelOutputData()
-        post_process(model_output_data)
+        model_output_data = ModelOutputData(
+            next_tokens=self.share_inputs["next_tokens"],
+            stop_flags=self.share_inputs["stop_flags"],
+            step_idx=self.share_inputs["step_idx"],
+            max_dec_len=self.share_inputs["max_dec_len"],
+            pre_ids=self.share_inputs["pre_ids"],
+            seq_lens_this_time=self.share_inputs["seq_lens_this_time"],
+            not_need_stop=self.share_inputs["not_need_stop"],
+            seq_lens_encoder=self.share_inputs["seq_lens_encoder"],
+            seq_lens_decoder=self.share_inputs["seq_lens_decoder"],
+            is_block_step=self.share_inputs["is_block_step"],
+            output_via_mq=self.model_config.output_via_mq,
+            msg_queue_id=self.model_config.msg_queue_id,
+            mp_rank=self.local_rank,
+            use_ep=self.parallel_config.use_ep)
+        post_process(sampled_token_ids=sampled_token_ids,
+                     model_output=model_output_data)
 
         # 7. Updata 'infer_seed' and step_cuda()
         self.share_inputs["infer_seed"].add_(self.infer_seed_increment)
@@ -525,26 +544,27 @@ class GPUModelRunner(ModelRunnerBase):
         # 2. Padding inputs for cuda grph
 
         # 3. Execute model
-        hiddden_states = self.model(self.share_inputs["ids_remove_padding"],
-                                    self.forward_meta)
+        model_output = self.model(self.share_inputs["ids_remove_padding"],
+                                  self.forward_meta)
         hiddden_states = rebuild_padding(
-            hiddden_states,
+            model_output,
             self.share_inputs["cum_offsets"],
             self.share_inputs["seq_lens_this_time"],
             self.share_inputs["seq_lens_decoder"],
             self.share_inputs["seq_lens_encoder"],
             self.share_inputs["padding_offset"],
-            self.args.max_model_len,
+            self.parallel_config.max_model_len,
         )
+
         # 4. Compute logits, Sample
         logits = self.model.compute_logits(hiddden_states)
-        next_tokens = self.sampler(logits, self.sampling_metadata)
+        sampled_token_ids = self.sampler(logits, self.sampling_metadata)
 
         # 5. Speculative decode
 
         # 6. Post Process
         model_output_data = ModelOutputData(
-            next_tokens=next_tokens,
+            next_tokens=self.share_inputs["next_tokens"],
             stop_flags=self.share_inputs["stop_flags"],
             step_idx=self.share_inputs["step_idx"],
             max_dec_len=self.share_inputs["max_dec_len"],
@@ -558,7 +578,8 @@ class GPUModelRunner(ModelRunnerBase):
             msg_queue_id=self.model_config.msg_queue_id,
             mp_rank=self.local_rank,
             use_ep=self.parallel_config.use_ep)
-        post_process(model_output_data)
+        post_process(sampled_token_ids=sampled_token_ids,
+                     model_output=model_output_data)
 
         # 7. Updata 'infer_seed' and step_cuda()
         self.share_inputs["infer_seed"].add_(self.infer_seed_increment)
@@ -579,14 +600,11 @@ class GPUModelRunner(ModelRunnerBase):
         # 1. Profile with multimodal encoder & encoder cache
 
         # 2. Dummy run
-        hidden_states = self._dummy_run(self.max_num_tokens)
+        self._dummy_run(num_tokens=self.parallel_config.max_model_len,
+                        batch_size=self.parallel_config.max_num_seqs)
 
-        # 3. Dummy sampler run
-        sampler_output = self._dummy_sampler_run()
-
-        # 4. gc
+        # 3. gc
         paddle.device.cuda.synchronize()
-        del hidden_states, sampler_output
         paddle.device.cuda.empty_cache()
         gc.collect()
 
