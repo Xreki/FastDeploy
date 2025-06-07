@@ -19,8 +19,6 @@ import os
 import paddle
 import paddle.distributed as dist
 from paddle import nn
-from paddle.distributed import fleet
-from paddle.framework import in_dynamic_mode
 from paddle.incubate.nn.functional import blha_get_max_len
 from paddlenlp.utils.log import logger
 
@@ -164,7 +162,7 @@ class FusedTransformer(nn.Layer):
                         and inference_args.act_dtype == "int8" else None),
                     layer_name=(f"ernie.mtp_block.{i}.self_attn" 
                                 if draft_type in ["mtp", "eagle"]
-                                else f"ernie.mtp_block.{i}.self_attn" 
+                                else f"ernie.layers.{i}.self_attn" 
                                 if self.inference_args.moe_config.use_moe and self.num_dense_layers > 0
                                 else f"{base_model_prefix}.decoder.layers.{i}.self_attn")
                 )
@@ -175,7 +173,7 @@ class FusedTransformer(nn.Layer):
             self.attn_layers = nn.LayerList([
                 Attention(
                     inference_args=inference_args,
-                    layer_name=(
+                    prefix=(
                         f"ernie.layers.{i}.self_attn"
                         if self.inference_args.moe_config.use_moe and
                         self.inference_args.moe_config.moe_layer_start_index
@@ -252,7 +250,7 @@ class FusedTransformer(nn.Layer):
         if not self.fuse_ffn_act:
             self.bias_act_layers = nn.LayerList([
                 SiluAndMul(
-                    inference_args=inference_args,
+                    llm_config=llm_config,
                     bias=getattr(self.ffn1_layers[i], "ffn1_bias", None),
                     act_method=act_method,
                     dequant_scales=getattr(self.ffn1_layers[i],
@@ -280,11 +278,16 @@ class FusedTransformer(nn.Layer):
                         inference_args=inference_args,
                         moe_config=inference_args.moe_config,
                         layer_name=f"moe_layers.{i}",
-                        gate_weight_key=f"ernie.decoder.moe_layers.{i}.gate_weight",
-                        ffn1_expert_weight_key=f"ernie.decoder.moe_layers.{i}.moe_ffn1_weight",
-                        ffn2_expert_weight_key=f"ernie.decoder.moe_layers.{i}.moe_ffn2_weight",
-                        ffn1_bias_key=f"ernie.decoder.moe_layers.{i}.moe_ffn1_bias",
-                        ffn2_bias_key=f"ernie.decoder.moe_layers.{i}.moe_ffn2_bias",
+                        gate_weight_key=
+                        f"ernie.decoder.moe_layers.{i}.gate_weight",
+                        ffn1_expert_weight_key=
+                        f"ernie.decoder.moe_layers.{i}.moe_ffn1_weight",
+                        ffn2_expert_weight_key=
+                        f"ernie.decoder.moe_layers.{i}.moe_ffn2_weight",
+                        ffn1_bias_key=
+                        f"ernie.decoder.moe_layers.{i}.moe_ffn1_bias",
+                        ffn2_bias_key=
+                        f"ernie.decoder.moe_layers.{i}.moe_ffn2_bias",
                         layer_idx=i,
                     ) for i in range(self.num_layers)
                 ])
@@ -337,15 +340,18 @@ class FusedTransformer(nn.Layer):
                         + ".{}.up_gate_proj.weight",
                         ffn2_expert_weight_key=f"ernie.layers.{i}.mlp.experts"
                         + ".{}.down_proj.weight",
-                        ffn1_expert_weight_scale_key=f"ernie.layers.{i}.mlp.experts" +
+                        ffn1_expert_weight_scale_key=
+                        f"ernie.layers.{i}.mlp.experts" +
                         ".{}.up_gate_proj.weight_quanter",
-                        ffn2_expert_weight_scale_key=f"ernie.layers.{i}.mlp.experts" +
+                        ffn2_expert_weight_scale_key=
+                        f"ernie.layers.{i}.mlp.experts" +
                         ".{}.down_proj.weight_quanter",
                         ffn1_expert_in_scale_key=f"ernie.layers.{i}.mlp.experts"
                         + ".{}.up_gate_proj.activation_quanter",
                         ffn2_expert_in_scale_key=f"ernie.layers.{i}.mlp.experts"
                         + ".{}.down_proj.activation_quanter",
-                        gate_correction_bias_key=f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
+                        gate_correction_bias_key=
+                        f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
                         ffn1_bias_key=None,
                         ffn2_bias_key=None,
                         ffn1_shared_weight_key=None,
@@ -402,9 +408,12 @@ class FusedTransformer(nn.Layer):
                         moe_quant_type,
                         layer_idx=i,
                         gate_weight_key=f"ernie.layers.{i}.mlp.gate.weight",
-                        gate_correction_bias_key=f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
-                        ffn1_expert_weight_key="ernie.layers.{}.mlp.experts.{}.up_gate_proj.weight",
-                        ffn2_expert_weight_key="ernie.layers.{}.mlp.experts.{}.down_proj.weight",
+                        gate_correction_bias_key=
+                        f"ernie.layers.{i}.mlp.moe_statics.e_score_correction_bias",
+                        ffn1_expert_weight_key=
+                        f"ernie.layers.{i}.mlp.experts.{{}}.up_gate_proj.weight",
+                        ffn2_expert_weight_key=
+                        f"ernie.layers.{i}.mlp.experts.{{}}.down_proj.weight",
                     ) for i in range(
                         self.num_dense_layers,
                         self.num_layers,
@@ -657,15 +666,10 @@ class FusedTransformer(nn.Layer):
         qkv_out = self.qkv_linear_layers[layer_id](ln_out)
 
         # attention
-        args = self.micro_batch_control.micro_batches[micro_batch_id].args
         # breakpoint()
         attn_out = self.attn_layers[layer_id](
-            q=None,
-            k=None,
-            v=None,
-            forward_meta=forward_meta,
             qkv=qkv_out,
-            kv_signal_data=kv_signal_data,
+            forward_meta=forward_meta,
         )
         # out_linear
         out_linear_out = self.out_linear_layers[layer_id](attn_out)
@@ -1057,26 +1061,12 @@ class FusedTransformer(nn.Layer):
 
                 else:
                     atten_out = self.attn_layers[i](
-                        q=None,
-                        k=None,
-                        v=None,
-                        forward_meta=forward_meta,
                         qkv=qkv_out,
-                        kv_signal_data=kv_signal_data,
+                        forward_meta=forward_meta,
                     )
 
             # out_linear
             out_linear_out = self.out_linear_layers[i](atten_out)
-
-            # all_reduce
-            if self.nranks > 1 and (not self.inference_args.use_ep):
-                # if in_dynamic_or_pir_mode():
-                if in_dynamic_mode():
-                    hcg = fleet.get_hybrid_communicate_group()
-                    mp_group = hcg.get_model_parallel_group()
-                    dist.all_reduce(out_linear_out, group=mp_group)
-                else:
-                    dist.all_reduce(out_linear_out)
 
             # ffn layernorm
             tmp_out, residual_input = self.ffn_layernorm_layers[i](
@@ -1119,15 +1109,6 @@ class FusedTransformer(nn.Layer):
                         ffn1_out = self.bias_act_layers[i](ffn1_out)
                     # ffn2 matmul
                     ffn2_out = self.ffn2_layers[i](ffn1_out)
-                # all_reduce
-                if self.nranks > 1 and (not self.inference_args.use_ep):
-                    # if in_dynamic_or_pir_mode():
-                    if in_dynamic_mode():
-                        hcg = fleet.get_hybrid_communicate_group()
-                        mp_group = hcg.get_model_parallel_group()
-                        dist.all_reduce(ffn2_out, group=mp_group)
-                    else:
-                        dist.all_reduce(ffn2_out)
 
                 if (self.inference_args.moe_config.use_moe
                         and self.inference_args.moe_config.

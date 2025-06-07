@@ -84,7 +84,7 @@ class LinearBase(nn.Layer):
         self.shift_key = f"{prefix}.shift_bias"
         self.smooth_key = f"{prefix}.smooth_weight"
         self.out_scale_key = f"{prefix}.out_scale"
-        
+
         self._dtype = self._helper.get_default_dtype()
 
         if llm_config.quant_config:
@@ -504,24 +504,24 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         if self.weight_key in state_dict.keys():
             weight_tensor = get_tensor(state_dict.pop(self.weight_key))
         else:
-            gate_weight_key = self.weight_key.replace("linear1", "gate_proj")
-            up_weight_key = self.weight_key.replace("linear1", "up_proj")
+            gate_weight_key = self.weight_key.replace("up_gate_proj",
+                                                      "gate_proj")
+            up_weight_key = self.weight_key.replace("up_gate_proj", "up_proj")
             gate_tensor = get_tensor(state_dict.pop(gate_weight_key))
             up_tensor = get_tensor(state_dict.pop(up_weight_key))
             weight_tensor = paddle.concat([gate_tensor, up_tensor], axis=-1)
 
             if self.with_bias:
-                gate_bias_key = self.bias_key.replace("linear1", "gate_proj")
+                gate_bias_key = self.bias_key.replace("up_gate_proj",
+                                                      "gate_proj")
                 bias_tensor = get_tensor(state_dict.pop(gate_bias_key)).astype(
-                    paddle.get_default_dtype()
-                )
-                converted_bias_tensor = paddle.zeros(
-                    shape=list(bias_tensor.shape), dtype=bias_tensor.dtype
-                )
+                    paddle.get_default_dtype())
+                converted_bias_tensor = paddle.zeros(shape=list(
+                    bias_tensor.shape),
+                                                     dtype=bias_tensor.dtype)
                 if not self.use_fast_ffn:
                     converted_bias_tensor = paddle.concat(
-                        [bias_tensor[::2], bias_tensor[1::2]], axis=0
-                    )
+                        [bias_tensor[::2], bias_tensor[1::2]], axis=0)
                 else:
                     converted_bias_tensor = bias_tensor
                 state_dict[self.bias_key] = converted_bias_tensor
@@ -593,17 +593,12 @@ class QKVParallelLinear(ColumnParallelLinear):
             k_tensor = get_tensor(state_dict.pop(k_weight_key))
             v_tensor = get_tensor(state_dict.pop(v_weight_key))
             weight_tensor = paddle.concat([q_tensor, k_tensor, v_tensor],
-                                          axis=-1).transpose([1, 0])   
-            weight_tensor = weight_tensor.reshape(
-                    [
-                        (
-                            self.num_heads_per_rank
-                            + 2 * self.kv_num_heads_per_rank
-                        )
-                        * (self.head_dim),
-                        self.embed_dim,
-                    ]
-                )
+                                          axis=-1).transpose([1, 0])
+            weight_tensor = weight_tensor.reshape([
+                (self.num_heads_per_rank + 2 * self.kv_num_heads_per_rank) *
+                (self.head_dim),
+                self.embed_dim,
+            ])
             weight_tensor = paddle.transpose(weight_tensor, perm=[1, 0])
 
         if self.llm_config.quant_config:
@@ -751,3 +746,16 @@ class RowParallelLinear(LinearBase):
                 dtype=self._dtype,
                 is_bias=False,
             )
+
+    def forward_cuda(self, x):
+        if self.llm_config.quant_config:
+            out = self.quant_method.apply(self, x)
+        else:
+            out = paddle.matmul(x, self.linear_weight)
+
+        if self.nranks > 1:
+            from fastdeploy.distributed.communication_op import \
+                tensor_model_parallel_all_reduce
+            tensor_model_parallel_all_reduce(out)
+
+        return out

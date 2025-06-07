@@ -22,6 +22,7 @@ import json
 import multiprocessing as mp
 import os
 import random
+import re
 import struct
 from functools import partial
 from typing import Callable, Optional
@@ -1352,3 +1353,77 @@ def load_checkpoint(model_path, cls, config, return_numpy=True):
                 model_path, cls, config, return_numpy=return_numpy
             )
     return state_dict
+
+
+def parser_quant_type(quant_type):
+    """
+    Parse the quantization type string and return the corresponding quantization types for weights,
+    activations, and custom.
+
+    Args:
+        quant_type (str): The quantization type string. It can be one of the following formats:
+            - "weight_only_int8" or "wint8": Only weights are quantized to int8.
+            - "weight_only_int4" or "wint4": Only weights are quantized to int4.
+            - A custom string in the format of "wxaybzcfp8", where 'x', 'y', 'z' are the quantization bitwidths
+            for weights, activations, and custom respectively,
+                and 'a', 'b', 'c' are the prefixes indicating the quantization types
+                (e.g., 'fp8' for floating-point 8-bit).
+                If a prefix is missing, the default quantization type will be used.
+
+    Returns:
+        tuple: A tuple of three strings representing the quantization types for weights, activations,
+                and custom respectively.
+                If the input is "weight_only_int8" or "wint8", returns ("int8", default_type, default_type).
+                If the input is "weight_only_int4" or "wint4", returns ("int4", default_type, default_type).
+                For custom strings, returns the parsed quantization types based on the input format.
+
+    Raises:
+        AssertionError: If the custom quantization type string format is incorrect.
+    """
+    default_type = paddle.get_default_dtype()
+    conver_dict = {
+        "8": "int8",
+        "4": "int4",
+        "16": paddle.get_default_dtype,
+        "fp8": "float8_e4m3fn",
+        "fp16": "float16",
+        "bf16": "bfloat16",
+        "fp32": "float32"
+    }
+    cache_type = default_type
+    if "c8" in quant_type:
+        cache_type = "int8"
+    elif "cfp8" in quant_type:
+        cache_type = "fp8"
+    elif "c4" in quant_type:
+        cache_type = "int4"
+    if "weight_only_int8" in quant_type or "wint8" in quant_type:
+        return "int8", default_type, cache_type
+    elif "weight_only_int4" in quant_type or "wint4" in quant_type:
+        return "int4", default_type, cache_type
+    else:
+        # split quant type, eg. w4afp8c8 -> ['w', '4', 'a', 'fp8', 'c', '8']
+        pattern = f"({'|'.join(map(re.escape, ['w', 'a', 'c']))})"
+        splited_type = re.split(pattern, quant_type)
+        splited_type = [tmp_type for tmp_type in splited_type if tmp_type]
+        assert (len(splited_type) % 2 == 0 and len(splited_type)
+                <= 6), f"Quant type[{quant_type}] format error."
+
+        quant_type_list = []
+        if "w" in splited_type:
+            w_idx = splited_type.index("w")
+            quant_type_list.append(conver_dict[splited_type[w_idx + 1]])
+        else:
+            quant_type_list.append(default_type)
+        if "a" in splited_type:
+            a_idx = splited_type.index("a")
+            quant_type_list.append(conver_dict[splited_type[a_idx + 1]])
+        else:
+            quant_type_list.append(default_type)
+        if "c" in splited_type:
+            c_idx = splited_type.index("c")
+            quant_type_list.append(conver_dict[splited_type[c_idx + 1]])
+        else:
+            quant_type_list.append(default_type)
+
+        return quant_type_list[0], quant_type_list[1], quant_type_list[2]

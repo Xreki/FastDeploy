@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
+import json
 import os
 import random
 
@@ -27,6 +28,12 @@ if current_platform.is_cuda() and current_platform.available():
     from fastdeploy.model_executor.layers.utils import (
         remove_padding, speculate_remove_padding)
 
+from fastdeploy.model_executor.layers.sample.meta_data import SamplingMetadata
+from fastdeploy.model_executor.layers.sample.sampler import Sampler
+from fastdeploy.model_executor.ops.gpu import (rebuild_padding, save_output,
+                                               set_stop_value_multi_ends,
+                                               update_inputs)
+
 
 class ModelRunner(ModelRunnerBase):
 
@@ -36,6 +43,7 @@ class ModelRunner(ModelRunnerBase):
         super().__init__(config, args)
         self._reset_paddle_env()
         self.init_local_params()
+        self.sampler = Sampler()
 
     def _reset_paddle_env(self):
         #FLAGS_gqa_use_tensorcore
@@ -160,18 +168,22 @@ class ModelRunner(ModelRunnerBase):
                 speculate_max_draft_tokens,
                 return_all_hidden_states=False,
                 moe_quant_type="weight_only_int4",
-                use_safetensors=True,
+                use_safetensors=False,
             )
             model.eval()
             self.model = model
 
     def init_rotary_position_embedding(self, max_model_len):
+        config_path = os.path.join(self.args.model_name_or_path, "config.json")
+        with open(config_path, "r") as f:
+            config = json.load(f)
         tmp_position_ids = paddle.arange(max_model_len).reshape((1, -1))
         self.share_inputs["rope_emb"] = get_rope(
             rotary_dim=self.model_cfg.hidden_size //
             self.model_cfg.num_attention_heads,
             position_ids=tmp_position_ids,
-            base=self.rope_theta)
+            base=self.rope_theta,
+            rope_scaling=config)
 
     def _init_kvcache(self):
         """
@@ -358,11 +370,82 @@ class ModelRunner(ModelRunnerBase):
         self._init_forward_meta()
         self.attn_backend.init_attention_metadata(self.forward_meta)
 
+        self.sampling_metadata = SamplingMetadata(
+            temperature=self.share_inputs["temperature"],
+            top_p=self.share_inputs["top_p"],
+            step_idx=self.share_inputs["step_idx"],
+            prompt_token_ids=self.share_inputs["input_ids"],
+            frequency_penalties=self.share_inputs["frequency_score"],
+            presence_penalties=self.share_inputs["presence_score"],
+            repetition_penalties=self.share_inputs["penalty_score"],
+            min_dec_lens=self.share_inputs["min_dec_len"],
+            bad_words_token_ids=self.share_inputs["bad_tokens"],
+            eos_token_ids=self.share_inputs["eos_token_id"],
+        )
+
     def generate(self):
         self.pre_process()
-        hiddden_states = self.model(**self.share_inputs)
+        hiddden_states = self.model(self.share_inputs["ids_remove_padding"],
+                                    self.forward_meta)
+        # rebuild_padding
+        hiddden_states = rebuild_padding(
+            hiddden_states,
+            self.share_inputs["cum_offsets"],
+            self.share_inputs["seq_lens_this_time"],
+            self.share_inputs["seq_lens_decoder"],
+            self.share_inputs["seq_lens_encoder"],
+            self.share_inputs["padding_offset"],
+            self.args.max_model_len,
+        )
         logits = self.model.compute_logits(hiddden_states)
-        self.model.sample(logits, **self.share_inputs)
+
+        # sampler & save_output
+        next_tokens = self.sampler(logits, self.sampling_metadata)
+        self.post_process(next_tokens)
+
+    def post_process(self, next_tokens):
+        paddle.assign(
+            paddle.where(
+                self.share_inputs["stop_flags"],
+                self.share_inputs["step_idx"],
+                self.share_inputs["step_idx"] + 1,
+            ),
+            self.share_inputs["step_idx"],
+        )
+        length_cond = paddle.greater_equal(self.share_inputs["step_idx"],
+                                           self.share_inputs["max_dec_len"])
+        paddle.assign(
+            paddle.logical_or(self.share_inputs["stop_flags"], length_cond),
+            self.share_inputs["stop_flags"],
+        )
+
+        set_stop_value_multi_ends(
+            next_tokens,
+            self.share_inputs["stop_flags"],
+            self.share_inputs["seq_lens_this_time"],
+            self.share_inputs["eos_token_id"],
+            self.share_inputs["next_tokens"],
+            False,
+        )  # multi ends
+        # update inputs
+        with paddle.framework._no_check_dy2st_diff():
+            update_inputs(
+                self.share_inputs["stop_flags"],
+                self.share_inputs["not_need_stop"],
+                self.share_inputs["seq_lens_this_time"],
+                self.share_inputs["seq_lens_encoder"],
+                self.share_inputs["seq_lens_decoder"],
+                self.share_inputs["input_ids"],
+                self.share_inputs["stop_nums"],
+                next_tokens,
+                self.share_inputs["is_block_step"],
+            )
+        save_output(
+            next_tokens,
+            self.share_inputs["not_need_stop"],
+            self.rank,
+            False,  # use_ep
+        )
 
     def clear_parameters(self, pid):
         if "caches" in self.share_inputs:

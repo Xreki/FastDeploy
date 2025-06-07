@@ -15,19 +15,22 @@
 """
 
 from __future__ import annotations
-from fastdeploy.model_executor.ops.gpu import append_attention
-from fastdeploy.model_executor.layers.attention.ops import \
-    append_attention
-from fastdeploy.model_executor.layers.attention.ops import \
-    get_block_shape_and_split_kv_block
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
+
 import paddle
+
+from fastdeploy.model_executor.layers.attention.ops import (
+    append_attention, get_block_shape_and_split_kv_block)
+
 if TYPE_CHECKING:
     from paddle._typing.dtype_like import _DTypeLiteral
-from fastdeploy.model_executor.layers.attention.base_attention_backend import AttentionBackend
-from fastdeploy.worker.model_runner import ForwardMeta
+
 from fastdeploy.model_executor.layers.attention import Attention
+from fastdeploy.model_executor.layers.attention.base_attention_backend import \
+    AttentionBackend
+from fastdeploy.worker.model_runner import ForwardMeta
 
 
 @dataclass
@@ -77,11 +80,8 @@ class AppendAttentionBackend(AttentionBackend):
         self.rope_theta = (10000.0 if model_runner.model_cfg.rope_theta is None
                            else model_runner.model_cfg.rope_theta)
         self.rope_3d = getattr(model_runner.model_cfg, "rope_3d", False)
-        self.use_neox_rotary_style = getattr(
-            model_runner.model_cfg, "use_neox_rotary_style", False)
         self.causal = getattr(model_runner.model_cfg, "causal", True)
         self.speculate_method = model_runner.args.speculate_method
-        self.use_speculate = self.speculate_method is not None
         self.speculate_max_draft_token_num = model_runner.args.speculate_max_draft_tokens
         self.num_heads = model_runner.model_cfg.num_attention_heads // model_runner.nranks
         self.kv_num_heads = int(
@@ -151,10 +151,9 @@ class AppendAttentionBackend(AttentionBackend):
         q,
         k,
         v,
+        qkv,
         layer: Attention,
         forward_meta: ForwardMeta,
-        qkv,
-        kv_signal_data=None
     ):
         """
         forward_mixed
@@ -194,10 +193,10 @@ class AppendAttentionBackend(AttentionBackend):
             getattr(layer, "cache_v_zp", None),
             layer.linear_shift,
             layer.linear_smooth,
-            kv_signal_data,
+            None,  # kv_signal_data,
             metadata._fuse_kernel_compute_dtype,
             getattr(layer, "cache_quant_type_str", "none"),
-            self.use_neox_rotary_style,
+            layer.use_neox_rotary_style,
             self.rope_3d,
             self.max_seq_len,
             getattr(layer, "quant_max_bound", 0.0),
@@ -209,7 +208,7 @@ class AppendAttentionBackend(AttentionBackend):
             metadata.encoder_max_partition_size,
             self.speculate_max_draft_token_num + 1,
             self.causal,
-            self.use_speculate
+            self.speculate_method is not None,
         )[0]
 
         return res
