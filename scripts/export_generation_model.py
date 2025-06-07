@@ -252,10 +252,10 @@ if __name__ == "__main__":
     fleet.init(is_collective=True, strategy=strategy)
 
     from fastdeploy.model_executor.models.export_model import (
-        export_efficientllm_model,
+        export_fastdeploy_model,
     )
 
-    model = export_efficientllm_model(args)
+    model = export_fastdeploy_model(args)
 
     # Generate the unique id
     unique_id_generator = UniqueIDGenerator()

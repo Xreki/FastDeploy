@@ -1,4 +1,4 @@
-# Copyright (c) 2024 PaddlePaddle Authors. All Rights Reserved.
+# Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-export EP_PREFILL_PERF_TEST=True
-export MAX_DEC_LEN=1
-export CKPT_PATH=${1:-$CKPT_PATH}
 
-bash run_prediction_efficientllm_ep_prefill.sh ${CKPT_PATH}
+
+export EP_DECODER_PERF_TEST=True
+export USE_CACHE_KV_INT8=True
+export MAX_SEQ_LEN=5000
+export MAX_DEC_LEN=64
+
+bash run_prediction_ep_decoder.sh ${1} 1 ${BATCH_SIZE:-52} ${USE_MICRO_BATCH:-"False"}

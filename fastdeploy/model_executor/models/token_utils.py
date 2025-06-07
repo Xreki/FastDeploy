@@ -449,8 +449,8 @@ def check_python_safe_export():
     required_filenames.extend(get_safe_python("./ernie_bot/"))
     required_filenames.extend(get_safe_python("./ernie_bot/moe/"))
     required_filenames.extend(get_safe_python("./ernie_bot/moe/distributed/"))
-    required_filenames.extend(get_safe_python("./ernie_bot/efficientllm/"))
-    required_filenames.extend(get_safe_python("./ernie_bot/efficientllm/layers/"))
+    required_filenames.extend(get_safe_python("./ernie_bot/fastdeploy/"))
+    required_filenames.extend(get_safe_python("./ernie_bot/fastdeploy/layers/"))
 
     python_files = find_python_files_without_cipher("./")
     assert set(python_files) == set(

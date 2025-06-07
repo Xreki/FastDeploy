@@ -11,12 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""efficientllm gpu ops"""
+"""fastdeploy gpu ops"""
 
 import os
 from fastdeploy.import_ops import import_custom_ops
 
 PACKAGE = "fastdeploy.model_executor.ops.gpu"
 
-import_custom_ops(PACKAGE, "..base.efficientllm_base_ops", globals())
-import_custom_ops(PACKAGE, ".efficientllm_ops", globals())
+import_custom_ops(PACKAGE, "..base.fastdeploy_base_ops", globals())
+import_custom_ops(PACKAGE, ".fastdeploy_ops", globals())

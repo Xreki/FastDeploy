@@ -11,7 +11,6 @@ export FD_MODEL_NAME="eb45t"
 # 本地测试需要
 export RUN_MODE="test"
 
-# 不需要，已安装了efficientllm whl包
 # export PYTHONPATH=/root/paddlejob/workspace/env_run/gaoziyuan/develop_nlp/PaddleNLP/:/root/paddlejob/workspace/env_run/gaoziyuan/develop_nlp/EfficientLLM:$PYTHONPATH
 
 # tensor-parallel-size注意是8

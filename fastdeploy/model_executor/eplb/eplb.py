@@ -1,3 +1,7 @@
+"""
+This file is copied from https://github.com/deepseek-ai/EPLB/blob/main/eplb.py
+"""
+
 """Expert Parallelism Load Balancer (EPLB)"""
 
 from typing import Tuple

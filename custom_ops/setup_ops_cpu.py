@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-""" setup for EfficientLLM custom cpu ops """
+""" setup for FASTDEPLOY custom cpu ops """
 import os
 import subprocess
 from paddle.utils.cpp_extension import setup, CppExtension
@@ -141,7 +141,7 @@ for library_dir in paddle_custom_kernel_library_dir:
             if os.path.isfile(lib_file):
                 so_files.append(lib_file)
 setup(
-    name="efficientllm_cpu_ops",
+    name="fastdeploy_cpu_ops",
     ext_modules=CppExtension(
         sources=[
             "cpu_ops/simd_sort.cc",
@@ -165,6 +165,6 @@ setup(
     ),
     packages=find_namespace_packages(where="third_party"),
     package_dir={"": "third_party"},
-    package_data={"efficientllm_cpu_ops": include_files + so_files},
+    package_data={"fastdeploy_cpu_ops": include_files + so_files},
     include_package_data=True,
 )

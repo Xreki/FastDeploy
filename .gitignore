@@ -133,7 +133,7 @@ kernel_meta*
 
 # building custom ops cache and auto-generated codes
 *.o
-efficientllm_ops.py
+fastdeploy_ops.py
 version.txt
 EGG-INFO/
 

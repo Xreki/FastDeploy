@@ -79,14 +79,14 @@ function copy_ops(){
     PY_VERSION="py${PY_MAIN_VERSION}.${PY_SUB_VERSION}"
     SYSTEM_VERSION=`${python} -c "import platform; print(platform.system().lower())"`
     PROCESSOR_VERSION=`${python} -c "import platform; print(platform.processor())"`
-    WHEEL_BASE_NAME="efficientllm_base_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
-    WHEEL_NAME="efficientllm_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
+    WHEEL_BASE_NAME="fastdeploy_base_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
+    WHEEL_NAME="fastdeploy_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
     echo -e "OPS are for BASE"
     mkdir -p ../fastdeploy/model_executor/ops/base && cp -r ./${OPS_TMP_DIR_BASE}/${WHEEL_BASE_NAME}/* ../fastdeploy/model_executor/ops/base
     echo -e "OPS are for CUDA"
     cp -r ./${OPS_TMP_DIR}/${WHEEL_NAME}/* ../fastdeploy/model_executor/ops/gpu
     if [ "$WITH_CPU" == "true" ]; then
-      WHEEL_CPU_NAME="efficientllm_cpu_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
+      WHEEL_CPU_NAME="fastdeploy_cpu_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
       echo -e "OPS are for CPU"
       cd ${OPS_TMP_DIR_CPU}/${WHEEL_CPU_NAME}/xFasterTransformer/build/
       for file in *_pd_.so; do
@@ -106,13 +106,13 @@ function copy_ops(){
 function build_and_install_ops() {
   cd $OPS_SRC_DIR
   export no_proxy=bcebos.com,paddlepaddle.org.cn,${no_proxy}
-  echo -e "${BLUE}[build]${NONE} build and install efficient_custom_ops..."
-  echo -e "${BLUE}[build]${NONE} build and install efficient_base_ops..."
+  echo -e "${BLUE}[build]${NONE} build and install fastdeploy_custom_ops..."
+  echo -e "${BLUE}[build]${NONE} build and install fastdeploy_base_ops..."
   ${python} setup_ops_base.py install --install-lib ${OPS_TMP_DIR_BASE}
-  echo -e "${BLUE}[build]${NONE} build and install efficient_custom_ops gpu ops..."
+  echo -e "${BLUE}[build]${NONE} build and install fastdeploy_custom_ops gpu ops..."
   BUILDING_ARCS="[80, 90]" ${python} setup_ops.py install --install-lib ${OPS_TMP_DIR}
   if [ "$WITH_CPU" == "true" ]; then
-    echo -e "${BLUE}[build]${NONE} build and install efficient_custom_ops cpu ops..."
+    echo -e "${BLUE}[build]${NONE} build and install fastdeploy_custom_ops cpu ops..."
     if [ "$CPU_USE_BF16" == "true" ]; then
         CPU_USE_BF16=True ${python} setup_ops_cpu.py install --install-lib ${OPS_TMP_DIR_CPU}
         :
@@ -125,10 +125,10 @@ function build_and_install_ops() {
     fi
   fi
   if [ $? -ne 0 ]; then
-    echo -e "${RED}[FAIL]${NONE} build efficient_custom_ops wheel failed !"
+    echo -e "${RED}[FAIL]${NONE} build fastdeploy_custom_ops wheel failed !"
     exit 1
   fi
-  echo -e "${BLUE}[build]${NONE} ${GREEN}build efficient_custom_ops wheel success\n"
+  echo -e "${BLUE}[build]${NONE} ${GREEN}build fastdeploy_custom_ops wheel success\n"
 
   copy_ops
 

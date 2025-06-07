@@ -66,9 +66,9 @@ void scaled_gemm_f8_i4_f16_launcher(Params& params,
     phi::Allocator* allocator = paddle::GetAllocator(place);
     auto ws = allocator->Allocate(ws_size)->ptr();
     cutlass_extensions::CutlassGemmConfig best_config;
-    if (getenv("FLAGS_efficientllm_op_configs")) {
-        std::string efficientllm_op_configs = getenv("FLAGS_efficientllm_op_configs");
-        if (efficientllm_op_configs == "tune") {
+    if (getenv("FLAGS_fastdeploy_op_configs")) {
+        std::string fastdeploy_op_configs = getenv("FLAGS_fastdeploy_op_configs");
+        if (fastdeploy_op_configs == "tune") {
             auto& ConfigManager = ConfigManager::get_instance();
             auto configs = runner->getConfigs(params.k);
             best_config = configs[0];
@@ -128,10 +128,10 @@ void scaled_gemm_f8_i4_f16_launcher(Params& params,
             cudaEventDestroy(end);
             ConfigManager.update("scaled_gemm_f8_i4_f16", params.m, params.n, params.k, best_config.toString());
         } else {
-            if (!std::filesystem::exists(efficientllm_op_configs)) {
-                PADDLE_THROW(phi::errors::Fatal("Warning: The file \"" + efficientllm_op_configs + "\" does not exist in the specified path." ));
+            if (!std::filesystem::exists(fastdeploy_op_configs)) {
+                PADDLE_THROW(phi::errors::Fatal("Warning: The file \"" + fastdeploy_op_configs + "\" does not exist in the specified path." ));
             } else {
-                auto& ConfigManager = ConfigManager::get_instance(efficientllm_op_configs);
+                auto& ConfigManager = ConfigManager::get_instance(fastdeploy_op_configs);
                 auto best_config_string = ConfigManager.get_best_config("scaled_gemm_f8_i4_f16", params.m, params.n, params.k);
                 if (!best_config_string.empty()) {
                     best_config.fromString(best_config_string);
