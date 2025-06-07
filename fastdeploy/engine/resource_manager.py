@@ -249,56 +249,27 @@ class ResourceManager(object):
                         self.cfg.block_size,
                         self.cfg.dec_token_num
                         )
-                        # 资源不够， query丢掉
                         if unique_block_ids is None:
                             llm_logger.warning(
                                 "req_id: {0} not enough blocks available".format(task["req_id"])
                             )
                             return
 
-                        # 记录Cache命中情况
-                        cache_block_num = len(common_block_ids)
-                        no_cache_block_num = math.ceil(len(task.prompt_token_ids) / self.cfg.block_size \
-                                            - cache_block_num)
-                        task.num_cached_tokens = cache_block_num * self.cfg.block_size
-                        task.gpu_cache_token_num = hit_info["gpu_cache_blocks"] * self.cfg.block_size
-                        task.cpu_cache_token_num = hit_info["cpu_cache_blocks"] * self.cfg.block_size
-                        task.cache_info = (cache_block_num, no_cache_block_num)
+                        cached_len = self._record_request_cache_info(task, common_block_ids, unique_block_ids, hit_info)
+                        task.cache_prepare_time = time.time() - cache_prepare_time
 
-                        cache_prepare_time = time.time() - cache_prepare_time                               
-                        task.cache_prepare_time = cache_prepare_time
-                        cached_len = len(common_block_ids) * self.cfg.block_size
-                        task.block_tables = common_block_ids + unique_block_ids
-                        task.need_block_tables = unique_block_ids
-                        llm_logger.debug(f"common: {common_block_ids} ")
-                        llm_logger.debug(f"unique: {unique_block_ids} ")
 
                         
                         if task.disaggregate_info is not None:
                             if task.disaggregate_info['role'] == "prefill":
                                 self.cache_transfer_finished[task.request_id] = False
                                 task.disaggregate_info['block_tables'] = task.block_tables
-                                if cached_len == len(task.prompt_token_ids):
-                                    # 公共cache完全匹配整个串
-                                    # 需要单独抽出一个token
-                                    task.prompt_token_ids = task.prompt_token_ids[:-1]
-                                    task.seq_lens_decoder = cached_len - 1
-                                else:
-                                    task.prompt_token_ids = task.prompt_token_ids[cached_len:] # 需要截掉公共部分的token
-                                    task.seq_lens_decoder = cached_len
+                                self._delete_cached_data(task, cached_len)
                             elif task.disaggregate_info['role'] == "decode":
                                 self.req_dict[task.request_id] = allocated_position
                                 task.disaggregate_info['block_tables'] = task.need_block_tables
-                                task.seq_lens_decoder = task.prompt_token_ids_len
                         else:
-                            if cached_len == len(task.prompt_token_ids):
-                                # 公共cache完全匹配整个串
-                                # 需要单独抽出一个token
-                                task.prompt_token_ids = task.prompt_token_ids[:-1]
-                                task.seq_lens_decoder = cached_len - 1
-                            else:
-                                task.prompt_token_ids = task.prompt_token_ids[cached_len:] # 需要截掉公共部分的token
-                                task.seq_lens_decoder = cached_len
+                            self._delete_cached_data(task, cached_len)
 
                     else:
                         block_tables = self._get_block_tables(task.prompt_token_ids_len)
@@ -314,14 +285,10 @@ class ResourceManager(object):
                             task.disaggregate_info['block_tables'] = block_tables
                             if task.disaggregate_info['role'] == "prefill":
                                 self.cache_transfer_finished[task.request_id] = False
-                                task.seq_lens_decoder = 0
                             elif task.disaggregate_info['role'] == "decode":
                                 self.req_dict[task.request_id] = allocated_position
-                                task.seq_lens_decoder = task.prompt_token_ids_len
 
-                    if self.cfg.enable_chunked_prefill and task.disaggregate_info is None:
-                        task.token_chunk_size = 384 
-                        task.ori_prompt_token_ids = ori_prompt_token_ids
+
                         
                     processed_tasks.append(task)
                     self.stop_flags[allocated_position] = False
@@ -345,6 +312,39 @@ class ResourceManager(object):
                         f"running requests in worker: {self.real_bsz}")
         llm_logger.info(f"{self.info()}")
         return processed_tasks
+
+
+    def _delete_cached_data(self, task, cached_len):
+        """
+        Delete cached data from the task's prompt token ids based on the cached length.
+        """
+        if cached_len == len(task.prompt_token_ids):
+            task.prompt_token_ids = task.prompt_token_ids[:-1]
+            task.seq_lens_decoder = cached_len - 1
+        else:
+            task.prompt_token_ids = task.prompt_token_ids[cached_len:]
+            task.seq_lens_decoder = cached_len
+        
+        
+    
+    def _record_request_cache_info(self, task, common_block_ids, unique_block_ids, hit_info):
+        """
+        Record the cache information for a given task and its corresponding block IDs.
+        """
+        cache_block_num = len(common_block_ids)
+        no_cache_block_num = math.ceil(len(task.prompt_token_ids) / self.cfg.block_size \
+                            - cache_block_num)
+        task.num_cached_tokens = cache_block_num * self.cfg.block_size
+        task.gpu_cache_token_num = hit_info["gpu_cache_blocks"] * self.cfg.block_size
+        task.cpu_cache_token_num = hit_info["cpu_cache_blocks"] * self.cfg.block_size
+        task.cache_info = (cache_block_num, no_cache_block_num)
+
+        cached_len = len(common_block_ids) * self.cfg.block_size
+        task.block_tables = common_block_ids + unique_block_ids
+        task.need_block_tables = unique_block_ids
+        llm_logger.debug(f"common: {common_block_ids} ")
+        llm_logger.debug(f"unique: {unique_block_ids} ")
+        return cached_len
 
     def info(self):
         """

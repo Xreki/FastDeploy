@@ -22,14 +22,15 @@ import json
 import queue
 import time
 import threading
-from enum import Enum
 import paddle
 import numpy as np
 
 
 from fastdeploy.utils import get_logger
-from fastdeploy.cache_manager.cache_queue_manager import CacheQueueManager
+from fastdeploy.cache_manager.data import CacheStatus
 from fastdeploy.inter_communicator import IPCSignal
+from fastdeploy.inter_communicator import EngineCacheQueue
+
 
 
 use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
@@ -81,17 +82,6 @@ def parse_args():
     args = parser.parse_args()
     return args
 
-class CacheStatus(Enum):
-    """
-    cache status enum class
-    """
-
-    GPU = 0  
-    SWAP2CPU = 1 
-    SWAP2GPU = 2
-    CPU = 3  
-
-
 
 
 class CacheTransferManager:
@@ -123,11 +113,11 @@ class CacheTransferManager:
         self.n_ranks = args.mp_num
         self.rank = rank
         self.device = device
-        self.cache_task_queue = CacheQueueManager(
-            rank=rank,
-            mp_num=args.mp_num,
-            port=args.cache_queue_port,
-        )
+
+        address = ('0.0.0.0', args.cache_queue_port)
+        self.cache_task_queue = EngineCacheQueue(
+            address=address, is_server=False, num_client=args.mp_num, client_id=rank)
+
 
         self.num_cpu_blocks = args.num_cpu_blocks
 
@@ -220,8 +210,8 @@ class CacheTransferManager:
             assert len(commu_protocol) == 1
             assert commu_protocol[0] in ["ipc"], f"not support protocol: {args.protocol}"
             logger.info(f"{args}")
-            from fastdeploy.cache_manager.transfer_factory.ipc_cache_messager import IPCCacheMessager
-            self.cache_messager = IPCCacheMessager(engine_worker_queue_port=args.engine_worker_queue_port, 
+            from fastdeploy.cache_manager.transfer_factory.ipc_cache_transfer import IPCCacheTransfer
+            self.cache_messager = IPCCacheTransfer(engine_worker_queue_port=args.engine_worker_queue_port, 
                         gpu_cache_kvs=self.gpu_cache_kvs,
                         rank=self.rank, 
                         nranks=args.mp_num, 
@@ -438,8 +428,8 @@ def main():
 
     cache_manager = CacheTransferManager(args)
     
-    transfer_thread = threading.Thread(target=cache_manager.do_data_transfer)
-    transfer_thread.start()
+    cache_manager.do_data_transfer()
+
 
 
 

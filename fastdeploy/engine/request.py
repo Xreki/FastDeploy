@@ -55,8 +55,9 @@ class Request:
         self.system = system
         self.sampling_params = sampling_params
         self.history = history
+        # model specific token ids: end of sentence token ids
         self.eos_token_ids = eos_token_ids
-        self.seq_lens_decoder = 0
+        self.num_cached_tokens = 0
 
         self.arrival_time = arrival_time
         self.preprocess_start_time = preprocess_start_time
@@ -70,7 +71,7 @@ class Request:
 
     @classmethod
     def from_dict(cls, d: dict):
-        data_processor_logger.info(f"{d}")
+        data_processor_logger.debug(f"{d}")
         sampling_params = SamplingParams.from_dict(d)
         return cls(
             request_id=d["request_id"],

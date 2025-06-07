@@ -198,7 +198,7 @@ class LLMEngine(object):
 
 
         if self.cfg.splitwise_role != "mixed":
-            self.engine_worker_queue.available_prefill.put(1)
+            self.engine_worker_queue.available_prefill_instances.put(1)
             self.split_mode_get_tasks()
 
 
@@ -408,8 +408,8 @@ class LLMEngine(object):
         def receiver_loop():
             while True:
                 try:
-                    if not self.engine_worker_queue.queue_empty():
-                        items = self.engine_worker_queue.get_splitwise_tasks()
+                    if not self.engine_worker_queue.disaggregate_queue_empty():
+                        items = self.engine_worker_queue.get_disaggregated_tasks()
                         for item in items:
                             role = item[0]
                             tasks = item[1]
@@ -544,7 +544,7 @@ class LLMEngine(object):
             self.engine_worker_queue.put_tasks(
                 (tasks, self.resource_manager.real_bsz))
             if is_prefill:
-                self.engine_worker_queue.available_prefill.put(1)
+                self.engine_worker_queue.available_prefill_instances.put(1)
         return True
 
     def task_is_finished(self, index):

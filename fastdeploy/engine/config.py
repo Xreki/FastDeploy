@@ -237,10 +237,10 @@ class CacheConfig:
             * kv_num_head
             * (self.model_cfg.hidden_size // self.model_cfg.num_attention_heads)
             * byte_size
-        )  # 每个token的key cache空间大小
+        ) 
         self.bytes_per_block = int(
             self.each_token_cache_space * self.block_size
-        )  # 各个block的字节数, 仅包含key cache
+        ) 
         self.bytes_per_layer_per_block = int(
             self.block_size
             * self.model_cfg.kv_num_head
@@ -284,7 +284,7 @@ class CacheConfig:
             self.total_block_num =  block_num * number_of_tasks
             self.prefill_kvcache_block_num = self.total_block_num
             llm_logger.info(f"Doing profile, the total_block_num:{self.total_block_num}")
-        self.max_block_num_per_seq = int(num_total_tokens // self.block_size)
+        
 
     def reset(self, num_gpu_blocks):
         """
@@ -447,6 +447,7 @@ class Config:
             self.long_prefill_token_threshold = int(self.max_model_len * 0.04)
 
         self.cache_config.postprocess(self.max_num_batched_tokens, self.max_num_seqs)
+        self.cache_config.max_block_num_per_seq = int(self.max_model_len // self.cache_config.block_size)
 
 
     def check(self):

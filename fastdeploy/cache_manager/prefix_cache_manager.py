@@ -27,106 +27,16 @@ from multiprocessing import shared_memory
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
-from fastdeploy.cache_manager.cache_queue_manager import CacheQueueManager, launch_queue_service
-from fastdeploy.cache_manager.cache_transfer_manager import CacheStatus
+
+from fastdeploy.cache_manager.data import CacheStatus, BlockNode
+from fastdeploy.cache_manager.cache_metrics import CacheMetrics
 from fastdeploy.inter_communicator import IPCSignal
+from fastdeploy.inter_communicator import EngineCacheQueue
 from fastdeploy.utils import get_logger
 
 logger = get_logger("prefix_cache_manager", "prefix_cache_manager.log")
 
 
-
-class CacheMetrics:
-    """
-     Cache Metrics used to record the cache hit time, token num, request num, etc.
-    """
-    def __init__(self):
-        self.total_match_time = 0.0 
-        self.avg_match_time = 0.0 
-        self.min_match_time = 1e9
-        self.max_match_time = 0.0
-
-        # request level
-        self.req_count = 0 
-        self.hit_req_count = 0 
-        self.hit_req_ratio = 0.0  
-
-        # token level
-        self.total_gpu_matched_token_num = 0  
-        self.total_cpu_matched_token_num = 0
-
-        self.matched_token_num = 0
-        self.total_token_num = 0  
-        self.hit_token_ratio = 0.0 
-        self.cpu_hit_token_ratio = 0.0
-        self.gpu_hit_token_ratio = 0.0
-
-
-    def _update_history_hit_metrics(self):
-        """
-        update hit ratio
-        """
-        self.hit_req_ratio = self.hit_req_count / self.req_count
-        self.hit_token_ratio = self.matched_token_num / self.total_token_num
-        self.cpu_hit_token_ratio = (
-            self.total_cpu_matched_token_num / self.total_token_num
-        )
-        self.gpu_hit_token_ratio = (
-            self.total_gpu_matched_token_num / self.total_token_num
-        )
-
-        logger.info(
-            f"Metrics for all requests: req_count {self.req_count} hit_req_count {self.hit_req_count}"
-            + f" hit_req_ratio {self.hit_req_ratio:.2f} hit_token_ratio {self.hit_token_ratio:.2f}"
-            + f" gpu_hit_token_ratio {self.gpu_hit_token_ratio:.2f}"
-            + f" cpu_hit_token_ratio {self.cpu_hit_token_ratio:.2f}"
-            + f" total_gpu_matched_token_num {self.total_gpu_matched_token_num}"
-            + f" total_cpu_matched_token_num {self.total_cpu_matched_token_num}"
-            + f" total_matched_token_num {self.matched_token_num}"
-            + f" total_token_num {self.total_token_num}"
-        )
-
-    def calculate_hit_metrics(
-        self,
-        req_id,
-        current_query_cpu_match_token_num,
-        current_query_gpu_match_token_num,
-        current_query_token_num,
-    ):
-        """
-        calculate hit metrics for current query
-        """
-        
-        cpu_cache_match_ratio = (
-            current_query_cpu_match_token_num / current_query_token_num
-        )
-        gpu_cache_match_ratio = (
-            current_query_gpu_match_token_num / current_query_token_num
-        )
-
-        total_match_ratio = (
-            cpu_cache_match_ratio + gpu_cache_match_ratio
-        )
-
-        
-        self.total_cpu_matched_token_num += (
-            current_query_cpu_match_token_num  
-        )
-        self.total_gpu_matched_token_num += (
-            current_query_gpu_match_token_num  
-        )
-
-        self.matched_token_num += (
-            current_query_cpu_match_token_num
-            + current_query_gpu_match_token_num
-        )  
-        self.total_token_num += current_query_token_num 
-        logger.info(
-            f"Metrics for req_id {req_id}: token_num {current_query_token_num}"
-            + f" cpu_cache_match_ratio {cpu_cache_match_ratio}"
-            + f" gpu_cache_match_ratio {gpu_cache_match_ratio}"
-            + f" total_match_ratio {total_match_ratio}"
-        )
 
 
 
@@ -224,10 +134,13 @@ class PrefixCacheManager:
                                              create=True)
 
 
-        multiprocessing.Process(
-            target=launch_queue_service,
-            args=(cache_config.cache_queue_port, tensor_parallel_size),
-        ).start()
+        self.cache_task_queue = EngineCacheQueue(
+            address=('127.0.0.1', cache_config.cache_queue_port),
+            authkey=b'cache_queue_service',
+            is_server=True,
+            num_client=tensor_parallel_size,
+            client_id=-1
+        )
 
         current_dir_path = os.path.split(os.path.abspath(__file__))[0]
         filename = "cache_transfer_manager.py"
@@ -299,7 +212,7 @@ class PrefixCacheManager:
 
         if cache_config.enable_hierarchical_cache and self.num_cpu_blocks > 0:
             logger.info("Enable hierarchical cache.")
-            self._enable_cpu_cache(tensor_parallel_size)
+            self._enable_cpu_cache()
 
     def update_cache_config(self, cache_config):
         """
@@ -317,17 +230,17 @@ class PrefixCacheManager:
         )
 
 
-    def _enable_cpu_cache(self, tensor_parallel_size):
+    def _enable_cpu_cache(self):
         """
         _enable_cpu_cache function used to enable cpu cache.
         """
 
-        ipc_cache_queue_port = self.cache_config.cache_queue_port
-        self.cache_task_queue = CacheQueueManager(
-            rank=0,
-            mp_num=tensor_parallel_size,
-            port=ipc_cache_queue_port,
-        )
+        # ipc_cache_queue_port = self.cache_config.cache_queue_port
+        # self.cache_task_queue = CacheQueueManager(
+        #     rank=0,
+        #     mp_num=tensor_parallel_size,
+        #     port=ipc_cache_queue_port,
+        # )
         # 开启获取传输任务结果的监听线程
         self.transfer_recv_thread = threading.Thread(
             target=self.recv_data_transfer_result
@@ -511,7 +424,9 @@ class PrefixCacheManager:
     def request_block_ids(self, task, block_size, dec_token_num, *args):
         """
             Allocate blocks for a task.  
-            This is a synchronous interface. If CPU-to-GPU data transfer occurs, it will block until synchronization completes. Callers requiring asynchronous behavior should invoke this via a thread pool.  
+            This is a synchronous interface. If CPU-to-GPU data transfer occurs, 
+            it will block until synchronization completes. 
+            Callers requiring asynchronous behavior should invoke this via a thread pool.  
 
             Parameters:  
             - task: Task dictionary  
@@ -711,7 +626,7 @@ class PrefixCacheManager:
         swap_node_ids = []
         need_transfer_task_gpu_block_ids = []
         need_transfer_task_cpu_block_ids = []
-        cpu_block_ids = self.allocate_cpu_blocks(min(total_gpu_free_count, len(self.cpu_free_block_list)))
+        cpu_block_ids = self.allocate_cpu_blocks(total_gpu_free_count)
         for input_hash_value in hash_value_gpu_block_ids_map.keys():
             need_transfer_task_gpu_block_ids.extend(
                 reversed(hash_value_gpu_block_ids_map[input_hash_value])
@@ -785,9 +700,8 @@ class PrefixCacheManager:
                         break
                     node = heapq.heappop(self.gpu_lru_leaf_heap)
                     self.gpu_lru_leaf_set.remove(node)
-                    if (
-                        not self.cache_config.enable_hierarchical_cache or len(self.cpu_free_block_list) < need_block_num
-                    ):  
+                    if not self.cache_config.enable_hierarchical_cache or \
+                        self.cache_config.num_cpu_blocks < need_block_num:  
                         if node.shared_count == 0 and node.is_gpu_leaf_node:  # 直接回收
                             self._handle_free_gpu_node_without_cpu(node)
                             total_gpu_free_count += 1
@@ -1046,7 +960,7 @@ class PrefixCacheManager:
         node = last_node
         reverved_dec_block_ids = []
         input_hash_value = self.cal_block_hash(input_ids)
-        logger.info(f"{gpu_block_ids} {input_hash_value}")
+
         
         
         token_num = len(left_input_ids)
@@ -1194,131 +1108,3 @@ class PrefixCacheManager:
             except Exception as e:
                 logger.warning(f"recv_data_transfer_result: error: {e}")
                 raise e
-
-
-class BlockNode:
-    """
-    BlockNode: store the information of a block node
-    """
-    def __init__(
-        self,
-        node_id,
-        input_ids,
-        input_hash_value,
-        depth,
-        block_id,
-        token_num,
-        hash_value,
-        last_used_time,
-        parent=None,
-        shared_count=1,
-        reverved_dec_block_ids=[],
-        cache_status=CacheStatus.GPU,
-        is_persistent=False,
-        persistent_shared_count=0,
-    ):
-        """
-        Args:
-            node_id: Unique identifier of the node  
-            depth: Depth of the node  
-            block_id: Assigned block ID (CPU block ID if on CPU, GPU block ID if on GPU)  
-            token_num: Number of tokens in the current block  
-            hash_value: Hash value of the current block  
-            last_used_time: Timestamp of last usage  
-            parent: Parent node  
-            shared_count: Reference count of requests currently using this node  
-            reserved_dec_block_ids: Pre-allocated block IDs reserved for decoding, formatted as [block_id, block_id,...]  
-            cache_status: Current cache state (USING, SWAP2CPU, SWAP2GPU, FREE)  
-            is_persistent: Whether the node is persistently stored  
-            persistent_shared_count: Reference count of persistent cache requests  
-        """
-        
-        self.node_id = node_id
-        self.depth = depth
-        self.parent = parent
-        self.hash_value = hash_value
-        self.token_num = token_num
-        self.input_ids = input_ids
-        self.input_hash_value = input_hash_value
-
-
-        self.children = {}
-        self.shared_count = shared_count
-        self.last_used_time = last_used_time
-        self.block_id = block_id
-        self.reverved_dec_block_ids = reverved_dec_block_ids 
-        self.cache_status = cache_status
-        self.is_persistent = is_persistent
-        self.persistent_shared_count = persistent_shared_count 
-        self.req_id_set = set()
-
-    def __lt__(self, other):
-        """
-        override the less than operator
-        """
-        if self.last_used_time < other.last_used_time:
-            return True
-        elif self.last_used_time > other.last_used_time:
-            return False
-        else:
-            return self.depth > other.depth  
-
-    def __str__(self):
-        """
-        return node info
-        """
-        if self.parent is not None:
-            parent_node_id = self.parent.node_id
-        else:
-            parent_node_id = None
-        return (
-            f"node_id {self.node_id}: depth {self.depth} hash_value {self.hash_value}"
-            + f" shared_count {self.shared_count} is_gpu_leaf_node {self.is_gpu_leaf_node}"
-            + f" is_cpu_leaf_node {self.is_cpu_leaf_node} block_id {self.block_id} "
-            + f"has_in_gpu {self.has_in_gpu} "
-            + f"cache_status {self.cache_status}  parent {parent_node_id} with children number "
-            + f"{len(self.children)} req_id_set {self.req_id_set}"
-        )
-
-    @property
-    def has_in_gpu(self):
-        """
-        check if the node has been allocated in GPU
-        """
-        return self.cache_status == CacheStatus.GPU
-
-    def increment_shared_count(self):
-        """
-        increment shared count
-        """
-        self.shared_count += 1
-
-    def decrement_shared_count(self):
-        """
-        decrement shared count
-        """
-        self.shared_count -= 1
-
-    @property
-    def is_cpu_leaf_node(self):
-        """
-        check if the node is a leaf node in CPU
-        """
-        if (self.cache_status == CacheStatus.CPU) and (len(self.children) == 0):
-            return True
-        return False
-
-    @property
-    def is_gpu_leaf_node(self):
-        """
-        check if the node is a leaf node in GPU
-        """
-        if self.has_in_gpu is False:
-            return False
-        else:
-            if len(self.children) == 0:
-                return True
-            for child in self.children.values():
-                if child.has_in_gpu is True:
-                    return False
-            return True

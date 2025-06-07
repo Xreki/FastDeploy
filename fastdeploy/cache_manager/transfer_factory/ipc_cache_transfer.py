@@ -23,13 +23,11 @@ from multiprocessing import shared_memory
 import ctypes
 import os
 
-from multiprocessing.managers import BaseManager
 from queue import Queue
 
 import numpy as np
 import paddle
 
-import paddle
 import socket
 from fastdeploy.utils import get_logger
 from fastdeploy.inter_communicator import IPCSignal
@@ -47,7 +45,9 @@ else:
 
 
 logger = get_logger(f"cache_messager", f"cache_messager.log")
-class IPCConnect:
+
+
+class IPCConnector:
     """
     IPC communication class.
     """
@@ -72,6 +72,7 @@ class IPCConnect:
             self.remote_value_tensor_ptr_list.append(get_data_ptr_ipc(tmp, value_unique_name))
         self.write_stream = paddle.device.Stream(f'gpu:{self.local_gpu_id}')
         self.finish_event = paddle.device.Event()
+
 
 class IPCCommManager:
     """
@@ -99,7 +100,7 @@ class IPCCommManager:
         if self.is_connected(remote_gpu_id_):
             return True
         else:
-            self.comm_map[remote_gpu_id_] = IPCConnect(self.rank_id, remote_gpu_id_, self.layer_num, self.gpu_idx)
+            self.comm_map[remote_gpu_id_] = IPCConnector(self.rank_id, remote_gpu_id_, self.layer_num, self.gpu_idx)
             return True
 
 
@@ -148,7 +149,7 @@ class IPCCommManager:
 
 
 
-class IPCCacheMessager(object):
+class IPCCacheTransfer(object):
     """
     IPC cache messager, used to initialize ipc and cache transmission.
     """
@@ -294,7 +295,7 @@ class IPCCacheMessager(object):
                         self.messager.write_block_by_sync(item[0])
                         logger.info(f"finish write cache {item[1]}")
                     self.last_layer_idx = -1
-                    self.engine_worker_queue.barrier1.wait()
+                    self.engine_worker_queue.finish_request_barrier.wait()
                     if self.rank == 0:
                         finished_req = []
                         for item in cache_sent_set:

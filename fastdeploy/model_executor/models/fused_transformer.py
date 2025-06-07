@@ -119,7 +119,9 @@ class FusedTransformer(nn.Layer):
             + "Expected one of ['prefill', 'decode', 'mixed']."
         )
 
-        self.device_id = os.getenv("CUDA_VISIBLE_DEVICES").split(",")[self.rank]
+        self.device_id = os.getenv("CUDA_VISIBLE_DEVICES", None)
+        if self.device_id is None:
+            self.device_id = self.rank
 
         if self.nranks > 1:
             assert ring_id != -1

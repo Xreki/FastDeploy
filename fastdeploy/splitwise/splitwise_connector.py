@@ -28,9 +28,18 @@ logger = get_logger("splitwise_connector", "splitwise_connector.log")
 
 class SplitwiseConnector:
     """
-
+    SplitwiseConnector class for managing and scheduling Splitwise tasks.
     """
     def __init__(self, cfg, scheduler, worker_queue, resource_manager):
+        """
+        Initialize the SplitwiseConnector instance.
+
+        Parameters:
+        cfg (dict): Configuration information.
+        scheduler (object): Scheduler object.
+        worker_queue (object): Worker queue object.
+        resource_manager (object): Resource manager object.
+        """
         self.cfg = cfg
         self.scheduler = scheduler
         self.engine_worker_queue = worker_queue
@@ -40,7 +49,10 @@ class SplitwiseConnector:
 
     def send_splitwise_tasks(self, tasks):
         """
-        send splitwise tasks to specific port, temporary dispatch splitwise tasks
+        Send splitwise tasks to specific port, temporarily dispatch splitwise tasks.
+
+        Parameters:
+        tasks (list): List of tasks.
         """
         tasks_status = "mixed"
         current_port = -1
@@ -62,39 +74,58 @@ class SplitwiseConnector:
 
     def send_splitwise_tasks_innode(self, tasks, port):
         """
-        send splitwise tasks to specific port
+        Send splitwise tasks to specific port.
+
+        Parameters:
+        tasks (list): List of tasks.
+        port (int): Port number.
+
+        Returns:
+        int: Current port number, -1 if tasks are not sent.
         """
         current_port = -1
         if port not in self.connect_innode_instances:
             self.create_connection(port)
-        if self.connect_innode_instances[port].get_prefill() == 1:
+        if self.connect_innode_instances[port].get_prefill_instances() == 1:
             for task in tasks:
                 task.disaggregate_info = {"role": "prefill", "port": self.cfg.engine_worker_queue_port}
-            self.connect_innode_instances[port].put_splitwise_tasks(("prefill", tasks))
+            self.connect_innode_instances[port].put_disaggregated_tasks(("prefill", tasks))
             current_port = port
         return current_port
 
-
     def send_first_token(self, port, tasks_list):
         """
-        send first token to specific port
+        Send the first token to specific port.
+
+        Parameters:
+        port (int): Port number.
+        tasks_list (list): List of tasks.
         """
         if port not in self.connect_innode_instances:
             self.create_connection(port)
-        self.connect_innode_instances[port].put_splitwise_tasks(("decode", tasks_list))
+        self.connect_innode_instances[port].put_disaggregated_tasks(("decode", tasks_list))
 
     def create_connection(self, port):
         """
-        create connection to specific port
+        Create a connection to specific port.
+
+        Parameters:
+        port (int): Port number.
         """
         self.connect_innode_instances[port] = EngineWorkerQueue(
-                                        address=("0.0.0.0", int(port)),
-                                        num_client=self.cfg.tensor_parallel_size, 
-                                        client_id=0)
+            address=("0.0.0.0", int(port)),
+            num_client=self.cfg.tensor_parallel_size, 
+            client_id=0)
 
     def send_cache_infos(self, tasks):
         """
-        send cache info to specific port
+        Send cache information to specific port.
+
+        Parameters:
+        tasks (list): List of tasks.
+
+        Returns:
+        bool: Whether it is in decode status.
         """
         is_decode = False
         temp_cache_info = dict()
@@ -135,4 +166,3 @@ class SplitwiseConnector:
             for k, v in temp_cache_info.items():
                 self.connect_innode_instances[k].put_cache_info(v)
         return is_decode
-
