@@ -16,7 +16,7 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from paddle import Tensor, nn
+from paddle import nn
 
 from fastdeploy.config import LLMConfig
 from fastdeploy.worker.output import ModelRunnerOutput
@@ -83,11 +83,6 @@ class WorkerBase(ABC):
         self,
         model_forward_batch=None,
     ) -> Optional[ModelRunnerOutput]:
-        """ """
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_kv_cache_spec(self) -> dict[str, Tensor]:
         """ """
         raise NotImplementedError
 

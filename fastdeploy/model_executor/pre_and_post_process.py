@@ -17,8 +17,7 @@ from typing import Dict, Optional
 
 import paddle
 
-from fastdeploy.model_executor.ops.gpu import (get_padding_offset,
-                                               save_output_dynamic,
+from fastdeploy.model_executor.ops.gpu import (get_padding_offset, save_output,
                                                set_stop_value_multi_ends,
                                                speculate_get_padding_offset,
                                                step_paddle, update_inputs)
@@ -102,14 +101,10 @@ def post_process(sampled_token_ids: paddle.Tensor,
         model_output.stop_flags,
     )
 
-    set_stop_value_multi_ends(
-        sampled_token_ids,
-        model_output.stop_flags,
-        model_output.seq_lens_this_time,
-        model_output.eos_token_id,
-        model_output.next_tokens,
-        False,
-    )  # multi ends
+    set_stop_value_multi_ends(sampled_token_ids, model_output.stop_flags,
+                              model_output.seq_lens_this_time,
+                              model_output.eos_token_id,
+                              model_output.next_tokens, False)  # multi ends
 
     # 2. Update the input buffer of the model
     with paddle.framework._no_check_dy2st_diff():
@@ -126,12 +121,11 @@ def post_process(sampled_token_ids: paddle.Tensor,
         )
     # 3. Transmit the model's output and stop generation signal via message queue.
     #    In the future, we will abandon this approach.
-    save_output_dynamic(
+    save_output(
         sampled_token_ids,
         model_output.not_need_stop,
         model_output.mp_rank,
-        model_output.msg_queue_id,
-        model_output.use_ep,
+        False,  # use_ep
     )
 
 

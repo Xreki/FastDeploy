@@ -56,6 +56,7 @@ class GpuWorker(WorkerBase):
             self.device = f"gpu:{self.local_rank}"
             paddle.device.set_device(self.device)
             paddle.set_default_dtype(self.parallel_config.dtype)
+            self.device_ids = self.parallel_config.device_ids.split(",")
 
             # Get free memory info
             pynvml.nvmlInit()
@@ -100,9 +101,9 @@ class GpuWorker(WorkerBase):
             self.local_rank)  # not reserved
 
         pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(self.local_rank)
+        handle = pynvml.nvmlDeviceGetHandleByIndex(
+            int(self.device_ids[self.local_rank]))
         before_run_meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
-        pynvml.nvmlShutdown()
 
         logger.info((
             "Before running the profile, the memory usage info is as follows:",
@@ -121,15 +122,14 @@ class GpuWorker(WorkerBase):
         paddle_allocated_mem_after_run = paddle.device.cuda.max_memory_allocated(
             self.local_rank)
 
-        pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(self.local_rank)
         after_run_meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
         pynvml.nvmlShutdown()
 
         not_paddle_use_mem = after_run_meminfo.used - paddle_reserved_mem_after_run
         peak_memory = paddle_allocated_mem_after_run + not_paddle_use_mem
 
-        available_kv_cache_memory = after_run_meminfo.total * self.parallel_config.gpu_memory_utilization - peak_memory
+        available_kv_cache_memory = after_run_meminfo.total * (
+            self.parallel_config.gpu_memory_utilization - 0.04) - peak_memory
 
         end_time = time.perf_counter()
         logger.info(
@@ -163,8 +163,6 @@ class GpuWorker(WorkerBase):
     ) -> Optional[ModelRunnerOutput]:
         """ """
         output = self.model_runner.execute_model(model_forward_batch)
-
-        assert isinstance(output, ModelRunnerOutput)
         return output
 
     def preprocess_new_task(self, req_dicts: List[Request]) -> None:
@@ -174,10 +172,6 @@ class GpuWorker(WorkerBase):
         """
         self.model_runner.process_prefill_inputs(req_dicts=req_dicts)
 
-    def get_kv_cache_spec(self) -> dict[str, paddle.Tensor]:
-        """ """
-        pass
-
     def graph_optimize_and_warm_up_model(self) -> None:
         """ """
         pass
@@ -185,3 +179,12 @@ class GpuWorker(WorkerBase):
     def check_health(self) -> bool:
         """ """
         return True
+
+    def cal_theortical_kvcache(self) -> int:
+        """ """
+        return self.model_runner.cal_theortical_kvcache()
+
+    def reinitialize_kv_cache(self, num_gpu_blocks: int) -> None:
+        """ """
+        self.model_runner.update_share_input_block_num(
+            num_gpu_blocks=num_gpu_blocks)

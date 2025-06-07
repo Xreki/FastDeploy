@@ -158,6 +158,7 @@ class PaddleDisWorkerProc():
                         self.task_queue.read_finish_flag.set(1)
                     else:
                         self.exist_task_signal.value[0] = 1
+
             if self.rank > 1:
                 # Synchronize the signal for other workers
                 paddle.distributed.barrier()
@@ -183,8 +184,16 @@ class PaddleDisWorkerProc():
                 # Process prefill inputs
                 self.worker.preprocess_new_task(req_dicts)
 
+            if not self.worker.model_runner.not_need_stop():
+                if self.rank > 1:
+                    paddle.distributed.barrier()
+
+                time.sleep(0.001)
+                continue
+
             # Execute model to generate token. The generated token will be written to the buffer.
             # These generated tokens can be obtained through get_output op.
+            print("----------- execute_model -----------")
             self.worker.execute_model()
 
     def init_distributed_enviroment(self, seed=20) -> List[int]:
@@ -214,12 +223,15 @@ class PaddleDisWorkerProc():
         """
         # 1. Get available memory(bytes)
         available_kv_cache_memory = self.worker.determine_available_memory()
+        print(
+            f"------- available_kv_cache_memory:{available_kv_cache_memory / 1024**3} GB --------"
+        )
 
         # 2. Calculate the appropriate number of blocks
-        kv_cache_spec_list = self.model_runner.get_kv_cache_spec()
-        merged_layer_spec = kv_cache_spec_list[0].merge(kv_cache_spec_list)
+        model_block_memory_used = self.worker.cal_theortical_kvcache()
         num_blocks_local = int(available_kv_cache_memory //
-                               merged_layer_spec.block_memory_used)
+                               model_block_memory_used)
+        print(f"------- num_blocks_local:{num_blocks_local} --------")
 
         # 3. Send IPCSignal
         get_profile_block_num = np.zeros(shape=[self.rank], dtype=np.int32)
@@ -236,11 +248,11 @@ class PaddleDisWorkerProc():
             time.sleep(0.01)
         num_blocks_global = self.get_profile_block_num_signal.value.min().item(
         )
-        self.get_profile_block_num_signal.value[self.rank] = num_blocks_global
+        self.get_profile_block_num_signal.value[
+            self.local_rank] = num_blocks_global
 
         # 4. Updata share inputs
-        self.model_runner._update_share_input_block_num(
-            block_num=num_blocks_global)
+        self.worker.reinitialize_kv_cache(num_gpu_blocks=num_blocks_global)
 
     def init_device(self):
         """ """
@@ -432,8 +444,6 @@ def initialize_llm_config(args) -> LLMConfig:
         f"quant_type: weight[{weight_dtype}], act[{act_dtype}] -> act[{args.dtype}], cachekv[{cachekv_dtype}]"
     )
 
-    print(f"weight dtype: {weight_dtype}")
-    print(f"act_dtype: {act_dtype}")
     if weight_dtype == "int8" and act_dtype in ["bfloat16", "float16"]:
         quant_cls = get_quantization_config("weight_only")
         quant_config = quant_cls.from_config({
@@ -471,6 +481,7 @@ def initialize_llm_config(args) -> LLMConfig:
     parallel_config.engine_worker_queue_port = args.engine_worker_queue_port
     parallel_config.max_model_len = args.max_model_len
     model_config.max_seq_len = args.max_model_len
+    model_config.max_length = args.max_model_len
     parallel_config.device_ids = args.device_ids
     parallel_config.dtype = args.dtype
     parallel_config.enc_dec_block_num = args.enc_dec_block_num
@@ -517,8 +528,8 @@ def run_worker_proc():
     worker_proc.init_device()
     worker_proc.load_model()
 
-    if llm_config.parallel_config.do_profile:
-        worker_proc.determine_num_available_blocks()
+    # if llm_config.parallel_config.do_profile:
+    worker_proc.determine_num_available_blocks()
     worker_proc.event_loop_normal()
 
 
