@@ -11,17 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """ setup for FastDeploy custom ops """
+import glob
+import json
 import os
 import shutil
-import json
 import subprocess
-import paddle
-from paddle.utils.cpp_extension import CUDAExtension, setup, CppExtension
-from setuptools import find_namespace_packages, find_packages
-import glob
 import tarfile
+
+import paddle
+from paddle.utils.cpp_extension import CppExtension, CUDAExtension, setup
+from setuptools import find_namespace_packages, find_packages
 
 archs = json.loads(os.getenv("BUILDING_ARCS", "[]"))
 use_bf16 = os.getenv("CPU_USE_BF16", "False") == "True"
@@ -85,10 +85,6 @@ def get_sm_version(archs):
     Get sm version of paddle.
     """
     arch_set = set(archs)
-    try:
-        arch_set.update(set(paddle.version.cuda_archs()))
-    except AttributeError:
-        pass
     try:
         prop = paddle.device.cuda.get_device_properties()
         cc = prop.major * 10 + prop.minor
@@ -179,36 +175,22 @@ if paddle.is_compiled_with_rocm():
     )
 elif paddle.is_compiled_with_cuda():
     sources = [
-        "gpu_ops/set_mask_value.cu",
-        "gpu_ops/set_value_by_flags.cu",
-        "gpu_ops/ngram_mask.cu",
-        "gpu_ops/gather_idx.cu",
-        "gpu_ops/get_output_ep.cc",
-        "gpu_ops/get_mm_split_fuse.cc",
+        "gpu_ops/set_mask_value.cu", "gpu_ops/set_value_by_flags.cu",
+        "gpu_ops/ngram_mask.cu", "gpu_ops/gather_idx.cu",
+        "gpu_ops/get_output_ep.cc", "gpu_ops/get_mm_split_fuse.cc",
         "gpu_ops/token_penalty_multi_scores.cu",
-        "gpu_ops/token_penalty_only_once.cu",
-        "gpu_ops/stop_generation.cu",
+        "gpu_ops/token_penalty_only_once.cu", "gpu_ops/stop_generation.cu",
         "gpu_ops/stop_generation_multi_ends.cu",
-        "gpu_ops/stop_generation_multi_stop_seqs.cu",
-        "gpu_ops/set_flags.cu",
-        "gpu_ops/step.cu",
-        "gpu_ops/step_reschedule.cu",
-        "gpu_ops/fused_get_rope.cu",
-        "gpu_ops/get_padding_offset.cu",
-        "gpu_ops/update_inputs.cu",
-        "gpu_ops/update_inputs_beam.cu",
-        "gpu_ops/beam_search_softmax.cu",
-        "gpu_ops/rebuild_padding.cu",
-        "gpu_ops/set_data_ipc.cu",
-        "gpu_ops/read_data_ipc.cu",
-        "gpu_ops/enforce_generation.cu",
-        "gpu_ops/dequant_int8.cu",
-        "gpu_ops/tune_cublaslt_gemm.cu",
-        "gpu_ops/swap_cache_batch.cu",
-        "gpu_ops/swap_cache.cu",
-        "gpu_ops/step_system_cache.cu",
-        "gpu_ops/cpp_extensions.cu",
-        "gpu_ops/share_external_data.cu",
+        "gpu_ops/stop_generation_multi_stop_seqs.cu", "gpu_ops/set_flags.cu",
+        "gpu_ops/step.cu", "gpu_ops/step_reschedule.cu",
+        "gpu_ops/fused_get_rope.cu", "gpu_ops/get_padding_offset.cu",
+        "gpu_ops/update_inputs.cu", "gpu_ops/update_inputs_beam.cu",
+        "gpu_ops/beam_search_softmax.cu", "gpu_ops/rebuild_padding.cu",
+        "gpu_ops/set_data_ipc.cu", "gpu_ops/read_data_ipc.cu",
+        "gpu_ops/enforce_generation.cu", "gpu_ops/dequant_int8.cu",
+        "gpu_ops/tune_cublaslt_gemm.cu", "gpu_ops/swap_cache_batch.cu",
+        "gpu_ops/swap_cache.cu", "gpu_ops/step_system_cache.cu",
+        "gpu_ops/cpp_extensions.cu", "gpu_ops/share_external_data.cu",
         "gpu_ops/per_token_quant_fp8.cu",
         "gpu_ops/extract_text_token_output.cu",
         "gpu_ops/update_split_fuse_input.cu"
@@ -225,7 +207,8 @@ elif paddle.is_compiled_with_cuda():
     if not os.path.exists(cutlass_dir) or not os.listdir(cutlass_dir):
         if not os.path.exists(cutlass_dir):
             os.makedirs(cutlass_dir)
-        clone_git_repo("v3.8.0", "https://github.com/NVIDIA/cutlass.git", cutlass_dir)
+        clone_git_repo("v3.8.0", "https://github.com/NVIDIA/cutlass.git",
+                       cutlass_dir)
         if not os.listdir(cutlass_dir):
             raise ValueError("Git clone cutlass failed!")
 
@@ -255,13 +238,15 @@ elif paddle.is_compiled_with_cuda():
         try:
             shutil.copytree(src_dir, dst_dir)
         except Exception as e:
-            raise RuntimeError(f"Failed to copy from {src_dir} to {dst_dir}: {e}")
+            raise RuntimeError(
+                f"Failed to copy from {src_dir} to {dst_dir}: {e}")
 
     json_dir = "third_party/nlohmann_json"
     if not os.path.exists(json_dir) or not os.listdir(json_dir):
         if not os.path.exists(json_dir):
             os.makedirs(json_dir)
-        clone_git_repo("v3.11.3", "https://github.com/nlohmann/json.git", json_dir)
+        clone_git_repo("v3.11.3", "https://github.com/nlohmann/json.git",
+                       json_dir)
         if not os.listdir(json_dir):
             raise ValueError("Git clone nlohmann_json failed!")
 
@@ -299,7 +284,9 @@ elif paddle.is_compiled_with_cuda():
         os.system("python auto_gen_fp8_fp8_dual_gemm_fused_kernels.py")
         os.system("python auto_gen_visitor_fp8_gemm_fused_kernels.py")
 
-        nvcc_compile_args += ["-Igpu_ops/cutlass_kernels/fp8_gemm_fused/autogen"]
+        nvcc_compile_args += [
+            "-Igpu_ops/cutlass_kernels/fp8_gemm_fused/autogen"
+        ]
 
         sources += [
             "gpu_ops/fp8_gemm_with_cutlass/fp8_fp8_half_gemm.cu",
@@ -328,8 +315,7 @@ elif paddle.is_compiled_with_cuda():
     # for fp8 autogen *.cu
     if cc >= 89:
         sources += find_end_files(
-            "gpu_ops/cutlass_kernels/fp8_gemm_fused/autogen", ".cu"
-        )
+            "gpu_ops/cutlass_kernels/fp8_gemm_fused/autogen", ".cu")
 
     setup(
         name="fastdeploy_ops",
@@ -353,21 +339,20 @@ elif paddle.is_compiled_with_xpu():
     # TODO zhangsishuai@baidu.com to add xpu ops
     setup(
         name="fastdeploy_ops",
-        ext_modules=CUDAExtension(
-            sources=[
-                "xpu_ops/set_mask_value.cu",
-                "xpu_ops/set_value_by_flags.cu",
-                "xpu_ops/ngram_mask.cu",
-                "xpu_ops/gather_idx.cu",
-                "xpu_ops/token_penalty_multi_scores.cu",
-                "xpu_ops/token_penalty_only_once.cu",
-            ]
-        ),
+        ext_modules=CUDAExtension(sources=[
+            "xpu_ops/set_mask_value.cu",
+            "xpu_ops/set_value_by_flags.cu",
+            "xpu_ops/ngram_mask.cu",
+            "xpu_ops/gather_idx.cu",
+            "xpu_ops/token_penalty_multi_scores.cu",
+            "xpu_ops/token_penalty_only_once.cu",
+        ]),
     )
 else:
     use_bf16 = os.getenv("CPU_USE_BF16", "False") == "True"
     x86_simd_sort_dir = "third_party/x86-simd-sort"
-    if not os.path.exists(x86_simd_sort_dir) or not os.listdir(x86_simd_sort_dir):
+    if not os.path.exists(x86_simd_sort_dir) or not os.listdir(
+            x86_simd_sort_dir):
         x86_simd_sort_url = "https://paddlepaddle-inference-banchmark.bj.bcebos.com/x86-simd-sort.tar.gz"
         download_and_extract(x86_simd_sort_url, "third_party")
     xft_dir = "third_party/xFasterTransformer"
