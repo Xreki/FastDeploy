@@ -114,10 +114,10 @@ for ((i=0; i<$NUM_INSTANCES; i++)); do
     done
 
     # 计算端口索引
-    AP_IDX=$((i * 3 + 1))
-    IP_IDX=$((i * 3 + 2))
-    QP_IDX=$((i * 3 + 3))
-    MP_IDX=$((i * 3 + 4))
+    AP_IDX=$((i * 4 + 1))
+    IP_IDX=$((i * 4 + 2))
+    QP_IDX=$((i * 4 + 3))
+    MP_IDX=$((i * 4 + 4))
 
     # 获取对应端口
     AP=`echo $ports | awk -v idx=$AP_IDX '{print $idx}'`
@@ -128,6 +128,8 @@ for ((i=0; i<$NUM_INSTANCES; i++)); do
     # 启动agent，根据MODEL环境变量选择启动脚本
     if [ "$MODEL" = "eb45t" ]; then
         python rollout-worker-agent_dynamic.py --device_id $DEVICE_ID -j $JOB_ID -p $CARDS_PER_INSTANCE -ap $AP -ip $IP -qp $QP -mp $MP -s start_job_by_agent_eff.sh &
+    elif [ "$MODEL" = "eb45tmm" ]; then
+        python rollout-worker-agent_dynamic.py --device_id $DEVICE_ID -j $JOB_ID -p $CARDS_PER_INSTANCE -ap $AP -ip $IP -qp $QP -mp $MP -s start_job_by_agent_vl.sh &
     else
         python rollout-worker-agent_dynamic.py --device_id $DEVICE_ID -j $JOB_ID -p $CARDS_PER_INSTANCE -ap $AP -ip $IP -qp $QP -mp $MP &
     fi

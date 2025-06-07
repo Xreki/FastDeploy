@@ -232,6 +232,7 @@ def cleanup_worker(job_id):
     if worker_monitor_thread and worker_monitor_thread.is_alive():
         worker_stop_event.set()
         worker_monitor_thread.join(timeout=5)
+        logging.info("Killing worker_monitor_thread")
 
     #  推理进程
     if worker_proc and worker_proc.poll() is None:
@@ -249,6 +250,7 @@ def cleanup_worker(job_id):
         p.join(5)
         if p.is_alive():
             os.kill(p.pid, signal.SIGKILL)
+    logging.info("Killing update worker process")
 
 def background_start(job_id: str, model_path: str, model_version: str, modify_max_model_len: bool) -> None:
     """Start worker by calling downstream HTTP APIs"""
@@ -350,6 +352,7 @@ def background_start(job_id: str, model_path: str, model_version: str, modify_ma
 
 
 max_model_len = 0
+max_num_seqs = 0
 
 @app.route('/infer/start', methods=['POST'])
 def start() -> str:
@@ -360,12 +363,14 @@ def start() -> str:
     logging.info(f"receive start request: {info}")
     modify_max_model_len = False
     try:
-        global max_model_len
+        global max_model_len, max_num_seqs
         new_max_model_len = int(info["max_model_len"])
-        if max_model_len != new_max_model_len:
-            set_max_model_len(new_max_model_len)
+        new_max_num_seqs = int(info["max_num_seqs"])
+        if max_model_len != new_max_model_len or max_num_seqs != new_max_num_seqs:
+            set_max_model_len(new_max_model_len, new_max_num_seqs)
             modify_max_model_len = True
             max_model_len = new_max_model_len
+            max_num_seqs = new_max_num_seqs
     except Exception as e:
         logging.error(f"set max_model_len failed: {str(e)}")
 
@@ -638,7 +643,7 @@ def set_parallel_degree(degree: str):
     parallel_degree = degree
 
 
-def set_max_model_len(max_model_len: int):
+def set_max_model_len(max_model_len: int, max_num_seqs: int):
     """Set max model length in all agent_work YAML files"""
     try:
         pattern = os.path.join(rollout_worker_root, "training", "agent_work*.yaml")
@@ -657,6 +662,16 @@ def set_max_model_len(max_model_len: int):
                 if not isinstance(data, dict):
                     print(f"{yaml_path} 内容不是字典，跳过")
                     logging.warning(f"{yaml_path} 内容不是字典，跳过")
+                    continue
+
+                if 'max_num_seqs' in data:
+                    old_value = data['max_num_seqs']
+                    data['max_num_seqs'] = max_num_seqs
+                    print(f"{yaml_path}: max_num_seqs 从 {old_value} 修改为 {max_num_seqs}")
+                    logging.info(f"{yaml_path}: max_model_len 从 {old_value} 修改为 {max_num_seqs}")
+                else:
+                    print(f"{yaml_path}: 不存在 max_num_seqs 字段，跳过")
+                    logging.info(f"{yaml_path}: 不存在 max_num_seqs 字段，跳过")
                     continue
 
                 if 'max_model_len' in data:
