@@ -157,6 +157,7 @@ def notice_controller(job_id: str, model_version: str, status: str, reason: str)
                 "ip": ip,
                 "infer_port": rollout_worker_http_port,
                 "agent_port": port,
+                "metrics_port": metrics_port,
                 "worker_status": status,
                 "reason": reason
             })
@@ -166,6 +167,7 @@ def notice_controller(job_id: str, model_version: str, status: str, reason: str)
                     "ip": ip,
                     "infer_port": rollout_worker_http_port,
                     "agent_port": port,
+                    "metrics_port": metrics_port,
                     "worker_status": status,
                     "model_version": model_version,
                     "reason": reason
@@ -503,6 +505,7 @@ def register(port: Optional[int] = None,
             "ip": local_ip,
             "agent_port": port,
             "infer_port": http_port,
+            "metrics_port": metrics_port,
             "worker_status": "initialized"
         }
 
