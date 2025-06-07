@@ -2,6 +2,6 @@
 model: "/shared_ipc_meta/"
 max_model_len: 33792
 max_num_seqs: 32
-block_ratio: 0.2
+kv_cache_ratio: 0.2
 gpu_memory_utilization: 0.8
 dynamic_load_weight: 1
