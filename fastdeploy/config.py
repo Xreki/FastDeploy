@@ -78,7 +78,6 @@ class ModelConfig(PretrainedConfig):
     max_stop_seqs_num = 5  # int(os.getenv("MAX_STOP_SEQS_NUM", "5"))
     stop_seqs_max_len = 8  # int(os.getenv("STOP_SEQS_MAX_LEN", "8"))
 
-    use_neox_rotary_style: bool = True
     architectures: list[str] = []
 
     # NOTE(gongshaotain): form _load_model_init_val()

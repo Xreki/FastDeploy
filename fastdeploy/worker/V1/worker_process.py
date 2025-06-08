@@ -477,10 +477,6 @@ def initialize_llm_config(args) -> LLMConfig:
         quant_config = None
 
     model_config.architectures = config.get("architectures")
-    if "ErnieForCausalLM" in model_config.architectures:
-        model_config.use_neox_rotary_style = False
-    else:
-        model_config.use_neox_rotary_style = True
 
     # Update parallel config
     parallel_config.engine_pid = args.engine_pid

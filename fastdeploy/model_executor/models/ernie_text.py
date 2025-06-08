@@ -106,6 +106,7 @@ class Ernie45TAttention(nn.Layer):
             llm_config=llm_config,
             layer_id=layer_id,
             prefix=prefix,
+            use_neox_rotary_style=False,
         )
 
     def load_state_dict(self, state_dict):

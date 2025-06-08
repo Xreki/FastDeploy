@@ -21,6 +21,7 @@ from functools import partial
 import paddle
 from paddle import nn
 from paddlenlp.transformers import PretrainedModel
+from paddlenlp.utils.log import logger
 
 from fastdeploy.config import LLMConfig, ModelConfig
 from fastdeploy.model_executor.layers.activation import SiluAndMul
@@ -108,7 +109,8 @@ class Qwen2Attention(nn.Layer):
 
         self.attn = Attention(llm_config=llm_config,
                               layer_id=layer_id,
-                              prefix=prefix)
+                              prefix=prefix,
+                              use_neox_rotary_style=True)
 
     def load_state_dict(self, state_dict):
         """
@@ -261,6 +263,7 @@ class Qwen2Model(nn.Layer):
         self.embeddings.load_state_dict(state_dict)
         self.norm.load_state_dict(state_dict)
         for i in range(self.num_layers):
+            logger.info(f"Start load layer {i}")
             self.layers[i].load_state_dict(state_dict)
 
     def forward(

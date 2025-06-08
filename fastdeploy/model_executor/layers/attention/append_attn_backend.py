@@ -80,8 +80,6 @@ class AppendAttentionBackend(AttentionBackend):
         self.rope_theta = (10000.0 if llm_config.model_config.rope_theta
                            is None else llm_config.model_config.rope_theta)
         self.rope_3d = getattr(llm_config.model_config, "rope_3d", False)
-        self.use_neox_rotary_style = getattr(llm_config.model_config,
-                                             "use_neox_rotary_style", False)
         self.causal = getattr(llm_config.model_config, "causal", True)
         self.speculate_method = llm_config.parallel_config.speculate_method
         self.use_speculate = self.speculate_method is not None
@@ -198,7 +196,7 @@ class AppendAttentionBackend(AttentionBackend):
             None,  # kv_signal_data,
             metadata._fuse_kernel_compute_dtype,
             getattr(layer, "cache_quant_type_str", "none"),
-            self.use_neox_rotary_style,
+            layer.use_neox_rotary_style,
             self.rope_3d,
             self.max_seq_len,
             getattr(layer, "quant_max_bound", 0.0),

@@ -100,7 +100,7 @@ def post_process(sampled_token_ids: paddle.Tensor,
         paddle.logical_or(model_output.stop_flags, length_cond),
         model_output.stop_flags,
     )
-
+    # TODO(gongshaotian): Add use_stop_seqs
     set_stop_value_multi_ends(sampled_token_ids, model_output.stop_flags,
                               model_output.seq_lens_this_time,
                               model_output.eos_token_id,
