@@ -52,8 +52,11 @@ class EngineWorkerQueue:
         self.num_client: int = num_client
         self.client_id: int = client_id
 
-        # Custom QueueManager for proxy object registration
+
         class QueueManager(BaseManager):
+            """
+            Custom QueueManager for proxy object registration.
+            """
             pass
 
         if is_server:
