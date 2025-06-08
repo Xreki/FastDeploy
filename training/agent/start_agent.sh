@@ -14,7 +14,7 @@ export ROLLOUT_CONTROLLER_HOST=${rollout_controller_host:-"http://10.11.155.41:8
 source ${ROLLOUT_WORKER_ROOT}/training/agent/build_env.sh
 source "${ROLLOUT_WORKER_ROOT}/${FASTDEPLOY_ENV_NAME}/bin/activate"
 
-FILES=("${ROLLOUT_WORKER_ROOT}/training/agent_work.yaml" "${ROLLOUT_WORKER_ROOT}/training/agent_work_45T.yaml")
+FILES=("${ROLLOUT_WORKER_ROOT}/training/agent_work.yaml" "${ROLLOUT_WORKER_ROOT}/training/agent_work_45T.yaml" "${ROLLOUT_WORKER_ROOT}/training/agent_work_45T_vl.yaml")
 
 # 写入agent_work.yaml 和 agent_work_45T.yaml 的 scheduler 段
 for YAML_FILE in "${FILES[@]}"; do
@@ -89,7 +89,7 @@ fi
 cd $ROLLOUT_WORKER_ROOT/training/agent
 
 # 计算需要的端口总数
-TOTAL_PORTS=$((NUM_INSTANCES * 3))
+TOTAL_PORTS=$((NUM_INSTANCES * 4))
 
 # 获取空闲端口
 ports=`sh get_free_ports.sh $TOTAL_PORTS`
@@ -114,20 +114,24 @@ for ((i=0; i<$NUM_INSTANCES; i++)); do
     done
 
     # 计算端口索引
-    AP_IDX=$((i * 3 + 1))
-    IP_IDX=$((i * 3 + 2))
-    QP_IDX=$((i * 3 + 3))
+    AP_IDX=$((i * 4 + 1))
+    IP_IDX=$((i * 4 + 2))
+    QP_IDX=$((i * 4 + 3))
+    MP_IDX=$((i * 4 + 4))
 
     # 获取对应端口
     AP=`echo $ports | awk -v idx=$AP_IDX '{print $idx}'`
     IP=`echo $ports | awk -v idx=$IP_IDX '{print $idx}'`
     QP=`echo $ports | awk -v idx=$QP_IDX '{print $idx}'`
+    MP=`echo $ports | awk -v idx=$MP_IDX '{print $idx}'`
 
     # 启动agent，根据MODEL环境变量选择启动脚本
     if [ "$MODEL" = "eb45t" ]; then
-        python rollout-worker-agent_dynamic.py --device_id $DEVICE_ID -j $JOB_ID -p $CARDS_PER_INSTANCE -ap $AP -ip $IP -qp $QP -s start_job_by_agent_eff.sh &
+        python rollout-worker-agent_dynamic.py --device_id $DEVICE_ID -j $JOB_ID -p $CARDS_PER_INSTANCE -ap $AP -ip $IP -qp $QP -mp $MP -s start_job_by_agent_eff.sh &
+    elif [ "$MODEL" = "eb45tmm" ]; then
+        python rollout-worker-agent_dynamic.py --device_id $DEVICE_ID -j $JOB_ID -p $CARDS_PER_INSTANCE -ap $AP -ip $IP -qp $QP -mp $MP -s start_job_by_agent_vl.sh &
     else
-        python rollout-worker-agent_dynamic.py --device_id $DEVICE_ID -j $JOB_ID -p $CARDS_PER_INSTANCE -ap $AP -ip $IP -qp $QP &
+        python rollout-worker-agent_dynamic.py --device_id $DEVICE_ID -j $JOB_ID -p $CARDS_PER_INSTANCE -ap $AP -ip $IP -qp $QP -mp $MP &
     fi
 
     # 等待5秒确保启动

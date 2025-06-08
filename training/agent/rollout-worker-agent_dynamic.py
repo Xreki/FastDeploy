@@ -19,6 +19,9 @@ import sys
 import argparse
 from subprocess import Popen
 import multiprocessing
+import yaml
+import glob
+import tempfile
 
 port = 8098
 app = Flask(__name__)
@@ -39,6 +42,7 @@ registered = False
 rollout_worker_host = "http://127.0.0.1"
 rollout_worker_http_port = int(os.getenv('ROLLOUT_WORKER_HTTP_PORT', "8146"))
 rollout_worker_queue_port = int(os.getenv('ROLLOUT_WORKER_QUEUE_PORT', "8147"))
+metrics_port = int(8000)
 rollout_worker_health_api = f"{rollout_worker_host}:{rollout_worker_http_port}/health"
 rollout_worker_root = os.getenv('ROLLOUT_WORKER_ROOT', "/root/paddlejob/")
 # rollout_worker_yaml = "test.yaml"
@@ -153,6 +157,7 @@ def notice_controller(job_id: str, model_version: str, status: str, reason: str)
                 "ip": ip,
                 "infer_port": rollout_worker_http_port,
                 "agent_port": port,
+                "metrics_port": metrics_port,
                 "worker_status": status,
                 "reason": reason
             })
@@ -162,6 +167,7 @@ def notice_controller(job_id: str, model_version: str, status: str, reason: str)
                     "ip": ip,
                     "infer_port": rollout_worker_http_port,
                     "agent_port": port,
+                    "metrics_port": metrics_port,
                     "worker_status": status,
                     "model_version": model_version,
                     "reason": reason
@@ -185,22 +191,24 @@ def notice_controller(job_id: str, model_version: str, status: str, reason: str)
                 time.sleep(retry_interval)
 
 
-def monitor_worker(job_id: str, proc: Popen, model_version: str):
+def monitor_worker(job_id: str, proc: Popen, model_version: str, stop_event: threading.Event):
     """Monitor the worker process and report its status"""
     # 每隔 1s 检查一次进程状态
-    while True:
-        ret = proc.poll()
-        if ret is not None:
-            # ret 就是子进程的退出码
-            logging.error(f"[{job_id}] Worker exited with error (code={ret})")
-            time.sleep(5)
-            # 仅对通知controller的请求进行重试
-            notice_controller(job_id, model_version, "stopped", "abnormal_stop")
-            global start_cmd_executed
-            start_cmd_executed = False
-            break
-        time.sleep(30)
-
+    try:
+        while not stop_event.is_set():
+            ret = proc.poll()
+            if ret is not None:
+                # ret 就是子进程的退出码
+                logging.error(f"[{job_id}] Worker exited with error (code={ret})")
+                time.sleep(5)
+                # 仅对通知controller的请求进行重试
+                notice_controller(job_id, model_version, "stopped", "abnormal_stop")
+                global start_cmd_executed
+                start_cmd_executed = False
+                break
+            time.sleep(30)
+    except Exception as e:
+        logging.error(f"Monitor worker thread failed: {e}")
 
 def health_check() -> bool:
     """Perform health check on the worker process"""
@@ -213,9 +221,49 @@ def health_check() -> bool:
     return False
 
 
-def background_start(job_id: str, model_path: str, model_version: str) -> None:
+worker_proc = None
+worker_monitor_thread = None
+worker_stop_event = threading.Event()
+
+def cleanup_worker(job_id):
+    """clean up rollout worker process"""
+    global worker_proc, worker_monitor_thread, worker_stop_event
+    #  监控线程
+    if worker_monitor_thread and worker_monitor_thread.is_alive():
+        worker_stop_event.set()
+        worker_monitor_thread.join(timeout=5)
+        logging.info("Killing worker_monitor_thread")
+
+    #  推理进程
+    if worker_proc and worker_proc.poll() is None:
+        logging.info("Killing previous worker process")
+        os.killpg(os.getpgid(worker_proc.pid), signal.SIGTERM)
+        try:
+            worker_proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            logging.warning("Worker process did not exit in time")
+
+    #  更新进程
+    p = update_procs.pop(job_id, None)
+    if p and p.is_alive():
+        p.terminate()
+        p.join(5)
+        if p.is_alive():
+            os.kill(p.pid, signal.SIGKILL)
+    logging.info("Killing update worker process")
+
+def background_start(job_id: str, model_path: str, model_version: str,
+                     modify_model_conf: bool) -> None:
     """Start worker by calling downstream HTTP APIs"""
     global start_cmd_executed
+    try:
+        #  如果max_model_len被修改，需要重启进程
+        if modify_model_conf and start_cmd_executed:
+            cleanup_worker(job_id)
+            start_cmd_executed = False
+    except Exception as e:
+        logging.error(f"Failed to restart worker process: {str(e)}")
+
     logging.info(f"Creating background_start thread, start_cmd status is {start_cmd_executed}")
     if not start_cmd_executed:
         # 执行start_cmd
@@ -227,10 +275,13 @@ def background_start(job_id: str, model_path: str, model_version: str) -> None:
             str(rollout_worker_queue_port),
             device_use_id,
             str(parallel_degree),
+            str(metrics_port)
         ]
         # Popen 时加 preexec_fn=os.setsid，让它在新的进程组里启动
         proc = Popen(start_cmd, cwd=f"{rollout_worker_root}/training/agent",
                      preexec_fn=os.setsid)
+        global worker_proc
+        worker_proc = proc
         logging.info(f"Executing start command: {start_cmd}")
         print(f"Executing start command: {start_cmd}")
         start_cmd_executed = True
@@ -267,16 +318,20 @@ def background_start(job_id: str, model_path: str, model_version: str) -> None:
 
         # 启动一个守护线程，监听进程，并上报
         logging.info(f"Creating monitor_worker thread")
-        thread = threading.Thread(
+        global worker_monitor_thread
+        global worker_stop_event
+        worker_stop_event = threading.Event()
+        worker_monitor_thread = threading.Thread(
             target=monitor_worker,
             kwargs={
                 "job_id": job_id,
                 "proc": proc,
-                "model_version": model_version
+                "model_version": model_version,
+                "stop_event": worker_stop_event
             },
             daemon=True
         )
-        thread.start()
+        worker_monitor_thread.start()
 
     p = update_procs.pop(job_id, None)
     if p and p.is_alive():
@@ -297,6 +352,9 @@ def background_start(job_id: str, model_path: str, model_version: str) -> None:
     update_procs[job_id] = p
 
 
+max_model_len = 0
+max_num_seqs = 0
+
 @app.route('/infer/start', methods=['POST'])
 def start() -> str:
     """Start Infer Engine"""
@@ -304,13 +362,26 @@ def start() -> str:
     info = json.loads(req.decode('utf-8'))
 
     logging.info(f"receive start request: {info}")
+    modify_model_conf = False
+    try:
+        global max_model_len, max_num_seqs
+        new_max_model_len = int(info["max_model_len"])
+        new_max_num_seqs = int(info["max_num_seqs"])
+        if max_model_len != new_max_model_len or max_num_seqs != new_max_num_seqs:
+            set_max_model_len(new_max_model_len, new_max_num_seqs)
+            modify_model_conf = True
+            max_model_len = new_max_model_len
+            max_num_seqs = new_max_num_seqs
+    except Exception as e:
+        logging.error(f"set max_model_len failed: {str(e)}")
 
     thread = threading.Thread(
         target=background_start,
         kwargs={
             "job_id": str(info["job_id"]),
             "model_path": str(info["model_info"]["local_path"]),
-            "model_version": str(info["model_info"]["model_version"])
+            "model_version": str(info["model_info"]["model_version"]),
+            "modify_model_conf": modify_model_conf
         }
     )
     thread.start()
@@ -440,6 +511,7 @@ def register(port: Optional[int] = None,
             "ip": local_ip,
             "agent_port": port,
             "infer_port": http_port,
+            "metrics_port": metrics_port,
             "worker_status": "initialized"
         }
 
@@ -572,6 +644,66 @@ def set_parallel_degree(degree: str):
     parallel_degree = degree
 
 
+def set_max_model_len(max_model_len: int, max_num_seqs: int):
+    """Set max model length in all agent_work YAML files"""
+    try:
+        pattern = os.path.join(rollout_worker_root, "training", "agent_work*.yaml")
+        yaml_files = glob.glob(pattern)
+
+        if not yaml_files:
+            print(f"未找到匹配的 YAML 文件：{pattern}")
+            logging.warning(f"未找到匹配的 YAML 文件：{pattern}")
+            return
+
+        for yaml_path in yaml_files:
+            try:
+                with open(yaml_path, 'r') as f:
+                    data = yaml.safe_load(f)
+
+                if not isinstance(data, dict):
+                    print(f"{yaml_path} 内容不是字典，跳过")
+                    logging.warning(f"{yaml_path} 内容不是字典，跳过")
+                    continue
+
+                if 'max_num_seqs' in data:
+                    old_value = data['max_num_seqs']
+                    data['max_num_seqs'] = max_num_seqs
+                    print(f"{yaml_path}: max_num_seqs 从 {old_value} 修改为 {max_num_seqs}")
+                    logging.info(f"{yaml_path}: max_model_len 从 {old_value} 修改为 {max_num_seqs}")
+                else:
+                    print(f"{yaml_path}: 不存在 max_num_seqs 字段，跳过")
+                    logging.info(f"{yaml_path}: 不存在 max_num_seqs 字段，跳过")
+                    continue
+
+                if 'max_model_len' in data:
+                    old_value = data['max_model_len']
+                    data['max_model_len'] = max_model_len
+                    print(f"{yaml_path}: max_model_len 从 {old_value} 修改为 {max_model_len}")
+                    logging.info(f"{yaml_path}: max_model_len 从 {old_value} 修改为 {max_model_len}")
+                else:
+                    print(f"{yaml_path}: 不存在 max_model_len 字段，跳过")
+                    logging.info(f"{yaml_path}: 不存在 max_model_len 字段，跳过")
+                    continue
+
+                # 原子写入，防止并发读到一半的内容
+                atomic_write_yaml(data, yaml_path)
+
+            except Exception as fe:
+                print(f"{yaml_path}: 修改失败 - {str(fe)}")
+                logging.error(f"{yaml_path}: 修改失败 - {str(fe)}")
+
+    except Exception as e:
+        print(f"Set max_model_len failed: {str(e)}")
+        logging.error(f"Set max_model_len failed: {str(e)}")
+
+def atomic_write_yaml(data, target_path):
+    """原子方式写入 YAML 文件，防止写一半被读到"""
+    dir_name = os.path.dirname(target_path)
+    with tempfile.NamedTemporaryFile('w', delete=False, dir=dir_name) as tf:
+        yaml.dump(data, tf, default_flow_style=False, sort_keys=False)
+        temp_name = tf.name
+    os.replace(temp_name, target_path)  # 原子替换
+
 if __name__ == '__main__':
     # multiprocessing.set_start_method("spawn", force=True)
     # 注册清理函数
@@ -598,6 +730,7 @@ if __name__ == '__main__':
     parser.add_argument('-ap', '--agent_port', help='agent_port')
     parser.add_argument('-ip', '--infer_port', help='infer_port')
     parser.add_argument('-qp', '--queue_port', help='queue_port')
+    parser.add_argument('-mp', '--metrics_port', help='metrics_port')
     parser.add_argument('-skip', '--skip-health-check', action='store_true', help='跳过健康检查')
 
     args = parser.parse_args()
@@ -615,6 +748,8 @@ if __name__ == '__main__':
         rollout_worker_http_port = int(args.infer_port)
     if args.queue_port:
         rollout_worker_queue_port = int(args.queue_port)
+    if args.metrics_port:
+        metrics_port = int(args.metrics_port)
 
     print(f"device_use_id: {device_use_id},\n"
           f"job_id: {job_id},\n"
@@ -637,9 +772,11 @@ if __name__ == '__main__':
         filemode='a'
     )
 
-    print(f"port: {port}, http_port: {rollout_worker_http_port}, queue_port: {rollout_worker_queue_port}")
+    print(f"port: {port}, http_port: {rollout_worker_http_port}, "
+          f"queue_port: {rollout_worker_queue_port}, metrics_port: {metrics_port}")
 
-    logging.info(f"port: {port}, http_port: {rollout_worker_http_port}, queue_port: {rollout_worker_queue_port}")
+    logging.info(f"port: {port}, http_port: {rollout_worker_http_port}"
+                 f", queue_port: {rollout_worker_queue_port}, metrics_port: {metrics_port}")
 
     logging.info("Starting service")
 
