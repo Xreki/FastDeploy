@@ -132,7 +132,6 @@ class GPUModelRunner(ModelRunnerBase):
                 idx:idx + 1, :encoder_block_num] = np.array(
                     request.block_tables, dtype="int32")
 
-            # TODO(luotingdan): Confirm correctness
             if request.get("stop_token_ids") is not None and request.get(
                     "stop_seqs_len") is not None:
                 stop_seqs_num = len(request.get("stop_seqs_len"))
@@ -394,7 +393,6 @@ class GPUModelRunner(ModelRunnerBase):
         Initialize forward meta and attention meta data
         """
         # Initialize forward meta
-        # print(f"self.share_inputs['caches']: {self.share_inputs['caches']}")
         self.forward_meta = ForwardMeta.init_forward_meta(
             self.share_inputs, self.attn_backends[0])
 
@@ -408,7 +406,6 @@ class GPUModelRunner(ModelRunnerBase):
         Initialize kv cache
         Args:
             kv_cache_config:
-        TODO(gongshaotian): Refactor cacke manage
         """
         cache_kvs = {}
         max_block_num = self.num_gpu_blocks
@@ -560,7 +557,6 @@ class GPUModelRunner(ModelRunnerBase):
         # 3. Execute model
         model_output = self.model(self.share_inputs["ids_remove_padding"],
                                   self.forward_meta)
-        print(f"model_output: {model_output}")
         hiddden_states = rebuild_padding(
             model_output,
             self.share_inputs["cum_offsets"],
@@ -573,10 +569,8 @@ class GPUModelRunner(ModelRunnerBase):
 
         # 4. Compute logits, Sample
         logits = self.model.compute_logits(hiddden_states)
-        print(f"logits: {logits}")
 
         sampled_token_ids = self.sampler(logits, self.sampling_metadata)
-        print(f"sampled_token_ids: {sampled_token_ids}")
 
         # 5. Speculative decode
 
@@ -664,10 +658,7 @@ class GPUModelRunner(ModelRunnerBase):
         })
 
     def cal_theortical_kvcache(self):
-        """
-        Calculate the total block memory required at the model level
-        TODO(gongshaotian): get block size(bytes) from attention backend
-        """
+        """ Calculate the total block memory required at the model level """
         """
         Byte of dtype:
         - bf16: 2

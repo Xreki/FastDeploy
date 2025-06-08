@@ -15,7 +15,6 @@
 """
 from __future__ import annotations
 
-from typing import List, Tuple, Dict, Optional
 import os
 import re
 import signal
@@ -26,6 +25,7 @@ import time
 import traceback
 import uuid
 import weakref
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import zmq
@@ -85,8 +85,8 @@ class LLMEngine(object):
         self.scheduler = cfg.scheduler_config.scheduler()
 
         self.input_processor = InputPreprocessor(cfg.tokenizer, cfg.enable_mm)
-        self.resource_manager = ResourceManager(
-            cfg.max_num_seqs, cfg.cache_config)
+        self.resource_manager = ResourceManager(cfg.max_num_seqs,
+                                                cfg.cache_config)
 
         self.token_processor = TokenProcessor(
             cfg=self.cfg, cached_generated_tokens=self.scheduler)
@@ -184,13 +184,15 @@ class LLMEngine(object):
         assert self.api_server_pid is not None
         while True:
             try:
+
                 def get_results_handler(request_ids):
                     results = dict()
                     try:
                         results = self.scheduler.get_results(request_ids)
                         for req_id, contents in results.items():
-                            results[req_id] = [data.to_dict()
-                                               for data in contents]
+                            results[req_id] = [
+                                data.to_dict() for data in contents
+                            ]
                     except Exception as e:
                         llm_logger.error(f"Get results handler error: {e}")
                     return results
@@ -290,8 +292,9 @@ class LLMEngine(object):
                     request = Request.from_dict(data)
                     llm_logger.info(f"Receive request: {request}")
 
-                results: List[Tuple[str, Optional[str]]] = self.scheduler.put_requests(
-                    [] if request is None else [request])
+                results: List[Tuple[
+                    str, Optional[str]]] = self.scheduler.put_requests(
+                        [] if request is None else [request])
 
                 if request:
                     if request.request_id not in added_requests:
@@ -312,8 +315,8 @@ class LLMEngine(object):
                                              error_msg=failed)
                 # Since the request is not in scheduler
                 # Send result by zmq directly
-                self.zmq_server.send_multipart(
-                    request.request_id, error_result)
+                self.zmq_server.send_multipart(request.request_id,
+                                               error_result)
             except Exception as e:
                 llm_logger.error(
                     f"Error happend while receving new request from zmq, details={e}"
@@ -336,7 +339,8 @@ class LLMEngine(object):
         if sampling_params is not None:
             request.sampling_params = sampling_params
         request.preprocess_start_time = time.time()
-        request = self.data_processor.process_request(request, self.cfg.max_model_len)
+        request = self.data_processor.process_request(request,
+                                                      self.cfg.max_model_len)
 
         request.prompt_token_ids_len = len(request.prompt_token_ids)
         input_ids_len = request.prompt_token_ids_len
@@ -399,7 +403,9 @@ class LLMEngine(object):
             raise EngineError(error_msg, error_code=500)
 
         self.token_processor.number_of_tasks += len(tasks)
-        token_chunk_size =(self.cfg.max_num_batched_tokens // len(tasks)) // self.cfg.cache_config.block_size * self.cfg.cache_config.block_size
+        token_chunk_size = (
+            self.cfg.max_num_batched_tokens // len(tasks)
+        ) // self.cfg.cache_config.block_size * self.cfg.cache_config.block_size
         for i in range(len(tasks)):
             self.token_processor.number_of_input_tokens += tasks[
                 i].prompt_token_ids_len
@@ -569,9 +575,9 @@ class LLMEngine(object):
         uncache_worker_stdout = "" if os.getenv("UNCACHE_WORKER_STDOUT",
                                                 "0") == 1 else "-u"
         pd_cmd = f"{command_prefix} {sys.executable} {uncache_worker_stdout} -m paddle.distributed.launch "
-        # py_script = os.path.join(current_dir_path, "../worker/worker.py")
-        py_script = os.path.join(current_dir_path,
-                                 "../worker/V1/worker_process.py")
+        worker_path = "../worker/V1/worker_process.py" if os.getenv(
+            "USE_WORKER_V1", default="0") == "1" else "../worker/worker.py"
+        py_script = os.path.join(current_dir_path, worker_path)
         arguments = (
             f" --nnodes {str(self.cfg.nnode)}"
             f" --devices {self.cfg.device_ids} {py_script}"

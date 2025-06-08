@@ -358,6 +358,7 @@ class ParallelConfig:
 
     # speculate_max_draft_tokens
     speculate_max_draft_tokens: int = 1
+    max_num_batched_tokens: int = 2048
 
 
 @dataclass
@@ -636,6 +637,7 @@ class TmpConfig:
     is_channel_wise: bool = False
     weight_block_size: int = 16
     use_offline_quant: bool = False
+
 
 @dataclass
 class DecodingConfig:

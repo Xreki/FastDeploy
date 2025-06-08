@@ -96,5 +96,3 @@ class ModelRunnerOutput:
 
     # [num_reqs, num_spec_tokens]
     spec_token_ids: Optional[list[list[int]]]
-
-    # TODO(gongshaotian): supplement other outputs info

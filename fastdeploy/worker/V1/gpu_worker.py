@@ -107,11 +107,11 @@ class GpuWorker(WorkerBase):
 
         logger.info((
             "Before running the profile, the memory usage info is as follows:",
-            f"\tDevice Total memory: {before_run_meminfo.total}",
-            f"\tDevice used memory: {before_run_meminfo.used}",
-            f"\tDevice free memory: {before_run_meminfo.free}",
-            f"\tPaddle reserved memory: {paddle_reserved_mem_before_run}",
-            f"\tPaddle allocated memory: {paddle_allocated_mem_before_run}"))
+            f"\nDevice Total memory: {before_run_meminfo.total}",
+            f"\nDevice used memory: {before_run_meminfo.used}",
+            f"\nDevice free memory: {before_run_meminfo.free}",
+            f"\nPaddle reserved memory: {paddle_reserved_mem_before_run}",
+            f"\nPaddle allocated memory: {paddle_allocated_mem_before_run}"))
 
         # 2. Profile run
         self.model_runner.profile_run()
@@ -134,12 +134,12 @@ class GpuWorker(WorkerBase):
         end_time = time.perf_counter()
         logger.info(
             ("After running the profile, the memory usage info is as follows:",
-             f"\tDevice Total memory: {after_run_meminfo.total}",
-             f"\tDevice used memory: {after_run_meminfo.used}",
-             f"\tDevice free memory: {after_run_meminfo.free}",
-             f"\tPaddle reserved memory: {paddle_reserved_mem_after_run}",
-             f"\tPaddle allocated memory: {paddle_allocated_mem_after_run}",
-             f"\tAvailable KV Cache meomory: {available_kv_cache_memory}",
+             f"\nDevice Total memory: {after_run_meminfo.total}",
+             f"\nDevice used memory: {after_run_meminfo.used}",
+             f"\nDevice free memory: {after_run_meminfo.free}",
+             f"\nPaddle reserved memory: {paddle_reserved_mem_after_run}",
+             f"\nPaddle allocated memory: {paddle_allocated_mem_after_run}",
+             f"\nAvailable KV Cache meomory: {available_kv_cache_memory}",
              f"Profile time: {end_time - start_time}"))
 
         return available_kv_cache_memory  # return to caculate the block num in this device

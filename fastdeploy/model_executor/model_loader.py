@@ -21,13 +21,18 @@ from paddle import nn
 from paddle.common_ops_import import convert_dtype
 
 from fastdeploy.config import LLMConfig, LoadConfig, ModelConfig
+from fastdeploy.model_executor.models.ernie import ErnieBotPretrainedModel
 from fastdeploy.model_executor.models.model_base import ModelRegistry
 from fastdeploy.model_executor.models.qwen2 import Qwen2PretrainedModel
 from fastdeploy.model_executor.models.utils import (convert_ndarray_dtype,
                                                     load_checkpoint)
 
+MODEL_CLASSES = {
+    "ErnieForCausalLM": ErnieBotPretrainedModel,
+    "Qwen2ForCausalLM": Qwen2PretrainedModel,
+}
 
-# TODO(gongshaotian): implement real interface to replace this
+
 def get_model_from_loader(llm_config: LLMConfig) -> nn.Layer:
     """ load or download model """
     model_loader = DefaultModelLoader(llm_config.load_config)
@@ -64,12 +69,11 @@ class DefaultModelLoader(BaseModelLoader):
     def load_model(self, llm_config: LLMConfig) -> nn.Layer:
         context = paddle.LazyGuard()
         architectures = llm_config.model_config.architectures[0]
-        """TODO(gongshaotian):  Architecture optimization
-           1. Get model from config
-           2. Move the loading funcs of the model to the Model class and rename as load_weight"""
+
+        model_class = MODEL_CLASSES[architectures]
         state_dict = load_checkpoint(
             llm_config.parallel_config.model_name_or_path,
-            Qwen2PretrainedModel,
+            model_class,
             llm_config.model_config,
             return_numpy=True)
         with context:

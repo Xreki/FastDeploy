@@ -193,7 +193,6 @@ class PaddleDisWorkerProc():
 
             # Execute model to generate token. The generated token will be written to the buffer.
             # These generated tokens can be obtained through get_output op.
-            print("----------- execute_model -----------")
             self.worker.execute_model()
 
     def init_distributed_enviroment(self, seed=20) -> List[int]:
@@ -234,22 +233,26 @@ class PaddleDisWorkerProc():
         print(f"------- num_blocks_local:{num_blocks_local} --------")
 
         # 3. Send IPCSignal
-        get_profile_block_num = np.zeros(shape=[self.rank], dtype=np.int32)
-        self.get_profile_block_num_signal = IPCSignal(
-            name="get_profile_block_num",
-            array=get_profile_block_num,
-            dtype=np.int32,
-            suffix=self.parallel_config.engine_pid,
-            create=False)
-        self.get_profile_block_num_signal.value[
-            self.local_rank] = num_blocks_local
-        # wait all worker send the signal
-        while np.any(self.get_profile_block_num_signal.value <= 0):
-            time.sleep(0.01)
-        num_blocks_global = self.get_profile_block_num_signal.value.min().item(
-        )
-        self.get_profile_block_num_signal.value[
-            self.local_rank] = num_blocks_global
+        if self.llm_config.parallel_config.do_profile:
+            get_profile_block_num = np.zeros(shape=[self.rank], dtype=np.int32)
+            self.get_profile_block_num_signal = IPCSignal(
+                name="get_profile_block_num",
+                array=get_profile_block_num,
+                dtype=np.int32,
+                suffix=self.parallel_config.engine_pid,
+                create=False)
+            self.get_profile_block_num_signal.value[
+                self.local_rank] = num_blocks_local
+
+            # Wait all worker send the signal
+            while np.any(self.get_profile_block_num_signal.value <= 0):
+                time.sleep(0.01)
+            num_blocks_global = self.get_profile_block_num_signal.value.min(
+            ).item()
+            self.get_profile_block_num_signal.value[
+                self.local_rank] = num_blocks_global
+        else:
+            num_blocks_global = num_blocks_local
 
         # 4. Updata share inputs
         self.worker.reinitialize_kv_cache(num_gpu_blocks=num_blocks_global)
@@ -278,7 +281,8 @@ def parse_args():
                         type=int,
                         default=34,
                         help="max batch size")
-    parser.add_argument("--max_block_num", type=int, default=2000)
+    parser.add_argument("--total_block_num", type=int,
+                        default=2000)  # max_block_num -> total_block_num
     parser.add_argument("--block_size", type=int, default=64)
     parser.add_argument("--engine_worker_queue_port", type=int, default=9923)
     parser.add_argument("--max_model_len",
@@ -353,6 +357,10 @@ def parse_args():
         ],
     )
     parser.add_argument("--speculate_max_draft_tokens", type=int, default=1)
+    parser.add_argument("--max_num_batched_tokens",
+                        type=int,
+                        default=2048,
+                        help="max num batched tokens")
 
     args = parser.parse_args()
     return args
@@ -380,6 +388,7 @@ def initialize_llm_config(args) -> LLMConfig:
 
     # Note(tangbinhan): used for load_checkpoint
     model_config.tensor_parallel_rank = parallel_config.tensor_parallel_rank
+    model_config.use_ep = parallel_config.use_ep
     model_config.is_mtp = speculative_config.is_mtp
 
     group_size = config.get("group_size", -1)
@@ -467,6 +476,7 @@ def initialize_llm_config(args) -> LLMConfig:
     else:
         quant_config = None
 
+    model_config.architectures = config.get("architectures")
     if "ErnieForCausalLM" in model_config.architectures:
         model_config.use_neox_rotary_style = False
     else:
@@ -476,7 +486,7 @@ def initialize_llm_config(args) -> LLMConfig:
     parallel_config.engine_pid = args.engine_pid
     parallel_config.model_name_or_path = args.model_name_or_path
     parallel_config.max_num_seqs = args.max_num_seqs
-    parallel_config.max_block_num = args.max_block_num
+    parallel_config.max_block_num = args.total_block_num
     parallel_config.block_size = args.block_size
     parallel_config.engine_worker_queue_port = args.engine_worker_queue_port
     parallel_config.max_model_len = args.max_model_len
@@ -497,6 +507,7 @@ def initialize_llm_config(args) -> LLMConfig:
     parallel_config.speculate_method = args.speculate_method
     parallel_config.attention_backend = args.attention_backend
     parallel_config.speculate_max_draft_tokens = args.speculate_max_draft_tokens
+    parallel_config.max_num_batched_tokens = args.max_num_batched_tokens
 
     llm_config = LLMConfig(model_config=model_config,
                            parallel_config=parallel_config,
@@ -527,8 +538,6 @@ def run_worker_proc():
     worker_proc = PaddleDisWorkerProc(llm_config)
     worker_proc.init_device()
     worker_proc.load_model()
-
-    # if llm_config.parallel_config.do_profile:
     worker_proc.determine_num_available_blocks()
     worker_proc.event_loop_normal()
 
