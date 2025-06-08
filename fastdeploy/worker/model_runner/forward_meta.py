@@ -329,6 +329,7 @@ class ForwardMeta():
     @classmethod
     def init_forward_meta(cls, share_inputs: Dict,
                           attn_backend: "AttentionBackend"):
+        """ init forward meta """
         # TODO(gongshaotian): delete this func
         ret = cls(forward_mode=ForwardMode.MIXED,
                   input_ids=share_inputs["input_ids"],
