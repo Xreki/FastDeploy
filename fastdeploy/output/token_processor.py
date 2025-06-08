@@ -90,7 +90,7 @@ class TokenProcessor(object):
         """
         from fastdeploy.model_executor.models import \
             inference_runner_supported_models
-        if self.cfg.model_config.architectures[0] not in inference_runner_supported_models \
+        if self.cfg.model_config.architectures not in inference_runner_supported_models \
             and "ErnieMoEVLForCausalLM" not in self.cfg.model_config.architectures:
             from paddlenlp_ops import get_output, speculate_get_output
         else:
@@ -169,6 +169,14 @@ class TokenProcessor(object):
                 continue
 
             task = self.resource_manager.tasks_list[i]
+
+            if self.cfg.enable_chunked_prefill:
+                if task.get("prefill_token_num", None) is None:
+                    task.set("prefill_token_num", task.token_chunk_size)
+                else:
+                    task.prefill_token_num += task.token_chunk_size
+                if task.prompt_token_ids_len > task.prefill_token_num:
+                    continue
 
             task_id = task.request_id
 
@@ -259,7 +267,7 @@ class WarmUpTokenProcessor(TokenProcessor):
         """
         from fastdeploy.model_executor.models import \
             inference_runner_supported_models
-        if self.cfg.model_config.architectures[0] not in inference_runner_supported_models \
+        if self.cfg.model_config.architectures not in inference_runner_supported_models \
             and "ErnieMoEVLForCausalLM" not in self.cfg.model_config.architectures:
             from paddlenlp_ops import get_output, speculate_get_output
         else:

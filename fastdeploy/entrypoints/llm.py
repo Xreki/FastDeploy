@@ -26,7 +26,7 @@ from tqdm import tqdm
 from fastdeploy.engine.args_utils import EngineArgs
 from fastdeploy.engine.engine import LLMEngine
 from fastdeploy.engine.sampling_params import SamplingParams
-
+from fastdeploy.entrypoints.chat_utils import ChatCompletionMessageParam
 from fastdeploy.utils import llm_logger
 
 
@@ -139,6 +139,54 @@ class LLM:
         outputs = self._run_engine(req_ids, use_tqdm=use_tqdm)
         return outputs
 
+    def chat(
+        self,
+        messages: Union[list[ChatCompletionMessageParam],
+                        list[list[ChatCompletionMessageParam]]],
+        sampling_params: Optional[Union[SamplingParams,
+                                        list[SamplingParams]]] = None,
+        use_tqdm: bool = True,
+    ):
+        """
+        Args:
+            messages (Union[list[ChatCompletionMessageParam], list[list[ChatCompletionMessageParam]]]):
+                Single conversation or a list of conversations.
+            sampling_params (Optional[Union[SamplingParams, list[SamplingParams]]], optional):
+                The sampling parameters to use for generating the response. Defaults to None.
+            use_tqdm (bool, optional): Whether to use tqdm for the progress bar. Defaults to True.
+
+        Returns:
+            Union[str, list[str]]: The generated response.
+        """
+        if sampling_params is None:
+            sampling_params = self.default_sampling_params
+        
+        if isinstance(sampling_params, SamplingParams):
+            sampling_params_len = 1
+        else:
+            sampling_params_len = len(sampling_params)
+
+        if isinstance(messages, list) and isinstance(messages[0], dict):
+            messages = [messages]
+
+        if sampling_params_len != 1 and len(messages) != sampling_params_len:
+            raise ValueError(
+                "messages and sampling_params must be the same length.")
+
+        messages_len = len(messages)
+        for i in range(messages_len):
+            messages[i] = {
+                "messages": messages[i]
+            }
+        req_ids = self._add_request(
+            prompts=messages,
+            sampling_params=sampling_params
+        )
+
+        # get output
+        outputs = self._run_engine(req_ids, use_tqdm=use_tqdm)
+        return outputs
+
     def _add_request(
         self,
         prompts,
@@ -234,7 +282,7 @@ class LLM:
                     llm_logger.error("Unexcepted error happend: {}".format(e))
 
             num_requests -= len(finished)
-            for i in finished:
+            for i in reversed(finished):
                 req_ids.pop(i)
 
         if use_tqdm:

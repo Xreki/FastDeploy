@@ -17,12 +17,6 @@
 export IP_LIST='10.95.244.83,10.95.244.82,10.95.246.141,10.95.246.145'
 # export IP_LIST='10.95.244.83,10.95.244.82,10.95.246.141,10.95.246.145,10.95.246.162,10.95.247.31,10.95.247.39,10.95.246.158'
 
-export EP_DECODER_PERF_TEST=True
-export USE_CACHE_KV_INT8=True
-export MAX_SEQ_LEN=5000
-export MAX_DEC_LEN=64
-
 mpirun \
--x EP_DECODER_PERF_TEST -x USE_CACHE_KV_INT8 -x MAX_SEQ_LEN -x MAX_DEC_LEN \
 --host $IP_LIST  \
-bash run_prediction_efficientllm_ep_decoder.sh ${1} ${2} ${BATCH_SIZE:-92} ${USE_MICRO_BATCH:-"False"} $IP_LIST
+bash run_prediction_ep_decoder.sh ${1} ${2} ${BATCH_SIZE:-1} ${USE_MICRO_BATCH:-"False"} $IP_LIST

@@ -80,6 +80,8 @@ class ModelConfig:
                     except Exception:
                         continue
 
+        if isinstance(self.architectures, list):
+            self.architectures = self.architectures[0]
         self.model_name_or_path = model_name_or_path
         self.override_name_from_config()
         self.read_from_env()
@@ -93,8 +95,15 @@ class ModelConfig:
             del self.infer_model_mp_num
 
         if hasattr(self, "num_hidden_layers"):
+            if hasattr(self, "remove_tail_layer"):
+                if self.remove_tail_layer is True:
+                    self.num_hidden_layers -= 1
+                elif isinstance(self.remove_tail_layer, int):
+                    self.num_hidden_layers -= self.remove_tail_layer
+
             self.num_layers = self.num_hidden_layers
             del self.num_hidden_layers
+
         if not hasattr(self, "mla_use_absorb"):
             self.mla_use_absorb = False
 
@@ -214,24 +223,22 @@ class CacheConfig:
         self.dec_token_num = self.enc_dec_block_num * self.block_size
         if self.num_gpu_blocks_override is not None:
             self.total_block_num = self.num_gpu_blocks_override
+            self.prefill_kvcache_block_num= int(self.total_block_num * self.kv_cache_ratio)
         else:
             length = num_total_tokens // number_of_tasks
-            block_num = (length + self.block_size - 1 +
-                         self.enc_dec_block_num) // self.block_size
-            self.total_block_num = block_num * number_of_tasks
-            llm_logger.info(
-                f"Doing profile, the total_block_num:{self.total_block_num}")
-        self.max_block_num = int(self.total_block_num * self.kv_cache_ratio)
+            block_num = (length + self.block_size - 1 + self.enc_dec_block_num) // self.block_size
+            self.total_block_num =  block_num * number_of_tasks
+            self.prefill_kvcache_block_num= self.total_block_num
+            llm_logger.info(f"Doing profile, the total_block_num:{self.total_block_num}")
 
     def reset(self, num_gpu_blocks):
         """
         reset gpu block number
         """
-        self.total_block_num = num_gpu_blocks
-        self.max_block_num = int(self.total_block_num * self.kv_cache_ratio)
-        llm_logger.info(
-            (f"Reset block num, the total_block_num:{self.total_block_num},"
-             f" max_block_num:{self.max_block_num}"))
+        self.total_block_num  = num_gpu_blocks
+        self.prefill_kvcache_block_num= int(self.total_block_num * self.kv_cache_ratio)
+        llm_logger.info((f"Reset block num, the total_block_num:{self.total_block_num},"
+            f" prefill_kvcache_block_num:{self.prefill_kvcache_block_num}"))
 
     def print(self):
         """
@@ -282,6 +289,7 @@ class Config:
         use_warmup: bool = False,
         engine_worker_queue_port: int = 8002,
         enable_mm: bool = False,
+        enable_chunked_prefill: bool = False,
     ):
         """
         Initialize the Config class.
@@ -301,6 +309,7 @@ class Config:
             mm_processor_kwargs (Optional[Dict[str, Any]]): Additional arguments for multi-modal processor. Default is None.
             speculative_config (Optional[Dict[str, Any]]): Speculative execution configuration. Default is None.
             use_warmup (bool): Flag to use warmup. Default is False.
+            enable_chunked_prefill (bool): Flag to enable chunked prefill. Default is False.
         """
         self.model_config = model_config
         self.cache_config = cache_config
@@ -317,6 +326,7 @@ class Config:
         self.enable_mm = enable_mm
         self.speculative_config = speculative_config
         self.use_warmup = use_warmup
+        self.enable_chunked_prefill = enable_chunked_prefill
 
         # TODO
         self.max_prefill_batch = 3
@@ -340,7 +350,9 @@ class Config:
         if len(self.device_ids.split(',')) > self.tensor_parallel_size:
             self.device_ids = ",".join(
                 self.device_ids.split(',')[:self.tensor_parallel_size:])
-        assert len(self.device_ids.split(',')) == self.tensor_parallel_size
+        assert len(
+            self.device_ids.split(',')
+        ) == self.tensor_parallel_size, f"The number of available GPUs is {len(self.device_ids.split(','))}, which is less than the tensor parallel required {self.tensor_parallel_size}."
 
         assert self.tensor_parallel_size % self.nnode == 0, f"tensor_parallel_size: {self.tensor_parallel_size} should be divisible by nnode: {self.nnode}"
         self.tp_num_per_node = self.tensor_parallel_size // self.nnode
@@ -350,10 +362,12 @@ class Config:
         self.paddle_commit_id = paddle.version.commit
 
         if self.max_num_batched_tokens is None:
-            self.max_num_batched_tokens = self.max_model_len
+            if self.enable_chunked_prefill:
+                self.max_num_batched_tokens = 2048
+            else:
+                self.max_num_batched_tokens = self.max_model_len
+        self.cache_config.postprocess(self.max_num_batched_tokens, self.max_num_seqs)
 
-        self.cache_config.postprocess(self.max_num_batched_tokens,
-                                      self.max_num_seqs)
 
     def check(self):
         """
@@ -420,10 +434,7 @@ class Config:
                 )
 
         reset_value(self.cache_config, "block_size", "infer_model_block_size")
-        reset_value(self.model_config, "max_model_len",
-                    "infer_model_max_seq_len")
-        reset_value(self.model_config, "return_full_hidden_states",
-                    "return_full_hidden_states")
+        reset_value(self.model_config, "return_full_hidden_states", "return_full_hidden_states")
         reset_value(self.cache_config, "cache_dtype", "infer_model_dtype")
 
     def __str__(self) -> str:

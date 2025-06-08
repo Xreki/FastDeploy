@@ -45,7 +45,7 @@ class ResourceManager(object):
         self.stop_flags = [True] * max_num_seqs
 
 
-        self.free_list = list(range(self.cfg.max_block_num - 1, -1, -1))
+        self.free_list = list(range(self.cfg.prefill_kvcache_block_num - 1, -1, -1))
         self.tasks_list = [None] * max_num_seqs
         # current batch status of the engine
         self.real_bsz = 0
@@ -56,7 +56,7 @@ class ResourceManager(object):
         reset cache config
         """
         self.cfg = cfg
-        self.free_list = list(range(self.cfg.max_block_num - 1, -1, -1))
+        self.free_list = list(range(self.cfg.prefill_kvcache_block_num - 1, -1, -1))
 
 
     def get_required_block_number(self, input_token_num):
@@ -101,7 +101,7 @@ class ResourceManager(object):
         Returns:
             int: total block number
         """
-        return self.cfg.max_block_num
+        return self.cfg.prefill_kvcache_block_num
 
     def _get_block_tables(self, input_token_num, required_type="all"):
         """

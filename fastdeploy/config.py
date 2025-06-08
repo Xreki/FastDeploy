@@ -38,7 +38,7 @@ __all__ = [
 
 ERNIEBOT_PRETRAINED_INIT_CONFIGURATION = {
     "ernie-bot": {
-        "hidden_act": "SwiGLU",
+        "hidden_act": "swiglu",
         "hidden_dropout_prob": 0.0,
         "hidden_size": 4096,
         "num_attention_heads": 32,
@@ -99,7 +99,7 @@ class ModelConfig(PretrainedConfig):
         num_layers: int = 48,
         num_attention_heads: int = 32,
         num_key_value_heads: Optional[int] = None,
-        hidden_act: str = "SwiGLU",
+        hidden_act: str = "swiglu",
         hidden_dropout_prob: float = 0.0,
         max_position_embeddings: int = 512,
         max_seq_len: int = 512,
@@ -267,7 +267,6 @@ class MoEConfig:
 
     use_moe: bool = False
     num_experts: int = -1
-    use_top_k: bool = True
     top_k: int = 8
     moe_intermediate_size: int = -1
     num_experts_per_rank: int = -1
@@ -276,7 +275,6 @@ class MoEConfig:
 
     moe_use_gate_correction_bias = False
     moe_every2 = (False, )
-    moe_topk = (8, )
     moe_num_shared_experts = (0, )
     moe_layer_start_index = 0
     moe_use_ffn_shared_weight_and_bias = (False, )
@@ -288,22 +286,24 @@ class MoEConfig:
     im_patch_id = (
         100295  # multimodality, TODO(liuyuanle): read from config.json
     )
+    moe_tag = ""
 
 
 @dataclass
 class ParallelConfig:
     """Configuration for the distributed execution."""
-    block_size = 16,  # The block size for processing.
-    sequence_parallel = False,  # Whether to enable sequence parallelism.
-    use_ep = False,  # Whether to enable Expert Parallelism
-    moe_group = False,  # Whether to enable moe group
-    msg_queue_id = 1,  # mesage queue id
-    use_micro_batch = False,  # Whether to enable micro batch
-    tensor_parallel_rank = None,  # TP rank ID
-    tensor_parallel_degree = None,  # TP degree
-    mp_size = 1,  # mp size
-    ep_size = 1,  # ep size
-    column_cut = False,  # (bool, optional): The embedding weight distributed on your gpu cards is divided by row or column. Defaults to False means divide by row. When vocab_size can not be divided by world_size but hidden_size can, we can consider split embedding weight by column.
+    block_size = 16  # The block size for processing.
+    sequence_parallel = False  # Whether to enable sequence parallelism.
+    use_ep = False  # Whether to enable Expert Parallelism
+    moe_group = False  # Whether to enable moe group
+    msg_queue_id = 1  # mesage queue id
+    use_micro_batch = False  # Whether to enable micro batch
+    tensor_parallel_rank = None  # TP rank ID
+    tensor_parallel_degree = None  # TP degree
+    mp_size = 1  # mp size
+    ep_size = 1  # ep size
+    column_cut = False  # (bool, optional): The embedding weight distributed on your gpu cards is divided by row or column. Defaults to False means divide by row. When vocab_size can not be divided by world_size but hidden_size can, we can consider split embedding weight by column.
+    lm_head_column_cut = False
     """
     From old wersion worker args
     TODO(gongshaotian): Reclassify
@@ -635,7 +635,7 @@ class TmpConfig:
     has_zero_point: bool = False
     is_channel_wise: bool = False
     weight_block_size: int = 16
-
+    use_offline_quant: bool = False
 
 @dataclass
 class DecodingConfig:

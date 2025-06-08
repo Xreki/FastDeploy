@@ -23,7 +23,7 @@
 
 class ConfigManager {
 public:
-    static ConfigManager& get_instance(const std::string& config_path = "efficientllm_op_configs.json") {
+    static ConfigManager& get_instance(const std::string& config_path = "fastdeploy_op_configs.json") {
         static ConfigManager instance(config_path);
         return instance;
     }

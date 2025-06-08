@@ -193,7 +193,7 @@ __global__ void append_dequant_cache_kv_c8(
   // k_out v_out idx
   uint32_t kv_t_stride = kv_num_heads * HEAD_DIM;
   T *k_write_ptr = k_out + (cu_seqlens_k[batch_id] + start_kv_idx) * kv_t_stride; // 当前k block起始指针
-  T *v_write_ptr = v_out + (cu_seqlens_k[batch_id] + start_kv_idx) * kv_t_stride; // 当前k block起始指针
+  T *v_write_ptr = v_out + (cu_seqlens_k[batch_id] + start_kv_idx) * kv_t_stride; // 当前v block起始指针
 
   uint32_t k_frag[4], v_frag[4], frag_dq[4];
   T *frag_dq_T = reinterpret_cast<T *>(frag_dq);
@@ -215,9 +215,8 @@ __global__ void append_dequant_cache_kv_c8(
   uint32_t k_smem_offset_r = smem_t::get_permuted_offset<num_vecs_per_head_k, inv_k_stride>(
       wid * 16 + 8 * (tid / 16) + tid % 8, (tid % 16) / 8);
   
-  uint32_t k_read_idx = kv_head_idx * kv_h_stride +
-                                  (wid * 4 + tid / 8) * HEAD_DIM +
-                                  tid % 8 * num_elems_per_128b<CacheT>();
+  uint32_t k_read_idx = (wid * 4 + tid / 8) * HEAD_DIM +
+                          tid % 8 * num_elems_per_128b<CacheT>();
 
   // load k_smem 行是64 列是128
   for (int fz = 0; fz < 4; fz++) { // 每个warp1次4行,循环4次16行,4个warp64行
@@ -285,9 +284,8 @@ __global__ void append_dequant_cache_kv_c8(
   uint32_t v_smem_offset_r = smem_t::get_permuted_offset<num_vecs_per_blocksize, inv_v_stride>(
       wid * 16 + 8 * (tid / 16) + tid % 8, (tid % 16) / 8);
 
-  uint32_t v_read_idx = kv_head_idx * kv_h_stride +
-                                  (wid * 8 + tid / 4) * BLOCK_SIZE +
-                                  tid % 4 * num_elems_per_128b<CacheT>();
+  uint32_t v_read_idx = (wid * 8 + tid / 4) * BLOCK_SIZE +
+                          tid % 4 * num_elems_per_128b<CacheT>();
   // load v_smem 行是128 列是64
   for (int fy = 0; fy < 4; fy++) { // 每个warp1次8行,循环4次32行,4个warp128行
     for (int fz = 0; fz < 1; fz++) { // 一次4个128b = 64个uint8
@@ -543,13 +541,22 @@ std::vector<paddle::Tensor> GQARopeWriteCacheKernel(
         const_cast<paddle::Tensor*>(&value_cache));
   }
   const char* fmt_write_cache_completed_signal_str = std::getenv("FLAGS_fmt_write_cache_completed_signal");
+  const char* FLAGS_use_pd_disaggregation_per_chunk = std::getenv("FLAGS_use_pd_disaggregation_per_chunk");
   if (fmt_write_cache_completed_signal_str &&
       (std::strcmp(fmt_write_cache_completed_signal_str, "true") == 0 ||
        std::strcmp(fmt_write_cache_completed_signal_str, "1") == 0)) {
-      if (kv_signal_data) {
+      if (FLAGS_use_pd_disaggregation_per_chunk &&
+          (std::strcmp(FLAGS_use_pd_disaggregation_per_chunk, "true") == 0 ||
+           std::strcmp(FLAGS_use_pd_disaggregation_per_chunk, "1") == 0)) {
         cudaLaunchHostFunc(qkv.stream(),
-                           &RemoteCacheKvIpc::save_cache_kv_complete_signal_layerwise,
-                           (void*)(const_cast<int64_t*>(kv_signal_data.get().data<int64_t>())));
+                           &(RemoteCacheKvIpc::save_cache_kv_complete_signal_layerwise_per_query),
+                           (void*)nullptr);
+      } else {
+        if (kv_signal_data) {
+          cudaLaunchHostFunc(qkv.stream(),
+                            &RemoteCacheKvIpc::save_cache_kv_complete_signal_layerwise,
+                            (void*)(const_cast<int64_t*>(kv_signal_data.get().data<int64_t>())));
+        }
       }
   }
 

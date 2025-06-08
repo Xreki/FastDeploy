@@ -505,3 +505,25 @@ static void PrintMatrix3(const T *mat_d, int num, std::string name) {
   outfile << ss.str();
   outfile.close();
 }
+
+__forceinline__ __device__ uint32_t ld_flag_acquire(uint32_t *flag_addr, int mode = 0) {
+  uint32_t flag;
+  if (mode == 0) {
+    asm volatile("ld.acquire.sys.global.b32 %0, [%1];" : "=r"(flag) : "l"(flag_addr));
+  } else if (mode == 1) {
+    asm volatile("ld.acquire.gpu.global.b32 %0, [%1];" : "=r"(flag) : "l"(flag_addr));
+  } else {
+    asm volatile("ld.acquire.cta.global.b32 %0, [%1];" : "=r"(flag) : "l"(flag_addr));
+  }
+  return flag;
+}
+
+__forceinline__ __device__ void st_flag_release(uint32_t *flag_addr, uint32_t flag, int mode = 0) {
+  if (mode == 0) {
+    asm volatile("st.release.sys.global.b32 [%1], %0;" ::"r"(flag), "l"(flag_addr));
+  } else if (mode == 1) {
+    asm volatile("st.release.gpu.global.b32 [%1], %0;" ::"r"(flag), "l"(flag_addr));
+  } else {
+    asm volatile("st.release.cta.global.b32 [%1], %0;" ::"r"(flag), "l"(flag_addr));
+  }
+}

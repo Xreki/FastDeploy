@@ -10,7 +10,7 @@ tqdm
 pynvml
 uvicorn
 fastapi
-paddlenlp @ https://paddle-qa.bj.bcebos.com/paddlenlp/wheel/72dc85d2d7ccb1ec245de2a296319f429615dc69/paddlenlp-3.0.0b4.post20250508-py3-none-any.whl
+paddlenlp @ https://paddle-qa.bj.bcebos.com/paddlenlp/wheel/c1322be06cdf366ad2d996e963499f5298d2a2bc/paddlenlp-3.0.0b4.post20250530-py3-none-any.whl
 redis
 etcd3
 httpx
@@ -23,3 +23,5 @@ xlwt
 visualdl
 setuptools-scm>=8
 prometheus-client
+decord
+moviepy

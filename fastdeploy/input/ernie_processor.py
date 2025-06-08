@@ -412,7 +412,7 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
         if self.is_thinking:
             tokens = self._convert_to_ids_thinking(messages, max_model_len, system)
         else:
-            tokens = self._convert_to_ids(messages, max_model_len, system)
+            tokens = self._convert_to_ids(messages, raw_request=True, max_model_len=max_model_len, system=system)
         data_processor_logger.debug(f"processed data : {''.join(tokens)}")
         input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
         return input_ids

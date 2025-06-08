@@ -49,7 +49,9 @@ class ModelRunnerBase(ABC):
 
         self._init_share_inputs(args.max_num_seqs)
         self.init_rotary_position_embedding(args.max_model_len)
-        self.num_gpu_blocks = args.max_block_num
+        self.num_gpu_blocks = args.total_block_num
+
+
         self._load_model(config.model_name_or_path, args.dynamic_load_weight)
 
     def _log_memory_usage(self, context: str = "") -> None:
@@ -213,9 +215,8 @@ class ModelRunnerBase(ABC):
 
         # 初始化free list
         free_list = list(
-            range(self.args.max_block_num - 1,
-                  int(self.args.max_block_num * self.args.kv_cache_ratio) - 1,
-                  -1))
+            range(self.args.total_block_num - 1, int(self.args.total_block_num * self.args.kv_cache_ratio) - 1, -1)
+        )
         self.free_list_len = len(free_list)
         self.share_inputs.update({
             "free_list":
@@ -234,6 +235,21 @@ class ModelRunnerBase(ABC):
                 self.model_cfg.stop_seqs_max_len
             ], -1, **int64_config),
         })
+    
+    def update_chunked_prefill(self, token_chunk_size=384):
+        """
+        更新chunked prefill相关参数
+        """
+        if not self.args.enable_chunked_prefill:
+            return
+        
+        raise NotImplementedError("currently chunked_prefill is not supported.")
+    
+    def prefill_finished(self):
+        """
+        判断是否已经完成了prefill操作
+        """
+        return True
 
     @abstractmethod
     def init_rotary_position_embedding(self, max_model_len):

@@ -129,7 +129,6 @@ class Qwen2Attention(nn.Layer):
             qkv=qkv_out,
             forward_meta=forward_meta,
         )
-
         output = self.o_proj(atten_out)
         return output
 

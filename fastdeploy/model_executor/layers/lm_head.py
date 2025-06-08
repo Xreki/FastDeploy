@@ -158,11 +158,15 @@ class ParallelLMHead(nn.Layer):
                     get_tensor(state_dict.pop(self.linear_weight_key)).astype(
                         paddle.get_default_dtype()))
 
-                bias = (get_tensor(state_dict.pop(
-                    self.linear_bias_key)).astype(paddle.get_default_dtype())
-                        if self.linear_bias_key is not None else paddle.zeros(
-                            self.out_linear.bias.shape,
-                            dtype=paddle.get_default_dtype()))
+                bias = (
+                    get_tensor(state_dict.pop(self.linear_bias_key)).astype(
+                        paddle.get_default_dtype()
+                    )
+                    if self.linear_bias_key is not None
+                    else paddle.zeros(
+                        self.out_linear.bias.shape, dtype=paddle.get_default_dtype()
+                    )
+                )
                 self.out_linear.bias.set_value(bias)
 
     def forward(self, input):

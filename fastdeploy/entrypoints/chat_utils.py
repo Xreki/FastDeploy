@@ -49,7 +49,7 @@ class CustomUserChatCompletionMessageParam(TypedDict, total=False):
     content: Required[Union[str, List[CustomChatCompletionContentPartParam]]]
     """The contents of the user message"""
 
-    role: Required[Literal["user"]]
+    role: Required[str]
     """The role of the messages author, in this case `user`."""
 
     name: str
@@ -88,7 +88,7 @@ class MultiModalPartParser(object):
         
         if parsed.scheme.startswith("data"):
             data_spec, data = parsed.path.split(",", 1)
-            media_type, data_type = parsed.split(";", 1)
+            media_type, data_type = data_spec.split(";", 1)
             return media_io.load_base64(media_type, data)
 
         if parsed.scheme.startswith("file"):

@@ -100,7 +100,7 @@ void append_speculate_cache_rope(const QKV_TYPE* qkv,
   }
 }
 
-template <typename T, typename QKV_TYPE>
+template <typename T, typename QKV_TYPE, bool IsFP8=false>
 void append_speculate_cache_int8_rope(const QKV_TYPE* qkv,
                                       uint8_t* key_cache,
                                       uint8_t* value_cache,
@@ -169,7 +169,7 @@ void append_speculate_cache_int8_rope(const QKV_TYPE* qkv,
                                                -127.0f,
                                                kv_num_heads);
   } else {
-    append_speculate_cache_int8_rope_kernel<T, 4>
+    append_speculate_cache_int8_rope_kernel<T, 4, 0, 128, QKV_TYPE, IsFP8>
         <<<grids, num_warps * 32, 0, stream>>>(qkv,
                                                key_cache,
                                                value_cache,
@@ -371,6 +371,39 @@ void SpeculateWriteCacheWithRoPEKernel(
         use_neox_rotary_style);
   } else if (cache_quant_type_str == "cache_int8") {
     append_speculate_cache_int8_rope(
+        reinterpret_cast<const QKV_TYPE*>(qkv_ptr),
+        key_cache_out->data<uint8_t>(),
+        value_cache_out->data<uint8_t>(),
+        reinterpret_cast<DataType_*>(qkv_out->data<T>()),
+        block_tables.data<int>(),
+        padding_offsets.data<int>(),
+        cum_offsets.data<int>(),
+        seq_lens.data<int>(),
+        seq_lens_encoder.data<int>(),
+        cos_emb,
+        sin_emb,
+        qkv_out_scales ? qkv_out_scales.get().data<float>() : nullptr,
+        qkv_biases ? reinterpret_cast<DataType_*>(
+                         const_cast<T*>(qkv_biases.get().data<T>()))
+                   : nullptr,
+        cache_k_scale ? reinterpret_cast<DataType_*>(
+                            const_cast<T*>(cache_k_scale.get().data<T>()))
+                      : nullptr,
+        cache_v_scale ? reinterpret_cast<DataType_*>(
+                            const_cast<T*>(cache_v_scale.get().data<T>()))
+                      : nullptr,
+        max_seq_len,
+        max_blocks_per_seq,
+        num_heads,
+        kv_num_heads,
+        dim_head,
+        block_size,
+        bsz,
+        token_nums,
+        stream,
+        use_neox_rotary_style);
+  } else if (cache_quant_type_str == "cache_fp8") {
+    append_speculate_cache_int8_rope<DataType_, QKV_TYPE, true>(
         reinterpret_cast<const QKV_TYPE*>(qkv_ptr),
         key_cache_out->data<uint8_t>(),
         value_cache_out->data<uint8_t>(),

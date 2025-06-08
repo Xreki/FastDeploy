@@ -30,7 +30,7 @@ def load_requirements():
 
 setuptools.setup(
     name="fastdeploy",
-    version="0.1.0",
+    version="2.0.0-alpha",
     author="PaddlePaddle",
     author_email="dltp@baidu.com",
     description="FastDeploy: Large Language Model Serving.",
@@ -49,6 +49,7 @@ setuptools.setup(
             "model_executor/ops/base/*",
             "model_executor/models/*",
             "model_executor/layers/*",
+            "input/mm_processor/utils/*"
         ]
     },
     install_requires=load_requirements(),

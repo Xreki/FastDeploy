@@ -3,7 +3,6 @@
 ## 1. 使用方式
 通过FastDeploy离线推理，可支持本地加载ERNIE-4.5-Turbo模型，并处理用户数据，使用方式如下，
 
-
 ```python
 from fastdeploy import LLM, SamplingParams
 
@@ -54,6 +53,7 @@ for output in outputs:
 * kv_cache_ratio(float): KV Cache分配给输入的比例，推荐值=平均输入长度/(平均输入长度+平均输出长度），默认值0.75
 * use_warmup(int): 是否在启动时进行warmup，会自动生成极限长度数据进行warmup，默认自动计算KV Cache时会使用
 * engine_worker_queue_port(int): 引擎内部进程间通信使用端口号，默认值8002
+* enable_mm(bool): 启用多模推理，默认值False
 
 > 参数配置说明：
 > 1. 模型服务启动后，会在日志文件log/fastdeploy.log中打印如 `Doing profile, the total_block_num:640` 的日志，其中640即表示自动计算得到的KV Cache block数量，将它乘以block_size(默认值64)，即可得到部署后总共可以在KV Cache中缓存的Token数。
@@ -68,7 +68,7 @@ for output in outputs:
 ### 2.3 fastdeploy.SamplingParams
 
 * presence_penalty(float): 控制模型生成重复内容的惩罚系数，正值降低重复话题出现的概率
-* frequence_penalty(float): 控制重复token的惩罚力度，比presence_penalty更严格，会惩罚高频重复
+* frequency_penalty(float): 控制重复token的惩罚力度，比presence_penalty更严格，会惩罚高频重复
 * repetition_penalty(float): 直接对重复生成的token进行惩罚的系数（>1时惩罚重复，<1时鼓励重复）
 * temperature(float): 控制生成随机性的参数，值越高结果越随机，值越低结果越确定
 * top_p(float): 概率累积分布截断阈值，仅考虑累计概率达到此阈值的最可能token集合

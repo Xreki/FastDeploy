@@ -228,6 +228,7 @@ class DataProcessor(BaseDataProcessor):
             request.prompt_token_ids = request.prompt_token_ids[:
                                                                 max_model_len -
                                                                 1]
+        return request
 
     def process_request_dict(self, request, max_model_len=None):
         """

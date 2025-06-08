@@ -88,32 +88,31 @@ class EngineClient:
         self.vaild_parameters(task)
 
         task["preprocess_start_time"] = time.time()
-        if not self.enable_mm:
-            try:
-                self.data_processor.process_request_dict(task, self.max_model_len)
+        try:
+            self.data_processor.process_request_dict(task, self.max_model_len)
 
-                task["prompt_token_ids_len"] = len(task["prompt_token_ids"])
-                input_ids_len = task["prompt_token_ids_len"]
-                task["max_tokens"] = min(self.max_model_len - input_ids_len , task.get("max_tokens"))
-                min_tokens = task.get("min_tokens", 1)
-            except Exception as e:
-                api_server_logger.error(e)
-                raise EngineError(str(e), error_code=400)
+            task["prompt_token_ids_len"] = len(task["prompt_token_ids"])
+            input_ids_len = task["prompt_token_ids_len"]
+            task["max_tokens"] = min(self.max_model_len - input_ids_len , task.get("max_tokens"))
+            min_tokens = task.get("min_tokens", 1)
+        except Exception as e:
+            api_server_logger.error(e)
+            raise EngineError(str(e), error_code=400)
 
-            if input_ids_len + min_tokens >= self.max_model_len:
-                error_msg = (
-                    f"Input text is too long, input_ids_len ({input_ids_len}) "
-                    f"+ min_dec_len ({min_tokens}) >= max_model_len "
-                )
-                api_server_logger.error(error_msg)
-                raise EngineError(error_msg, error_code=400)
+        if input_ids_len + min_tokens >= self.max_model_len:
+            error_msg = (
+                f"Input text is too long, input_ids_len ({input_ids_len}) "
+                f"+ min_dec_len ({min_tokens}) >= max_model_len "
+            )
+            api_server_logger.error(error_msg)
+            raise EngineError(error_msg, error_code=400)
 
-            if input_ids_len > self.max_model_len:
-                error_msg = (
-                    f"Length of input token({input_ids_len}) exceeds the limit max_model_len({self.max_model_len})."
-                )
-                api_server_logger.error(error_msg)
-                raise EngineError(error_msg, error_code=400)
+        if input_ids_len > self.max_model_len:
+            error_msg = (
+                f"Length of input token({input_ids_len}) exceeds the limit max_model_len({self.max_model_len})."
+            )
+            api_server_logger.error(error_msg)
+            raise EngineError(error_msg, error_code=400)
 
         task["preprocess_end_time"] = time.time()
         preprocess_cost_time = task["preprocess_end_time"] - task["preprocess_start_time"]
@@ -123,7 +122,10 @@ class EngineClient:
         )
         api_server_logger.debug(f"Recieve task: {task}")
         try:
-            self.zmq_client.send_json(task)
+            if not self.enable_mm:
+                self.zmq_client.send_json(task)
+            else:
+                self.zmq_client.send_pyobj(task)
         except Exception as e:
             api_server_logger.error(e)
             raise EngineError(str(e), error_code=400)
