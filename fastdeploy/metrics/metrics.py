@@ -8,7 +8,9 @@ from typing import Set, TYPE_CHECKING, List
 from prometheus_client import Gauge, Histogram, multiprocess, CollectorRegistry, generate_latest, Counter
 from prometheus_client.registry import Collector
 
+from fastdeploy.metrics import build_1_2_5_buckets
 from fastdeploy.metrics.work_metrics import work_process_metrics
+from fastdeploy.utils import api_server_logger
 
 if TYPE_CHECKING:
     from prometheus_client import Gauge, Histogram, Counter
@@ -61,7 +63,7 @@ class SimpleCollector(Collector):
                     Metric: Prometheus Metric objects that are not excluded.
                 """
         for metric in self.base_registry.collect():
-            if metric.name not in self.exclude_names:
+            if not any(name.startswith(metric.name) for name in self.exclude_names):
                 yield metric
 
 
@@ -90,29 +92,7 @@ REQUEST_LATENCY_BUCKETS = [
 ]
 
 
-def build_buckets(mantissa_lst: List[int], max_value: int) -> List[int]:
-    """
-    Generate a list of bucket boundaries using a set of mantissas scaled by powers of 10,
-    stopping when the generated value exceeds the specified maximum value.
-    """
-    exponent = 0
-    buckets: List[int] = []
-    while True:
-        for m in mantissa_lst:
-            value = m * 10 ** exponent
-            if value <= max_value:
-                buckets.append(value)
-            else:
-                return buckets
-        exponent += 1
 
-
-def build_1_2_5_buckets(max_value: int) -> List[int]:
-    """
-    Generate a bucket list using the common [1, 2, 5] mantissa pattern,
-    scaled by powers of 10 up to the specified maximum value.
-    """
-    return build_buckets([1, 2, 5], max_value)
 
 class MetricsManager:
     """Prometheus Metrics Manager handles all metric updates """
@@ -126,13 +106,10 @@ class MetricsManager:
     request_inference_time: 'Histogram'
     request_queue_time: 'Histogram'
     gpu_cache_usage_perc: 'Gauge'
-    prompt_tokens_total: 'Counter'
     generation_tokens_total: 'Counter'
     request_prefill_time: 'Histogram'
     request_decode_time: 'Histogram'
-    request_prompt_tokens: 'Histogram'
     request_generation_tokens: 'Histogram'
-    request_params_max_tokens: 'Histogram'
     request_success_total: 'Counter'
 
     # 定义所有指标配置
@@ -188,12 +165,7 @@ class MetricsManager:
             'description': 'GPU KV-cache usage. 1 means 100 percent usage',
             'kwargs': {}
         },
-        'prompt_tokens_total': {
-            'type': Counter,
-            'name': 'fastdeploy:prompt_tokens_total',
-            'description': 'Total number of prompt tokens processed',
-            'kwargs': {}
-        },
+
         'generation_tokens_total': {
             'type': Counter,
             'name': 'fastdeploy:generation_tokens_total',
@@ -216,26 +188,10 @@ class MetricsManager:
                 'buckets': REQUEST_LATENCY_BUCKETS
             }
         },
-        'request_prompt_tokens': {
-            'type': Histogram,
-            'name': 'fastdeploy:request_prompt_tokens',
-            'description': 'Number of prefill tokens processed.',
-            'kwargs': {
-                'buckets': build_1_2_5_buckets(33792)
-            }
-        },
         'request_generation_tokens': {
             'type': Histogram,
             'name': 'fastdeploy:request_generation_tokens',
             'description': 'Number of generation tokens processed.',
-            'kwargs': {
-                'buckets': build_1_2_5_buckets(33792)
-            }
-        },
-        'request_params_max_tokens': {
-            'type': Histogram,
-            'name': 'fastdeploy:request_params_max_tokens',
-            'description': 'Histogram of max_tokens parameter in request parameters',
             'kwargs': {
                 'buckets': build_1_2_5_buckets(33792)
             }
@@ -264,6 +220,9 @@ class MetricsManager:
             registry.register(getattr(self, metric_name))
         if workers == 1:
             registry.register(work_process_metrics.e2e_request_latency)
+            registry.register(work_process_metrics.request_params_max_tokens)
+            registry.register(work_process_metrics.prompt_tokens_total)
+            registry.register(work_process_metrics.request_prompt_tokens)
 
     @classmethod
     def get_excluded_metrics(cls) -> Set[str]:
