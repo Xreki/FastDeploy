@@ -94,6 +94,8 @@ class LLMEngine(object):
         self.resource_manager = ResourceManager(cfg.max_num_seqs, cfg.cache_config, \
                 cfg.tensor_parallel_size, cfg.splitwise_role)
 
+        os.environ['INFERENCE_MSG_QUEUE_ID'] = str(self.cfg.engine_worker_queue_port)
+
 
         address = ('0.0.0.0', self.cfg.engine_worker_queue_port)
         self.engine_worker_queue = EngineWorkerQueue(
@@ -148,9 +150,11 @@ class LLMEngine(object):
             time.sleep(3)
 
         if self.do_profile == 0 and (self.cfg.cache_config.enable_prefix_caching or self.cfg.splitwise_role != "mixed"):
-            self.resource_manager.cache_manager.launch_cache_manager(self.cfg.cache_config, \
-            self.cfg.tensor_parallel_size, self.cfg.device_ids, \
-            self.cfg.engine_worker_queue_port, self.ipc_signal_suffix)
+            self.cache_manager_processes = self.resource_manager.cache_manager.launch_cache_manager(
+                self.cfg.cache_config, \
+                self.cfg.tensor_parallel_size, self.cfg.device_ids, \
+                self.cfg.engine_worker_queue_port, self.ipc_signal_suffix
+                )
 
 
         self.worker_proc = self._start_worker_service()
@@ -656,6 +660,16 @@ class LLMEngine(object):
         """
         exit sub services
         """
+
+        if hasattr(self, "cache_manager_processes"):
+            self.resource_manager.cache_manager.shm_cache_task_flag_broadcast.clear()
+            self.resource_manager.cache_manager.cache_ready_signal.clear()
+            for p in self.cache_manager_processes:
+                llm_logger.info(f"Killing cache manager process {p.pid}")
+                try:
+                    os.killpg(p.pid, signal.SIGTERM)
+                except:
+                    pass
         self.worker_ready_signal.clear()
         self.exist_task_signal.clear()
         self.exist_swapped_task_signal.clear()
@@ -670,6 +684,7 @@ class LLMEngine(object):
                 pass
         if hasattr(self, "zmq_server") and self.zmq_server is not None:
             self.zmq_server.close()
+
 
     def _setting_environ_variables(self):
         """
@@ -687,6 +702,13 @@ class LLMEngine(object):
             "NCCL_ALGO": "Ring",
             "ELLM_DYNAMIC_MODE": 1,
         }
+
+        if self.cfg.splitwise_role != "mixed":
+            variables["FLAGS_use_pd_disaggregation"] = 1
+            # TODO dynamic load environment variable
+            if self.cfg.splitwise_role == "prefill":
+                variables["FLAGS_fmt_write_cache_completed_signal"] = 1
+            
         command_prefix = ""
         for k, v in variables.items():
             command_prefix += f"{k}={v} "
@@ -833,9 +855,11 @@ class LLMEngine(object):
         self.cfg.cache_config.reset(num_gpu_blocks)
         self.resource_manager.reset_cache_config(self.cfg.cache_config)
         if self.cfg.cache_config.enable_prefix_caching or self.cfg.splitwise_role != "mixed":
-            self.resource_manager.cache_manager.launch_cache_manager(self.cfg.cache_config, \
+            self.cache_manager_processes = self.resource_manager.cache_manager.launch_cache_manager(
+                self.cfg.cache_config, \
                 self.cfg.tensor_parallel_size, self.cfg.device_ids, \
-                self.cfg.engine_worker_queue_port, self.ipc_signal_suffix)
+                self.cfg.engine_worker_queue_port, self.ipc_signal_suffix
+               )
 
     def check_health(self, time_interval_threashold=30):
         """
