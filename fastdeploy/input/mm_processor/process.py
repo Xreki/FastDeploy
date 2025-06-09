@@ -32,6 +32,7 @@ from .process_video import read_frames_decord, read_video_decord
 from .utils.io_utils import RAW_IMAGE_DIR, get_downloadable
 from .utils.render_timestamp import render_frame_timestamp
 from .tokenizer.tokenizer_vl import ErnieVLTokenizer
+from fastdeploy.entrypoints.chat_utils import parse_chat_messages
 
 IDS_TYPE_FLAG = {"text": 0, "image": 1, "video": 2, "audio": 3}
 
@@ -147,7 +148,7 @@ class DataProcessor:
         """Enable evaluation mode (doesn't produce labels)."""
         self.is_training = False
 
-    def process(self, messages: List[Dict[str, Any]]) -> Dict[str, Union[np.ndarray, List[np.ndarray], None]]:
+    def process(self, request: List[Dict[str, Any]]) -> Dict[str, Union[np.ndarray, List[np.ndarray], None]]:
         """
         Convert chat messages into model inputs.
         Returns a dict with input_ids, token_type_ids, position_ids, images, grid_thw, image_type_ids, labels.
@@ -165,7 +166,17 @@ class DataProcessor:
             "video_cnt": 0,
         }
         
+        messages = request.get("messages")
+        template_input = {"messages": messages}
+        add_generation_prompt = request.get("add_generation_prompt")
+        if add_generation_prompt is not None:
+            template_input["add_generation_prompt"] = add_generation_prompt
+        enable_thinking = request.get("enable_thinking")
+        if enable_thinking is not None:
+            template_input["enable_thinking"] = enable_thinking
+        prompt_token_ids = self.messages2ids(template_input)
         #收集多模message
+        messages = parse_chat_messages(messages)
         image_message_list = []
         for msg in messages:
             role = msg.get("role")
@@ -178,8 +189,6 @@ class DataProcessor:
             for item in content_items:
                 if isinstance(item, dict) and item.get("type") in ["image_url", "image", "video_url", "video"]:
                     image_message_list.append(item)
-        
-        prompt_token_ids = self.messages2ids(messages)
         image_start_index = 0
         image_message_index = 0
         for i in range(len(prompt_token_ids)):
@@ -451,5 +460,5 @@ class DataProcessor:
             raise ValueError("This model does not support chat_template.")
 
         return self.tokenizer.apply_chat_template(
-            messages, tokenize=True, add_generation_prompt=False
+            messages, tokenize=True
         )["input_ids"]
