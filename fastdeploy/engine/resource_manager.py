@@ -371,7 +371,7 @@ class ResourceManager(object):
         float: GPU KV-cache usage (0.0 - 1.0)
         """
         num_total_gpu = self.total_block_number()
-        num_free_gpu = len(self.free_list)
+        num_free_gpu = len(self.cache_manager.gpu_free_block_list)
         if num_total_gpu > 0:
             return 1.0 - (num_free_gpu / num_total_gpu)
         return 0.0
