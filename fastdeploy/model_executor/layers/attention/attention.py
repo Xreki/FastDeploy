@@ -97,6 +97,9 @@ class Attention(nn.Layer):
         self.cache_v_scale_key = cache_v_scale_key
 
     def load_state_dict(self, state_dict):
+        """
+        Attention only have quant related scales not other parameters.
+        """
         if self.cache_k_scale_key is not None:
             self.cache_quant_type_str = "cache_int8"
             logger.info(
