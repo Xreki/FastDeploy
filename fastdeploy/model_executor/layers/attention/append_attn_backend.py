@@ -23,9 +23,8 @@ from typing import TYPE_CHECKING, List, Optional
 import paddle
 
 from fastdeploy.model_executor.layers.attention.ops import (
-    append_attention, get_block_shape_and_split_kv_block)
-from fastdeploy.model_executor.ops.gpu import (init_signal_layerwise,
-                                               open_shm_and_get_meta_signal)
+    append_attention, get_block_shape_and_split_kv_block,
+    init_signal_layerwise, open_shm_and_get_meta_signal)
 
 if TYPE_CHECKING:
     from paddle._typing.dtype_like import _DTypeLiteral
