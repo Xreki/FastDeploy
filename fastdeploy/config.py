@@ -625,7 +625,7 @@ class KVCacheConfig:
     kv_cache_ratio: float = 0.75
     dtype: str = 'bfloat16'
     kvcache_quant_config: Optional[QuantConfigBase] = None
-    cache_quant_dtype: str = ""
+    cache_quant_dtype: str = "none"
 
 
 class TmpConfig:
