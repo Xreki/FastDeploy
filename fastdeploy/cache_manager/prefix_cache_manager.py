@@ -181,6 +181,7 @@ class PrefixCacheManager:
                 + f" --num_layers {cache_config.model_cfg.num_layers}"
                 + f" --num_attention_heads {cache_config.model_cfg.num_attention_heads}"
                 + f" --hidden_size {cache_config.model_cfg.hidden_size}"
+                + f" --head_dim {cache_config.model_cfg.head_dim}"
                 + f" --kv_num_head {kv_num_head}"
                 + f" --mp_num {tensor_parallel_size}"
                 + f" --cache_dtype {cache_config.cache_dtype}"

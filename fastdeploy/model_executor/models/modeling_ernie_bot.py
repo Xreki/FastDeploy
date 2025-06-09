@@ -220,7 +220,7 @@ class ErnieBotPretrainedModel(PretrainedModel):
                             config.hidden_size,
                             config.num_attention_heads,
                             3,
-                            config.hidden_size // config.num_attention_heads,
+                            config.head_dim,
                         ]
                     ).transpose([2, 1, 3, 0])
                 else:
@@ -230,7 +230,7 @@ class ErnieBotPretrainedModel(PretrainedModel):
                                 config.hidden_size,
                                 config.num_attention_heads
                                 + 2 * config.num_key_value_heads,
-                                config.hidden_size // config.num_attention_heads,
+                                config.head_dim,
                             ]
                         )
                         .transpose([1, 2, 0])
@@ -584,14 +584,14 @@ class ErnieBotPretrainedModel(PretrainedModel):
                     tensor_parallel_rank=config.tensor_parallel_rank,
                     num_attention_heads=config.num_attention_heads,
                     num_key_value_heads=config.num_key_value_heads,
-                    head_dim=config.hidden_size // config.num_attention_heads,
+                    head_dim=config.head_dim,
                 )
             else:
                 qkv_fn = partial(
                     gqa_qkv_merge_func,
                     num_attention_heads=config.num_attention_heads,
                     num_key_value_heads=config.num_key_value_heads,
-                    head_dim=config.hidden_size // config.num_attention_heads,
+                    head_dim=config.head_dim,
                 )
         else:
             qkv_fn = partial(fn, is_column=True)
@@ -826,7 +826,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         self.num_attention_heads = num_attention_heads
         self.ffn_hidden_size = ffn_hidden_size
         self.num_layers = num_layers
-        self.head_dim = self.hidden_size // self.num_attention_heads
+        self.head_dim = ernie_config.head_dim
         self.use_rope = use_rope
         self.max_len = max_len
         self.use_fast_ffn = use_fast_ffn
@@ -1482,7 +1482,9 @@ class ErnieBotForGeneration(nn.Layer):
         # for NPU
         self.hidden_size = self.configs.get("hidden_size", 4096)
         self.num_attention_heads = self.configs.get("num_attention_heads", 32)
-        self.head_dim = self.hidden_size // self.num_attention_heads
+        self.head_dim = self.configs.get(
+            "head_dim", self.hidden_size // self.num_attention_heads
+        )
         self.rank = (
             paddle.distributed.fleet.get_hybrid_communicate_group().get_model_parallel_rank()
         )

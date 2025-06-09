@@ -221,7 +221,7 @@ class ModelRunner(ModelRunnerBase):
             print("load model finished")
 
     def init_extra_input(self, config, args):
-        head_dim = self.model_cfg.hidden_size // self.model_cfg.num_attention_heads
+        head_dim = self.model_cfg.head_dim
         self.share_inputs.update({
             "rope_emb":
             paddle.full(shape=[
@@ -258,8 +258,7 @@ class ModelRunner(ModelRunnerBase):
                     total_block_num,
                     kv_num_head,
                     self.args.block_size,
-                    self.model_cfg.hidden_size //
-                    self.model_cfg.num_attention_heads,
+                    self.model_cfg.head_dim,
                 ],
                 fill_value=0,
                 dtype=cache_type,
@@ -269,8 +268,7 @@ class ModelRunner(ModelRunnerBase):
                     total_block_num,
                     kv_num_head,
                     self.args.block_size,
-                    self.model_cfg.hidden_size //
-                    self.model_cfg.num_attention_heads,
+                    self.model_cfg.head_dim,
                 ],
                 fill_value=0,
                 dtype=cache_type,

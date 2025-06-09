@@ -291,6 +291,17 @@ class ErnieProcessor(BaseDataProcessor):
             tokens = self._convert_to_ids(messages, raw_request, max_model_len, system)
         data_processor_logger.debug(f"processed data : {''.join(tokens)}")
         input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
+        # input_ids = self.tokenizer(
+        #     [messages[0]],
+        #     return_tensors="np",
+        #     padding=True,
+        #     max_length=max_model_len,
+        #     truncation=True,
+        #     return_position_ids=True,
+        #     return_attention_mask=True,
+        #     add_special_tokens=False
+        # )["input_ids"][0].tolist()
+        data_processor_logger.info(f"input_ids : {input_ids}")
         return input_ids
 
     def _convert_to_ids(self, messages, raw_request, max_model_len=None, system=None):

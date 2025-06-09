@@ -54,6 +54,7 @@ def parse_args():
     parser.add_argument("--num_layers", type=int, default=1, help="model num layers")
     parser.add_argument("--num_attention_heads", type=int, default=1, help="model attention heads")
     parser.add_argument("--hidden_size", type=int, default=1, help="model hidden size")
+    parser.add_argument("--head_dim", type=int, default=1, help="model head dim")
     parser.add_argument("--kv_num_head", type=int, default=1, help="model kv num head")
     parser.add_argument("--mp_num", type=int, default=1, help="number of model parallel")
     parser.add_argument("--protocol", type=str, default="ipc", 
@@ -131,8 +132,7 @@ class CacheTransferManager:
                     args.num_gpu_blocks,
                     args.kv_num_head,
                     args.block_size,
-                    args.hidden_size
-                    // args.num_attention_heads,
+                    args.head_dim,
                 ],
                 fill_value=0,
                 dtype=cache_type,
@@ -147,8 +147,7 @@ class CacheTransferManager:
                     args.num_gpu_blocks,
                     args.kv_num_head,
                     args.block_size,
-                    args.hidden_size
-                    // args.num_attention_heads,
+                    args.head_dim,
                 ],
                 fill_value=0,
                 dtype=cache_type,
