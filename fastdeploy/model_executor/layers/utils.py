@@ -32,7 +32,12 @@ if current_platform.is_cuda() and current_platform.available():
             f"Verify environment consistency between compilation and FastDeploy installation. "
             f"And ensure the Paddle version supports FastDeploy's custom operators"
         )
+import re
 
+import os
+cache_params = os.getenv("CACHE_PARAMS", "none")
+if cache_params != "none":
+    c8_state_dict = paddle.load(cache_params, return_numpy=True)
 
 def per_block_cast_to_fp8(x: Tensor) -> Tuple[Tensor, Tensor]:
     """
@@ -92,11 +97,37 @@ def get_tensor(input):
     层名与对应权重的路径，因此需要将权重的类型转换为paddle.Tensor
     """
     if isinstance(input, paddle.Tensor):
+        if input.place.is_cpu_place():
+            return input.to(paddle.device.get_device())
         return input
     elif isinstance(input, np.ndarray):
         return paddle.to_tensor(input)
     elif isinstance(input, str):
-        return paddle.load(input)
+        if ".safetensors" in input:
+
+            match = re.match(r"\[(.*?)\](.*)", input)
+            if match:
+                key_name = match.group(1)
+                model_path = match.group(2)
+            from safetensors import safe_open
+
+            with safe_open(model_path, framework="np", device="cpu") as f:
+                if key_name in f.keys():
+                    weight = f.get_tensor(key_name)
+                    weight = paddle.Tensor(weight, zero_copy=True)
+                    weight = weight._copy_to(
+                        paddle.framework._current_expected_place(), False
+                    )
+                    return weight
+                else:
+                    return None
+        else:   
+            if cache_params != "none":
+                tmp_key = input.split("/")[-1]
+                if tmp_key in c8_state_dict:
+                    print(f"Loading {tmp_key} in extra C8_state_dict")
+                    return paddle.to_tensor(c8_state_dict.pop(tmp_key))
+            return paddle.load(input)
     else:
         # 理论上不会命中这个分支
         return input

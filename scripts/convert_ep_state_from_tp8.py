@@ -1,3 +1,19 @@
+"""
+# Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""
+
 import paddle
 import paddle.distributed as dist
 import pdb
@@ -61,7 +77,7 @@ for p in model_path_pp:
             new_ffn1_1 = np.concatenate(half_ffn1_1, axis=1)
             new_ffn1_2 = np.concatenate(half_ffn1_2, axis=1)
             new_w = np.concatenate([new_ffn1_1, new_ffn1_2], axis=1)
-        elif "lm_head" in k:
+        elif "lm_head" in k or "mtp_linear_proj" in k:
             new_w = np.concatenate(state_now, axis=1)
         else:
             new_w = v

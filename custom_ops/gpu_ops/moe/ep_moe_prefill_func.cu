@@ -24,6 +24,105 @@
 #pragma GCC diagnostic pop
 
 #include "helper.h"
+#include <cooperative_groups.h>
+namespace cg = cooperative_groups;
+
+template<typename T>
+__device__ T warpReduceSum(T val){
+    for(int lane_mask = 16; lane_mask > 0; lane_mask /=2){
+        val += __shfl_down_sync(0xffffffff, val, lane_mask); 
+    }
+    return val; 
+}
+
+__global__ void get_expert_token_num(
+  int64_t* topk_ids,
+  int *out_workspace, // num_experts * 2 + 2
+  const int token_num,
+  const int moe_topk,
+  const int num_experts
+) {
+  cg::grid_group grid = cg::this_grid();
+  constexpr int KNWARPS = 512 / 32;
+  __shared__ int warp_sum[KNWARPS * 2];
+  int *expert_token_num = out_workspace;
+  int *expert_token_num_padded = out_workspace + num_experts;
+  int *token_num_all = out_workspace + num_experts * 2;
+  int *token_num_all_padded = out_workspace + num_experts * 2 + 1;
+  const int global_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  for (int i = global_idx; i < num_experts; i += blockDim.x * gridDim.x) {
+    expert_token_num[i] = 0;
+    expert_token_num_padded[i] = 0;
+  }
+  grid.sync();
+  for (int i = global_idx; i < token_num * moe_topk; i += blockDim.x * gridDim.x) {
+    const int topk_idx = topk_ids[i];
+    atomicAdd(&expert_token_num[topk_idx], 1);
+  }
+  grid.sync();
+  for (int i = global_idx; i < num_experts; i += blockDim.x * gridDim.x) {
+    const int token_num_per_expert = expert_token_num[i];
+    if (token_num_per_expert > 0) {
+      expert_token_num_padded[i] = 128 - token_num_per_expert % 128 + token_num_per_expert;
+    }
+  }
+  grid.sync();
+  if (blockIdx.x == 0) {
+    int token_num_now = 0;
+    int token_num_padded = 0;
+    if (threadIdx.x < num_experts) {
+      token_num_now = expert_token_num[threadIdx.x];
+      token_num_padded = expert_token_num_padded[threadIdx.x];
+    }
+    const int laneId = threadIdx.x % 32;
+    const int warpId = threadIdx.x / 32;
+
+    int sum = warpReduceSum<int>(token_num_now);
+    int sum_padded = warpReduceSum<int>(token_num_padded);
+    __syncthreads();
+    if (laneId == 0) {
+      warp_sum[warpId] = sum;
+      warp_sum[warpId + KNWARPS] = sum_padded;
+    }
+    __syncthreads();
+    sum = (threadIdx.x < KNWARPS) ? warp_sum[laneId] : 0;
+    sum_padded = (threadIdx.x < KNWARPS) ? warp_sum[laneId + KNWARPS] : 0;
+    if (warpId == 0) {
+      sum = warpReduceSum<int>(sum); 
+      sum_padded = warpReduceSum<int>(sum_padded);
+    }
+    if (threadIdx.x == 0) {
+      *token_num_all = sum;
+      *token_num_all_padded = sum_padded;
+    }
+  }
+}
+
+std::vector<std::vector<int>> GetExpertTokenNum(
+    const paddle::Tensor& topk_ids,
+    const int num_experts) {
+  const int token_num = topk_ids.dims()[0];
+  const int moe_topk = topk_ids.dims()[1];
+  auto out_workspace = GetEmptyTensor({num_experts * 2 + 2}, paddle::DataType::INT32, topk_ids.place());
+  const int block_size = 512;
+  const int grid_size = min(132 * 4, div_up(token_num * moe_topk, block_size));
+  int64_t *topk_ids_ptr = const_cast<int64_t*>(topk_ids.data<int64_t>());
+  int *out_workspace_ptr = out_workspace.data<int>();
+  void* kernel_args[] = {
+    (void*)(&topk_ids_ptr),
+    (void*)(&out_workspace_ptr),
+    (void*)&token_num,
+    (void*)&moe_topk,
+    (void*)&num_experts
+  };
+  cudaLaunchCooperativeKernel((void*)get_expert_token_num, dim3(grid_size), dim3(block_size), kernel_args, 0, topk_ids.stream());
+  auto out_workspace_host = out_workspace.copy_to(paddle::CPUPlace(), true);
+  int *out_workspace_host_ptr = out_workspace_host.data<int>();
+  std::vector<int> expert_token_num(out_workspace_host_ptr, out_workspace_host_ptr + num_experts);
+  std::vector<int> expert_token_num_padded(out_workspace_host_ptr + num_experts, out_workspace_host_ptr + num_experts * 2);
+  std::vector<int> token_num_all(out_workspace_host_ptr + num_experts * 2, out_workspace_host_ptr + num_experts * 2 + 2);
+  return {expert_token_num, expert_token_num_padded, token_num_all};
+}
 
 template <typename T>
 __global__ void combine_prmt_back_kernel(
@@ -61,7 +160,6 @@ __global__ void combine_prmt_back_kernel(
         const T* expanded_permuted_rows_row_ptr =
             expanded_permuted_rows + expanded_permuted_row * cols; // prmt后的位置对应的值
         Load<T, VEC_SIZE>(expanded_permuted_rows_row_ptr + tid * VEC_SIZE, &load_vec);
-
         const int expert_idx = expert_for_source_row[k_offset]; // 当前位置对应的专家
         const T* bias_ptr = bias ? bias + expert_idx * cols : nullptr; // 当前专家对应的ffn2的bias
         if (bias_ptr) {
@@ -95,14 +193,13 @@ void MoeCombineKernel(const paddle::Tensor& ffn_out,
                       const float routed_scaling_factor,
                       const int num_rows,
                       const int hidden_size,
-                      const int topk,
                       paddle::Tensor* output) {
     using namespace phi;
     typedef PDTraits<T> traits_;
     typedef typename traits_::DataType DataType_;
     typedef typename traits_::data_t data_t;
     auto stream = ffn_out.stream();
-    const int threads = 512;
+    const int threads = 1024;
     const int gridx = min(132 * 8, num_rows);
     const int num_experts_per_rank = top_k_indices.dims()[1];
 
@@ -133,7 +230,6 @@ std::vector<paddle::Tensor> EPMoeExpertCombine(
     const auto input_type = ffn_out.dtype();
     auto place = ffn_out.place();
 
-    const int topk = top_k_indices.dims()[1];
     const int num_rows = top_k_indices.dims()[0];
     const int hidden_size = ffn_out.dims()[1];
 
@@ -151,7 +247,6 @@ std::vector<paddle::Tensor> EPMoeExpertCombine(
                 routed_scaling_factor,
                 num_rows,
                 hidden_size,
-                topk,
                 &output);
             break;
         case paddle::DataType::FLOAT16:
@@ -165,7 +260,6 @@ std::vector<paddle::Tensor> EPMoeExpertCombine(
                 routed_scaling_factor,
                 num_rows,
                 hidden_size,
-                topk,
                 &output);
             break;
         default:
@@ -545,7 +639,7 @@ __global__ void permute_x_fp8_kernel(const T *src_x,
                                      const int num_rows,
                                      const int token_nums_this_rank,
                                      const int token_nums_this_rank_padded,
-                                     const int hidden_size,
+                                     const int64_t hidden_size,
                                      T *permute_x, // [token_nums_this_rank, hidden_size]
                                      float *permute_scale,
                                      int *permute_indices_per_token, // [moe_topk, num_rows]
@@ -555,7 +649,7 @@ __global__ void permute_x_fp8_kernel(const T *src_x,
                                      int64_t *token_nums_per_expert_cumsum,
                                      int64_t *token_nums_per_expert_padded_cumsum,
                                      int *m_indices) { // [num_rows, moe_topk]
-    const int src_token_idx = blockIdx.x;
+    const int64_t src_token_idx = blockIdx.x;
     const int tid = threadIdx.x;
     constexpr int vec_size = sizeof(int4) / sizeof(T);
     constexpr int scale_vec_size = sizeof(int4) / sizeof(float);
@@ -579,7 +673,7 @@ __global__ void permute_x_fp8_kernel(const T *src_x,
     const int hidden_size_scale = hidden_size / 128;
     const int hidden_size_scale_int4 = hidden_size_scale / scale_vec_size;
     // prmt
-    for (int s_token_idx = src_token_idx; s_token_idx < token_nums_this_rank_padded; s_token_idx += gridDim.x) {
+    for (int64_t s_token_idx = src_token_idx; s_token_idx < token_nums_this_rank_padded; s_token_idx += gridDim.x) {
       if (tid == 0) {
         for (int i = 0; i < NUM_EXPERTS_PER_RANK; i++) {
           const int start_idx = i == 0 ? 0 : token_nums_per_expert_cum[i - 1];
@@ -603,13 +697,13 @@ __global__ void permute_x_fp8_kernel(const T *src_x,
           }
           __syncthreads();
           const int token_offset_now = write_idx;
-          const int dst_token_idx = dst_chunk_start_idx + token_offset_now;
+          const int64_t dst_token_idx = dst_chunk_start_idx + token_offset_now;
           permute_indices_per_token[expert_now * num_rows + s_token_idx] = dst_token_idx;
           dst_weights[dst_token_idx] = topk_weights[s_token_idx * moe_topk + expert_idx];
           // m_indices[dst_token_idx] = expert_now; // not need?
           dst_indices[s_token_idx * NUM_EXPERTS_PER_RANK + expert_now] = expert_now;
           // cp x
-          for (int v_id = tid; v_id < hidden_size_int4; v_id += blockDim.x) {
+          for (int64_t v_id = tid; v_id < hidden_size_int4; v_id += blockDim.x) {
               *(reinterpret_cast<int4*>(permute_x + dst_token_idx * hidden_size) + v_id) = *(reinterpret_cast<const int4*>(src_x + s_token_idx * hidden_size) + v_id);
           }
           // cp scale
@@ -668,6 +762,29 @@ void EPMoeDispatchFP8Kernel(const paddle::Tensor& input,
       token_nums_per_expert_padded_cumsum->data<int64_t>(),
       m_indices->data<int>()
     );
+  } else if (num_experts_per_rank == 9) {
+    permute_x_fp8_kernel<phi::dtype::float8_e4m3fn, 9><<<gridx, 512, 0, stream>>>(
+      input.data<phi::dtype::float8_e4m3fn>(),
+      scale.data<float>(),
+      topk_ids.data<int64_t>(),
+      topk_weights.data<float>(),
+      token_nums_per_expert.data<int>(),
+      token_nums_per_expert_padded.data<int>(),
+      moe_topk,
+      num_rows,
+      token_nums_this_rank,
+      token_nums_this_rank_padded,
+      hidden_size,
+      permute_input->data<phi::dtype::float8_e4m3fn>(),
+      permute_scale->data<float>(),
+      permute_indices_per_token->data<int>(),
+      dst_weights->data<float>(),
+      dst_indices->data<int>(),
+      cumsum_idx_gpu->data<int>(),
+      token_nums_per_expert_cumsum->data<int64_t>(),
+      token_nums_per_expert_padded_cumsum->data<int64_t>(),
+      m_indices->data<int>()
+    );
   } else if (num_experts_per_rank == 16) {
     permute_x_fp8_kernel<phi::dtype::float8_e4m3fn, 16><<<gridx, 512, 0, stream>>>(
       input.data<phi::dtype::float8_e4m3fn>(),
@@ -691,6 +808,31 @@ void EPMoeDispatchFP8Kernel(const paddle::Tensor& input,
       token_nums_per_expert_padded_cumsum->data<int64_t>(),
       m_indices->data<int>()
     );
+  } else if (num_experts_per_rank == 64) {
+    permute_x_fp8_kernel<phi::dtype::float8_e4m3fn, 64><<<gridx, 512, 0, stream>>>(
+      input.data<phi::dtype::float8_e4m3fn>(),
+      scale.data<float>(),
+      topk_ids.data<int64_t>(),
+      topk_weights.data<float>(),
+      token_nums_per_expert.data<int>(),
+      token_nums_per_expert_padded.data<int>(),
+      moe_topk,
+      num_rows,
+      token_nums_this_rank,
+      token_nums_this_rank_padded,
+      hidden_size,
+      permute_input->data<phi::dtype::float8_e4m3fn>(),
+      permute_scale->data<float>(),
+      permute_indices_per_token->data<int>(),
+      dst_weights->data<float>(),
+      dst_indices->data<int>(),
+      cumsum_idx_gpu->data<int>(),
+      token_nums_per_expert_cumsum->data<int64_t>(),
+      token_nums_per_expert_padded_cumsum->data<int64_t>(),
+      m_indices->data<int>()
+    );
+  } else {
+    PD_THROW("Not dispatching this num_experts_per_rank for EPMoeDispatchFP8Kernel");
   }
 }
 

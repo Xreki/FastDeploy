@@ -13,26 +13,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright 2023-2024 SGLang Team
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Adapt from
+# https://github.com/sgl-project/sglang/blob/main/python/sglang/srt/layers/attention/base_attn_backend.py
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+
 import paddle
 
-from fastdeploy.worker.model_runner import ForwardMeta, ForwardMode
+from fastdeploy.worker.model_runner import ForwardMeta
+
+
+@dataclass
+class AttentionMetadata():
+    """ The base class of attention metadata """
+
+    #TODO(tangbinghan): Set base attributes
+    pass
 
 
 class AttentionBackend(ABC):
@@ -48,9 +48,9 @@ class AttentionBackend(ABC):
         q: paddle.Tensor,
         k: paddle.Tensor,
         v: paddle.Tensor,
+        qkv: paddle.Tensor,
         layer: paddle.nn.Layer,
         forward_meta: ForwardMeta,
-        **kwargs,
     ):
         """
         Run a forward.
@@ -66,27 +66,27 @@ class AttentionBackend(ABC):
                 q,
                 k,
                 v,
+                qkv,
                 layer,
                 forward_meta,
-                **kwargs,
             )
         elif forward_meta.forward_mode.is_decode():
             return self.forward_decode(
                 q,
                 k,
                 v,
+                qkv,
                 layer,
                 forward_meta,
-                **kwargs,
             )
         else:
             return self.forward_extend(
                 q,
                 k,
                 v,
+                qkv,
                 layer,
                 forward_meta,
-                **kwargs,
             )
 
     def forward_mixed(
@@ -94,6 +94,7 @@ class AttentionBackend(ABC):
         q: paddle.Tensor,
         k: paddle.Tensor,
         v: paddle.Tensor,
+        qkv: paddle.Tensor,
         layer: paddle.nn.Layer,
         forward_meta: ForwardMeta,
     ):
@@ -105,6 +106,7 @@ class AttentionBackend(ABC):
         q: paddle.Tensor,
         k: paddle.Tensor,
         v: paddle.Tensor,
+        qkv: paddle.Tensor,
         layer: paddle.nn.Layer,
         forward_meta: ForwardMeta,
     ):
@@ -116,6 +118,7 @@ class AttentionBackend(ABC):
         q: paddle.Tensor,
         k: paddle.Tensor,
         v: paddle.Tensor,
+        qkv: paddle.Tensor,
         layer: paddle.nn.Layer,
         forward_meta: ForwardMeta,
     ):

@@ -1,4 +1,3 @@
-
 """
 # Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
@@ -15,23 +14,21 @@
 # limitations under the License.
 """
 
-
+import abc
+import logging
 from dataclasses import dataclass
 from enum import IntEnum, auto
-from typing import Optional
-from typing import List, Optional, Tuple, Union
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
-import abc
-import paddle
 import numpy as np
-import logging
 import paddle
+
 if TYPE_CHECKING:
-    from fastdeploy.model_executor.layers.attention import AttentionBackend, Attention
-    from fastdeploy.worker.model_runner.model_runner_base import ModelRunnerBase
+    from fastdeploy.model_executor.layers.attention import (Attention,
+                                                            AttentionBackend)
 
 logger = logging.getLogger(__name__)
+
 
 class ForwardMode(IntEnum):
     """
@@ -52,24 +49,21 @@ class ForwardMode(IntEnum):
     def is_decode(self):
         """Whether it's a decode forward"""
         return self == ForwardMode.DECODE
+
     def is_mixed(self):
         """Whether it's a decode forward"""
         return self == ForwardMode.MIXED
 
+
 class ReqToTokenPool:
     """A memory pool that maps a request to its token locations."""
 
-    def __init__(
-        self,
-        size: int,
-        max_context_len: int
-    ):
+    def __init__(self, size: int, max_context_len: int):
 
         self.size = size
         self.max_context_len = max_context_len
-        self.req_to_token = paddle.zeros(
-            (size, max_context_len), dtype=paddle.int32
-        )
+        self.req_to_token = paddle.zeros((size, max_context_len),
+                                         dtype=paddle.int32)
         self.free_slots = list(range(size))
 
     def write(self, indices, values):
@@ -92,7 +86,7 @@ class ReqToTokenPool:
 
     def free(self, free_index: Union[int, List[int]]):
         """Free slot"""
-        if isinstance(free_index, (int,)):
+        if isinstance(free_index, (int, )):
             self.free_slots.append(free_index)
         else:
             self.free_slots.extend(free_index)
@@ -101,10 +95,13 @@ class ReqToTokenPool:
         """Clear all slots"""
         self.free_slots = list(range(self.size))
 
+
 class KVCache(abc.ABC):
     """Abstract base class representing a key value cache"""
+
     @abc.abstractmethod
-    def get_kv_buffer(self, layer_id: int) -> Tuple[paddle.Tensor, paddle.Tensor]:
+    def get_kv_buffer(self,
+                      layer_id: int) -> Tuple[paddle.Tensor, paddle.Tensor]:
         """
         Return cached keys and values given layer id.
         Args:
@@ -178,7 +175,7 @@ class MHATokenToKVPool(KVCache):
         k_size, v_size = self.get_kv_size_bytes()
         GB = 1024 * 1024 * 1024
         logger.info(
-            f"KV Cache is allocated. #tokens: {size}, K size: {k_size / GB:.2f} GB, V size: {v_size / GB:.2f} GB"
+            f"KV Cache is allocated. #tokens: {self.size}, K size: {k_size / GB:.2f} GB, V size: {v_size / GB:.2f} GB"
         )
 
     def _create_buffers(self):
@@ -186,19 +183,17 @@ class MHATokenToKVPool(KVCache):
         # The padded slot 0 is used for writing dummy outputs from padded tokens.
         self.k_buffer = [
             paddle.zeros(
-                (self.max_block_num, self.head_num,
-                 self.block_size, self.head_dim),
+                (self.max_block_num, self.head_num, self.block_size,
+                 self.head_dim),
                 dtype=self.store_dtype,
-            )
-            for _ in range(self.layer_num)
+            ) for _ in range(self.layer_num)
         ]
         self.v_buffer = [
             paddle.zeros(
-                (self.max_block_num, self.head_num,
-                 self.block_size, self.head_dim),
+                (self.max_block_num, self.head_num, self.block_size,
+                 self.head_dim),
                 dtype=self.store_dtype,
-            )
-            for _ in range(self.layer_num)
+            ) for _ in range(self.layer_num)
         ]
 
     def _clear_buffers(self):
@@ -280,44 +275,74 @@ class ForwardMeta():
     """
     ForwardMeta is used to store the global meta information of the forward.
     """
-    input_ids:paddle.Tensor
+    #
+    input_ids: paddle.Tensor
+
     #attention meta
     forward_mode: ForwardMode = ForwardMode.MIXED
-    ids_remove_padding:paddle.Tensor = None
+
+    #
+    ids_remove_padding: paddle.Tensor = None
+
+    #
     seq_lens_encoder: Optional[paddle.Tensor] = None
+
+    #
     seq_lens_decoder: Optional[paddle.Tensor] = None
+
+    #
     seq_lens_this_time: Optional[paddle.Tensor] = None
+
+    #
     cum_offsets: Optional[paddle.Tensor] = None
+
+    #
     block_tables: Optional[paddle.Tensor] = None
+
+    #
     attn_backend: 'AttentionBackend' = None
-    rotary_embs:Optional[paddle.Tensor] = None
-    padding_offset:Optional[paddle.Tensor] = None
-    cum_offsets:Optional[paddle.Tensor] = None
-    cu_seqlens_q:Optional[paddle.Tensor] = None
-    cu_seqlens_k:Optional[paddle.Tensor] = None
-    caches:Optional[paddle.Tensor] = None
-    attn_mask:Optional[paddle.Tensor] = None
-    pre_caches_length:int=0
+
+    #
+    rotary_embs: Optional[paddle.Tensor] = None
+
+    #
+    padding_offset: Optional[paddle.Tensor] = None
+
+    #
+    cum_offsets: Optional[paddle.Tensor] = None
+
+    #
+    cu_seqlens_q: Optional[paddle.Tensor] = None
+
+    #
+    cu_seqlens_k: Optional[paddle.Tensor] = None
+
+    #
+    caches: Optional[paddle.Tensor] = None
+
+    #
+    attn_mask: Optional[paddle.Tensor] = None
+
+    #
+    pre_caches_length: int = 0
 
     @classmethod
-    def init_forward_mata(
-        cls,
-        model_runner: "ModelRunnerBase"
-    ):
-        ret = cls(
-            forward_mode=ForwardMode.MIXED,
-            input_ids=model_runner.share_inputs["input_ids"],
-            ids_remove_padding=model_runner.share_inputs["ids_remove_padding"],
-            seq_lens_encoder=model_runner.share_inputs["seq_lens_encoder"],
-            seq_lens_decoder=model_runner.share_inputs["seq_lens_decoder"],
-            seq_lens_this_time=model_runner.share_inputs["seq_lens_this_time"],
-            cum_offsets=model_runner.share_inputs["cum_offsets"],
-            block_tables=model_runner.share_inputs["block_tables"],
-            attn_backend=model_runner.attn_backend,
-            rotary_embs=model_runner.share_inputs["rope_emb"],
-            padding_offset=model_runner.share_inputs["padding_offset"],
-            cu_seqlens_q=model_runner.share_inputs["cu_seqlens_q"],
-            cu_seqlens_k=model_runner.share_inputs["cu_seqlens_k"],
-            caches=model_runner.share_inputs["caches"]
-        )
+    def init_forward_meta(cls, share_inputs: Dict,
+                          attn_backend: "AttentionBackend"):
+        """ init forward meta """
+        # TODO(gongshaotian): delete this func
+        ret = cls(forward_mode=ForwardMode.MIXED,
+                  input_ids=share_inputs["input_ids"],
+                  ids_remove_padding=share_inputs["ids_remove_padding"],
+                  seq_lens_encoder=share_inputs["seq_lens_encoder"],
+                  seq_lens_decoder=share_inputs["seq_lens_decoder"],
+                  seq_lens_this_time=share_inputs["seq_lens_this_time"],
+                  cum_offsets=share_inputs["cum_offsets"],
+                  block_tables=share_inputs["block_tables"],
+                  attn_backend=attn_backend,
+                  rotary_embs=share_inputs["rope_emb"],
+                  padding_offset=share_inputs["padding_offset"],
+                  cu_seqlens_q=share_inputs["cu_seqlens_q"],
+                  cu_seqlens_k=share_inputs["cu_seqlens_k"],
+                  caches=share_inputs["caches"])
         return ret

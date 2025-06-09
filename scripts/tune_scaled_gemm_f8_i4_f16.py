@@ -26,7 +26,7 @@ def tune_scaled_gemm_f8_i4_f16(
     Tune fp8 int4 gemm.
     """
     assert len(ns) == len(ks), "list[n] and list[k] should have the same length!"
-    os.environ["FLAGS_efficientllm_op_configs"] = "tune"
+    os.environ["FLAGS_fastdeploy_op_configs"] = "tune"
     mm_tmp = []
 
     for m in range(1, 4, 1):

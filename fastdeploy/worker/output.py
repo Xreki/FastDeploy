@@ -46,8 +46,8 @@ class ModelOutputData:
     # Sequence lengths for this step
     seq_lens_this_time: paddle.Tensor
 
-    #  Lengths of the stop sequences
-    stop_seqs_len: paddle.Tensor
+    #
+    eos_token_id: paddle.Tensor
 
     #  Indicates if stopping conditions should be ignored
     not_need_stop: bool
@@ -73,6 +73,12 @@ class ModelOutputData:
     # Use EP parallel
     use_ep: bool
 
+    #
+    input_ids: paddle.Tensor
+
+    #
+    stop_nums: paddle.Tensor
+
 
 @dataclass
 class ModelRunnerOutput:
@@ -90,5 +96,3 @@ class ModelRunnerOutput:
 
     # [num_reqs, num_spec_tokens]
     spec_token_ids: Optional[list[list[int]]]
-
-    # TODO(gongshaotian): supplement other outputs info

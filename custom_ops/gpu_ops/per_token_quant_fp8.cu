@@ -252,6 +252,9 @@ __global__ void masked_quant_per_token_per_block(const T *input,
         const auto token_idx_in_expert = token_idx % num_max_tokens_per_expert;
         const auto expert_id = token_idx / num_max_tokens_per_expert;
         if (token_idx_in_expert >= recv_expert_count[expert_id]) {
+            auto next_expert_start_idx = (expert_id + 1) * num_max_tokens_per_expert;
+            auto num_iters_to_next_expert = (next_expert_start_idx - token_idx - 1) / gridDim.x;
+            token_idx += num_iters_to_next_expert * gridDim.x;
             continue;
         }
 

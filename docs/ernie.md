@@ -6,7 +6,7 @@
 > 1. 服务当前仅单并发处理请求（即完成一个请求后，再发下一个请求），避免动态插入组batch，使得计算kernel的变化影响结果的稳定性
 > 2. top_p参数设置为0，且seed参数固定
 
-## ERNIE 4.5 Turbo
+## ERNIE-45-Turbo
 
 |    参数    | 推荐值 | 服务默认值 |
 |    :---    | :----  | :------- |
@@ -17,7 +17,7 @@
 | frequency_penalty | 0.0 | 0.0 |
 | presence_penalty | 0.0 | 0.0 |
 
-## ERNIE 4.5 Turbo X1
+## ERNIE-X1-Turbo
 X1模型不支持system，请不要在请求中带system字段，会返回报错
 
 |    参数    | 推荐值 | 服务默认值 |
@@ -29,7 +29,7 @@ X1模型不支持system，请不要在请求中带system字段，会返回报错
 | frequency_penalty | 0.0 | 0.0 |
 | presence_penalty | 0.0 | 0.0 |
 
-## ERNIE 4.5 Turbo VL(多模)
+## ERNIE-45-Turbo-VL(多模)
 
 |    参数    | 推荐值 | 服务默认值 |
 |    :---    | :----  | :------- |

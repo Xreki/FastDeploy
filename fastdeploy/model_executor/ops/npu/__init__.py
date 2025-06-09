@@ -11,13 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""efficientllm npu ops."""
+"""fastdeploy npu ops."""
 
 from fastdeploy.import_ops import import_custom_ops, rename_imported_op
 
 PACKAGE = "fastdeploy.model_executor.ops.npu"
 
-import_custom_ops(PACKAGE, ".efficientllm_ops", globals())
+import_custom_ops(PACKAGE, ".fastdeploy_ops", globals())
 rename_imported_op(
     old_name="set_value_by_flags_and_idx_v2",
     new_name="set_value_by_flags_and_idx",

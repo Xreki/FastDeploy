@@ -85,6 +85,7 @@ class ErnieBotTokenizer(PretrainedTokenizer):
             pad_token=pad_token,
             add_bos_token=add_bos_token,
             add_eos_token=add_eos_token,
+            verbose=False,
             sp_model_kwargs=self.sp_model_kwargs,
             clean_up_tokenization_spaces=clean_up_tokenization_spaces,
             **kwargs,
@@ -264,5 +265,5 @@ class ErnieBotTokenizer(PretrainedTokenizer):
 
         if token_ids_1 is not None:
             output += [1] * len(bos_token_id + token_ids_1 + eos_token_id)
-
+ 
         return output

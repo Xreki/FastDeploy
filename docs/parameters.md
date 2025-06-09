@@ -1,11 +1,15 @@
 # 参数说明
 
+## 环境变量
+|         环境变量        |                       说明                        |   默认值   |
+| :---------------------: | :-----------------------------------------------: | :---------: |
+|      USE_WORKER_V1      |        FastDeploy 是否使用 V1 版本的 worker         |      0     |
+
 ## 服务启动参数
 
 |         字段名         | 字段类型 |                       说明                       | 是否必填 |   默认值   |
 | :---------------------: | :------: | :-----------------------------------------------: | :------: | :---------: |
 |          model          |   str   |                     模型路径                     |    是    |  llama-7b  |
-|    model_config_name    |   str   |                 模型配置文件名称                 |    否    | config.json |
 |        tokenizer        |   str   |                  tokenizer的地址                  |    否    |  模型地址  |
 |      max_model_len      |   int   |            模型支持的最长的上下文长度            |    否    |    2048    |
 |  tensor_parallel_size  |   int   |                   tensor 并行度                   |    否    |      1      |
@@ -19,11 +23,9 @@
 |     kv_cache_ratio     |  float  | 模型输入的长度 / 模型支持的最长的上下文长度的比例 |    否    |    0.75    |
 |          nnode          |   int   |                     节点数量                     |    否    |      1      |
 |         pod_ips         |   str   |                   各个节点的ip                   |    否    |    None    |
-| max_cached_request_num |   int   |             等待队列中缓存任务的上限             |    否    |     128     |
 |       use_warmup       |   bool   |                   是否进行预热                   |    否    |    False    |
 |  enable_prefix_caching  |   bool   |                 是否开启前缀缓存                 |    否    |    False    |
-
-
+|       enabe_mm          |   bool   |                 是否开启多模态                 |    否    |    False    |
 
 ## 请求参数
 
@@ -61,14 +63,7 @@
 | `min_tokens`       | int           | 生成的最少token数（遇到停止条件前必须生成）                 | 否       | 1          |
 | `logprobs`         | int    | 返回每个token的前N个概率（None表示不返回）     （目前暂不支持）             | 否       | `None`      |
 
-
-
-
-
-
-
 ### OpenAI Compatible API 请求参数
-
 
 |       字段名        |      字段类型      |                             说明                             | 是否必填 |    默认值    |
 |---------------------|-------------------|------------------------------------------------------------|----------|-------------|
@@ -90,6 +85,7 @@
 | `temperature`      | float             | 表示输出的确定性                    | 否       | -           |
 | `top_p`            | float       | 仅考虑累积概率超过此值的候选词                              | 否       | 1           |
 | `user`             | str         | 用户信息（当前不支持）                                                    | 否       | None        |
+| `stop_token_ids`   | list[int]   | 生成遇到这些token时停止（结果包含token，除非是特殊token）   | 否       | -           |
 
 ### OpenAI Chat API 请求参数
 
@@ -120,17 +116,17 @@
 
 |       字段名        |      字段类型      |                             说明                             | 是否必填 |    默认值    |
 |---------------------|-------------------|------------------------------------------------------------|----------|-------------|
-| `id`               | str         | 请求id                                                   | 否       | default     |
+| `request_id`       |       str         | 请求id                                                   | 否       | default     |
 | `prompt`           | Optional[str]     | 输入prompt                                                | 否       | None        |
 | `prompt_token_ids` | Optional[list[int]] | 输入prompt的token id                                      | 否       | None        |
 | `outputs`          | CompletionOutput  | 推理输出                                                  | 是       | -           |
 | `finished`         | bool              | 是否完成                                                  | 是       | False       |
 | `num_cached_tokens`| Optional[int]     | 缓存的token数量                                           | 否       | 0           |
 | `metrics`          | Optional[RequestMetrics] | 请求指标                                                | 否       | None        |
-
+| `error_code`       | Optional[int]     | 错误代码                                                  | 否       | None        |
+| `error_msg`        | Optional[str]     | 错误信息                                                  | 否       | None        |
 
 #### 离线推理输出 CompletionOutput
-
 
 |       字段名        |      字段类型      |                             说明                             | 是否必填 |    默认值    |
 |---------------------|-------------------|------------------------------------------------------------|----------|-------------|
@@ -141,7 +137,6 @@
 
 #### 离线推理输出 RequestMetrics
 
-
 |       字段名        |      字段类型      |                             说明                             | 是否必填 |    默认值    |
 |---------------------|-------------------|------------------------------------------------------------|----------|-------------|
 | `arrival_time`      | float         | 请求到达时间                                               | 是       | -           |
@@ -151,3 +146,4 @@
 | `preprocess_cost_time`| Optional[float]     | 预处理耗时                                              | 否       | None        |
 | `model_forward_time`| Optional[float]     | 模型前向推理耗时                                       | 否       | None        |
 | `model_execute_time`| Optional[float]     | 模型执行耗时（包含预处理及排队时间）                             | 否       | None        |
+| `request_start_time`| Optional[float]     | 请求开始时间                                           | 否       | None        |

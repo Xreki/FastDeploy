@@ -38,6 +38,16 @@
 #include "cutlass_kernels/w4a8_moe/cutlass_extensions/gemm/kernel/gemm_with_epilogue_visitor_interleaved_nf4.h"
 #include "w4a8_moe_gemm_with_epilogue_visitor.h"
 
+
+template <int val>
+class IntegerType {
+  public:
+  static constexpr int value = val;
+};
+
+template <int v>
+using Int = IntegerType<v>;
+
 template <typename OutputType,
           typename IntAType,
           typename IntBType,
@@ -55,6 +65,7 @@ void generic_w4a8_moe_gemm_kernelLauncher(
     const int32_t* nf4_look_up_table,
     OutputType* C,
     int64_t* total_rows_before_expert,
+    int total_rows_in_ll_else_minus1,
     int total_rows,
     int n,
     int k,
@@ -195,6 +206,7 @@ void generic_w4a8_moe_gemm_kernelLauncher(
                                   {reinterpret_cast<OutputElementType*>(C), n},
                                   {reinterpret_cast<OutputElementType*>(C), n},
                                   total_rows_before_expert,
+                                  total_rows_in_ll_else_minus1,
                                   n,
                                   k,
                                   (int64_t)0,
@@ -256,6 +268,7 @@ void dispatch_gemm_config(const IntAType* A,
                           const int32_t* nf4_look_up_table,
                           OutputType* C,
                           int64_t* total_rows_before_expert,
+                          int64_t total_rows_in_ll_else_minus1,
                           int64_t total_rows,
                           int64_t gemm_n,
                           int64_t gemm_k,
@@ -266,174 +279,54 @@ void dispatch_gemm_config(const IntAType* A,
                           int multi_processor_count,
                           cudaStream_t stream,
                           int* occupancy = nullptr) {
+
+  auto dispatch_by_stage = [&](auto temp_args) {
+    using DispatcherStages = dispatch_stages<OutputType,
+                                             IntAType,
+                                             IntBType,
+                                             arch,
+                                             EpilogueTag,
+                                             ThreadblockShape,
+                                             WarpShape,
+                                             decltype(temp_args)::value>;
+    DispatcherStages::dispatch(A,
+                               B,
+                               quant_mode,
+                               col_scale,
+                               row_scale,
+                               nf4_look_up_table,
+                               C,
+                               total_rows_before_expert,
+                               total_rows_in_ll_else_minus1,
+                               total_rows,
+                               gemm_n,
+                               gemm_k,
+                               num_experts,
+                               gemm_config,
+                               workspace,
+                               workspace_bytes,
+                               multi_processor_count,
+                               stream,
+                               occupancy);
+  };
   switch (gemm_config.stages) {
     case 2:
-      using DispatcherStages2 = dispatch_stages<OutputType,
-                                               IntAType,
-                                               IntBType,
-                                                arch,
-                                                EpilogueTag,
-                                                ThreadblockShape,
-                                                WarpShape,
-                                                2>;
-      DispatcherStages2::dispatch(A,
-                                  B,
-                                  quant_mode,
-                                  col_scale,
-                                  row_scale,
-                                  nf4_look_up_table,
-                                  C,
-                                  total_rows_before_expert,
-                                  total_rows,
-                                  gemm_n,
-                                  gemm_k,
-                                  num_experts,
-                                  gemm_config,
-                                  workspace,
-                                  workspace_bytes,
-                                  multi_processor_count,
-                                  stream,
-                                  occupancy);
+      dispatch_by_stage(Int<2>());
       break;
     case 3:
-      using DispatcherStages3 = dispatch_stages<OutputType,
-                                               IntAType,
-                                               IntBType,
-                                                arch,
-                                                EpilogueTag,
-                                                ThreadblockShape,
-                                                WarpShape,
-                                                3>;
-      DispatcherStages3::dispatch(A,
-                                  B,
-                                  quant_mode,
-                                  col_scale,
-                                  row_scale,
-                                  nf4_look_up_table,
-                                  C,
-                                  total_rows_before_expert,
-                                  total_rows,
-                                  gemm_n,
-                                  gemm_k,
-                                  num_experts,
-                                  gemm_config,
-                                  workspace,
-                                  workspace_bytes,
-                                  multi_processor_count,
-                                  stream,
-                                  occupancy);
+      dispatch_by_stage(Int<3>());
       break;
     case 4:
-      using DispatcherStages4 = dispatch_stages<OutputType,
-                                               IntAType,
-                                               IntBType,
-                                                arch,
-                                                EpilogueTag,
-                                                ThreadblockShape,
-                                                WarpShape,
-                                                4>;
-      DispatcherStages4::dispatch(A,
-                                  B,
-                                  quant_mode,
-                                  col_scale,
-                                  row_scale,
-                                  nf4_look_up_table,
-                                  C,
-                                  total_rows_before_expert,
-                                  total_rows,
-                                  gemm_n,
-                                  gemm_k,
-                                  num_experts,
-                                  gemm_config,
-                                  workspace,
-                                  workspace_bytes,
-                                  multi_processor_count,
-                                  stream,
-                                  occupancy);
+      dispatch_by_stage(Int<4>());
       break;
     case 5:
-      using DispatcherStages5 = dispatch_stages<OutputType,
-                                               IntAType,
-                                               IntBType,
-                                                arch,
-                                                EpilogueTag,
-                                                ThreadblockShape,
-                                                WarpShape,
-                                                5>;
-      DispatcherStages5::dispatch(A,
-                                  B,
-                                  quant_mode,
-                                  col_scale,
-                                  row_scale,
-                                  nf4_look_up_table,
-                                  C,
-                                  total_rows_before_expert,
-                                  total_rows,
-                                  gemm_n,
-                                  gemm_k,
-                                  num_experts,
-                                  gemm_config,
-                                  workspace,
-                                  workspace_bytes,
-                                  multi_processor_count,
-                                  stream,
-                                  occupancy);
+      dispatch_by_stage(Int<5>());
       break;
     case 6:
-      using DispatcherStages6 = dispatch_stages<OutputType,
-                                               IntAType,
-                                               IntBType,
-                                               arch,
-                                               EpilogueTag,
-                                               ThreadblockShape,
-                                               WarpShape,
-                                               6>;
-      DispatcherStages6::dispatch(A,
-                                  B,
-                                  quant_mode,
-                                  col_scale,
-                                  row_scale,
-                                  nf4_look_up_table,
-                                  C,
-                                  total_rows_before_expert,
-                                  total_rows,
-                                  gemm_n,
-                                  gemm_k,
-                                  num_experts,
-                                  gemm_config,
-                                  workspace,
-                                  workspace_bytes,
-                                  multi_processor_count,
-                                  stream,
-                                  occupancy);
+      dispatch_by_stage(Int<6>());
       break;
     case 7:
-      using DispatcherStages7 = dispatch_stages<OutputType,
-                                               IntAType,
-                                               IntBType,
-                                               arch,
-                                               EpilogueTag,
-                                               ThreadblockShape,
-                                               WarpShape,
-                                               7>;
-      DispatcherStages7::dispatch(A,
-                                  B,
-                                  quant_mode,
-                                  col_scale,
-                                  row_scale,
-                                  nf4_look_up_table,
-                                  C,
-                                  total_rows_before_expert,
-                                  total_rows,
-                                  gemm_n,
-                                  gemm_k,
-                                  num_experts,
-                                  gemm_config,
-                                  workspace,
-                                  workspace_bytes,
-                                  multi_processor_count,
-                                  stream,
-                                  occupancy);
+      dispatch_by_stage(Int<7>());
       break;
     default:
       std::string err_msg = "dispatch_gemm_config does not support stages " +
@@ -458,6 +351,7 @@ void dispatch_moe_gemm_to_cutlass(
     const int32_t* nf4_look_up_table,
     OutputType* C,
     int64_t* total_rows_before_expert,
+    int64_t total_rows_in_ll_else_minus1,
     int64_t total_rows,
     int64_t gemm_n,
     int64_t gemm_k,
@@ -470,261 +364,87 @@ void dispatch_moe_gemm_to_cutlass(
     cudaStream_t stream,
     int* occupancy = nullptr) {
   // VLOG(1)<<__PRETTY_FUNCTION__;
+
+  auto dispatch_by_tile = [&](auto ThreadblockShapeM,
+                              auto ThreadblockShapeN,
+                              auto ThreadblockShapeK,
+                              auto WarpShapeM,
+                              auto WarpShapeN,
+                              auto WarpShapeK) {
+      dispatch_gemm_config<
+          OutputType,
+          IntAType,
+          IntBType,
+          arch,
+          EpilogueTag,
+          cutlass::gemm::GemmShape<decltype(ThreadblockShapeM)::value,
+                                   decltype(ThreadblockShapeN)::value,
+                                   decltype(ThreadblockShapeK)::value>,
+          cutlass::gemm::GemmShape<decltype(WarpShapeM)::value,
+                                   decltype(WarpShapeN)::value,
+                                   decltype(WarpShapeK)::value>>
+                                   (A,
+                                    B,
+                                    quant_mode,
+                                    col_scale,
+                                    row_scale,
+                                    nf4_look_up_table,
+                                    C,
+                                    total_rows_before_expert,
+                                    total_rows_in_ll_else_minus1,
+                                    total_rows,
+                                    gemm_n,
+                                    gemm_k,
+                                    num_experts,
+                                    gemm_config,
+                                    workspace_ptr,
+                                    workspace_bytes,
+                                    multi_processor_count,
+                                    stream,
+                                    occupancy);
+  };
+
   switch (gemm_config.tile_config) {
     case CutlassTileConfig::CtaShape16x128x64_WarpShape16x32x64:
-      dispatch_gemm_config<
-          OutputType,
-          IntAType,
-          IntBType,
-          arch,
-          EpilogueTag,
-          cutlass::gemm::GemmShape<16, 64, 64>,
-          cutlass::gemm::GemmShape<16, 32, 64>>(A,
-                                                B,
-                                                quant_mode,
-                                                col_scale,
-                                                row_scale,
-                                                nf4_look_up_table,
-                                                C,
-                                                total_rows_before_expert,
-                                                total_rows,
-                                                gemm_n,
-                                                gemm_k,
-                                                num_experts,
-                                                gemm_config,
-                                                workspace_ptr,
-                                                workspace_bytes,
-                                                multi_processor_count,
-                                                stream,
-                                                occupancy);
+      dispatch_by_tile(Int<16>(), Int<64>(), Int<64>(),
+                       Int<16>(), Int<32>(), Int<64>());
       break;
     case CutlassTileConfig::CtaShape32x128x64_WarpShape32x32x64:
-      dispatch_gemm_config<
-          OutputType,
-          IntAType,
-          IntBType,
-          arch,
-          EpilogueTag,
-          cutlass::gemm::GemmShape<32, 128, 64>,
-          cutlass::gemm::GemmShape<32, 32, 64>>
-                                               (A,
-                                                B,
-                                                quant_mode,
-                                                col_scale,
-                                                row_scale,
-                                                nf4_look_up_table,
-                                                C,
-                                                total_rows_before_expert,
-                                                total_rows,
-                                                gemm_n,
-                                                gemm_k,
-                                                num_experts,
-                                                gemm_config,
-                                                workspace_ptr,
-                                                workspace_bytes,
-                                                multi_processor_count,
-                                                stream,
-                                                occupancy);
+      dispatch_by_tile(Int<32>(), Int<128>(), Int<64>(),
+                       Int<32>(), Int<32>(), Int<64>());
       break;
     case CutlassTileConfig::CtaShape64x128x64_WarpShape64x32x64:
-      dispatch_gemm_config<
-          OutputType,
-          IntAType,
-          IntBType,
-          arch,
-          EpilogueTag,
-          cutlass::gemm::GemmShape<64, 128, 64>,
-          cutlass::gemm::GemmShape<64, 32, 64>>(A,
-                                                B,
-                                                quant_mode,
-                                                col_scale,
-                                                row_scale,
-                                                nf4_look_up_table,
-                                                C,
-                                                total_rows_before_expert,
-                                                total_rows,
-                                                gemm_n,
-                                                gemm_k,
-                                                num_experts,
-                                                gemm_config,
-                                                workspace_ptr,
-                                                workspace_bytes,
-                                                multi_processor_count,
-                                                stream,
-                                                occupancy);
+      dispatch_by_tile(Int<64>(), Int<128>(), Int<64>(),
+                       Int<64>(), Int<32>(), Int<64>());
       break;
     case CutlassTileConfig::CtaShape128x128x64_WarpShape128x32x64:
-      dispatch_gemm_config<
-          OutputType,
-          IntAType,
-          IntBType,
-          arch,
-          EpilogueTag,
-          cutlass::gemm::GemmShape<128, 128, 64>,
-          cutlass::gemm::GemmShape<128, 32, 64>>(A,
-                                                B,
-                                                quant_mode,
-                                                col_scale,
-                                                row_scale,
-                                                nf4_look_up_table,
-                                                C,
-                                                total_rows_before_expert,
-                                                total_rows,
-                                                gemm_n,
-                                                gemm_k,
-                                                num_experts,
-                                                gemm_config,
-                                                workspace_ptr,
-                                                workspace_bytes,
-                                                multi_processor_count,
-                                                stream,
-                                                occupancy);
+      dispatch_by_tile(Int<128>(), Int<128>(), Int<64>(),
+                       Int<128>(), Int<32>(), Int<64>());
       break;
     case CutlassTileConfig::CtaShape32x512x64_WarpShape32x128x64:
-      dispatch_gemm_config<
-          OutputType,
-          IntAType,
-          IntBType,
-          arch,
-          EpilogueTag,
-          cutlass::gemm::GemmShape<32, 512, 64>,
-          cutlass::gemm::GemmShape<32, 128, 64>>(A,
-                                                B,
-                                                quant_mode,
-                                                col_scale,
-                                                row_scale,
-                                                nf4_look_up_table,
-                                                C,
-                                                total_rows_before_expert,
-                                                total_rows,
-                                                gemm_n,
-                                                gemm_k,
-                                                num_experts,
-                                                gemm_config,
-                                                workspace_ptr,
-                                                workspace_bytes,
-                                                multi_processor_count,
-                                                stream,
-                                                occupancy);
+      dispatch_by_tile(Int<32>(), Int<512>(), Int<64>(),
+                       Int<32>(), Int<128>(), Int<64>());
       break;
     case CutlassTileConfig::CtaShape32x256x64_WarpShape32x64x64:
-      dispatch_gemm_config<
-          OutputType,
-          IntAType,
-          IntBType,
-          arch,
-          EpilogueTag,
-          cutlass::gemm::GemmShape<32, 256, 64>,
-          cutlass::gemm::GemmShape<32, 64, 64>>(A,
-                                                 B,
-                                                 quant_mode,
-                                                 col_scale,
-                                                 row_scale,
-                                                 nf4_look_up_table,
-                                                 C,
-                                                total_rows_before_expert,
-                                                total_rows,
-                                                gemm_n,
-                                                gemm_k,
-                                                num_experts,
-                                                 gemm_config,
-                                                workspace_ptr,
-                                                workspace_bytes,
-                                                multi_processor_count,
-                                                 stream,
-                                                 occupancy);
+      dispatch_by_tile(Int<32>(), Int<256>(), Int<64>(),
+                       Int<32>(), Int<64>(), Int<64>());
       break;
     case CutlassTileConfig::CtaShape64x256x64_WarpShape64x64x64:
-      dispatch_gemm_config<
-          OutputType,
-          IntAType,
-          IntBType,
-          arch,
-          EpilogueTag,
-          cutlass::gemm::GemmShape<64, 256, 64>,
-          cutlass::gemm::GemmShape<64, 64, 64>>(A,
-                                                 B,
-                                                 quant_mode,
-                                                 col_scale,
-                                                 row_scale,
-                                                 nf4_look_up_table,
-                                                 C,
-                                                total_rows_before_expert,
-                                                total_rows,
-                                                gemm_n,
-                                                gemm_k,
-                                                num_experts,
-                                                 gemm_config,
-                                                workspace_ptr,
-                                                workspace_bytes,
-                                                multi_processor_count,
-                                                 stream,
-                                                 occupancy);
+      dispatch_by_tile(Int<64>(), Int<256>(), Int<64>(),
+                       Int<64>(), Int<64>(), Int<64>());
       break;
     // case CutlassTileConfig::CtaShape128x256x64_WarpShape128x64x64:
-    //   dispatch_gemm_config<
-    //       OutputType,
-    //       IntAType,
-    //       IntBType,
-    //       arch,
-    //       EpilogueTag,
-    //       cutlass::gemm::GemmShape<128, 256, 64>,
-    //       cutlass::gemm::GemmShape<128, 64, 64>>(A,
-    //                                              B,
-    //                                              quant_mode,
-    //                                              col_scale,
-    //                                              row_scale,
-    //                                              nf4_look_up_table,
-    //                                              C,
-    //                                             total_rows_before_expert,
-    //                                             total_rows,
-    //                                             gemm_n,
-    //                                             gemm_k,
-    //                                             num_experts,
-    //                                              gemm_config,
-    //                                             workspace_ptr,
-    //                                             workspace_bytes,
-    //                                             multi_processor_count,
-    //                                              stream,
-    //                                              occupancy);
+    //   dispatch_by_tile(Int<128>(), Int<256>(), Int<64>(),
+    //                    Int<128>(), Int<64>(), Int<64>());
     //   break;
-
-
-    // //config for M_16000_N_12288_K_6144 in encoder
+    // config for M_16000_N_12288_K_6144 in encoder
     // case CutlassTileConfig::CtaShape256x128x64_WarpShape64x64x64:
-    //     intAintB_interleaved_dispatch_gemm_config<OutputType,
-    //                          IntAType,
-    //                          IntBType,
-    //                          arch,
-    //                          EpilogueTag,
-    //                          cutlass::gemm::GemmShape<256, 128, 64>,
-    //                          cutlass::gemm::GemmShape<128, 32, 64>>(
-    //         A, B, quant_mode, col_scale, row_scale, C, m, n, k, gemm_config,
-    //         workspace, workspace_bytes, stream, occupancy);
-    //     break;
+    //   dispatch_by_tile(Int<256>(), Int<128>(), Int<64>(),
+    //                    Int<128>(), Int<32>(), Int<64>());
+    //   break;
     // case CutlassTileConfig::CtaShape128x256x64_WarpShape64x64x64:
-    //   intAintB_interleaved_dispatch_gemm_config<
-    //       OutputType,
-    //       IntAType,
-    //       IntBType,
-    //       arch,
-    //       EpilogueTag,
-    //       cutlass::gemm::GemmShape<128, 256, 64>,
-    //       cutlass::gemm::GemmShape<64, 32, 64>>(A,
-    //                                              B,
-    //                                              quant_mode,
-    //                                              col_scale,
-    //                                              row_scale,
-    //                                              nf4_look_up_table,
-    //                                              C,
-    //                                              m,
-    //                                              n,
-    //                                              k,
-    //                                              gemm_config,
-    //                                              workspace,
-    //                                              workspace_bytes,
-    //                                              stream,
-    //                                              occupancy);
+    //   dispatch_by_tile(Int<128>(), Int<256>(), Int<64>(),
+    //                    Int<64>(), Int<32>(), Int<64>());
     //   break;
     case CutlassTileConfig::Undefined:
       throw std::runtime_error(
@@ -846,6 +566,7 @@ void W4A8MoeGemmRunner<OutputType, IntAType, IntBType>::dispatch_to_arch<Epilogu
     const int32_t* nf4_look_up_table,
     OutputType* C,
     int64_t* total_rows_before_expert,
+    int64_t total_rows_in_ll_else_minus1,
     int64_t total_rows,
     int64_t gemm_n,
     int64_t gemm_k,
@@ -869,6 +590,7 @@ void W4A8MoeGemmRunner<OutputType, IntAType, IntBType>::dispatch_to_arch<Epilogu
                                           nf4_look_up_table,
                                           C,
                                           total_rows_before_expert,
+                                          total_rows_in_ll_else_minus1,
                                           total_rows,
                                           gemm_n,
                                           gemm_k,
@@ -894,6 +616,7 @@ void W4A8MoeGemmRunner<OutputType, IntAType, IntBType>::run_gemm<EpilogueTag>(
     const int32_t* nf4_look_up_table,
     OutputType* C,
     int64_t* total_rows_before_expert,
+    int64_t total_rows_in_ll_else_minus1,
     int64_t total_rows,
     int64_t gemm_n,
     int64_t gemm_k,
@@ -922,6 +645,7 @@ void W4A8MoeGemmRunner<OutputType, IntAType, IntBType>::run_gemm<EpilogueTag>(
                                     nf4_look_up_table,
                                     C,
                                     total_rows_before_expert,
+                                    total_rows_in_ll_else_minus1,
                                     total_rows,
                                     gemm_n,
                                     gemm_k,
@@ -946,6 +670,7 @@ void W4A8MoeGemmRunner<OutputType, IntAType, IntBType>::run_gemm<EpilogueTag>(
                                   nf4_look_up_table,
                                   C,
                                   total_rows_before_expert,
+                                  total_rows_in_ll_else_minus1,
                                   total_rows,
                                   gemm_n,
                                   gemm_k,
@@ -995,6 +720,7 @@ void W4A8MoeGemmRunner<OutputType, IntAType, IntBType>::run_gemm<EpilogueTag>(
                                 nf4_look_up_table,
                                 C,
                                 total_rows_before_expert,
+                                total_rows_in_ll_else_minus1,
                                 total_rows,
                                 gemm_n,
                                 gemm_k,
@@ -1051,6 +777,7 @@ void W4A8MoeGemmRunner<OutputType, IntAType, IntBType>::moe_gemm(
   const int32_t* nf4_look_up_table,
   OutputType* C,
   int64_t* total_rows_before_expert,
+  int64_t total_rows_in_ll_else_minus1,
   int64_t total_rows,
   int64_t gemm_n,
   int64_t gemm_k,
@@ -1110,6 +837,7 @@ void W4A8MoeGemmRunner<OutputType, IntAType, IntBType>::moe_gemm(
                              nf4_look_up_table,
                              C,
                              total_rows_before_expert,
+                             total_rows_in_ll_else_minus1,
                              total_rows,
                              gemm_n,
                              gemm_k,

@@ -18,8 +18,8 @@ from abc import ABC, abstractmethod
 from paddle import nn
 
 from fastdeploy.config import LLMConfig
-from fastdeploy.model_runner.output import ModelRunnerOutput
 from fastdeploy.utils import get_logger
+from fastdeploy.worker.output import ModelRunnerOutput
 
 logger = get_logger("model_runner_base", "model_runner_base.log")
 
@@ -32,9 +32,9 @@ class ModelRunnerBase(ABC):
     """
 
     def __init__(self, llm_config: LLMConfig, device: str) -> None:
-        self.llm_conig = llm_config
+        # Initialize config
+        self.llm_config = llm_config
         self.model_config = llm_config.model_config
-        self.lora_config = llm_config.lora_config
         self.load_config = llm_config.load_config
         self.device_config = llm_config.device_config
         self.speculative_config = llm_config.speculative_config

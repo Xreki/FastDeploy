@@ -15,23 +15,27 @@
 """
 
 from __future__ import annotations
-from fastdeploy.model_executor.ops.gpu import append_attention
-from fastdeploy.model_executor.layers.attention.ops import \
-    append_attention
-from fastdeploy.model_executor.layers.attention.ops import \
-    get_block_shape_and_split_kv_block
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
+
 import paddle
+
+from fastdeploy.model_executor.layers.attention.ops import (
+    append_attention, get_block_shape_and_split_kv_block)
+
 if TYPE_CHECKING:
     from paddle._typing.dtype_like import _DTypeLiteral
-from fastdeploy.model_executor.layers.attention.base_attention_backend import AttentionBackend
-from fastdeploy.worker.model_runner import ForwardMeta
+
+from fastdeploy.config import LLMConfig
 from fastdeploy.model_executor.layers.attention import Attention
+from fastdeploy.model_executor.layers.attention.base_attention_backend import (
+    AttentionBackend, AttentionMetadata)
+from fastdeploy.worker.model_runner import ForwardMeta
 
 
 @dataclass
-class AppendAttentionMetadata:
+class AppendAttentionMetadata(AttentionMetadata):
     """
     AppendAttentionMetadata
     """
@@ -63,29 +67,27 @@ class AppendAttentionBackend(AttentionBackend):
     AppendAttentionBackend backend implementation.
     """
 
-    def __init__(
-        self,
-        model_runner: "ModelRunner",
-    ):
+    def __init__(self, llm_config: LLMConfig, kv_num_heads: int,
+                 num_heads: int, head_dim: int):
         """
         AppendAttentionBackend __init__
         """
         super().__init__()
         self.attention_metadata: AppendAttentionMetadata = None
-        self.block_size = model_runner.args.block_size
-        self.max_seq_len = model_runner.args.max_model_len
-        self.rope_theta = (10000.0 if model_runner.model_cfg.rope_theta is None
-                           else model_runner.model_cfg.rope_theta)
-        self.rope_3d = getattr(model_runner.model_cfg, "rope_3d", False)
-        self.use_neox_rotary_style = getattr(
-            model_runner.model_cfg, "use_neox_rotary_style", False)
-        self.causal = getattr(model_runner.model_cfg, "causal", True)
-        self.speculate_method = model_runner.args.speculate_method
+        # TODO(gongshaotian): Use llm_config parameters in the correct location
+        self.block_size = llm_config.parallel_config.block_size
+        self.max_seq_len = llm_config.parallel_config.max_model_len
+        self.rope_theta = (10000.0 if llm_config.model_config.rope_theta
+                           is None else llm_config.model_config.rope_theta)
+        self.rope_3d = getattr(llm_config.model_config, "rope_3d", False)
+        self.causal = getattr(llm_config.model_config, "causal", True)
+        self.speculate_method = llm_config.parallel_config.speculate_method
         self.use_speculate = self.speculate_method is not None
-        self.speculate_max_draft_token_num = model_runner.args.speculate_max_draft_tokens
-        self.num_heads = model_runner.model_cfg.num_attention_heads // model_runner.nranks
-        self.kv_num_heads = int(
-            model_runner.model_cfg.num_key_value_heads) // model_runner.nranks
+        self.speculate_max_draft_token_num = llm_config.parallel_config.speculate_max_draft_tokens
+
+        self.kv_num_heads = kv_num_heads
+        self.num_heads = num_heads
+        self.head_dim = head_dim
 
     def init_attention_metadata(self, forward_meta: ForwardMeta):
         """Initialize attntion metadata hence all layers in the forward pass can reuse it."""
@@ -134,27 +136,24 @@ class AppendAttentionBackend(AttentionBackend):
         """get_attntion_meta"""
         return self.attention_metadata
 
-    @staticmethod
     def get_kv_cache_shape(
+        self,
         max_num_blocks: int,
-        block_size: int,
-        kv_num_head: int,
-        head_dim: int,
     ):
         """
-        get_kv_cache_shape
+        Caculate kv cache shape
         """
-        return (max_num_blocks, kv_num_head, block_size, head_dim)
+        return (max_num_blocks, self.kv_num_heads, self.block_size,
+                self.head_dim)
 
     def forward_mixed(
         self,
         q,
         k,
         v,
+        qkv,
         layer: Attention,
         forward_meta: ForwardMeta,
-        qkv,
-        kv_signal_data=None
     ):
         """
         forward_mixed
@@ -194,10 +193,10 @@ class AppendAttentionBackend(AttentionBackend):
             getattr(layer, "cache_v_zp", None),
             layer.linear_shift,
             layer.linear_smooth,
-            kv_signal_data,
+            None,  # kv_signal_data,
             metadata._fuse_kernel_compute_dtype,
             getattr(layer, "cache_quant_type_str", "none"),
-            self.use_neox_rotary_style,
+            layer.use_neox_rotary_style,
             self.rope_3d,
             self.max_seq_len,
             getattr(layer, "quant_max_bound", 0.0),
@@ -209,7 +208,6 @@ class AppendAttentionBackend(AttentionBackend):
             metadata.encoder_max_partition_size,
             self.speculate_max_draft_token_num + 1,
             self.causal,
-            self.use_speculate
+            self.speculate_method is not None,
         )[0]
-
         return res

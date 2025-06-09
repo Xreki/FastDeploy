@@ -552,6 +552,103 @@ __launch_bounds__(TPB) __global__ void moe_softmax_top_k_normed_fused(
   }
 }
 
+inline __device__ unsigned int xorwow_moe(unsigned int &state) {
+    state ^= state >> 7;
+    state ^= state << 9;
+    state ^= state >> 13;
+    return state;
+}
+
+template <typename T, int TPB, typename IdxT = int>
+__launch_bounds__(TPB) __global__ void moe_redundant_top_k_normed(const T* inputs_after_softmax,
+                                                 const T* bias,
+                                                 const int* expert_id_to_ep_rank_array,
+                                                 const int* expert_in_rank_num_list,
+                                                 int* tokens_per_expert_stats_list,
+                                                 T* output,
+                                                 IdxT* indices,
+                                                 IdxT* indices_tmp,
+                                                 int* source_rows,
+                                                 const int64_t num_experts,
+                                                 const int64_t k,
+                                                 const int64_t num_rows,
+                                                 const int redundant_ep_rank_num_plus_one) {
+  using cub_kvp = cub::KeyValuePair<int, T>;
+  using BlockReduce = cub::BlockReduce<cub_kvp, TPB>;
+  __shared__ typename BlockReduce::TempStorage tmpStorage;
+
+  cub_kvp thread_kvp;
+  cub::ArgMax arg_max;
+
+  const int block_row = blockIdx.x + blockIdx.y * gridDim.x;
+  // unsigned int state = block_row + blockIdx.x * blockDim.x + *kernel_call_num;
+  unsigned int state = block_row + blockIdx.x * blockDim.x;
+
+  if (block_row >= num_rows) {
+    return;
+  }
+
+  const bool should_process_row = true;
+  const int thread_read_offset = block_row * num_experts;
+  T weight_sum = static_cast<T>(0);
+
+  extern __shared__ char smem[];
+
+  T* row_outputs = reinterpret_cast<T*>(smem);
+
+  for (int k_idx = 0; k_idx < k; ++k_idx) {
+    thread_kvp.key = 0;
+    thread_kvp.value = T(-1.f);  // This is OK because inputs are probabilities
+
+    cub_kvp inp_kvp;
+    for (int expert = threadIdx.x; expert < num_experts; expert += TPB) {
+      const int idx = thread_read_offset + expert;
+      inp_kvp.key = expert;
+      inp_kvp.value = bias ? inputs_after_softmax[idx] + bias[expert] : inputs_after_softmax[idx] ;
+
+      for (int prior_k = 0; prior_k < k_idx; ++prior_k) {
+        const int prior_winning_expert = indices_tmp[k * block_row + prior_k];
+
+        if (prior_winning_expert == expert) {
+          inp_kvp = thread_kvp;
+        }
+      }
+
+      thread_kvp = arg_max(inp_kvp, thread_kvp);
+    }
+
+    const cub_kvp result_kvp =
+        BlockReduce(tmpStorage).Reduce(thread_kvp, arg_max);
+    if (threadIdx.x == 0) {
+      const int idx = k * block_row + k_idx;
+      // output[idx] = bias ? inputs_after_softmax[thread_read_offset + result_kvp.key]: result_kvp.value;
+      source_rows[idx] = k_idx * num_rows + block_row;
+      int expert_topk = should_process_row ? result_kvp.key : num_experts;
+
+      // runduncy
+      int len = expert_in_rank_num_list[expert_topk];
+      int select = (int)xorwow_moe(state) % len;
+      int selected_rank =  expert_id_to_ep_rank_array[expert_topk * redundant_ep_rank_num_plus_one + select];
+
+      indices[idx] = (IdxT)selected_rank;
+      indices_tmp[idx] = result_kvp.key;
+      atomicAdd(&tokens_per_expert_stats_list[result_kvp.key], 1);
+
+      T row_out = bias ? inputs_after_softmax[thread_read_offset + result_kvp.key]: result_kvp.value;
+      row_outputs[k_idx] = row_out;
+      weight_sum += row_out;
+    }
+    __syncthreads();
+  }
+  if (threadIdx.x < WARP_SIZE) {
+    weight_sum = __shfl_sync(0xffffffff, weight_sum, 0);
+  }
+
+  if (threadIdx.x < k) {
+    output[k * block_row + threadIdx.x] = row_outputs[threadIdx.x] / weight_sum;
+  }
+}
+
 // ====================== TopK softmax things ===============================
 
 /*

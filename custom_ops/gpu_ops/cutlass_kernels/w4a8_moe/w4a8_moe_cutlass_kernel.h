@@ -26,7 +26,8 @@
 #include "cutlass/gemm/kernel/params_universal_base.h"
 #include "cutlass/layout/matrix.h"
 #include "cutlass/trace.h"
-#include "cutlass_kernels/w4a8_moe/cutlass_extensions/gemm/kernel/gemm_moe_problem_visitor.h"
+#include "cutlass_extensions/gemm/kernel/gemm_moe_problem_visitor.h"
+
 #include "cutlass_kernels/w4a8_moe/cutlass_extensions/tile_interleaved_layout.h"
 #include "cutlass_kernels/w4a8_moe/cutlass_extensions/epilogue/epilogue_quant_helper.h"
 

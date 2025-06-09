@@ -25,18 +25,23 @@ export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
 export PYTHONPATH=$(dirname $(pwd)):$PYTHONPATH
 export FLAGS_enable_pir_api=0
 export FLAGS_use_append_attn=1
-export FLAGS_use_fa3=0
+export FLAGS_use_fa3=1
 
 export devices=0,1,2,3,4,5,6,7
 export CUDA_VISIBLE_DEVICES=${devices}
-export ENABLE_EFFICIENTLLM_LOAD_MODEL_CONCURRENCY=0
+export ENABLE_FASTDEPLOY_LOAD_MODEL_CONCURRENCY=0
 
+export PREDICT_MODEL_TYPE=${PREDICT_MODEL_TYPE:-"W8A16Cfp8"}
+export MOE_QUANT_TYPE=${MOE_QUANT_TYPE-"fp8"}
+export EP_SCALE_DIR=${EP_SCALE_DIR:-"/path/to/scale_dir"} # scale json文件所在的目录
 # export FLAGS_enable_blaslt_global_search=1
 # export FLAGS_cublaslt_device_best_config=/path/to/cublaslt_device_best_config.csv
 
 # export FLAGS_use_cutlass_device_best_config_path=/path/to/cutlass_device_best_config.json
 
-model_path=${1:-"/path/to/model"}
+model_path=${1:-"/root/paddlejob/workspace/env_run/bh_test_quantized_fp8"}
+# model_path=/root/paddlejob/workspace/env_run/EB45T0332kMODEL_0425_v1
+
 
 for name in `env | grep -E 'PADDLE|ENDPOINT' | awk -F'=' '{print $1}'`; do
 unset ${name}
@@ -53,14 +58,16 @@ python -m paddle.distributed.launch \
         --model_name_or_path ${model_path} \
         --input_file "../data/query-answers-list.jsonl" \
         --output_file ./predict_out.json \
-        --predict_model_type "W8A16Cfp8" \
+        --predict_model_type $PREDICT_MODEL_TYPE \
         --dtype bfloat16 \
         --data_format "sft" \
         --append_bos_token "False" \
         --max_dec_len ${MAX_DEC_LEN:-128} \
         --top_p 0 \
-        --moe_quant_type "weight_only_int4" \
+        --moe_quant_type $MOE_QUANT_TYPE \
         --use_ep "True" \
         --generation_phase 1 \
         --use_cache_kv_int8 "False" \
-        --scale_dir "None"
+        --scale_dir ${EP_SCALE_DIR} \
+        --use_safetensors "False" \
+        --use_offline_quant "False"

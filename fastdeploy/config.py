@@ -38,7 +38,7 @@ __all__ = [
 
 ERNIEBOT_PRETRAINED_INIT_CONFIGURATION = {
     "ernie-bot": {
-        "hidden_act": "SwiGLU",
+        "hidden_act": "swiglu",
         "hidden_dropout_prob": 0.0,
         "hidden_size": 4096,
         "num_attention_heads": 32,
@@ -75,6 +75,21 @@ class ModelConfig(PretrainedConfig):
     model_type = "ernie_bot"
     pretrained_init_configuration = ERNIEBOT_PRETRAINED_INIT_CONFIGURATION
 
+    max_stop_seqs_num = 5  # int(os.getenv("MAX_STOP_SEQS_NUM", "5"))
+    stop_seqs_max_len = 8  # int(os.getenv("STOP_SEQS_MAX_LEN", "8"))
+
+    architectures: list[str] = []
+
+    # NOTE(gongshaotain): form _load_model_init_val()
+    top_p = 0.0
+    temperature = 1.0
+    rope_theta = 10000.0
+    rope_scaling = None
+    penalty_score = 1.0
+    frequency_score = 0.0
+    presence_score = 0.0
+    min_length = 1
+
     def __init__(
         self,
         vocab_size: int = 100224,
@@ -83,14 +98,14 @@ class ModelConfig(PretrainedConfig):
         num_layers: int = 48,
         num_attention_heads: int = 32,
         num_key_value_heads: Optional[int] = None,
-        hidden_act: str = "SwiGLU",
+        hidden_act: str = "swiglu",
         hidden_dropout_prob: float = 0.0,
         max_position_embeddings: int = 512,
         max_seq_len: int = 512,
         initializer_range: float = 0.02,
         type_vocab_size: int = 4,
         use_rope=True,
-        use_rmsnorm=False,
+        use_rmsnorm=True,
         weight_sharing=True,
         weight_sharing_add_bias=False,
         sequence_parallel=False,
@@ -116,7 +131,7 @@ class ModelConfig(PretrainedConfig):
         use_moe=False,
         ffn_hidden_size: Optional[int] = None,
         dtype=None,
-        export_model_type: str = "default",
+        export_model_type: str = "weight_only_int8",
         use_stop_seqs: bool = False,
         return_all_hidden_states: bool = False,
         start_layer_index: int = 0,
@@ -251,8 +266,7 @@ class MoEConfig:
 
     use_moe: bool = False
     num_experts: int = -1
-    use_top_k: bool = True
-    top_k: int = -1
+    top_k: int = 8
     moe_intermediate_size: int = -1
     num_experts_per_rank: int = -1
     num_experts_start_offset: int = -1
@@ -260,34 +274,90 @@ class MoEConfig:
 
     moe_use_gate_correction_bias = False
     moe_every2 = (False, )
-    moe_topk = (8, )
     moe_num_shared_experts = (0, )
     moe_layer_start_index = 0
     moe_use_ffn_shared_weight_and_bias = (False, )
     moe_group = (False, )
-    moe_quant_type = "default"
+    moe_quant_type = "weight_only_int8"
     num_max_dispatch_tokens_per_rank = 256
 
     has_multimodality: bool = False
     im_patch_id = (
         100295  # multimodality, TODO(liuyuanle): read from config.json
     )
+    moe_tag = ""
 
 
 @dataclass
 class ParallelConfig:
     """Configuration for the distributed execution."""
-    block_size = 16,  # The block size for processing.
-    sequence_parallel = False,  # Whether to enable sequence parallelism.
-    use_ep = False,  # Whether to enable Expert Parallelism
-    moe_group = False,  # Whether to enable moe group
-    msg_queue_id = None,  # mesage queue id
-    use_micro_batch = False,  # Whether to enable micro batch
-    tensor_parallel_rank = None,  # TP rank ID
-    tensor_parallel_degree = None,  # TP degree
-    mp_size = 1,  # mp size
-    ep_size = 1,  # ep size
-    column_cut = False,  # (bool, optional): The embedding weight distributed on your gpu cards is divided by row or column. Defaults to False means divide by row. When vocab_size can not be divided by world_size but hidden_size can, we can consider split embedding weight by column.
+    block_size = 16  # The block size for processing.
+    sequence_parallel = False  # Whether to enable sequence parallelism.
+    use_ep = False  # Whether to enable Expert Parallelism
+    moe_group = False  # Whether to enable moe group
+    msg_queue_id = 1  # mesage queue id
+    use_micro_batch = False  # Whether to enable micro batch
+    tensor_parallel_rank = None  # TP rank ID
+    tensor_parallel_degree = None  # TP degree
+    mp_size = 1  # mp size
+    ep_size = 1  # ep size
+    column_cut = False  # (bool, optional): The embedding weight distributed on your gpu cards is divided by row or column. Defaults to False means divide by row. When vocab_size can not be divided by world_size but hidden_size can, we can consider split embedding weight by column.
+    lm_head_column_cut = False
+    """
+    From old wersion worker args
+    TODO(gongshaotian): Reclassify
+    """
+    model_name_or_path: str = "./output"
+    max_num_seqs: int = 34
+    # Set default block num for profile run
+    max_block_num: int = 2000
+    # block size
+    block_size: int = 64
+    # Engine worker queue port
+    engine_worker_queue_port: int = 9923
+    # Max model len
+    max_model_len: int = 3072  # max_seq_len
+    # cuda visible devices
+    device_ids: str = "0"
+    # Input dtype
+    dtype: str = "bfloat16"
+    # Encoder's decoder num
+    enc_dec_block_num: int = 1
+    # KV cache ratio for input
+    kv_cache_ratio: float = 0.7
+    # First token id
+    first_token_id: int = 1
+    # Gpu memory utilization
+    gpu_memory_utilization: float = 0.9
+    # Process ID of engine
+    engine_pid: Optional[int] = None
+    # Do profile or not
+    do_profile: bool = False
+    # Dynamic load weight or not
+    dynamic_load_weight: bool = False
+    #
+    pad_token_id: int = -1
+    #
+    eos_tokens_lens: int = 2
+    # Enable chunked prefill
+    enable_chunked_prefill: str = "store_true"
+    """
+
+    - autoregressive:
+    - inference_with_reference:
+    - draft_model:
+    - hydra:
+    - eagle:
+    """
+    speculate_method: str = None
+    """
+    - APPEND_ATTN:
+    """
+    attention_backend: str = "APPEND_ATTN"
+
+    # speculate_max_draft_tokens
+    speculate_max_draft_tokens: int = 1
+    max_num_batched_tokens: int = 2048
 
 
 @dataclass
@@ -296,7 +366,8 @@ class SpeculativeConfig:
     Configuration for speculative decoding.
     """
     speculate_method = None  # speculate method
-    speculate_max_draft_token_num = 1  # the max length of draft tokens for speculate method
+    # the max length of draft tokens for speculate method
+    speculate_max_draft_token_num = 1  # speculate_max_draft_tokens
     draft_type = "None"  # draft type
     is_mtp = False  # is mtp
     speculate_max_candidate_len = 5  # the max length of candidate tokens for speculate method
@@ -308,6 +379,7 @@ class DeviceConfig:
     """
     Configuration for device settings.
     """
+    device_type = "cuda"
 
 
 @dataclass
@@ -563,6 +635,7 @@ class TmpConfig:
     has_zero_point: bool = False
     is_channel_wise: bool = False
     weight_block_size: int = 16
+    use_offline_quant: bool = False
 
 
 @dataclass
@@ -584,11 +657,9 @@ class LLMConfig:
     The configuration class which contains all fastdeploy-related configuration. This
     simplifies passing around the distinct configurations in the codebase.
     """
-
     model_config: ModelConfig = field(default=None, init=True)  # type: ignore
 
-    parallel_config: ParallelConfig = field(default_factory=ParallelConfig,
-                                            init=True)
+    parallel_config: ParallelConfig = field(default=None, init=True)
     speculative_config: SpeculativeConfig = field(default=None,
                                                   init=True)  # type: ignore
     device_config: DeviceConfig = field(default=None,
@@ -602,3 +673,5 @@ class LLMConfig:
     moe_config: MoEConfig = field(default=None, init=True)  # type: ignore
     decoding_config: DecodingConfig = field(default=None,
                                             init=True)  # type: ignore
+    kv_cache_config: KVCacheConfig = field(default=None,
+                                           init=True)  # type: ignore

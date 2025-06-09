@@ -14,12 +14,15 @@
 # limitations under the License.
 """
 
-from typing import List, Optional
+
+from typing import List, Optional, Dict, Tuple
 import time
-import redis
+from redis import ConnectionPool
+from fastdeploy.scheduler.storage import AdaptedRedis
 from fastdeploy.engine.request import Request, RequestOutput
 from fastdeploy.metrics.metrics import main_process_metrics
 from fastdeploy.scheduler.data import ScheduledRequest, ScheduledResponse
+from fastdeploy.scheduler.workers import Workers
 from fastdeploy.utils import llm_logger
 
 
@@ -42,11 +45,27 @@ class GlobalScheduler(object):
         self.topic = topic
         self.ttl = ttl
         self.remote_write_time = remote_write_time
-        self.wait_response_timeout = wait_response_timeout
+        self.wait_response_timeout = 1.0 if wait_response_timeout < 1.0 else wait_response_timeout
         self.wait_request_timeout = 10
 
-        self.client = redis.Redis(
-            host=host, port=port, db=db, password=password)
+        connection_pool = ConnectionPool(
+            host=host, port=port, db=db, password=password, max_connections=10)
+        self.client = AdaptedRedis(connection_pool=connection_pool)
+
+        self.put_request_workers = Workers(
+            "put_request_worker", self._put_requests_worker, max_batch_size=5)
+        self.put_request_workers.start(size=1)
+
+        self.put_response_workers = Workers(
+            "put_response_worker", self._put_results_worker, max_batch_size=50)
+        self.put_response_workers.start(size=1)
+
+        self.get_response_workers = Workers(
+            "get_response_worker", self._get_results_worker, max_batch_size=1)
+        self.get_response_workers.start(size=5)
+        self.response_max_batch = 50
+
+        llm_logger.info(f"Scheduler: redis version is {self.client.version}")
 
     def _request_queue_name(self):
         return f"{self.topic}.request"
@@ -62,47 +81,79 @@ class GlobalScheduler(object):
         """calculate required blocks for given token number"""
         return (token_num + block_size - 1) // block_size
 
-    def put_requests(self, requests: List[Request]):
+    def _put_requests_worker(self, tasks: List[Tuple[str, Request]]) -> List[Tuple[str, Optional[str]]]:
         """
             add requests to shared cache
         """
         requests: List[ScheduledRequest] = [
-            ScheduledRequest(request) for request in requests]
+            ScheduledRequest(request) for _, request in tasks]
 
         # check the uniqueness of the request_id
-        valided_keys = list()
-        duplicated_ids = list()
+        valid_requests: List[ScheduledRequest] = list()
+        duplicated_ids: List[str] = list()
         for request in requests:
             unique_key = self._unique_key_name(request.id)
             if self.client.set(unique_key, "", ex=self.ttl, nx=True):
-                valided_keys.append(unique_key)
+                valid_requests.append(request)
             else:
                 duplicated_ids.append(request.id)
 
-        if len(duplicated_ids) > 0:
-            self.client.delete(*valided_keys)
-            raise ValueError(
-                f"Request_id is duplicated (ids={duplicated_ids})")
-
         # add to request queue
-        serialized_requests = [request.serialize() for request in requests]
+        serialized_requests = [request.serialize()
+                               for request in valid_requests]
         self.client.rpush(self._request_queue_name(), *serialized_requests)
-        llm_logger.debug(f"Global cached requests: {requests}")
-        main_process_metrics.num_requests_waiting.inc(len(requests))
+        llm_logger.info(
+            f"Scheduler has put some requests: {[request.id for request in valid_requests]}")
+        main_process_metrics.num_requests_waiting.inc(len(valid_requests))
 
-    def get_requests(self, available_blocks, block_size, reserved_output_blocks, \
-        max_num_batched_tokens, batch=1) -> List[Request]:
+        if len(duplicated_ids) > 0:
+            llm_logger.warning(
+                f"Scheduler has received some duplicated requests: {duplicated_ids}")
+
+        results = [(request.id, None) for request in valid_requests]
+        results += [(request_id, "duplicated request_id")
+                    for request_id in duplicated_ids]
+        return results
+
+    def put_requests(self, requests: List[Request]) -> List[Tuple[str, Optional[str]]]:
+        """
+            add requests to scheduler
+        """
+        tasks: List[Tuple[str, Request]] = [
+            (request.request_id, request) for request in requests]
+        self.put_request_workers.put_tasks(tasks)
+        return self.put_request_workers.get_results(10, 0.005)
+
+    def get_requests(self, available_blocks, block_size, reserved_output_blocks,
+                     max_num_batched_tokens, batch=1) -> List[Request]:
         """
             get requests blocked from shared cache
         """
 
         if available_blocks <= reserved_output_blocks or batch < 1:
+            llm_logger.debug(
+                f"Scheduler's resource are insufficient: available_blocks={available_blocks} "
+                f"reserved_output_blocks={reserved_output_blocks} batch={batch} "
+                f"max_num_batched_tokens={max_num_batched_tokens}")
             return []
 
-        serialized_requests = self.client.lpop(
-            self._request_queue_name(), batch)
+        batches = []
+        piece = (batch + 1) // 2
+        while batch > 0:
+            batch -= piece
+            if batch >= 0:
+                batches.append(piece)
+            else:
+                batches.append(piece + batch)
 
-        if serialized_requests is None or len(serialized_requests) == 0:
+        serialized_requests = []
+        for bs in batches:
+            bs_data = self.client.lpop(self._request_queue_name(), bs)
+            if bs_data is None:
+                break
+            serialized_requests += bs_data
+
+        if len(serialized_requests) == 0:
             blocked_data = self.client.blpop(
                 self._request_queue_name(), self.wait_request_timeout)
             if blocked_data is None:
@@ -112,7 +163,7 @@ class GlobalScheduler(object):
         required_total_blocks = 0
         current_prefill_tokens = 0
         remaining_request = []
-        requests = []
+        requests: List[Request] = []
         for serialized_request in serialized_requests:
             if len(remaining_request) > 0:
                 remaining_request.append(serialized_request)
@@ -121,7 +172,8 @@ class GlobalScheduler(object):
             request: ScheduledRequest = ScheduledRequest.unserialize(
                 serialized_request)
             if (time.time() - request.scheduled_time) > self.ttl:
-                llm_logger.info(f"Request_id ({request.id}) has expired")
+                llm_logger.info(
+                    f"Request has expired when getting a request from the scheduler: {[request.id]}")
                 continue
 
             required_input_blocks = self.calc_required_blocks(
@@ -132,22 +184,31 @@ class GlobalScheduler(object):
                 remaining_request.append(serialized_request)
                 continue
             requests.append(request.raw)
-        llm_logger.debug(f"Global get requests:{len(requests)}")
 
         if len(remaining_request) > 0:
             self.client.lpush(self._request_queue_name(), *remaining_request)
+
+        if len(requests) > 0:
+            llm_logger.info(
+                f"Scheduler has pulled some request: {[request.request_id for request in requests]}")
         main_process_metrics.num_requests_running.inc(len(requests))
         main_process_metrics.num_requests_waiting.dec(len(requests))
         return requests
 
-    def put_results(self, results: List[RequestOutput]):
+    def _put_results_worker(self, tasks: List[Tuple[str, RequestOutput]]):
         """
-            add results to shared cache
+            add tasks to shared cache
         """
         responses: List[ScheduledResponse] = [
-            ScheduledResponse(result) for result in results]
+            ScheduledResponse(result) for _, result in tasks]
         sorted_responses = sorted(
             responses, key=lambda response: f"{response.id}.{response.index}")
+
+        finished_responses = [
+            response.id for response in responses if response.finished]
+        if len(finished_responses) > 0:
+            llm_logger.info(
+                f"Scheduler has received a finished response: {finished_responses}")
 
         group = dict()
         for response in sorted_responses:
@@ -161,8 +222,8 @@ class GlobalScheduler(object):
             ttl = self.client.ttl(self._unique_key_name(
                 response_id)) - self.remote_write_time
             if ttl <= 0:
-                llm_logger.info(
-                    f"Output of request_id ({response_id}) has expired")
+                llm_logger.warning(
+                    f"Scheduler has received a expired response: {[response.id]}")
                 continue
 
             with self.client.pipeline() as pipe:
@@ -171,24 +232,66 @@ class GlobalScheduler(object):
                 pipe.expire(self._response_queue_name(response_id), ttl)
                 pipe.execute()
 
-    def get_results(self, request_id: str) -> List[RequestOutput]:
+    def put_results(self, results: List[RequestOutput]):
+        """
+            add results to shared cache
+        """
+        tasks: List[Tuple[str, RequestOutput]] = [
+            (result.request_id, result) for result in results]
+        self.put_response_workers.put_tasks(tasks)
+
+    def _get_results_worker(self, tasks: List[Tuple[str, str]]) -> List[Tuple[str, List[ScheduledResponse]]]:
         """
             get results blocked from shared cache
         """
+        if len(tasks) != 1:
+            raise ValueError(
+                f"Tasks size of _get_results_worker must be 1. ({len(tasks)})")
+
+        task_id, request_id = tasks[0]
         key = self._response_queue_name(request_id)
         size = self.client.llen(key)
+        size = min(size, self.response_max_batch)
 
-        serialized_responses = self.client.lpop(key, size)
+        serialized_responses = None
+        if size > 0:
+            serialized_responses = self.client.lpop(key, size)
+
         if serialized_responses is None or len(serialized_responses) == 0:
-            ttl = self.client.ttl(self._unique_key_name(request_id))
-            wait_time = self.wait_response_timeout if ttl <= 0 else min(ttl, self.wait_response_timeout)
-            blocked_data = self.client.blpop(key, wait_time)
+            blocked_data = self.client.blpop(key, self.wait_response_timeout)
             if blocked_data is None:
                 return []
             serialized_responses = blocked_data[1:]
 
-        output = []
+        output = [(task_id, [])]
         for serialized_response in serialized_responses:
             response = ScheduledResponse.unserialize(serialized_response)
-            output.append(response.raw)
+            output[0][1].append(response)
         return output
+
+    def get_results(self, request_ids: List[str]) -> Dict[str, RequestOutput]:
+        """
+            get results blocked from scheduler.
+        """
+        tasks = [(request_id, request_id) for request_id in request_ids]
+        self.get_response_workers.put_tasks(tasks, deduplication=True)
+        batch_responses: List[Tuple[str, List[ScheduledResponse]]] = self.get_response_workers.get_results(
+            10, self.wait_response_timeout)
+
+        results = dict()
+        for _, responses in batch_responses:
+            for response in responses:
+                if response.id not in results:
+                    results[response.id] = []
+                results[response.id].append(response)
+                if response.finished:
+                    llm_logger.info(
+                        f"Scheduler has pulled a finished response: {[response.id]}")
+
+        request_ids = list(results.keys())
+        for request_id in request_ids:
+            results[request_id] = sorted(
+                results[request_id], key=lambda response: f"{response.id}.{response.index}")
+            results[request_id] = [
+                result.raw for result in results[request_id]]
+        return results

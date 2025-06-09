@@ -5,32 +5,79 @@
 if [ -n "$CE_root_path" ]; then
     export ROLLOUT_WORKER_ROOT="$CE_root_path/third_party/FastDeploy"
 else
-    export ROLLOUT_WORKER_ROOT=`PWD`
+    export ROLLOUT_WORKER_ROOT=`pwd`
 fi
 export ROLLOUT_CONTROLLER_HOST=${rollout_controller_host:-"http://10.11.155.41:8771"}
+export USE_PIP_EFF_LLM=1
 
-if [ "$MODEL" = "eb45t" ]; then
-    source ${ROLLOUT_WORKER_ROOT}/fastdeploy/agent/build_env_eff.sh
-    source "${ROLLOUT_WORKER_ROOT}/${FASTDEPLOY_ENV_NAME}/bin/activate"
-else
-    source ${ROLLOUT_WORKER_ROOT}/fastdeploy/agent/build_env.sh
-    source "${ROLLOUT_WORKER_ROOT}/${FASTDEPLOY_ENV_NAME}/bin/activate"
-fi
+source ${ROLLOUT_WORKER_ROOT}/fastdeploy/agent/build_env.sh
+source "${ROLLOUT_WORKER_ROOT}/${FASTDEPLOY_ENV_NAME}/bin/activate"
+
+FILES=("${ROLLOUT_WORKER_ROOT}/fastdeploy/agent_work.yaml" "${ROLLOUT_WORKER_ROOT}/fastdeploy/agent_work_45T.yaml")
+
+# 写入agent_work.yaml 和 agent_work_45T.yaml 的 scheduler 段
+for YAML_FILE in "${FILES[@]}"; do
+  echo "处理文件: $YAML_FILE"
+
+  SKIP_SCHEDULER=false
+
+  if [ ! -f "$YAML_FILE" ]; then
+    echo "文件 $YAML_FILE 不存在，跳过。"
+    continue
+  fi
+
+  # 控制开关
+  if [ "$SCHEDULER_SWITCH" != "true" ]; then
+    echo "SCHEDULER_SWITCH 不是 true，跳过写入 $YAML_FILE。"
+    SKIP_SCHEDULER=true
+  fi
+
+  # 如果已有 scheduler 段，则跳过写入
+  if grep -qE '^\s*scheduler\s*:' "$YAML_FILE"; then
+    echo "文件 $YAML_FILE 中已存在 scheduler 段，跳过写入。"
+    SKIP_SCHEDULER=true
+  fi
+
+  # 写入 scheduler 段
+  if [ "$SKIP_SCHEDULER" != "true" ]; then
+    {
+      echo ""
+      echo "scheduler:"
+      [ -n "$SCHEDULER_NAME" ] && echo "  name: $SCHEDULER_NAME"
+      [ -n "$SCHEDULER_TTL" ] && echo "  ttl: $SCHEDULER_TTL"
+      [ -n "$SCHEDULER_WAIT_RESPONSE_TIMEOUT" ] && echo "  wait_response_timeout: $SCHEDULER_WAIT_RESPONSE_TIMEOUT"
+      [ -n "$SCHEDULER_HOST" ] && echo "  host: $SCHEDULER_HOST"
+      [ -n "$SCHEDULER_PORT" ] && echo "  port: $SCHEDULER_PORT"
+      [ -n "$SCHEDULER_DB" ] && echo "  db: $SCHEDULER_DB"
+      [ -n "$SCHEDULER_PASSWORD" ] && echo "  password: $SCHEDULER_PASSWORD"
+      [ -n "$SCHEDULER_TOPIC" ] && echo "  topic: $SCHEDULER_TOPIC"
+      [ -n "$SCHEDULER_REMOTE_WRITE_TIME" ] && echo "  remote_write_time: $SCHEDULER_REMOTE_WRITE_TIME"
+    } >> "$YAML_FILE"
+
+    echo "指定 scheduler 配置已追加到 $YAML_FILE"
+  fi
+
+  echo ""
+done
 
 # 参数检查
-if [ $# -ne 3 ]; then
-    echo "用法: $0 <卡数> <实例数> <任务ID>"
+if [ $# -lt 3 ] || [ $# -gt 5 ]; then
+    echo "用法: $0 <卡数> <实例数> <任务ID> [起始卡数] [运行模式]"
     echo "卡数: 1-8, 表示每个实例使用的GPU数量"
     echo "实例数: 要启动的实例数量"
     echo "任务ID: job id"
+    echo "起始卡数: (可选) 指定起始卡，默认为0"
+    echo "运行模式: (可选) 指定运行模式，默认为空"
     exit 1
 fi
-
-
 
 CARDS_PER_INSTANCE=$1
 NUM_INSTANCES=$2
 JOB_ID=$3
+START_CARDS=${4:-0}
+RUN_MODE=${5:-""}  # 如果未提供第四个参数，则默认为空字符串
+
+export RUN_MODE="$RUN_MODE"
 
 # 验证卡数参数
 if [ $CARDS_PER_INSTANCE -lt 1 ] || [ $CARDS_PER_INSTANCE -gt 8 ]; then
@@ -51,7 +98,7 @@ for ((i=0; i<$NUM_INSTANCES; i++)); do
     # 生成device_id字符串,每个实例递增
     DEVICE_ID=""
     for ((j=0; j<$CARDS_PER_INSTANCE; j++)); do
-        curr_id=$((i * CARDS_PER_INSTANCE + j))
+        curr_id=$((START_CARDS + i * CARDS_PER_INSTANCE + j))
         if [ $j -eq 0 ]; then
             DEVICE_ID="$curr_id"
         else

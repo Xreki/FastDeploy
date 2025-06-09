@@ -103,7 +103,6 @@ __global__ void draft_model_update_kernel(const int64_t* inter_next_tokens,
       seq_lens_this_time[tid] = 1;
     } else {
       seq_lens_this_time[tid] = 0;
-      seq_lens_decoder[tid] = 0;
       seq_lens_encoder[tid] = 0;
     }
   }

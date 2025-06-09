@@ -25,6 +25,7 @@ import time
 import traceback
 import uuid
 import weakref
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import zmq
@@ -184,20 +185,16 @@ class LLMEngine(object):
         while True:
             try:
 
-                def get_results_handler(request_id):
+                def get_results_handler(request_ids):
+                    results = dict()
                     try:
-                        results = self.scheduler.get_results(request_id)
-                        for i in range(len(results)):
-                            results[i] = results[i].to_dict()
+                        results = self.scheduler.get_results(request_ids)
+                        for req_id, contents in results.items():
+                            results[req_id] = [
+                                data.to_dict() for data in contents
+                            ]
                     except Exception as e:
-                        llm_logger.error(
-                            f"failed to get results of request_id({request_id}): {e}"
-                        )
-                        error_result = RequestOutput(request_id=request_id,
-                                                     finished=True,
-                                                     error_code=500,
-                                                     error_msg=f"{e}")
-                        results = [error_result.to_dict()]
+                        llm_logger.error(f"Get results handler error: {e}")
                     return results
 
                 self.zmq_server.send_multipart2(get_results_handler)
@@ -213,18 +210,19 @@ class LLMEngine(object):
         try:
             acc = None
             while True:
-                results = self.scheduler.get_results(request_id)
-                for result in results:
-                    if acc is None:
-                        acc = result
-                    else:
-                        acc.add(result)
+                results = self.scheduler.get_results([request_id])
+                for _, contents in results.items():
+                    for result in contents:
+                        if acc is None:
+                            acc = result
+                        else:
+                            acc.add(result)
 
-                    if result.finished:
-                        yield acc
-                        return
+                        if result.finished:
+                            yield acc
+                            return
 
-                    yield result
+                        yield result
 
         except Exception as e:
             llm_logger.error("Unexcepted error happend: {}, {}".format(
@@ -248,13 +246,18 @@ class LLMEngine(object):
                     int(self.resource_manager.available_batch()),
                     self.cfg.max_prefill_batch)
 
+                if self.cfg.enable_chunked_prefill:
+                    cur_max_num_batched_tokens = self.cfg.max_model_len * num_prefill_batch
+                else:
+                    cur_max_num_batched_tokens = self.cfg.max_num_batched_tokens
+
                 tasks = self.scheduler.get_requests(
                     available_blocks=self.resource_manager.available_block_num(
                     ),
                     block_size=self.cfg.cache_config.block_size,
                     reserved_output_blocks=self.cfg.cache_config.
                     enc_dec_block_num,
-                    max_num_batched_tokens=self.cfg.max_num_batched_tokens,
+                    max_num_batched_tokens=cur_max_num_batched_tokens,
                     batch=num_prefill_batch)
 
                 if len(tasks) == 0:
@@ -271,30 +274,53 @@ class LLMEngine(object):
         if self.api_server_pid is None:
             return
 
+        added_requests: Dict[str, int] = dict()
         while True:
             try:
-                data = self.zmq_server.receive_once(block=True)
-                if data is None:
-                    break
-                #TODO need optimize
-                if self.cfg.enable_mm:
-                    self.add_requests(data)
+                block = True if len(added_requests) == 0 else False
+                if not self.cfg.enable_mm:
+                    err, data = self.zmq_server.receive_json_once(block)
                 else:
+                    err, data = self.zmq_server.receive_pyobj_once(block)
+                if err is not None:
+                    llm_logger.error(
+                        "Engine stops inserting zmq task into scheduler")
+                    break
+
+                request = None
+                if data:
                     request = Request.from_dict(data)
-                    self.scheduler.put_requests([request])
                     llm_logger.info(f"Receive request: {request}")
-            except Exception as e:
-                llm_logger.error(
-                    f"Error happend while receving new request from zmq, details={e}"
-                )
-                error_result = RequestOutput(request_id=request.request_id,
+
+                results: List[Tuple[
+                    str, Optional[str]]] = self.scheduler.put_requests(
+                        [] if request is None else [request])
+
+                if request:
+                    if request.request_id not in added_requests:
+                        added_requests[request.request_id] = 0
+                    added_requests[request.request_id] += 1
+
+                for request_id, failed in results:
+                    added_requests[request_id] -= 1
+                    if added_requests[request_id] == 0:
+                        added_requests.pop(request_id)
+
+                if failed is None:
+                    continue
+
+                error_result = RequestOutput(request_id=request_id,
                                              finished=True,
                                              error_code=500,
-                                             error_msg=f"{e}")
+                                             error_msg=failed)
                 # Since the request is not in scheduler
                 # Send result by zmq directly
                 self.zmq_server.send_multipart(request.request_id,
                                                error_result)
+            except Exception as e:
+                llm_logger.error(
+                    f"Error happend while receving new request from zmq, details={e}"
+                )
 
     def add_requests(self, task, sampling_params=None):
         """
@@ -313,7 +339,8 @@ class LLMEngine(object):
         if sampling_params is not None:
             request.sampling_params = sampling_params
         request.preprocess_start_time = time.time()
-        self.data_processor.process_request(request, self.cfg.max_model_len)
+        request = self.data_processor.process_request(request,
+                                                      self.cfg.max_model_len)
 
         request.prompt_token_ids_len = len(request.prompt_token_ids)
         input_ids_len = request.prompt_token_ids_len
@@ -376,9 +403,14 @@ class LLMEngine(object):
             raise EngineError(error_msg, error_code=500)
 
         self.token_processor.number_of_tasks += len(tasks)
+        token_chunk_size = (
+            self.cfg.max_num_batched_tokens // len(tasks)
+        ) // self.cfg.cache_config.block_size * self.cfg.cache_config.block_size
         for i in range(len(tasks)):
             self.token_processor.number_of_input_tokens += tasks[
                 i].prompt_token_ids_len
+
+            tasks[i].set("token_chunk_size", token_chunk_size)
 
         llm_logger.info(f"Tasks are sent to engine, req_ids={req_ids}")
         self.engine_worker_queue.put_tasks(
@@ -504,8 +536,9 @@ class LLMEngine(object):
         if hasattr(self, "worker_proc") and self.worker_proc is not None:
             try:
                 os.killpg(self.worker_proc.pid, signal.SIGTERM)
-            except:
-                pass
+            except Exception as e:
+                print(f"Error extracting sub services: {e}")
+
         if hasattr(self, "zmq_server") and self.zmq_server is not None:
             self.zmq_server.close()
 
@@ -518,7 +551,7 @@ class LLMEngine(object):
             "PADDLE_TRAINERS_NUM": 1,
             "TRAINER_INSTANCES_NUM": 1,
             "TRAINER_INSTANCES": "0.0.0.0",
-            "ENABLE_EFFICIENTLLM_LOAD_MODEL_CONCURRENCY": 0,
+            "ENABLE_FASTDEPLOY_LOAD_MODEL_CONCURRENCY": 0,
             "LOAD_STATE_DICT_THREAD_NUM": len(self.cfg.device_ids.split(',')),
             "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION": "python",
             "FLAGS_use_append_attn": 1,
@@ -542,7 +575,9 @@ class LLMEngine(object):
         uncache_worker_stdout = "" if os.getenv("UNCACHE_WORKER_STDOUT",
                                                 "0") == 1 else "-u"
         pd_cmd = f"{command_prefix} {sys.executable} {uncache_worker_stdout} -m paddle.distributed.launch "
-        py_script = os.path.join(current_dir_path, "../worker/worker.py")
+        worker_path = "../worker/V1/worker_process.py" if os.getenv(
+            "USE_WORKER_V1", default="0") == "1" else "../worker/worker.py"
+        py_script = os.path.join(current_dir_path, worker_path)
         arguments = (
             f" --nnodes {str(self.cfg.nnode)}"
             f" --devices {self.cfg.device_ids} {py_script}"
@@ -551,7 +586,7 @@ class LLMEngine(object):
             f" --model_name_or_path {str(self.cfg.model_name_or_path)}"
             f" --device_ids {self.cfg.device_ids}"
             f" --engine_worker_queue_port {str(self.cfg.engine_worker_queue_port)}"
-            f" --max_block_num {self.cfg.cache_config.total_block_num}"
+            f" --total_block_num {self.cfg.cache_config.total_block_num}"
             f" --block_size {self.cfg.cache_config.block_size}"
             f" --enc_dec_block_num {self.cfg.cache_config.enc_dec_block_num}"
             f" --eos_tokens_lens {self.data_processor.eos_token_id_len}"
@@ -559,8 +594,16 @@ class LLMEngine(object):
             f" --engine_pid {self.engine_pid}"
             f" --do_profile {self.do_profile}"
             f" --dynamic_load_weight {self.cfg.model_config.dynamic_load_weight}"
+            f" --max_num_batched_tokens {self.cfg.max_num_batched_tokens}"
             f" --kv_cache_ratio {self.cfg.cache_config.kv_cache_ratio} --dtype {self.cfg.cache_config.cache_dtype}"
         )
+        worker_append_flag = {
+            "enable_chunked_prefill": self.cfg.enable_chunked_prefill,
+        }
+        for worker_flag, value in worker_append_flag.items():
+            if value:
+                arguments = arguments + f" --{worker_flag}"
+
         if self.cfg.nnode > 1:
             pd_cmd = pd_cmd + f" --ips {self.cfg.ips}"
         log_dir = os.getenv("FD_LOG_DIR", default="log")

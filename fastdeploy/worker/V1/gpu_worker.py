@@ -23,7 +23,6 @@ import pynvml
 
 from fastdeploy.config import LLMConfig
 from fastdeploy.engine.request import Request
-from fastdeploy.scheduler.scheduler_batch import ModelForwardBatch
 from fastdeploy.utils import get_logger
 from fastdeploy.worker.output import ModelRunnerOutput
 from fastdeploy.worker.V1.gpu_model_runner import GPUModelRunner
@@ -41,7 +40,7 @@ class GpuWorker(WorkerBase):
         local_rank: int,
         rank: int,
     ):
-        super.__init__(
+        super().__init__(
             llm_config=llm_config,
             local_rank=local_rank,
             rank=rank,
@@ -49,13 +48,15 @@ class GpuWorker(WorkerBase):
         pass
 
     def init_device(self):
-        """  """
-        if self.device_config.device.type == "cuda" and paddle.device.is_compiled_with_cuda(
+        """ Initialize device and Construct model runner
+        """
+        if self.device_config.device_type == "cuda" and paddle.device.is_compiled_with_cuda(
         ):
             # Set evironment variable
             self.device = f"gpu:{self.local_rank}"
             paddle.device.set_device(self.device)
-            paddle.set_default_dtype(self.model_config.dtype)
+            paddle.set_default_dtype(self.parallel_config.dtype)
+            self.device_ids = self.parallel_config.device_ids.split(",")
 
             # Get free memory info
             pynvml.nvmlInit()
@@ -72,7 +73,10 @@ class GpuWorker(WorkerBase):
 
         # Construct model runner
         self.model_runner: GPUModelRunner = GPUModelRunner(
-            self.llm_config, self.device)
+            llm_config=self.llm_config,
+            device=self.device,
+            rank=self.rank,
+            local_rank=self.local_rank)
 
     def determine_available_memory(self) -> int:
         """
@@ -98,17 +102,16 @@ class GpuWorker(WorkerBase):
 
         pynvml.nvmlInit()
         handle = pynvml.nvmlDeviceGetHandleByIndex(
-            int(self.device_ids[self.rank]))
+            int(self.device_ids[self.local_rank]))
         before_run_meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
-        pynvml.nvmlShutdown()
 
         logger.info((
             "Before running the profile, the memory usage info is as follows:",
-            f"\tDevice Total memory: {before_run_meminfo.total}",
-            f"\tDevice used memory: {before_run_meminfo.used}",
-            f"\tDevice free memory: {before_run_meminfo.free}",
-            f"\tPaddle reserved memory: {paddle_reserved_mem_before_run}",
-            f"\tPaddle allocated memory: {paddle_allocated_mem_before_run}"))
+            f"\nDevice Total memory: {before_run_meminfo.total}",
+            f"\nDevice used memory: {before_run_meminfo.used}",
+            f"\nDevice free memory: {before_run_meminfo.free}",
+            f"\nPaddle reserved memory: {paddle_reserved_mem_before_run}",
+            f"\nPaddle allocated memory: {paddle_allocated_mem_before_run}"))
 
         # 2. Profile run
         self.model_runner.profile_run()
@@ -119,33 +122,31 @@ class GpuWorker(WorkerBase):
         paddle_allocated_mem_after_run = paddle.device.cuda.max_memory_allocated(
             self.local_rank)
 
-        pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(
-            int(self.device_ids[self.rank]))
         after_run_meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
         pynvml.nvmlShutdown()
 
         not_paddle_use_mem = after_run_meminfo.used - paddle_reserved_mem_after_run
         peak_memory = paddle_allocated_mem_after_run + not_paddle_use_mem
 
-        available_kv_cache_memory = after_run_meminfo.total * self.cache_config.gpu_memory_utilization - peak_memory
+        available_kv_cache_memory = after_run_meminfo.total * (
+            self.parallel_config.gpu_memory_utilization - 0.04) - peak_memory
 
         end_time = time.perf_counter()
         logger.info(
             ("After running the profile, the memory usage info is as follows:",
-             f"\tDevice Total memory: {after_run_meminfo.total}",
-             f"\tDevice used memory: {after_run_meminfo.used}",
-             f"\tDevice free memory: {after_run_meminfo.free}",
-             f"\tPaddle reserved memory: {paddle_reserved_mem_after_run}",
-             f"\tPaddle allocated memory: {paddle_allocated_mem_after_run}",
-             f"\tAvailable KV Cache meomory: {available_kv_cache_memory}",
+             f"\nDevice Total memory: {after_run_meminfo.total}",
+             f"\nDevice used memory: {after_run_meminfo.used}",
+             f"\nDevice free memory: {after_run_meminfo.free}",
+             f"\nPaddle reserved memory: {paddle_reserved_mem_after_run}",
+             f"\nPaddle allocated memory: {paddle_allocated_mem_after_run}",
+             f"\nAvailable KV Cache meomory: {available_kv_cache_memory}",
              f"Profile time: {end_time - start_time}"))
 
         return available_kv_cache_memory  # return to caculate the block num in this device
 
-    def load_model(self) -> nn.Layer:
+    def load_model(self) -> None:
         """ """
-        pass
+        self.model_runner.load_model()
 
     def get_model(self) -> nn.Layer:
         """ """
@@ -158,12 +159,10 @@ class GpuWorker(WorkerBase):
 
     def execute_model(
         self,
-        model_forward_batch: Optional[List[Request], ModelForwardBatch],
+        model_forward_batch: Optional[List[Request]] = None,
     ) -> Optional[ModelRunnerOutput]:
         """ """
         output = self.model_runner.execute_model(model_forward_batch)
-
-        assert isinstance(output, ModelRunnerOutput)
         return output
 
     def preprocess_new_task(self, req_dicts: List[Request]) -> None:
@@ -173,10 +172,6 @@ class GpuWorker(WorkerBase):
         """
         self.model_runner.process_prefill_inputs(req_dicts=req_dicts)
 
-    def get_kv_cache_spec(self) -> dict[str, paddle.Tensor]:
-        """ """
-        pass
-
     def graph_optimize_and_warm_up_model(self) -> None:
         """ """
         pass
@@ -184,3 +179,12 @@ class GpuWorker(WorkerBase):
     def check_health(self) -> bool:
         """ """
         return True
+
+    def cal_theortical_kvcache(self) -> int:
+        """ """
+        return self.model_runner.cal_theortical_kvcache()
+
+    def reinitialize_kv_cache(self, num_gpu_blocks: int) -> None:
+        """ """
+        self.model_runner.update_share_input_block_num(
+            num_gpu_blocks=num_gpu_blocks)

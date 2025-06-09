@@ -22,13 +22,19 @@ import paddle
 import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
 
-from fastdeploy.config import LLMConfig
+from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
+                               KVCacheConfig, LLMConfig, LoadConfig,
+                               ModelConfig, MoEConfig, ParallelConfig,
+                               SpeculativeConfig, TmpConfig)
 from fastdeploy.inter_communicator import EngineWorkerQueue as TaskQueue
 from fastdeploy.inter_communicator import IPCSignal
+from fastdeploy.model_executor.layers.quantization import \
+    get_quantization_config
+from fastdeploy.model_executor.models.utils import parser_quant_type
 from fastdeploy.utils import get_logger
-from fastdeploy.worker.V1.GpuWorker import GpuWorker
+from fastdeploy.worker.V1.gpu_worker import GpuWorker
 
-logger = get_logger("worker_process", )
+logger = get_logger("worker_process", "worker_process.log")
 
 
 class PaddleDisWorkerProc():
@@ -48,6 +54,12 @@ class PaddleDisWorkerProc():
 
         # Initialize distributed enviroment
         (self.rank, self.local_rank) = self.init_distributed_enviroment()
+        self.llm_config.parallel_config.tensor_parallel_rank = self.local_rank
+        self.llm_config.parallel_config.tensor_parallel_degree = self.rank
+        self.llm_config.model_config.tensor_parallel_degree = self.rank
+        self.llm_config.parallel_config.mp_size = self.rank
+        self.llm_config.parallel_config.ep_size = 1
+        self.llm_config.parallel_config.column_cut = False
 
         # TODO(gongshaotian): Use worker factory to get worker
         self.worker = GpuWorker(llm_config=llm_config,
@@ -68,54 +80,55 @@ class PaddleDisWorkerProc():
         """
         Initialize the health status of the worker.
         Worker Status:
-            workers_ready_status: -> worker_ready_singnal
-            workers_alive_status: -> worker_healthy_live_signal
-            workers_exist_task_status: -> exist_task_signal
-            workers_swapped_task_status: -> exist_swapped_task_signal
-            workers_model_weights_status: -> model_weights_status
+            worker_ready_singnal:
+            worker_healthy_live_signal:
+            exist_task_signal:
+            exist_swapped_task_signal:
+            model_weights_status:
         """
-        # init workers_ready_status
+        # init worker_ready_singnal
         workers_ready = np.zeros(shape=[self.rank], dtype=np.int32)
-        self.workers_ready_status = IPCSignal(
-            name="workers_ready_status",
+        self.worker_ready_singnal = IPCSignal(
+            name="worker_ready_singnal",
             array=workers_ready,
             dtype=np.int32,
             suffix=self.parallel_config.engine_pid,
             create=False)
-        self.workers_ready_status.value[self.local_rank] = 1
+        self.worker_ready_singnal.value[self.local_rank] = 1
 
-        # init workers_alive_status
+        # init worker_healthy_live_signal
         workers_alive = np.zeros(shape=[self.rank], dtype=np.int32)
-        self.workers_alive_status = IPCSignal(
-            name="workers_alive_status",
+        self.worker_healthy_live_signal = IPCSignal(
+            name="worker_healthy_live_signal",
             array=workers_alive,
             dtype=np.int32,
             suffix=self.parallel_config.engine_pid,
             create=False)
-        self.workers_alive_status.value[self.local_rank] = int(time.time())
+        self.worker_healthy_live_signal.value[self.local_rank] = int(
+            time.time())
 
-        # init workers_exist_task_status
+        # init exist_task_signal
         workers_exist_task = np.zeros([1], dtype=np.int32)
-        self.workers_exist_task_status = IPCSignal(
-            name="workers_exist_task_status",
+        self.exist_task_signal = IPCSignal(
+            name="exist_task_signal",
             array=workers_exist_task,
             dtype=np.int32,
             suffix=self.parallel_config.engine_pid,
             create=False)
 
-        # init workers_swapped_task_status
+        # init exist_swapped_task_signal
         workers_swapped_task = np.zeros(shape=[1], dtype=np.int32)
-        self.workers_swapped_task_status = IPCSignal(
-            name="workers_swapped_task_status",
+        self.exist_swapped_task_signal = IPCSignal(
+            name="exist_swapped_task_signal",
             array=workers_swapped_task,
             dtype=np.int32,
             suffix=self.parallel_config.engine_pid,
             create=False)
 
-        # init workers_model_weights_status
+        # init model_weights_status
         workers_model_weights = np.zeros(shape=[1], dtype=np.int32)
-        self.workers_model_weights_status = IPCSignal(
-            name="workers_model_weights_status",
+        self.model_weights_status = IPCSignal(
+            name="model_weights_status",
             array=workers_model_weights,
             dtype=np.int32,
             suffix=self.parallel_config.engine_pid,
@@ -129,12 +142,13 @@ class PaddleDisWorkerProc():
         self.nnode = 1
 
         while True:
-            if self.ranks > 1:
+            if self.rank > 1:
                 # Synchronize before updating weights
                 paddle.distributed.barrier()
 
             self.insert_step = False
-            self.workers_alive_status.value[self.local_rank] = int(time.time())
+            self.worker_healthy_live_signal.value[self.local_rank] = int(
+                time.time())
 
             # The first worker detects whether there are tasks in the task queue
             mp_num_per_node = self.rank / self.nnode
@@ -143,12 +157,13 @@ class PaddleDisWorkerProc():
                     if self.nnode > 1:
                         self.task_queue.read_finish_flag.set(1)
                     else:
-                        self.workers_exist_task_status.value[0] = 1
+                        self.exist_task_signal.value[0] = 1
+
             if self.rank > 1:
                 # Synchronize the signal for other workers
                 paddle.distributed.barrier()
 
-            if self.workers_exist_task_status.value[
+            if self.exist_task_signal.value[
                     0] == 1 or self.task_queue.read_finish_flag.get() == 1:
                 logger.info(f"Rank: {self.local_rank} Detected new requests.")
                 self.insert_step = True
@@ -156,7 +171,7 @@ class PaddleDisWorkerProc():
                 tasks, read_finish = self.task_queue.get_tasks()
                 if read_finish:
                     # Ensure that every worker get the task
-                    self.task_queue.value[0] = 0
+                    self.exist_task_signal.value[0] = 0
                     self.task_queue.read_finish_flag.set(0)
 
                 req_dicts = []
@@ -168,6 +183,13 @@ class PaddleDisWorkerProc():
 
                 # Process prefill inputs
                 self.worker.preprocess_new_task(req_dicts)
+
+            if not self.worker.model_runner.not_need_stop():
+                if self.rank > 1:
+                    paddle.distributed.barrier()
+
+                time.sleep(0.001)
+                continue
 
             # Execute model to generate token. The generated token will be written to the buffer.
             # These generated tokens can be obtained through get_output op.
@@ -200,42 +222,54 @@ class PaddleDisWorkerProc():
         """
         # 1. Get available memory(bytes)
         available_kv_cache_memory = self.worker.determine_available_memory()
+        print(
+            f"------- available_kv_cache_memory:{available_kv_cache_memory / 1024**3} GB --------"
+        )
 
         # 2. Calculate the appropriate number of blocks
-        kv_cache_spec_list = self.model_runner.get_kv_cache_spec()
-        merged_layer_spec = kv_cache_spec_list[0].merge(kv_cache_spec_list)
+        model_block_memory_used = self.worker.cal_theortical_kvcache()
         num_blocks_local = int(available_kv_cache_memory //
-                               merged_layer_spec.block_memory_used)
+                               model_block_memory_used)
+        print(f"------- num_blocks_local:{num_blocks_local} --------")
 
         # 3. Send IPCSignal
-        get_profile_block_num = np.zeros(shape=[self.rank], dtype=np.int32)
-        self.get_profile_block_num_signal = IPCSignal(
-            name="get_profile_block_num",
-            array=get_profile_block_num,
-            dtype=np.int32,
-            suffix=self.parallel_config.engine_pid,
-            create=False)
-        self.get_profile_block_num_signal.value[
-            self.local_rank] = num_blocks_local
-        # wait all worker send the signal
-        while np.any(self.get_profile_block_num_signal.value <= 0):
-            time.sleep(0.01)
-        num_blocks_global = self.get_profile_block_num_signal.value.min().item(
-        )
-        self.get_profile_block_num_signal.value[self.rank] = num_blocks_global
+        if self.llm_config.parallel_config.do_profile:
+            get_profile_block_num = np.zeros(shape=[self.rank], dtype=np.int32)
+            self.get_profile_block_num_signal = IPCSignal(
+                name="get_profile_block_num",
+                array=get_profile_block_num,
+                dtype=np.int32,
+                suffix=self.parallel_config.engine_pid,
+                create=False)
+            self.get_profile_block_num_signal.value[
+                self.local_rank] = num_blocks_local
+
+            # Wait all worker send the signal
+            while np.any(self.get_profile_block_num_signal.value <= 0):
+                time.sleep(0.01)
+            num_blocks_global = self.get_profile_block_num_signal.value.min(
+            ).item()
+            self.get_profile_block_num_signal.value[
+                self.local_rank] = num_blocks_global
+        else:
+            num_blocks_global = num_blocks_local
 
         # 4. Updata share inputs
-        self.model_runner._update_share_input_block_num(
-            block_num=num_blocks_global)
+        self.worker.reinitialize_kv_cache(num_gpu_blocks=num_blocks_global)
 
     def init_device(self):
         """ """
         self.worker.init_device()
 
+    def load_model(self):
+        """ """
+        self.worker.load_model()
+
 
 def parse_args():
-    """ """
-    # TODO(gongshaotian): move to parallel config
+    """
+    Parse args from command line
+    """
     parser = argparse.ArgumentParser("FastDeploy LLM Inference")
     parser.add_argument("-m",
                         "--model_name_or_path",
@@ -247,7 +281,8 @@ def parse_args():
                         type=int,
                         default=34,
                         help="max batch size")
-    parser.add_argument("--max_block_num", type=int, default=2000)
+    parser.add_argument("--total_block_num", type=int,
+                        default=2000)  # max_block_num -> total_block_num
     parser.add_argument("--block_size", type=int, default=64)
     parser.add_argument("--engine_worker_queue_port", type=int, default=9923)
     parser.add_argument("--max_model_len",
@@ -298,19 +333,208 @@ def parse_args():
                         type=int,
                         default=2,
                         help="eos token lens")
+    parser.add_argument("--enable_chunked_prefill",
+                        action='store_true',
+                        help="enable chunked prefill")
+    parser.add_argument(
+        "--speculate_method",
+        default=None,
+        type=str,
+        choices=[
+            "autoregressive",
+            "inference_with_reference",
+            "draft_model",
+            "hydra",
+            "eagle",
+        ],
+    )
+    parser.add_argument(
+        "--attention_backend",
+        default="APPEND_ATTN",
+        type=str,
+        choices=[
+            "APPEND_ATTN",
+        ],
+    )
+    parser.add_argument("--speculate_max_draft_tokens", type=int, default=1)
+    parser.add_argument("--max_num_batched_tokens",
+                        type=int,
+                        default=2048,
+                        help="max num batched tokens")
+
     args = parser.parse_args()
     return args
+
+
+def initialize_llm_config(args) -> LLMConfig:
+    """Initialize LLMConfig
+    TODO(gongshaotian): Unified all configs to LLMConfig
+    """
+    # NOTE(gongshaotian): From build stream line model
+    config, _ = ModelConfig.get_config_dict(args.model_name_or_path)
+    model_config = ModelConfig.from_dict(config)
+
+    device_config = DeviceConfig()
+    # model_config = ModelConfig()
+    kv_cache_config = KVCacheConfig()
+    decoding_config = DecodingConfig()
+    decoding_config = MoEConfig()
+    tmp_config = TmpConfig()
+    additional_config = AdditionalConfig()
+    speculative_config = SpeculativeConfig()
+    parallel_config = ParallelConfig()
+    load_config = LoadConfig()
+    moe_config = MoEConfig()
+
+    # Note(tangbinhan): used for load_checkpoint
+    model_config.tensor_parallel_rank = parallel_config.tensor_parallel_rank
+    model_config.use_ep = parallel_config.use_ep
+    model_config.is_mtp = speculative_config.is_mtp
+
+    group_size = config.get("group_size", -1)
+    num_key_value_heads = config.get("num_key_value_heads", -1)
+    if num_key_value_heads is None:
+        num_key_value_heads = -1
+
+    if config.get("ffn_hidden_size", None) is not None:
+        ffn_hidden_size = config["ffn_hidden_size"]
+    elif config.get("intermediate_size", None) is not None:
+        ffn_hidden_size = config["intermediate_size"]
+    else:
+        ffn_hidden_size = 4 * config["hidden_size"]
+        if config["hidden_act"].lower() == "swiglu":
+            if paddle.distributed.get_world_size() > 1:
+                multiple_of = 8 * config["num_attention_heads"]
+            else:
+                multiple_of = 4 * config["num_attention_heads"]
+            ffn_hidden_size = multiple_of * (
+                (int(2 * ffn_hidden_size / 3) + multiple_of - 1) //
+                multiple_of)
+
+    num_layers = config.get("num_layers", None) or config.get(
+        "num_hidden_layers", None)
+    if num_layers is None:
+        raise ValueError(f"num_layers<{num_layers}> is invalid")
+
+    use_moe = config.get("moe_layer_start_index", num_layers) < num_layers
+
+    model_config.ffn_hidden_size = ffn_hidden_size
+    model_config.num_layers = num_layers
+
+    model_config.group_size = group_size
+    model_config.use_rmsnorm = config.get("use_rmsnorm", True)
+    model_config.num_key_value_heads = num_key_value_heads
+    tmp_config.has_zero_point = config.get("has_zero_point", False)
+    tmp_config.is_channel_wise = config.get("is_channel_wise", False),
+    model_config.start_layer_index = config.get("start_layer_index", 0)
+    model_config.use_moe = use_moe
+    moe_config.num_experts = config.get("moe_num_experts", None)
+    moe_config.moe_intermediate_size = config.get("moe_intermediate_size",
+                                                  None)
+    moe_config.moe_use_gate_correction_bias = config.get(
+        "moe_use_gate_correction_bias", True)
+    moe_config.moe_every2 = config.get("moe_every2", False)
+    moe_config.moe_topk = config.get("moe_topk", 8)
+    moe_config.moe_num_shared_experts = config.get("moe_num_shared_experts", 0)
+    moe_config.moe_layer_start_index = config.get("moe_layer_start_index", 0)
+    moe_config.moe_use_ffn_shared_weight_and_bias = config.get(
+        "moe_use_ffn_shared_weight_and_bias", False)
+    moe_config.use_moe = use_moe
+    moe_config.moe_group = config.get("moe_group", False)
+    tmp_config.weight_block_size = config.get("weight_block_size", [-1, -1])
+
+    model_config.ori_vocab_size = config.get("vocab_size", -1)
+    weight_dtype, act_dtype, cachekv_dtype = parser_quant_type(
+        model_config.export_model_type)
+    model_config.weight_dtype = weight_dtype
+    act_dtype = args.dtype if (act_dtype != args.dtype) else act_dtype
+    model_config.act_dtype = act_dtype  # set as args.dtype from engine
+    logger.info(
+        f"quant_type: weight[{weight_dtype}], act[{act_dtype}] -> act[{args.dtype}], cachekv[{cachekv_dtype}]"
+    )
+
+    if weight_dtype == "int8" and act_dtype in ["bfloat16", "float16"]:
+        quant_cls = get_quantization_config("weight_only")
+        quant_config = quant_cls.from_config({
+            "weight_only_linear_arch": None,
+            "algo": "weight_only_int8"
+        })
+        quant_config.quant_max_bound = 0
+        quant_config.quant_min_bound = 0
+        quant_config.quant_round_type = 0
+        model_config.use_smooth_quant = False
+    elif weight_dtype == "int4" and act_dtype in ["bfloat16", "float16"]:
+        quant_cls = get_quantization_config("weight_only")
+        quant_config = quant_cls.from_config({
+            "weight_only_linear_arch": None,
+            "algo": "weight_only_int4"
+        })
+        quant_config.quant_max_bound = 0
+        quant_config.quant_min_bound = 0
+        quant_config.quant_round_type = 0
+        model_config.use_smooth_quant = False
+    else:
+        quant_config = None
+
+    model_config.architectures = config.get("architectures")
+
+    # Update parallel config
+    parallel_config.engine_pid = args.engine_pid
+    parallel_config.model_name_or_path = args.model_name_or_path
+    parallel_config.max_num_seqs = args.max_num_seqs
+    parallel_config.max_block_num = args.total_block_num
+    parallel_config.block_size = args.block_size
+    parallel_config.engine_worker_queue_port = args.engine_worker_queue_port
+    parallel_config.max_model_len = args.max_model_len
+    model_config.max_seq_len = args.max_model_len
+    model_config.max_length = args.max_model_len
+    parallel_config.device_ids = args.device_ids
+    parallel_config.dtype = args.dtype
+    parallel_config.enc_dec_block_num = args.enc_dec_block_num
+    parallel_config.kv_cache_ratio = args.kv_cache_ratio
+    parallel_config.first_token_id = args.first_token_id
+    parallel_config.gpu_memory_utilization = args.gpu_memory_utilization
+    parallel_config.engine_pid = args.engine_pid
+    parallel_config.do_profile = args.do_profile
+    parallel_config.dynamic_load_weight = args.dynamic_load_weight
+    parallel_config.pad_token_id = args.pad_token_id
+    parallel_config.eos_tokens_lens = args.eos_tokens_lens
+    parallel_config.enable_chunked_prefill = args.enable_chunked_prefill
+    parallel_config.speculate_method = args.speculate_method
+    parallel_config.attention_backend = args.attention_backend
+    parallel_config.speculate_max_draft_tokens = args.speculate_max_draft_tokens
+    parallel_config.max_num_batched_tokens = args.max_num_batched_tokens
+
+    llm_config = LLMConfig(model_config=model_config,
+                           parallel_config=parallel_config,
+                           speculative_config=speculative_config,
+                           device_config=device_config,
+                           additional_config=additional_config,
+                           load_config=load_config,
+                           tmp_config=tmp_config,
+                           moe_config=moe_config,
+                           decoding_config=decoding_config,
+                           quant_config=quant_config,
+                           kv_cache_config=kv_cache_config)
+
+    return llm_config
 
 
 def run_worker_proc():
     """
     start worker process
     """
-    llm_config = LLMConfig()
+    # Get args form Engine
+    args = parse_args()
+
+    # Get llm_config
+    llm_config = initialize_llm_config(args)
+
+    # Start event loop
     worker_proc = PaddleDisWorkerProc(llm_config)
     worker_proc.init_device()
-    if llm_config.parallel_config.do_profile:
-        worker_proc.determine_num_available_blocks()
+    worker_proc.load_model()
+    worker_proc.determine_num_available_blocks()
     worker_proc.event_loop_normal()
 
 

@@ -19,13 +19,21 @@ import random
 import numpy as np
 import paddle
 
+from fastdeploy.model_executor.layers.attention import get_attention_backend
 from fastdeploy.model_executor.layers.rotary_embedding import get_rope
 from fastdeploy.platforms import current_platform
+from fastdeploy.worker.model_runner.forward_meta import ForwardMeta
 from fastdeploy.worker.model_runner.model_runner_base import ModelRunnerBase
 
 if current_platform.is_cuda() and current_platform.available():
     from fastdeploy.model_executor.layers.utils import (
         remove_padding, speculate_remove_padding)
+
+from fastdeploy.model_executor.layers.sample.meta_data import SamplingMetadata
+from fastdeploy.model_executor.layers.sample.sampler import Sampler
+from fastdeploy.model_executor.ops.gpu import (rebuild_padding, save_output,
+                                               set_stop_value_multi_ends,
+                                               update_inputs)
 
 
 class ModelRunner(ModelRunnerBase):
@@ -33,8 +41,11 @@ class ModelRunner(ModelRunnerBase):
     def __init__(self, config, args, nranks, rank):
         self.nranks = nranks
         self.rank = rank
+        self.config = config
         super().__init__(config, args)
         self._reset_paddle_env()
+        self.init_local_params()
+        self.sampler = Sampler()
 
     def _reset_paddle_env(self):
         #FLAGS_gqa_use_tensorcore
@@ -42,26 +53,84 @@ class ModelRunner(ModelRunnerBase):
         # gqa .etc paddle Flags set
         pass
 
+    def init_local_params(self):
+        if self.args.enable_chunked_prefill:
+            self.chunked_prefill_seq_lens = paddle.full(
+                shape=[self.args.max_num_seqs], 
+                fill_value=0, 
+                dtype='int32',
+            )
+            self.chunked_prefill_cur_seq_lens = paddle.full(
+                shape=[self.args.max_num_seqs], 
+                fill_value=0, 
+                dtype='int32',
+            )
+            self.chunked_prefill_cur_input_ids = paddle.full(
+                shape=[self.args.max_num_seqs, self.args.max_model_len], 
+                fill_value=0, 
+                dtype='int64',
+            )
+    
+    def update_chunked_prefill(self, token_chunk_size=384):
+        """
+        更新chunked prefill相关参数
+        """
+        if not self.args.enable_chunked_prefill:
+            return
+        
+        from fastdeploy.model_executor.ops.gpu import update_split_fuse_inputs
+        update_split_fuse_inputs(
+            self.chunked_prefill_seq_lens,
+            self.chunked_prefill_cur_seq_lens,
+            self.chunked_prefill_cur_input_ids,
+            self.share_inputs['input_ids'],
+            self.share_inputs['seq_lens_this_time'],
+            self.share_inputs["seq_lens_encoder"],
+            self.share_inputs["seq_lens_decoder"],
+            self.share_inputs["step_idx"],
+            self.args.max_model_len,
+            self.args.max_num_seqs,
+            token_chunk_size,
+        )
+
     def _load_model(self, model_name, dynamic_load_weight):
         use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
+        
         local_test = False
-        if dynamic_load_weight and use_pip_eff_llm is not None:
-            from efficientllm.models.efficientllm_model import EfficientModel
-            efficientllm_model = EfficientModel(
-                model_name_or_path=self.args.model_name_or_path,
-                dtype=self.args.dtype,
-                block_size=self.args.block_size,
-                max_len=self.args.max_model_len,
-                gemm_method="weight_only_int8",
-                moe_quant_type="weight_only_int8",
-                load_model_from_ipc=dynamic_load_weight,
-                nranks=self.nranks,
-                rank=self.rank,
-                embeddings_column_cut=False,
-                local_test=local_test,
-            )
-            efficientllm_model.eval()
-            self.model = efficientllm_model
+        if os.getenv("RUN_MODE", "") == "test":
+            local_test = True
+
+        if dynamic_load_weight:
+            if use_pip_eff_llm:
+                from efficientllm.models.efficientllm_model import EfficientModel
+                dynamic_load_model = EfficientModel(
+                    model_name_or_path=self.args.model_name_or_path,
+                    dtype=self.args.dtype,
+                    block_size=self.args.block_size,
+                    max_len=self.args.max_model_len,
+                    gemm_method="weight_only_int8",
+                    moe_quant_type="weight_only_int8",
+                    load_model_from_ipc=dynamic_load_weight,
+                    embeddings_column_cut=False,
+                    nranks=self.nranks,
+                    rank=self.rank,
+                    local_test=local_test,
+                )
+            else:
+                from fastdeploy.model_executor.models.dynamic_load_model import DynamicLoadModel
+                dynamic_load_model = DynamicLoadModel(
+                    model_name_or_path=self.args.model_name_or_path,
+                    dtype=self.args.dtype,
+                    block_size=self.args.block_size,
+                    max_len=self.args.max_model_len,
+                    moe_quant_type="weight_only_int8",
+                    load_model_from_ipc=dynamic_load_weight,
+                    nranks=self.nranks,
+                    rank=self.rank,
+                    embeddings_column_cut=False,
+                    local_test=local_test
+                )
+            self.model = dynamic_load_model
         else:
             if use_pip_eff_llm is None:
                 from fastdeploy.model_executor.models.export_model import \
@@ -84,7 +153,7 @@ class ModelRunner(ModelRunnerBase):
                     break
             self.args.speculate_max_draft_tokens = 5
 
-            config, tokenizer, model = build_stream_line_model(
+            llm_config, tokenizer, model, _ = build_stream_line_model(
                 os.path.join(self.args.model_name_or_path,
                              os.getenv("CONFIG_JSON_FILE", "config.json")),
                 self.args.model_name_or_path,
@@ -102,9 +171,24 @@ class ModelRunner(ModelRunnerBase):
                 return_all_hidden_states=False,
                 moe_quant_type="weight_only_int4",
                 use_safetensors=True,
-            )
+                return_llm_config=True)
             model.eval()
+            llm_config.parallel_config.max_model_len = llm_config.model_config.max_seq_len
+            self.llm_config = llm_config
             self.model = model
+            attn_backend_cls = get_attention_backend(
+                self.args.attention_backend)
+            num_heads = self.llm_config.model_config.num_attention_heads // self.llm_config.parallel_config.mp_size
+            self.llm_config.model_config.kv_num_heads = int(
+                self.llm_config.model_config.num_key_value_heads
+            ) // self.llm_config.parallel_config.mp_size
+            head_dim = self.llm_config.model_config.hidden_size // self.llm_config.model_config.num_attention_heads
+            self.attn_backend = attn_backend_cls(
+                self.llm_config,
+                kv_num_heads=self.llm_config.model_config.kv_num_heads,
+                num_heads=num_heads,
+                head_dim=head_dim)
+            self._init_kvcache()
 
     def init_rotary_position_embedding(self, max_model_len):
         tmp_position_ids = paddle.arange(max_model_len).reshape((1, -1))
@@ -112,7 +196,8 @@ class ModelRunner(ModelRunnerBase):
             rotary_dim=self.model_cfg.hidden_size //
             self.model_cfg.num_attention_heads,
             position_ids=tmp_position_ids,
-            base=self.rope_theta)
+            base=self.rope_theta,
+            model_config=self.config)
 
     def _init_kvcache(self):
         """
@@ -120,7 +205,7 @@ class ModelRunner(ModelRunnerBase):
         """
 
         cache_kvs = {}
-        max_block_num = self.num_gpu_blocks
+        total_block_num = self.num_gpu_blocks
 
         if (hasattr(self.model_cfg, "num_key_value_heads")
                 and hasattr(self.model_cfg, "num_key_value_heads")
@@ -131,22 +216,30 @@ class ModelRunner(ModelRunnerBase):
         else:
             kv_num_head = self.model_cfg.num_attention_heads // self.nranks
         self.model_cfg.kv_num_head = kv_num_head
-        kv_cache_shape = self.attn_backend_cls.get_kv_cache_shape(
-            max_num_blocks=max_block_num,
-            block_size=self.args.block_size,
-            kv_num_head=kv_num_head,
-            head_dim=self.model_cfg.hidden_size //
-            self.model_cfg.num_attention_heads)
+        kv_cache_shape = self.attn_backend.get_kv_cache_shape(
+            max_num_blocks=total_block_num)
 
         for i in range(self.model_cfg.num_layers):
             cache_type = self.args.dtype
             cache_kvs["key_caches_{}".format(i)] = paddle.full(
-                shape=kv_cache_shape,
+                shape=[
+                    total_block_num,
+                    kv_num_head,
+                    self.args.block_size,
+                    self.model_cfg.hidden_size //
+                    self.model_cfg.num_attention_heads,
+                ],
                 fill_value=0,
                 dtype=cache_type,
             )
             cache_kvs["value_caches_{}".format(i)] = paddle.full(
-                shape=kv_cache_shape,
+                shape=[
+                    total_block_num,
+                    kv_num_head,
+                    self.args.block_size,
+                    self.model_cfg.hidden_size //
+                    self.model_cfg.num_attention_heads,
+                ],
                 fill_value=0,
                 dtype=cache_type,
             )
@@ -155,6 +248,13 @@ class ModelRunner(ModelRunnerBase):
         for value in cache_kvs.values():
             del value
         paddle.device.cuda.empty_cache()
+    
+    def prefill_finished(self):
+        """
+        判断是否已经完成了prefill操作
+        """
+        prefill_statue = (self.share_inputs["seq_lens_this_time"] != 0) & (self.share_inputs["seq_lens_this_time"] != 1)
+        return not paddle.any(prefill_statue).numpy()
 
     def dy_input_preprocess(self, tasks):
         """
@@ -164,8 +264,32 @@ class ModelRunner(ModelRunnerBase):
             task = tasks[i]
             idx = task.idx
             length = task.prompt_token_ids_len
-            self.share_inputs["input_ids"][idx:idx + 1, :length] = np.array(
-                task.prompt_token_ids)
+            
+            if self.args.enable_chunked_prefill:
+                if task.token_chunk_size > length:
+                    self.share_inputs["seq_lens_this_time"][idx] = length
+                    self.share_inputs['input_ids'][idx, :length] = np.array(task.prompt_token_ids)
+                    self.share_inputs['step_seq_lens_encoder'][idx] = task.token_chunk_size
+                    self.share_inputs['seq_lens_encoder'][idx] = length
+                    self.chunked_prefill_seq_lens[idx] = length
+                    self.chunked_prefill_cur_seq_lens[idx] = length
+                else:
+                    self.chunked_prefill_cur_input_ids[idx, :length] = np.array(task.prompt_token_ids)
+                    self.chunked_prefill_cur_seq_lens[idx] = task.token_chunk_size
+                    self.chunked_prefill_seq_lens[idx] = length
+                    self.share_inputs["seq_lens_this_time"][idx] = task.token_chunk_size
+                    self.share_inputs['input_ids'][idx, :task.token_chunk_size] = np.array(
+                        self.chunked_prefill_cur_input_ids[idx, :task.token_chunk_size]
+                    )
+                    self.share_inputs['step_seq_lens_encoder'][idx] = task.token_chunk_size
+                    self.share_inputs['seq_lens_encoder'][idx] = task.token_chunk_size
+            else:
+                self.share_inputs["input_ids"][idx:idx + 1, :length] = np.array(
+                    task.prompt_token_ids)
+                self.share_inputs["seq_lens_this_time"][idx:idx + 1] = length
+                self.share_inputs["step_seq_lens_encoder"][idx:idx + 1] = length
+                self.share_inputs["seq_lens_encoder"][idx:idx + 1] = length
+
             if len(task.eos_token_ids) < self.args.eos_tokens_lens:
                 task.eos_token_ids.append(task.eos_token_ids[0])
             self.share_inputs["eos_token_id"][:] = np.array(
@@ -180,9 +304,6 @@ class ModelRunner(ModelRunnerBase):
                 "frequency_penalty", 0.0)
             self.share_inputs["presence_score"][idx:idx + 1] = task.get(
                 "presence_penalty", 0.0)
-            self.share_inputs["seq_lens_this_time"][idx:idx + 1] = length
-            self.share_inputs["step_seq_lens_encoder"][idx:idx + 1] = length
-            self.share_inputs["seq_lens_encoder"][idx:idx + 1] = length
             self.share_inputs["seq_lens_decoder"][idx:idx + 1] = 0
             self.share_inputs["step_idx"][idx:idx + 1] = 0
             self.share_inputs["min_dec_len"][idx:idx + 1] = task.get(
@@ -254,16 +375,91 @@ class ModelRunner(ModelRunnerBase):
         self.share_inputs["cum_offsets"] = cum_offsets
         self.share_inputs["cu_seqlens_q"] = cu_seqlens_q
         self.share_inputs["cu_seqlens_k"] = cu_seqlens_k
-        #init attn_backend
-        self.attn_backend = self.attn_backend_cls(self)
-        self._init_forward_meta()
+
+        # initialize_forward_meta
+        self.forward_meta = ForwardMeta.init_forward_meta(
+            self.share_inputs, self.attn_backend)
+
         self.attn_backend.init_attention_metadata(self.forward_meta)
+
+        self.share_inputs["forward_meta"] = self.forward_meta
+
+        self.sampling_metadata = SamplingMetadata(
+            temperature=self.share_inputs["temperature"],
+            top_p=self.share_inputs["top_p"],
+            step_idx=self.share_inputs["step_idx"],
+            prompt_token_ids=self.share_inputs["input_ids"],
+            frequency_penalties=self.share_inputs["frequency_score"],
+            presence_penalties=self.share_inputs["presence_score"],
+            repetition_penalties=self.share_inputs["penalty_score"],
+            min_dec_lens=self.share_inputs["min_dec_len"],
+            bad_words_token_ids=self.share_inputs["bad_tokens"],
+            eos_token_ids=self.share_inputs["eos_token_id"],
+        )
 
     def generate(self):
         self.pre_process()
-        hiddden_states = self.model(**self.share_inputs)
+        hiddden_states = self.model(self.share_inputs["ids_remove_padding"],
+                                    self.forward_meta)
+        # rebuild_padding
+        hiddden_states = rebuild_padding(
+            hiddden_states,
+            self.share_inputs["cum_offsets"],
+            self.share_inputs["seq_lens_this_time"],
+            self.share_inputs["seq_lens_decoder"],
+            self.share_inputs["seq_lens_encoder"],
+            self.share_inputs["padding_offset"],
+            self.args.max_model_len,
+        )
         logits = self.model.compute_logits(hiddden_states)
-        self.model.sample(logits, **self.share_inputs)
+
+        # sampler & save_output
+        next_tokens = self.sampler(logits, self.sampling_metadata)
+        self.post_process(next_tokens)
+
+    def post_process(self, next_tokens):
+        paddle.assign(
+            paddle.where(
+                self.share_inputs["stop_flags"],
+                self.share_inputs["step_idx"],
+                self.share_inputs["step_idx"] + 1,
+            ),
+            self.share_inputs["step_idx"],
+        )
+        length_cond = paddle.greater_equal(self.share_inputs["step_idx"],
+                                           self.share_inputs["max_dec_len"])
+        paddle.assign(
+            paddle.logical_or(self.share_inputs["stop_flags"], length_cond),
+            self.share_inputs["stop_flags"],
+        )
+
+        set_stop_value_multi_ends(
+            next_tokens,
+            self.share_inputs["stop_flags"],
+            self.share_inputs["seq_lens_this_time"],
+            self.share_inputs["eos_token_id"],
+            self.share_inputs["next_tokens"],
+            False,
+        )  # multi ends
+        # update inputs
+        with paddle.framework._no_check_dy2st_diff():
+            update_inputs(
+                self.share_inputs["stop_flags"],
+                self.share_inputs["not_need_stop"],
+                self.share_inputs["seq_lens_this_time"],
+                self.share_inputs["seq_lens_encoder"],
+                self.share_inputs["seq_lens_decoder"],
+                self.share_inputs["input_ids"],
+                self.share_inputs["stop_nums"],
+                next_tokens,
+                self.share_inputs["is_block_step"],
+            )
+        save_output(
+            next_tokens,
+            self.share_inputs["not_need_stop"],
+            self.rank,
+            False,  # use_ep
+        )
 
     def clear_parameters(self, pid):
         if "caches" in self.share_inputs:
@@ -323,10 +519,13 @@ class ModelRunner(ModelRunnerBase):
         """
         fake input to profile
         """
-        full_length = num_total_tokens // number_of_tasks
-        input_length = int(full_length * self.args.kv_cache_ratio)
+        input_length = num_total_tokens // number_of_tasks
+
         block_num = (input_length + self.args.block_size - 1 +
                      self.args.enc_dec_block_num) // self.args.block_size
+        self.share_inputs["free_list"] = paddle.to_tensor([], dtype="int32")
+        self.share_inputs["free_list_len"][0] = 0
+
 
         for i in range(number_of_tasks):
             idx = i
