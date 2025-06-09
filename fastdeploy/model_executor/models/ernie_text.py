@@ -107,8 +107,6 @@ class Ernie45TAttention(nn.Layer):
             layer_id=layer_id,
             prefix=prefix,
             use_neox_rotary_style=False,
-            cache_k_scale_key = prefix+".scaled_dot_product_attention_.activation_quanter_k", 
-            cache_v_scale_key = prefix+".scaled_dot_product_attention_.activation_quanter_v",
         )
 
     def load_state_dict(self, state_dict):
