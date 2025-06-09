@@ -235,7 +235,7 @@ class CacheConfig:
         self.each_token_cache_space = int(
             self.model_cfg.num_layers
             * kv_num_head
-            * (self.model_cfg.hidden_size // self.model_cfg.num_attention_heads)
+            * self.model_cfg.head_dim
             * byte_size
         ) 
         self.bytes_per_block = int(
@@ -244,8 +244,7 @@ class CacheConfig:
         self.bytes_per_layer_per_block = int(
             self.block_size
             * self.model_cfg.kv_num_head
-            * self.model_cfg.hidden_size
-            // self.model_cfg.num_attention_heads // tensor_parallel_size
+            * self.model_cfg.head_dim // tensor_parallel_size
             * byte_size
         )
 

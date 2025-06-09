@@ -200,7 +200,7 @@ class ErnieBotToyPretrainedModel(PretrainedModel):
                             config.hidden_size,
                             config.num_attention_heads,
                             3,
-                            config.hidden_size // config.num_attention_heads,
+                            config.head_dim,
                         ]
                     ).transpose([2, 1, 3, 0])
                 else:
@@ -210,7 +210,7 @@ class ErnieBotToyPretrainedModel(PretrainedModel):
                                 config.hidden_size,
                                 config.num_attention_heads
                                 + 2 * config.num_key_value_heads,
-                                config.hidden_size // config.num_attention_heads,
+                                config.head_dim,
                             ]
                         )
                         .transpose([1, 2, 0])
@@ -465,14 +465,14 @@ class ErnieBotToyPretrainedModel(PretrainedModel):
                     tensor_parallel_rank=config.tensor_parallel_rank,
                     num_attention_heads=config.num_attention_heads,
                     num_key_value_heads=config.num_key_value_heads,
-                    head_dim=config.hidden_size // config.num_attention_heads,
+                    head_dim=config.head_dim,
                 )
             else:
                 qkv_fn = partial(
                     gqa_qkv_merge_func,
                     num_attention_heads=config.num_attention_heads,
                     num_key_value_heads=config.num_key_value_heads,
-                    head_dim=config.hidden_size // config.num_attention_heads,
+                    head_dim=config.head_dim,
                 )
         else:
             qkv_fn = partial(fn, is_column=True)

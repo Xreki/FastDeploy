@@ -71,7 +71,7 @@ class MinimalModelRunner:
             page_size=self.page_size,
             dtype=self.dtype,
             head_num=self.model_config.num_attention_heads,
-            head_dim=self.model_config.hidden_size // self.model_config.num_attention_heads,
+            head_dim=self.model_config.head_dim,
             layer_num=1,
             device=self.device,
         )
