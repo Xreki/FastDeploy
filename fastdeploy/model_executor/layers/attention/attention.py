@@ -20,8 +20,9 @@ import paddle
 from paddle import nn
 from paddlenlp.utils.log import logger
 
-from fastdeploy.worker.model_runner import ForwardMeta
 from fastdeploy.model_executor.layers.utils import get_tensor
+from fastdeploy.worker.model_runner import ForwardMeta
+
 
 class Attention(nn.Layer):
     """
@@ -42,8 +43,8 @@ class Attention(nn.Layer):
         linear_shift=None,
         linear_smooth=None,
         use_neox_rotary_style=False,
-        cache_k_scale_key = None,
-        cache_v_scale_key = None,
+        cache_k_scale_key=None,
+        cache_v_scale_key=None,
     ) -> None:
         """
         Initializes `LMLayer` with the given parameters.
@@ -98,10 +99,13 @@ class Attention(nn.Layer):
     def load_state_dict(self, state_dict):
         if self.cache_k_scale_key is not None:
             self.cache_quant_type_str = "cache_int8"
-            logger.info(f"Attention is running in {self.cache_quant_type_str} mode")
+            logger.info(
+                f"Attention is running in {self.cache_quant_type_str} mode")
             max_bound = 127
-            add_scale_attrs = ["cache_k_scale", "cache_k_out_scale",
-                               "cache_v_scale", "cache_v_out_scale"]
+            add_scale_attrs = [
+                "cache_k_scale", "cache_k_out_scale", "cache_v_scale",
+                "cache_v_out_scale"
+            ]
             weight_keys = [self.cache_k_scale_key, self.cache_v_scale_key]
 
             for i in range(2):
@@ -110,10 +114,11 @@ class Attention(nn.Layer):
                 max_value.reshape_([-1])
                 quant_scale_tensor = max_bound / max_value
                 dequant_scale_tensor = max_value / max_bound
-                
+
                 # quant_scale and dequant_scale
-                for j, scale_tensor in enumerate([quant_scale_tensor, dequant_scale_tensor]):
-                    tmp_name = add_scale_attrs[2*i + j]
+                for j, scale_tensor in enumerate(
+                    [quant_scale_tensor, dequant_scale_tensor]):
+                    tmp_name = add_scale_attrs[2 * i + j]
                     setattr(
                         self, tmp_name,
                         self.create_parameter(
