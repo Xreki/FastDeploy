@@ -86,8 +86,7 @@ class Attention(nn.Layer):
         self._dtype = self._helper.get_default_dtype()
         self.cache_quant_type_str = llm_config.kv_cache_config.cache_quant_dtype
 
-        if self.cache_quant_type_str == "":
-            self.cache_quant_type_str = "none"
+        if self.cache_quant_type_str == "none":
             logger.info(f"Attention is running in cache kv {self._dtype} mode")
         else:
             logger.info(

@@ -126,7 +126,7 @@ def build_stream_line_model(
         msg_queue_id=None,
         pad_vocab=True,
         tokenizer=None,
-        cache_quant_dtype="",
+        cache_quant_dtype="none",
         use_beam_search: bool = False,
         enf_gen: bool = False,
         speculate_method=None,
