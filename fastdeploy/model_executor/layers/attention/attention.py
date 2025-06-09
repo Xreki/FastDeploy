@@ -85,14 +85,6 @@ class Attention(nn.Layer):
         self.qkv_scale = qkv_scale
         self._dtype = self._helper.get_default_dtype()
         self.cache_quant_type_str = llm_config.kv_cache_config.cache_quant_dtype
-<<<<<<< HEAD
-        
-        if self.cache_quant_type_str == "":
-            self.cache_quant_type_str = "none"
-            logger.info(f"Attention is running in cache kv {self._dtype} mode")
-        else:
-            logger.info(f"Attention is running in cache kv {self.cache_quant_type_str} mode")
-=======
 
         if self.cache_quant_type_str == "none":
             logger.info(f"Attention is running in cache kv {self._dtype} mode")
@@ -100,7 +92,6 @@ class Attention(nn.Layer):
             logger.info(
                 f"Attention is running in cache kv {self.cache_quant_type_str} mode"
             )
->>>>>>> feature/inference-refactor-20250528
 
         self.out_scale = out_scale
         self.use_neox_rotary_style = use_neox_rotary_style
@@ -116,27 +107,19 @@ class Attention(nn.Layer):
         self.cache_v_scale_key = cache_v_scale_key
 
     def load_state_dict(self, state_dict):
-<<<<<<< HEAD
-=======
         '''
         Attention only have quant related scales not other parameters.
         '''
->>>>>>> feature/inference-refactor-20250528
         if self.cache_quant_type_str == "none":
             pass
         elif self.cache_quant_type_str == "cache_int8":
             assert self.cache_k_scale_key is not None
             assert self.cache_v_scale_key is not None
             max_bound = 127
-<<<<<<< HEAD
-            add_scale_attrs = ["cache_k_scale", "cache_k_out_scale",
-                               "cache_v_scale", "cache_v_out_scale"]
-=======
             add_scale_attrs = [
                 "cache_k_scale", "cache_k_out_scale", "cache_v_scale",
                 "cache_v_out_scale"
             ]
->>>>>>> feature/inference-refactor-20250528
             weight_keys = [self.cache_k_scale_key, self.cache_v_scale_key]
 
             for i in range(2):
@@ -147,14 +130,9 @@ class Attention(nn.Layer):
                 dequant_scale_tensor = max_value / max_bound
 
                 # quant_scale and dequant_scale
-<<<<<<< HEAD
-                for j, scale_tensor in enumerate([quant_scale_tensor, dequant_scale_tensor]):
-                    tmp_name = add_scale_attrs[2*i + j]
-=======
                 for j, scale_tensor in enumerate(
                     [quant_scale_tensor, dequant_scale_tensor]):
                     tmp_name = add_scale_attrs[2 * i + j]
->>>>>>> feature/inference-refactor-20250528
                     setattr(
                         self, tmp_name,
                         self.create_parameter(
@@ -163,12 +141,8 @@ class Attention(nn.Layer):
                         ))
                     getattr(self, tmp_name).set_value(scale_tensor)
         else:
-<<<<<<< HEAD
-            raise ValueError(f"Unsupported cachekv dtype {self.cache_quant_type_str}")
-=======
             raise ValueError(
                 f"Unsupported cachekv dtype {self.cache_quant_type_str}")
->>>>>>> feature/inference-refactor-20250528
 
     def forward(
         self,
