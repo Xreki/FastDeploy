@@ -51,19 +51,58 @@ class ModelRunner(ModelRunnerBase):
         #FLAGS_ffn2_use_hardamard
         # gqa .etc paddle Flags set
         pass
-    
 
+    def init_local_params(self):
+        if self.args.enable_chunked_prefill:
+            self.chunked_prefill_seq_lens = paddle.full(
+                shape=[self.args.max_num_seqs],
+                fill_value=0,
+                dtype='int32',
+            )
+            self.chunked_prefill_cur_seq_lens = paddle.full(
+                shape=[self.args.max_num_seqs],
+                fill_value=0,
+                dtype='int32',
+            )
+            self.chunked_prefill_cur_input_ids = paddle.full(
+                shape=[self.args.max_num_seqs, self.args.max_model_len],
+                fill_value=0,
+                dtype='int64',
+            )
+
+    def update_chunked_prefill(self, token_chunk_size=384):
+        """
+        更新chunked prefill相关参数
+        """
+        if not self.args.enable_chunked_prefill:
+            return
+
+        from fastdeploy.model_executor.ops.gpu import update_split_fuse_inputs
+        update_split_fuse_inputs(
+            self.chunked_prefill_seq_lens,
+            self.chunked_prefill_cur_seq_lens,
+            self.chunked_prefill_cur_input_ids,
+            self.share_inputs['input_ids'],
+            self.share_inputs['seq_lens_this_time'],
+            self.share_inputs["seq_lens_encoder"],
+            self.share_inputs["seq_lens_decoder"],
+            self.share_inputs["step_idx"],
+            self.args.max_model_len,
+            self.args.max_num_seqs,
+            token_chunk_size,
+        )
 
     def _load_model(self, model_name, dynamic_load_weight):
         use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
-        
+
         local_test = False
         if os.getenv("RUN_MODE", "") == "test":
             local_test = True
 
         if dynamic_load_weight:
             if use_pip_eff_llm:
-                from efficientllm.models.efficientllm_model import EfficientModel
+                from efficientllm.models.efficientllm_model import \
+                    EfficientModel
                 dynamic_load_model = EfficientModel(
                     model_name_or_path=self.args.model_name_or_path,
                     dtype=self.args.dtype,
@@ -78,7 +117,8 @@ class ModelRunner(ModelRunnerBase):
                     local_test=local_test,
                 )
             else:
-                from fastdeploy.model_executor.models.dynamic_load_model import DynamicLoadModel
+                from fastdeploy.model_executor.models.dynamic_load_model import \
+                    DynamicLoadModel
                 dynamic_load_model = DynamicLoadModel(
                     model_name_or_path=self.args.model_name_or_path,
                     dtype=self.args.dtype,
@@ -89,8 +129,7 @@ class ModelRunner(ModelRunnerBase):
                     nranks=self.nranks,
                     rank=self.rank,
                     embeddings_column_cut=False,
-                    local_test=local_test
-                )
+                    local_test=local_test)
             self.model = dynamic_load_model
         else:
             if use_pip_eff_llm is None:
@@ -191,6 +230,31 @@ class ModelRunner(ModelRunnerBase):
 
         cache_kvs_list = []
         # TODO infer 进程初始化cache
+        for i in range(self.model_cfg.num_layers):
+            if self.llm_config.kv_cache_config.cache_quant_dtype == "cache_int8":
+                cache_type = 'uint8'
+            cache_kvs["key_caches_{}".format(i)] = paddle.full(
+                shape=[
+                    total_block_num,
+                    kv_num_head,
+                    self.args.block_size,
+                    self.model_cfg.hidden_size //
+                    self.model_cfg.num_attention_heads,
+                ],
+                fill_value=0,
+                dtype=cache_type,
+            )
+            cache_kvs["value_caches_{}".format(i)] = paddle.full(
+                shape=[
+                    total_block_num,
+                    kv_num_head,
+                    self.args.block_size,
+                    self.model_cfg.hidden_size //
+                    self.model_cfg.num_attention_heads,
+                ],
+                fill_value=0,
+                dtype=cache_type,
+            )
 
         if not self.args.do_profile and (self.args.enable_prefix_caching or self.args.splitwise_role != "mixed"):
             use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
@@ -243,12 +307,13 @@ class ModelRunner(ModelRunnerBase):
             for value in cache_kvs.values():
                 del value
         paddle.device.cuda.empty_cache()
-    
+
     def prefill_finished(self):
         """
         check whether prefill stage finished
         """
-        prefill_statue = (self.share_inputs["seq_lens_this_time"] != 0) & (self.share_inputs["seq_lens_this_time"] != 1)
+        prefill_statue = (self.share_inputs["seq_lens_this_time"] != 0) & (
+            self.share_inputs["seq_lens_this_time"] != 1)
         return not paddle.any(prefill_statue).numpy()
 
     def dy_input_preprocess(self, tasks):

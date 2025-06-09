@@ -157,7 +157,8 @@ class EngineArgs:
     """
     max_long_partial_prefills: int = 1
     """
-    For chunked prefill, the maximum number of prompts longer than –long-prefill-token-threshold that will be prefilled concurrently. 
+    For chunked prefill, the maximum number of prompts longer than –long-prefill-token-threshold 
+    that will be prefilled concurrently. 
     """
     long_prefill_token_threshold: int = 0
     """
@@ -387,7 +388,8 @@ class EngineArgs:
             "--max-long-partial-prefills",
             type=int,
             default=EngineArgs.max_long_partial_prefills,
-            help="For chunked prefill, the maximum number of prompts longer than long-prefill-token-threshold that will be prefilled concurrently."
+            help=("For chunked prefill, the maximum number of prompts longer than long-prefill-token-threshold" 
+                    "that will be prefilled concurrently.")
         )
         perf_group.add_argument(
             "--long-prefill-token-threshold",

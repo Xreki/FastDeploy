@@ -14,13 +14,21 @@
 # limitations under the License.
 """
 
-from .append_attention import append_attention
-from .get_block_shape_and_split_kv_block import \
-    get_block_shape_and_split_kv_block
-from .init_signal_layerwise import init_signal_layerwise
-from .open_shm_and_get_meta_signal import open_shm_and_get_meta_signal
+from fastdeploy.platforms import current_platform
 
-__all__ = [
-    "get_block_shape_and_split_kv_block", "append_attention",
-    "open_shm_and_get_meta_signal", "init_signal_layerwise"
-]
+
+def open_shm_and_get_meta_signal(
+    rank: int = 0,
+    keep_pd_step_flag: bool = False,
+):
+    """
+    Args:
+    Returns:
+    """
+    if current_platform.is_cuda():
+        from fastdeploy.model_executor.ops.gpu import \
+            open_shm_and_get_meta_signal
+        out = open_shm_and_get_meta_signal(rank, keep_pd_step_flag)
+        return out
+    else:
+        raise NotImplementedError()
