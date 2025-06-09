@@ -13,9 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-import os
-import json
-from tqdm import tqdm
+
 from typing import Tuple
 
 import numpy as np
@@ -92,90 +90,6 @@ def _set_var_distributed(var, split_axis):
         startup_block._find_var_recursive(var.name).is_distributed = True
         main_block._find_var_recursive(var.name).is_distributed = True
 
-
-def split_tensor(name):
-    tensor = paddle.load(name)
-    tp_rank = paddle.distributed.get_rank()
-    tp_size = paddle.distributed.get_world_size()
-    name = name.split("/")[-1]
-    if "ernie.embed_tokens" in name:
-        return paddle.split(tensor, tp_size, axis=0)[tp_rank]
-    print(name)
-    return tensor
-
-
-
-def get_safe_tensor_file(model_path):
-    """
-    get_safe_tensor_file
-    """
-    with open(
-        os.path.join(model_path, "model.safetensors.index.json"), "r"
-    ) as f:
-        weight_map = json.load(f)["weight_map"]
-        safe_tensor_list = list(set(weight_map.values()))
-        key_name_list = list(set(weight_map.keys()))
-        safe_tensor_list = [
-            os.path.join(model_path, v) for v in safe_tensor_list
-        ]
-
-    return key_name_list, safe_tensor_list
-
-
-def safetensors_weights_iterator(
-    safe_tensor_list: list[str],
-):
-    """
-    safetensors_weights_iterator
-    """
-    for st_file in tqdm(
-        safe_tensor_list,
-        desc="Loading safetensors checkpoint shards",
-    ):
-        from safetensors import safe_open
-        #import torch
-        with safe_open(st_file, framework="pt") as f:
-            for name in f.keys():  # noqa: SIM118
-                param = f.get_tensor(name)
-                yield name, param.numpy()
-
-
-def get_state_dict(model_path, config):
-    """
-    get_sate_dict
-    """
-    state_dict = {}
-    _, safe_tensor_list = get_safe_tensor_file(
-        os.path.join(model_path, f"rank{config.tensor_parallel_rank}")
-    )
-
-    weights_iterator = safetensors_weights_iterator(safe_tensor_list)
-    for name, weight in weights_iterator:
-        state_dict[name] = weight
-    
-    return state_dict
-
-
-def load_checkpoint(model_path, cls, config, return_numpy=True):
-    """
-    load_checkpoint
-    """
-    rank_dirs = [
-        f
-        for f in os.listdir(model_path)
-        if f.startswith("rank") and os.path.isdir(os.path.join(model_path, f))
-    ]
-    if len(rank_dirs) > 1:
-        if config.tensor_parallel_degree != len(rank_dirs):
-            raise ValueError(
-                f"Your model only supports loading with tp{len(rank_dirs)}"
-            )
-        state_dict = get_state_dict(model_path, config)
-    else:
-        state_dict = load_tp_checkpoint(
-            model_path, cls, config, return_numpy=return_numpy
-        )
-    return state_dict
 
 def get_tensor(input):
     """
