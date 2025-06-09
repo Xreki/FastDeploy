@@ -18,9 +18,10 @@ from typing import Optional
 
 import paddle
 from paddle import nn
+from paddlenlp.utils.log import logger
 
 from fastdeploy.worker.model_runner import ForwardMeta
-
+from fastdeploy.model_executor.layers.utils import get_tensor
 
 class Attention(nn.Layer):
     """
@@ -41,6 +42,8 @@ class Attention(nn.Layer):
         linear_shift=None,
         linear_smooth=None,
         use_neox_rotary_style=False,
+        cache_k_scale_key = None,
+        cache_v_scale_key = None,
     ) -> None:
         """
         Initializes `LMLayer` with the given parameters.
@@ -80,6 +83,14 @@ class Attention(nn.Layer):
         self.qkv_bias = qkv_bias
         self.qkv_scale = qkv_scale
         self._dtype = self._helper.get_default_dtype()
+        self.cache_quant_type_str = llm_config.kv_cache_config.cache_quant_dtype
+        
+        if self.cache_quant_type_str == "":
+            self.cache_quant_type_str = "none"
+            logger.info(f"Attention is running in cache kv {self._dtype} mode")
+        else:
+            logger.info(f"Attention is running in cache kv {self.cache_quant_type_str} mode")
+
         self.out_scale = out_scale
         self.use_neox_rotary_style = use_neox_rotary_style
         if llm_config.kv_cache_config.kvcache_quant_config is not None:
@@ -89,6 +100,40 @@ class Attention(nn.Layer):
         if llm_config.quant_config is not None:
             self.quant_max_bound = llm_config.quant_config.quant_max_bound
             self.quant_min_bound = llm_config.quant_config.quant_min_bound
+
+        self.cache_k_scale_key = cache_k_scale_key
+        self.cache_v_scale_key = cache_v_scale_key
+
+    def load_state_dict(self, state_dict):
+        if self.cache_quant_type_str == "none":
+            pass
+        elif self.cache_quant_type_str == "cache_int8":
+            assert self.cache_k_scale_key is not None
+            assert self.cache_v_scale_key is not None
+            max_bound = 127
+            add_scale_attrs = ["cache_k_scale", "cache_k_out_scale",
+                               "cache_v_scale", "cache_v_out_scale"]
+            weight_keys = [self.cache_k_scale_key, self.cache_v_scale_key]
+
+            for i in range(2):
+                max_value = get_tensor(state_dict.pop(weight_keys[i]))
+                max_value = max_value.cast(paddle.get_default_dtype())
+                max_value.reshape_([-1])
+                quant_scale_tensor = max_bound / max_value
+                dequant_scale_tensor = max_value / max_bound
+
+                # quant_scale and dequant_scale
+                for j, scale_tensor in enumerate([quant_scale_tensor, dequant_scale_tensor]):
+                    tmp_name = add_scale_attrs[2*i + j]
+                    setattr(
+                        self, tmp_name,
+                        self.create_parameter(
+                            shape=scale_tensor.shape,
+                            dtype=scale_tensor.dtype,
+                        ))
+                    getattr(self, tmp_name).set_value(scale_tensor)
+        else:
+            raise ValueError(f"Unsupported cachekv dtype {self.cache_quant_type_str}")
 
     def forward(
         self,

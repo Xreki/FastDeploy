@@ -221,6 +221,8 @@ class ModelRunner(ModelRunnerBase):
 
         for i in range(self.model_cfg.num_layers):
             cache_type = self.args.dtype
+            if self.llm_config.kv_cache_config.cache_quant_dtype == "cache_int8":
+                cache_type = 'uint8'
             cache_kvs["key_caches_{}".format(i)] = paddle.full(
                 shape=[
                     total_block_num,
