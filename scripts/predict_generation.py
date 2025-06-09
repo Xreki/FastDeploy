@@ -15,6 +15,11 @@
 
 from __future__ import annotations
 
+import paddle
+import torch
+from torch._C import *
+
+
 import argparse
 import copy
 import json

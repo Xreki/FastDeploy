@@ -14,15 +14,35 @@
 # limitations under the License.
 """
 
-from fastdeploy.engine.sampling_params import SamplingParams
+import paddle
+import torch
 from fastdeploy.entrypoints.llm import LLM
+from fastdeploy.engine.sampling_params import SamplingParams
+model_name_or_path = "/root/paddlejob/workspace/env_run/output/kaiyuan_45Tw4a8quant"
+#model_name_or_path = "/root/paddlejob/workspace/env_run/output/chenjianye/eb45t02"
 
-model_name_or_path = "./models/llama-7b"
+batch_size=1
 
 # 超参设置
-sampling_params = SamplingParams(temperature=0.1, max_tokens=30)
-llm = LLM(model=model_name_or_path, tensor_parallel_size=1)
-output = llm.generate(prompts="who are you？", use_tqdm=True)
+sampling_params = SamplingParams(top_p=0, temperature=0.95, max_tokens=128)
+llm = LLM(model=model_name_or_path, tensor_parallel_size=4, max_num_seqs=batch_size, num_gpu_blocks_override=1000)
+
+input_text = ["北京天安门广场在哪里?\n"] * batch_size
+#input_token = [[3991, 94112, 94286, 94398, 12877, 20298, 94009, 23]]
+# for i in range(1):
+#     output = llm.generate(prompts=input_text, sampling_params=sampling_params, use_tqdm=True)
+
+# paddle.framework.core.nvprof_start()
+for i in range(1):
+    output = llm.generate(prompts=input_text, 
+                          sampling_params=sampling_params, 
+                          use_tqdm=True)
+# paddle.framework.core.nvprof_stop()
+
+
+
+print(output)
+
 
 # output = llm.generate(prompts=["who are you？", "what can you do？"], use_tqdm=True)
 # print(output)

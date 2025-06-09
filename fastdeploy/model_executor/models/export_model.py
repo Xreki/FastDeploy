@@ -62,6 +62,8 @@ model_classes_mapping = {
     "Qwen2ForCausalLM": Qwen2PretrainedModel,
 }
 
+from ..layers.utils import load_checkpoint
+
 current_dir = os.path.dirname(os.path.abspath(__file__))
 grandparent_dir = os.path.abspath(
     os.path.join(current_dir, os.pardir, os.pardir))
@@ -192,6 +194,7 @@ def build_stream_line_model(
         tuple[dict, ErnieBotTokenizer, ErnieForCausalLM]:
         A tuple containing the configuration, tokenizer, and model.
     """
+    use_safetensors = True
     runtime_timer = RuntimeTimer("build_model")
     runtime_timer.start(f"{stage_flag} stage model loading time")
 
@@ -228,6 +231,10 @@ def build_stream_line_model(
     parallel_config.mp_size = tensor_parallel_degree
     parallel_config.ep_size = 1
     parallel_config.column_cut = False
+
+    model_config.tensor_parallel_degree = 4
+    model_config.tensor_parallel_rank = paddle.distributed.get_rank()
+    print(type(model_config))
 
     speculative_config.is_mtp = draft_type in ["eagle", "mtp"]
     speculative_config.draft_type = draft_type
