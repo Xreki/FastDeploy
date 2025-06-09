@@ -22,7 +22,6 @@ from paddlenlp.utils.log import logger
 
 from fastdeploy.model_executor.layers.utils import get_tensor
 from fastdeploy.worker.model_runner import ForwardMeta
-from fastdeploy.model_executor.layers.utils import get_tensor
 
 class Attention(nn.Layer):
     """
@@ -43,8 +42,8 @@ class Attention(nn.Layer):
         linear_shift=None,
         linear_smooth=None,
         use_neox_rotary_style=False,
-        cache_k_scale_key = None,
-        cache_v_scale_key = None,
+        cache_k_scale_key=None,
+        cache_v_scale_key=None,
     ) -> None:
         """
         Initializes `LMLayer` with the given parameters.
