@@ -56,28 +56,28 @@ class ModelRunner(ModelRunnerBase):
     def init_local_params(self):
         if self.args.enable_chunked_prefill:
             self.chunked_prefill_seq_lens = paddle.full(
-                shape=[self.args.max_num_seqs], 
-                fill_value=0, 
+                shape=[self.args.max_num_seqs],
+                fill_value=0,
                 dtype='int32',
             )
             self.chunked_prefill_cur_seq_lens = paddle.full(
-                shape=[self.args.max_num_seqs], 
-                fill_value=0, 
+                shape=[self.args.max_num_seqs],
+                fill_value=0,
                 dtype='int32',
             )
             self.chunked_prefill_cur_input_ids = paddle.full(
-                shape=[self.args.max_num_seqs, self.args.max_model_len], 
-                fill_value=0, 
+                shape=[self.args.max_num_seqs, self.args.max_model_len],
+                fill_value=0,
                 dtype='int64',
             )
-    
+
     def update_chunked_prefill(self, token_chunk_size=384):
         """
         更新chunked prefill相关参数
         """
         if not self.args.enable_chunked_prefill:
             return
-        
+
         from fastdeploy.model_executor.ops.gpu import update_split_fuse_inputs
         update_split_fuse_inputs(
             self.chunked_prefill_seq_lens,
@@ -95,14 +95,15 @@ class ModelRunner(ModelRunnerBase):
 
     def _load_model(self, model_name, dynamic_load_weight):
         use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
-        
+
         local_test = False
         if os.getenv("RUN_MODE", "") == "test":
             local_test = True
 
         if dynamic_load_weight:
             if use_pip_eff_llm:
-                from efficientllm.models.efficientllm_model import EfficientModel
+                from efficientllm.models.efficientllm_model import \
+                    EfficientModel
                 dynamic_load_model = EfficientModel(
                     model_name_or_path=self.args.model_name_or_path,
                     dtype=self.args.dtype,
@@ -117,7 +118,8 @@ class ModelRunner(ModelRunnerBase):
                     local_test=local_test,
                 )
             else:
-                from fastdeploy.model_executor.models.dynamic_load_model import DynamicLoadModel
+                from fastdeploy.model_executor.models.dynamic_load_model import \
+                    DynamicLoadModel
                 dynamic_load_model = DynamicLoadModel(
                     model_name_or_path=self.args.model_name_or_path,
                     dtype=self.args.dtype,
@@ -128,8 +130,7 @@ class ModelRunner(ModelRunnerBase):
                     nranks=self.nranks,
                     rank=self.rank,
                     embeddings_column_cut=False,
-                    local_test=local_test
-                )
+                    local_test=local_test)
             self.model = dynamic_load_model
         else:
             if use_pip_eff_llm is None:
@@ -221,6 +222,8 @@ class ModelRunner(ModelRunnerBase):
 
         for i in range(self.model_cfg.num_layers):
             cache_type = self.args.dtype
+            if self.llm_config.kv_cache_config.cache_quant_dtype == "cache_int8":
+                cache_type = 'uint8'
             cache_kvs["key_caches_{}".format(i)] = paddle.full(
                 shape=[
                     total_block_num,
@@ -248,12 +251,13 @@ class ModelRunner(ModelRunnerBase):
         for value in cache_kvs.values():
             del value
         paddle.device.cuda.empty_cache()
-    
+
     def prefill_finished(self):
         """
         判断是否已经完成了prefill操作
         """
-        prefill_statue = (self.share_inputs["seq_lens_this_time"] != 0) & (self.share_inputs["seq_lens_this_time"] != 1)
+        prefill_statue = (self.share_inputs["seq_lens_this_time"] != 0) & (
+            self.share_inputs["seq_lens_this_time"] != 1)
         return not paddle.any(prefill_statue).numpy()
 
     def dy_input_preprocess(self, tasks):
@@ -264,30 +268,40 @@ class ModelRunner(ModelRunnerBase):
             task = tasks[i]
             idx = task.idx
             length = task.prompt_token_ids_len
-            
+
             if self.args.enable_chunked_prefill:
                 if task.token_chunk_size > length:
                     self.share_inputs["seq_lens_this_time"][idx] = length
-                    self.share_inputs['input_ids'][idx, :length] = np.array(task.prompt_token_ids)
-                    self.share_inputs['step_seq_lens_encoder'][idx] = task.token_chunk_size
+                    self.share_inputs['input_ids'][idx, :length] = np.array(
+                        task.prompt_token_ids)
+                    self.share_inputs['step_seq_lens_encoder'][
+                        idx] = task.token_chunk_size
                     self.share_inputs['seq_lens_encoder'][idx] = length
                     self.chunked_prefill_seq_lens[idx] = length
                     self.chunked_prefill_cur_seq_lens[idx] = length
                 else:
-                    self.chunked_prefill_cur_input_ids[idx, :length] = np.array(task.prompt_token_ids)
-                    self.chunked_prefill_cur_seq_lens[idx] = task.token_chunk_size
+                    self.chunked_prefill_cur_input_ids[
+                        idx, :length] = np.array(task.prompt_token_ids)
+                    self.chunked_prefill_cur_seq_lens[
+                        idx] = task.token_chunk_size
                     self.chunked_prefill_seq_lens[idx] = length
-                    self.share_inputs["seq_lens_this_time"][idx] = task.token_chunk_size
-                    self.share_inputs['input_ids'][idx, :task.token_chunk_size] = np.array(
-                        self.chunked_prefill_cur_input_ids[idx, :task.token_chunk_size]
-                    )
-                    self.share_inputs['step_seq_lens_encoder'][idx] = task.token_chunk_size
-                    self.share_inputs['seq_lens_encoder'][idx] = task.token_chunk_size
+                    self.share_inputs["seq_lens_this_time"][
+                        idx] = task.token_chunk_size
+                    self.share_inputs['input_ids'][
+                        idx, :task.token_chunk_size] = np.array(
+                            self.chunked_prefill_cur_input_ids[
+                                idx, :task.token_chunk_size])
+                    self.share_inputs['step_seq_lens_encoder'][
+                        idx] = task.token_chunk_size
+                    self.share_inputs['seq_lens_encoder'][
+                        idx] = task.token_chunk_size
             else:
-                self.share_inputs["input_ids"][idx:idx + 1, :length] = np.array(
-                    task.prompt_token_ids)
+                self.share_inputs["input_ids"][idx:idx +
+                                               1, :length] = np.array(
+                                                   task.prompt_token_ids)
                 self.share_inputs["seq_lens_this_time"][idx:idx + 1] = length
-                self.share_inputs["step_seq_lens_encoder"][idx:idx + 1] = length
+                self.share_inputs["step_seq_lens_encoder"][idx:idx +
+                                                           1] = length
                 self.share_inputs["seq_lens_encoder"][idx:idx + 1] = length
 
             if len(task.eos_token_ids) < self.args.eos_tokens_lens:
@@ -525,7 +539,6 @@ class ModelRunner(ModelRunnerBase):
                      self.args.enc_dec_block_num) // self.args.block_size
         self.share_inputs["free_list"] = paddle.to_tensor([], dtype="int32")
         self.share_inputs["free_list_len"][0] = 0
-
 
         for i in range(number_of_tasks):
             idx = i
