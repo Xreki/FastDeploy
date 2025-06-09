@@ -91,14 +91,21 @@ cd $ROLLOUT_WORKER_ROOT/training/agent
 # 计算需要的端口总数
 TOTAL_PORTS=$((NUM_INSTANCES * 4))
 
-# 获取空闲端口
-ports=`sh get_free_ports.sh $TOTAL_PORTS`
-
-# 如果为空则重试一次
-if [ -z "$ports" ]; then
-  echo "第一次获取端口失败，重试一次..."
+# 获取空闲端口,如果为空则重试
+cnt=0
+while [ $cnt -lt 5 ]; do
   ports=`sh get_free_ports.sh $TOTAL_PORTS`
-fi
+  ports_array=($ports)
+
+  if [ "${#ports_array[@]}" -eq "$TOTAL_PORTS" ]; then
+    echo "成功获取到所有端口: $ports"
+    break
+  else
+    echo "获取端口失败或数量不足，重试 $((cnt+1))/5 ..."
+    ((cnt++))
+    sleep 5
+  fi
+done
 
 # 启动实例
 for ((i=0; i<$NUM_INSTANCES; i++)); do
