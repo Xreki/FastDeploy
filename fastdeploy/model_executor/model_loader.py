@@ -70,6 +70,7 @@ class DefaultModelLoader(BaseModelLoader):
         context = paddle.LazyGuard()
         architectures = llm_config.model_config.architectures[0]
 
+        # TODO(gongshaotian): Now, only support safetensor
         model_class = MODEL_CLASSES[architectures]
         state_dict = load_checkpoint(
             llm_config.parallel_config.model_name_or_path,

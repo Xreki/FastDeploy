@@ -55,6 +55,7 @@ class PaddleDisWorkerProc():
         # Initialize distributed enviroment
         (self.rank, self.local_rank) = self.init_distributed_enviroment()
         self.llm_config.parallel_config.tensor_parallel_rank = self.local_rank
+        self.llm_config.model_config.tensor_parallel_rank = self.local_rank
         self.llm_config.parallel_config.tensor_parallel_degree = self.rank
         self.llm_config.model_config.tensor_parallel_degree = self.rank
         self.llm_config.parallel_config.mp_size = self.rank
