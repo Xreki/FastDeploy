@@ -1,7 +1,8 @@
-from typing import List
 """
 metrics
 """
+from typing import List
+
 
 def build_buckets(mantissa_lst: List[int], max_value: int) -> List[int]:
     """
