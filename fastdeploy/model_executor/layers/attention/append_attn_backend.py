@@ -16,13 +16,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+import os
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, List, Optional
 
 import paddle
 
 from fastdeploy.model_executor.layers.attention.ops import (
     append_attention, get_block_shape_and_split_kv_block)
+from fastdeploy.model_executor.ops.gpu import (init_signal_layerwise,
+                                               open_shm_and_get_meta_signal)
 
 if TYPE_CHECKING:
     from paddle._typing.dtype_like import _DTypeLiteral
@@ -61,6 +64,10 @@ class AppendAttentionMetadata(AttentionMetadata):
     decoder_block_shape_q: Optional[paddle.Tensor] = None
     _fuse_kernel_compute_dtype: str = "bf16"
 
+    # pd_disaggregation
+    kv_signal_metadata: Optional[paddle.Tensor] = None
+    kv_signal_data_list: List[paddle.Tensor] = field(default_factory=list)
+
 
 class AppendAttentionBackend(AttentionBackend):
     """
@@ -84,10 +91,18 @@ class AppendAttentionBackend(AttentionBackend):
         self.speculate_method = llm_config.parallel_config.speculate_method
         self.use_speculate = self.speculate_method is not None
         self.speculate_max_draft_token_num = llm_config.parallel_config.speculate_max_draft_tokens
+        self.keep_pd_step_flag = llm_config.speculative_config.is_mtp
+        self.rank = llm_config.parallel_config.tensor_parallel_rank
 
         self.kv_num_heads = kv_num_heads
         self.num_heads = num_heads
         self.head_dim = head_dim
+        self.num_layers = llm_config.model_config.num_layers
+
+        # pd_disaggregation
+        self.use_pd_disaggregation = int(
+            os.getenv("FLAGS_use_pd_disaggregation", 0))
+        self.start_layer_index = llm_config.model_config.start_layer_index
 
     def init_attention_metadata(self, forward_meta: ForwardMeta):
         """Initialize attntion metadata hence all layers in the forward pass can reuse it."""
@@ -130,6 +145,12 @@ class AppendAttentionBackend(AttentionBackend):
             self.block_size,
             self.speculate_max_draft_token_num + 1,
         )
+
+        # pd_disaggregation
+        metadata.kv_signal_data_list = [None] * self.num_layers
+        if self.use_pd_disaggregation:
+            metadata.kv_signal_metadata = open_shm_and_get_meta_signal(
+                self.rank, self.keep_pd_step_flag)
         self.attention_metadata = metadata
 
     def get_attntion_meta(self):
@@ -159,6 +180,12 @@ class AppendAttentionBackend(AttentionBackend):
         forward_mixed
         """
         metadata = self.attention_metadata
+
+        if self.use_pd_disaggregation:
+            metadata.kv_signal_data_list[
+                layer.layer_id] = init_signal_layerwise(
+                    metadata.kv_signal_metadata,
+                    layer.layer_id + self.start_layer_index)
 
         res = append_attention(
             qkv,
@@ -193,7 +220,7 @@ class AppendAttentionBackend(AttentionBackend):
             getattr(layer, "cache_v_zp", None),
             layer.linear_shift,
             layer.linear_smooth,
-            None,  # kv_signal_data,
+            metadata.kv_signal_data_list[layer.layer_id],
             metadata._fuse_kernel_compute_dtype,
             getattr(layer, "cache_quant_type_str", "none"),
             layer.use_neox_rotary_style,
