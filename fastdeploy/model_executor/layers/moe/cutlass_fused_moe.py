@@ -39,6 +39,7 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
         self.hidden_size = moe_compute_params.hidden_size
         self.moe_intermediate_size = moe_compute_params.moe_intermediate_size
         self.top_k = moe_compute_params.top_k
+        self.tp_size = moe_compute_params.tp_size
 
     def create_weights(
             self,
@@ -204,14 +205,6 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
             False,  # used_in_ep_low_latency
         )
 
-        if False:
-            if in_dynamic_or_pir_mode():
-                hcg = fleet.get_hybrid_communicate_group()
-                mp_group = hcg.get_model_parallel_group()
-                paddle.distributed.all_reduce(ffn_out, group=mp_group)
-            else:
-                paddle.distributed.all_reduce(ffn_out, group=mp_group)
-
         # reduce 中会做 topk 个 weight 的 norm 和 routed_scaling_factor
         fused_moe_out = moe_expert_reduce(
             ffn_out,
@@ -223,7 +216,7 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
             routed_scaling_factor=1.0,
         )
 
-        if True:
+        if self.tp_size > 1:
             from fastdeploy.distributed.communication_op import \
                 tensor_model_parallel_all_reduce
             tensor_model_parallel_all_reduce(fused_moe_out)
