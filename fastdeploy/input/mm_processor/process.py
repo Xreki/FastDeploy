@@ -164,8 +164,9 @@ class DataProcessor:
             "pic_cnt": 0,
             "video_cnt": 0,
         }
- 
-        #收集多模massage
+        
+        #收集多模message
+        image_message_list = []
         for msg in messages:
             role = msg.get("role")
             assert role in self.role_prefixes, f"Unsupported role: {role}"
@@ -176,24 +177,21 @@ class DataProcessor:
 
             for item in content_items:
                 if isinstance(item, dict) and item.get("type") in ["image_url", "image", "video_url", "video"]:
-                    image_massage_list.append(item)
-
-
-        image_massage_list = []
+                    image_message_list.append(item)
+        
         prompt_token_ids = self.messages2ids(messages)
-
         image_start_index = 0
-        image_massage_index = 0
+        image_message_index = 0
         for i in range(len(prompt_token_ids)):
             if prompt_token_ids[i] == self.image_start_id:
                 outputs["input_ids"].extend(prompt_token_ids[image_start_index:i + 1])
                 image_start_index = i + 2
-                if image_massage_index < len(image_massage_list):
-                    if image_massage_list[image_massage_index]["type"] in ["image", "image_url"]:
-                        self._add_image(image_massage_list[image_massage_index], outputs)
+                if image_message_index < len(image_message_list):
+                    if image_message_list[image_message_index]["type"] in ["image", "image_url"]:
+                        self._add_image(image_message_list[image_message_index], outputs)
                     else:
-                        self._add_video(image_massage_list[image_massage_index], outputs)
-                    image_massage_index += 1
+                        self._add_video(image_message_list[image_message_index], outputs)
+                    image_message_index += 1
         outputs["input_ids"].extend(prompt_token_ids[image_start_index:])
         return outputs
 
