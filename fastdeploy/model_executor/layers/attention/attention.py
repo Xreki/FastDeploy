@@ -84,6 +84,16 @@ class Attention(nn.Layer):
         self.qkv_bias = qkv_bias
         self.qkv_scale = qkv_scale
         self._dtype = self._helper.get_default_dtype()
+        self.cache_quant_type_str = llm_config.kv_cache_config.cache_quant_dtype
+
+        if self.cache_quant_type_str == "":
+            self.cache_quant_type_str = "none"
+            logger.info(f"Attention is running in cache kv {self._dtype} mode")
+        else:
+            logger.info(
+                f"Attention is running in cache kv {self.cache_quant_type_str} mode"
+            )
+
         self.out_scale = out_scale
         self.use_neox_rotary_style = use_neox_rotary_style
         if llm_config.kv_cache_config.kvcache_quant_config is not None:
@@ -93,17 +103,19 @@ class Attention(nn.Layer):
         if llm_config.quant_config is not None:
             self.quant_max_bound = llm_config.quant_config.quant_max_bound
             self.quant_min_bound = llm_config.quant_config.quant_min_bound
+
         self.cache_k_scale_key = cache_k_scale_key
         self.cache_v_scale_key = cache_v_scale_key
 
     def load_state_dict(self, state_dict):
-        """
+        '''
         Attention only have quant related scales not other parameters.
-        """
-        if self.cache_k_scale_key is not None:
-            self.cache_quant_type_str = "cache_int8"
-            logger.info(
-                f"Attention is running in {self.cache_quant_type_str} mode")
+        '''
+        if self.cache_quant_type_str == "none":
+            pass
+        elif self.cache_quant_type_str == "cache_int8":
+            assert self.cache_k_scale_key is not None
+            assert self.cache_v_scale_key is not None
             max_bound = 127
             add_scale_attrs = [
                 "cache_k_scale", "cache_k_out_scale", "cache_v_scale",
@@ -129,6 +141,9 @@ class Attention(nn.Layer):
                             dtype=scale_tensor.dtype,
                         ))
                     getattr(self, tmp_name).set_value(scale_tensor)
+        else:
+            raise ValueError(
+                f"Unsupported cachekv dtype {self.cache_quant_type_str}")
 
     def forward(
         self,
