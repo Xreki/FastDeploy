@@ -186,12 +186,11 @@ class DataProcessor:
             if prompt_token_ids[i] == self.image_start_id:
                 outputs["input_ids"].extend(prompt_token_ids[image_start_index:i + 1])
                 image_start_index = i + 2
-                if image_message_index < len(image_message_list):
-                    if image_message_list[image_message_index]["type"] in ["image", "image_url"]:
-                        self._add_image(image_message_list[image_message_index], outputs)
-                    else:
-                        self._add_video(image_message_list[image_message_index], outputs)
-                    image_message_index += 1
+                if image_message_list[image_message_index]["type"] in ["image", "image_url"]:
+                    self._add_image(image_message_list[image_message_index], outputs)
+                else:
+                    self._add_video(image_message_list[image_message_index], outputs)
+                image_message_index += 1
         outputs["input_ids"].extend(prompt_token_ids[image_start_index:])
         return outputs
 
@@ -279,8 +278,8 @@ class DataProcessor:
             img = img.resize((w, h))
 
         outputs["pic_cnt"] += 1
-        self._add_text(f"Picture {outputs['pic_cnt']}:", outputs)
-        self._add_special_token(self.IMG_START, outputs)
+        # self._add_text(f"Picture {outputs['pic_cnt']}:", outputs)
+        # self._add_special_token(self.IMG_START, outputs)
 
         patches_h, patches_w = self.image_preprocessor.get_smarted_resize(
             img.height,
@@ -316,8 +315,8 @@ class DataProcessor:
         url_info = item.get("video_url", {})
         url = url_info.get("url")
         outputs["video_cnt"] += 1
-        self._add_text(f"Video {outputs['video_cnt']}:", outputs)
-        self._add_special_token(self.VID_START, outputs)
+        # self._add_text(f"Video {outputs['video_cnt']}:", outputs)
+        # self._add_special_token(self.VID_START, outputs)
 
         if "video" in item:
             video_path = item["video"]
