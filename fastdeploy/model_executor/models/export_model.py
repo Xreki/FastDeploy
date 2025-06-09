@@ -54,8 +54,6 @@ model_classes_mapping = {
     "Qwen2ForCausalLM": Qwen2PretrainedModel,
 }
 
-from ..layers.utils import load_checkpoint
-
 current_dir = os.path.dirname(os.path.abspath(__file__))
 grandparent_dir = os.path.abspath(
     os.path.join(current_dir, os.pardir, os.pardir))
