@@ -194,6 +194,7 @@ class DataProcessor:
         for i in range(len(prompt_token_ids)):
             if prompt_token_ids[i] == self.image_start_id:
                 outputs["input_ids"].extend(prompt_token_ids[image_start_index:i + 1])
+                self._add_text(prompt_token_ids[image_start_index:i + 1], outputs)
                 image_start_index = i + 2
                 if image_message_list[image_message_index]["type"] in ["image", "image_url"]:
                     self._add_image(image_message_list[image_message_index], outputs)
@@ -261,8 +262,7 @@ class DataProcessor:
         outputs["position_ids"].append([pos] * 3)
         outputs["cur_position"] += 1
 
-    def _add_text(self, text: str, outputs: Dict) -> None:
-        tokens = self.tokenizer.encode(text, add_special_tokens=False)["input_ids"]
+    def _add_text(self, tokens: [int], outputs: Dict) -> None:
         outputs["input_ids"].extend(tokens)
         outputs["token_type_ids"].extend([IDS_TYPE_FLAG["text"]] * len(tokens))
 
