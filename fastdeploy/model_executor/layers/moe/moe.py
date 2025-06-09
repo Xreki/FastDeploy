@@ -67,6 +67,7 @@ class FusedMoE(nn.Layer):
         moe_ffn2_weight_scale_keys=None,
         moe_ffn1_in_scale_keys=None,
         moe_ffn2_in_scale_keys=None,
+        use_method = "cutlass"
     ):
         """
         Initialize the Moe layer with given parameters.
@@ -90,6 +91,7 @@ class FusedMoE(nn.Layer):
         moe_tag = self.llm_config.moe_config.moe_tag
         logger.info(f"{moe_tag}MoE is running in {moe_quant_type} mode")
         
+        self.hidden_size = 8192
         self.moe_quant_type = moe_quant_type
         self.num_experts = num_experts
         self.num_local_experts = self.num_experts // self.ep_size
@@ -117,18 +119,22 @@ class FusedMoE(nn.Layer):
             self.ffn2_expert_weight_scale_key = moe_ffn2_weight_scale_keys
             self.ffn1_expert_in_scale_key = moe_ffn1_in_scale_keys
             self.ffn2_expert_in_scale_key = moe_ffn2_in_scale_keys
+        
 
-        self.compute_method = CutlassFusedMoeMethod()
+        moe_compute_params = MoEComputeParams()
+        moe_compute_params.global_num_experts = self.num_experts
+        moe_compute_params.top_k = top_k
+        moe_compute_params.hidden_size = self.hidden_size
+        moe_compute_params.num_local_experts = self.num_local_experts
+        moe_compute_params.moe_quant_type = self.moe_quant_type
+        moe_compute_params.moe_intermediate_size = self.moe_intermediate_size
+        moe_compute_params.ep_size = self.ep_size
+        moe_compute_params.tp_size = self.tp_size
 
-        self.moe_compute_params = MoEComputeParams()
-        self.moe_compute_params.global_num_experts = self.num_experts
-        self.moe_compute_params.top_k = top_k
-        self.moe_compute_params.hidden_size = self.hidden_size
-        self.moe_compute_params.num_local_experts = self.num_local_experts
-        self.moe_compute_params.moe_quant_type = self.moe_quant_type
-        self.moe_compute_params.moe_intermediate_size = self.moe_intermediate_size
-        self.moe_compute_params.ep_size = self.ep_size
-        self.moe_compute_params.tp_size = self.tp_size
+        if use_method == "cutlass":
+            self.compute_method = CutlassFusedMoeMethod(moe_compute_params)
+        else:
+            self.compute_method = TritonFusedMoeMethod(moe_compute_params)
 
     def load_gate_state_dict(self, state_dict):
         """
@@ -211,7 +217,7 @@ class FusedMoE(nn.Layer):
 
         # other weight is with compute_method
         # different method may have different way to create weights
-        self.compute_method.create_weights(self, self.moe_compute_params,
+        self.compute_method.create_weights(self,
                                            up_gate_proj_weight,
                                            down_proj_weight, None, None,
                                            weight1_scale, weight2_scale,
@@ -229,9 +235,5 @@ class FusedMoE(nn.Layer):
 
         """
 
-        out = self.compute_method.apply(self, self.moe_compute_params, x)
-        if self.tp_size > 1:
-            from fastdeploy.distributed.communication_op import \
-                tensor_model_parallel_all_reduce
-            tensor_model_parallel_all_reduce(out)
+        out = self.compute_method.apply(self, x)
         return out
