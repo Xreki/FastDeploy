@@ -193,7 +193,6 @@ class DataProcessor:
         image_message_index = 0
         for i in range(len(prompt_token_ids)):
             if prompt_token_ids[i] == self.image_start_id:
-                outputs["input_ids"].extend(prompt_token_ids[image_start_index:i + 1])
                 self._add_text(prompt_token_ids[image_start_index:i + 1], outputs)
                 image_start_index = i + 2
                 if image_message_list[image_message_index]["type"] in ["image", "image_url"]:
