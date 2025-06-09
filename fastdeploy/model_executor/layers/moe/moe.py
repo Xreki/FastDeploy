@@ -129,10 +129,7 @@ class FusedMoE(nn.Layer):
         moe_compute_params.ep_size = self.ep_size
         moe_compute_params.tp_size = self.tp_size
 
-        if use_method == "cutlass":
-            self.compute_method = CutlassFusedMoeMethod(moe_compute_params)
-        else:
-            self.compute_method = TritonFusedMoeMethod(moe_compute_params)
+        self.compute_method = CutlassFusedMoeMethod(moe_compute_params)
 
     def load_gate_state_dict(self, state_dict):
         """
