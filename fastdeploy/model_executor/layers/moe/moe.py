@@ -67,7 +67,6 @@ class FusedMoE(nn.Layer):
         moe_ffn2_weight_scale_keys=None,
         moe_ffn1_in_scale_keys=None,
         moe_ffn2_in_scale_keys=None,
-        use_method = "cutlass"
     ):
         """
         Initialize the Moe layer with given parameters.
@@ -91,7 +90,6 @@ class FusedMoE(nn.Layer):
         moe_tag = self.llm_config.moe_config.moe_tag
         logger.info(f"{moe_tag}MoE is running in {moe_quant_type} mode")
         
-        self.hidden_size = 8192
         self.moe_quant_type = moe_quant_type
         self.num_experts = num_experts
         self.num_local_experts = self.num_experts // self.ep_size
