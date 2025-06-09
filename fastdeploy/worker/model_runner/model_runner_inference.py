@@ -70,27 +70,6 @@ class ModelRunner(ModelRunnerBase):
                 dtype='int64',
             )
 
-    def update_chunked_prefill(self, token_chunk_size=384):
-        """
-        更新chunked prefill相关参数
-        """
-        if not self.args.enable_chunked_prefill:
-            return
-
-        from fastdeploy.model_executor.ops.gpu import update_split_fuse_inputs
-        update_split_fuse_inputs(
-            self.chunked_prefill_seq_lens,
-            self.chunked_prefill_cur_seq_lens,
-            self.chunked_prefill_cur_input_ids,
-            self.share_inputs['input_ids'],
-            self.share_inputs['seq_lens_this_time'],
-            self.share_inputs["seq_lens_encoder"],
-            self.share_inputs["seq_lens_decoder"],
-            self.share_inputs["step_idx"],
-            self.args.max_model_len,
-            self.args.max_num_seqs,
-            token_chunk_size,
-        )
 
     def _load_model(self, model_name, dynamic_load_weight):
         use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
