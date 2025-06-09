@@ -58,13 +58,6 @@ class GpuWorker(WorkerBase):
             paddle.set_default_dtype(self.parallel_config.dtype)
             self.device_ids = self.parallel_config.device_ids.split(",")
 
-            # Get free memory info
-            pynvml.nvmlInit()
-            handler = pynvml.nvmlDeviceGetHandleByIndex(self.local_rank)
-            meminfo = pynvml.nvmlDeviceGetMemoryInfo(handler)
-            pynvml.nvmlShutdown()
-
-            self.free_gpu_memory = meminfo.free
             gc.collect()
             paddle.device.cuda.empty_cache()
         else:
@@ -128,8 +121,7 @@ class GpuWorker(WorkerBase):
         not_paddle_use_mem = after_run_meminfo.used - paddle_reserved_mem_after_run
         peak_memory = paddle_allocated_mem_after_run + not_paddle_use_mem
 
-        available_kv_cache_memory = after_run_meminfo.total * (
-            self.parallel_config.gpu_memory_utilization - 0.04) - peak_memory
+        available_kv_cache_memory = after_run_meminfo.total * self.parallel_config.gpu_memory_utilization - peak_memory
 
         end_time = time.perf_counter()
         logger.info(

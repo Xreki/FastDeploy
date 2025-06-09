@@ -619,8 +619,12 @@ class GPUModelRunner(ModelRunnerBase):
                         batch_size=self.parallel_config.max_num_seqs)
 
         # 3. gc
+        del self.share_inputs["caches"]
+        if self.forward_meta is not None:
+            del self.forward_meta.caches
+        del self.share_inputs["block_tables"]
         # paddle.device.cuda.synchronize()
-        # paddle.device.cuda.empty_cache()
+        paddle.device.cuda.empty_cache()
         # gc.collect()
 
     def update_share_input_block_num(self, num_gpu_blocks: int) -> None:
@@ -632,12 +636,8 @@ class GPUModelRunner(ModelRunnerBase):
         self.num_gpu_blocks = num_gpu_blocks
 
         # Reset block table and kv cache with global block num
-        del self.share_inputs["caches"]
-        if self.forward_meta is not None:
-            del self.forward_meta.caches
         self.initialize_kv_cache()
 
-        del self.share_inputs["block_tables"]
         self.share_inputs["block_tables"] = paddle.full(
             [self.parallel_config.max_num_seqs, self.num_gpu_blocks],
             -1,
