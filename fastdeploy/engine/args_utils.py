@@ -501,7 +501,9 @@ class EngineArgs:
         """
         prefix = "scheduler_"
         prefix_len = len(prefix)
-        extra_params = ["max_model_len", "enable_chunked_prefill", "max_num_partial_prefills", "max_long_partial_prefills", "long_prefill_token_threshold"]
+        extra_params = ["max_model_len", "enable_chunked_prefill", 
+                        "max_num_partial_prefills", "max_long_partial_prefills", 
+                        "long_prefill_token_threshold"]
 
         all = asdict(self)
         params = dict()
