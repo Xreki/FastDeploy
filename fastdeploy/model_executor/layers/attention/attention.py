@@ -23,6 +23,7 @@ from paddlenlp.utils.log import logger
 from fastdeploy.model_executor.layers.utils import get_tensor
 from fastdeploy.worker.model_runner import ForwardMeta
 
+
 class Attention(nn.Layer):
     """
     The AttentionLayer.
