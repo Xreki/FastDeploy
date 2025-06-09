@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "paddle/extension.h"
+#include <map>
 
 std::vector<paddle::Tensor> GetMmSplitFuse(const paddle::Tensor& task_input_ids,
                             const paddle::Tensor& task_image_type_ids,

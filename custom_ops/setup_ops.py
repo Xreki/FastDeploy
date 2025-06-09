@@ -22,7 +22,7 @@ import tarfile
 import paddle
 from paddle.utils.cpp_extension import CppExtension, CUDAExtension, setup
 from setuptools import find_namespace_packages, find_packages
-
+from setuptools.command.install_lib import install_lib
 archs = json.loads(os.getenv("BUILDING_ARCS", "[]"))
 use_bf16 = os.getenv("CPU_USE_BF16", "False") == "True"
 
@@ -190,7 +190,7 @@ elif paddle.is_compiled_with_cuda():
         "gpu_ops/enforce_generation.cu", "gpu_ops/dequant_int8.cu",
         "gpu_ops/tune_cublaslt_gemm.cu", "gpu_ops/swap_cache_batch.cu",
         "gpu_ops/swap_cache.cu", "gpu_ops/step_system_cache.cu",
-        "gpu_ops/cpp_extensions.cu", "gpu_ops/share_external_data.cu",
+        "gpu_ops/share_external_data.cu",
         "gpu_ops/per_token_quant_fp8.cu",
         "gpu_ops/extract_text_token_output.cu",
         "gpu_ops/update_split_fuse_input.cu"
@@ -201,6 +201,7 @@ elif paddle.is_compiled_with_cuda():
         "gpu_ops/remote_cache_kv_ipc.cc",
         "gpu_ops/open_shm_and_get_meta_signal.cc",
         "gpu_ops/init_signal_layerwise.cc",
+        "gpu_ops/cpp_extensions.cc",
     ]
 
     cutlass_dir = "third_party/cutlass"
@@ -252,6 +253,8 @@ elif paddle.is_compiled_with_cuda():
 
     nvcc_compile_args = get_gencode_flags(archs)
     nvcc_compile_args += ["-DPADDLE_DEV"]
+    nvcc_compile_args += ["-DPADDLE_ON_INFERENCE"]
+    nvcc_compile_args += ["-DPy_LIMITED_API=0x03090000"]
     nvcc_compile_args += [
         "-Igpu_ops/cutlass_kernels",
         "-Ithird_party/cutlass/include",
@@ -316,7 +319,6 @@ elif paddle.is_compiled_with_cuda():
     if cc >= 89:
         sources += find_end_files(
             "gpu_ops/cutlass_kernels/fp8_gemm_fused/autogen", ".cu")
-
     setup(
         name="fastdeploy_ops",
         ext_modules=CUDAExtension(
@@ -332,6 +334,9 @@ elif paddle.is_compiled_with_cuda():
                 "include/cute/**/*",
                 "include/cutlass/**/*",
             ]
+        },
+        exclude_package_data={
+        "": ["*.cu.o","*.o"],  # 排除中间文件
         },
         include_package_data=True,
     )
@@ -394,6 +399,7 @@ else:
         "-fPIC",
         "-Wno-parentheses",
         "-DPADDLE_WITH_CUSTOM_KERNEL",
+        "-DPADDLE_ON_INFERENCE"
         "-mavx512f",
         "-mavx512vl",
         "-fopenmp",
@@ -405,6 +411,7 @@ else:
         "-g",
         "-lstdc++fs",
         "-D_GLIBCXX_USE_CXX11_ABI=1",
+        "-DPy_LIMITED_API=0x03090000",
     ]
     if use_bf16:
         # avx512-bf16 flags

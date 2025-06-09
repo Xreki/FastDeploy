@@ -26,5 +26,6 @@ setup(
             "gpu_ops/get_output_msg_with_topk.cc",
             "gpu_ops/transfer_output.cc",
         ],
+        extra_compile_args=["-DPy_LIMITED_API=0x03090000","-DPADDLE_ON_INFERENCE"],
     ),
 )

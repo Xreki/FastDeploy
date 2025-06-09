@@ -13,7 +13,7 @@
 // limitations under the License.
 
 #include "paddle/extension.h"
-
+#include "pybind11/pybind11.h"
 namespace py = pybind11;
 
 // 自定义异常类，用于处理CUDA错误
