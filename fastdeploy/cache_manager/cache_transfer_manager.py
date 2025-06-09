@@ -52,8 +52,6 @@ def parse_args():
     parser.add_argument("--rank", type=int, default=0, help="current rank")
     parser.add_argument("--device_id", type=int, default=0, help="device id")
     parser.add_argument("--num_layers", type=int, default=1, help="model num layers")
-    parser.add_argument("--num_attention_heads", type=int, default=1, help="model attention heads")
-    parser.add_argument("--hidden_size", type=int, default=1, help="model hidden size")
     parser.add_argument("--head_dim", type=int, default=1, help="model head dim")
     parser.add_argument("--kv_num_head", type=int, default=1, help="model kv num head")
     parser.add_argument("--mp_num", type=int, default=1, help="number of model parallel")
