@@ -175,8 +175,9 @@ class DataProcessor:
                 content_items = [content_items]
 
             for item in content_items:
-                if  not (isinstance(item, str) or item.get("text", "")) and item.get("type") in ["image_url", "image", "video_url", "video"]:
+                if isinstance(item, dict) and item.get("type") in ["image_url", "image", "video_url", "video"]:
                     image_massage_list.append(item)
+
 
         image_massage_list = []
         prompt_token_ids = self.messages2ids(messages)
