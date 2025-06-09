@@ -126,6 +126,7 @@ class DataProcessor:
         self.video_start = self.VID_START
         self.video_end = self.VID_END
         self.image_patch_id = self.tokenizer.convert_tokens_to_ids("<|IMAGE_PLACEHOLDER|>")
+        self.image_start_id = self.tokenizer.convert_tokens_to_ids(self.image_start)
 
         self.token_type_mapping = self._build_token_type_mapping()
         self.is_training = True
@@ -147,6 +148,55 @@ class DataProcessor:
         self.is_training = False
 
     def process(self, messages: List[Dict[str, Any]]) -> Dict[str, Union[np.ndarray, List[np.ndarray], None]]:
+        """
+        Convert chat messages into model inputs.
+        Returns a dict with input_ids, token_type_ids, position_ids, images, grid_thw, image_type_ids, labels.
+        """
+        outputs = {
+            "input_ids": [],
+            "token_type_ids": [],
+            "position_ids": [],
+            "images": [],
+            "grid_thw": [],
+            "image_type_ids": [],
+            "labels": [],
+            "cur_position": 0,
+            "pic_cnt": 0,
+            "video_cnt": 0,
+        }
+ 
+        #收集多模massage
+        for msg in messages:
+            role = msg.get("role")
+            assert role in self.role_prefixes, f"Unsupported role: {role}"
+
+            content_items = msg.get("content")
+            if not isinstance(content_items, list):
+                content_items = [content_items]
+
+            for item in content_items:
+                if  not (isinstance(item, str) or item.get("text", "")) and item.get("type") in ["image_url", "image", "video_url", "video"]:
+                    image_massage_list.append(item)
+
+        image_massage_list = []
+        prompt_token_ids = self.messages2ids(messages)
+
+        image_start_index = 0
+        image_massage_index = 0
+        for i in range(len(prompt_token_ids)):
+            if prompt_token_ids[i] == self.image_start_id:
+                outputs["input_ids"].extend(prompt_token_ids[image_start_index:i + 1])
+                image_start_index = i + 2
+                if image_massage_index < len(image_massage_list):
+                    if image_massage_list[image_massage_index]["type"] in ["image", "image_url"]:
+                        self._add_image(image_massage_list[image_massage_index], outputs)
+                    else:
+                        self._add_video(image_massage_list[image_massage_index], outputs)
+                    image_massage_index += 1
+        outputs["input_ids"].extend(prompt_token_ids[image_start_index:])
+        return outputs
+
+    def process_back(self, messages: List[Dict[str, Any]]) -> Dict[str, Union[np.ndarray, List[np.ndarray], None]]:
         """
         Convert chat messages into model inputs.
         Returns a dict with input_ids, token_type_ids, position_ids, images, grid_thw, image_type_ids, labels.
@@ -387,3 +437,21 @@ class DataProcessor:
 
         coords = list(zip(time_idx, h_idx, w_idx))
         return [[start_idx + ti, start_idx + hi, start_idx + wi] for ti, hi, wi in coords]
+
+    def messages2ids(self, messages):
+        """
+        Convert multi-turn messages into ID sequences.
+        
+        Args:
+            messages: Either a request dict containing 'messages' field, 
+                                or a list of message dicts directly
+            
+        Returns:
+            List of token IDs as strings (converted from token objects)
+        """
+        if self.tokenizer.chat_template is None:
+            raise ValueError("This model does not support chat_template.")
+
+        return self.tokenizer.apply_chat_template(
+            messages, tokenize=True, add_generation_prompt=False
+        )["input_ids"]
