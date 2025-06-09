@@ -179,7 +179,6 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
             False,
             topk_only_mode=False,
         )
-        #print(token_nums_per_expert)
 
         if self.moe_quant_type != "w4a8":
             # only w4a8 need expert_idx_per_token

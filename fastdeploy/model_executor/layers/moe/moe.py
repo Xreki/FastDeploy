@@ -93,7 +93,7 @@ class FusedMoE(nn.Layer):
         logger.info(f"{moe_tag}MoE is running in {moe_quant_type} mode")
         
         self.hidden_size = 8192
-        self.moe_quant_type = moe_quant_type
+        self.moe_quant_type = "w4a8"
         self.num_experts = num_experts
         self.num_local_experts = self.num_experts // self.ep_size
 
@@ -238,5 +238,3 @@ class FusedMoE(nn.Layer):
 
         out = self.compute_method.apply(self, x)
         return out
-
-
