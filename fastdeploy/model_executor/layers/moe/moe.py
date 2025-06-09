@@ -92,7 +92,7 @@ class FusedMoE(nn.Layer):
         moe_tag = self.llm_config.moe_config.moe_tag
         logger.info(f"{moe_tag}MoE is running in {moe_quant_type} mode")
         
-        self.moe_quant_type = "w4a8"
+        self.moe_quant_type = moe_quant_type
         self.num_experts = num_experts
         self.num_local_experts = self.num_experts // self.ep_size
 
