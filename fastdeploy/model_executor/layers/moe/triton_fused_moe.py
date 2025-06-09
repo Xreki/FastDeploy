@@ -24,16 +24,22 @@ from .triton_moe_kernels import fused_moe_kernel_paddle
 
 
 def ceil_div(a, b):
+    """
+    ceil(a / b)
+    """
     return (a + b - 1) // b
 
 
 class TritonFusedMoeMethod(FusedMoEMethodBase):
     """
-    Use Cutlass Group Gemm to compute Fused MoE.
-    This method is the oldest way to compute MoE in Paddle.
+    Use Triton Group Gemm to compute Fused MoE.
     """
 
     def __init__(self, moe_compute_params):
+        """
+        Triton Group Gemm to compute Fused MoE.
+        """
+
         self.num_local_experts = moe_compute_params.num_local_experts
         self.moe_quant_type = moe_compute_params.moe_quant_type
         self.hidden_size = moe_compute_params.hidden_size
