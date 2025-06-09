@@ -81,8 +81,8 @@ class FusedMoE(nn.Layer):
 
         self.llm_config = llm_config
         self.layer_idx = layer_idx
-        self.tp_size = 4
-        self.ep_size = 1
+        self.tp_size = llm_config.parallel_config.mp_size
+        self.ep_size = llm_config.parallel_config.ep_size
 
         self.moe_use_gate_correction_bias = moe_use_gate_correction_bias
 
@@ -92,7 +92,6 @@ class FusedMoE(nn.Layer):
         moe_tag = self.llm_config.moe_config.moe_tag
         logger.info(f"{moe_tag}MoE is running in {moe_quant_type} mode")
         
-        self.hidden_size = 8192
         self.moe_quant_type = "w4a8"
         self.num_experts = num_experts
         self.num_local_experts = self.num_experts // self.ep_size
