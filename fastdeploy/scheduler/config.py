@@ -22,31 +22,53 @@ from .local_scheduler import LocalScheduler
 
 class LocalSchedulerConfig:
     """
-    LocalSchedulerConfig class
+    Configuration class for LocalScheduler.
+
+    Attributes:
+        max_size: Maximum number of concurrent requests (-1 for unlimited)
+        ttl: Time-to-live in seconds for request expiration
     """
 
     def __init__(self,
                  max_size: int = -1,
-                 ttl: int = 900,
-                 wait_response_timeout: float = 1,
+                 ttl: float = 900,
+                 max_model_len: int = 8192,
+                 enable_chunked_prefill: bool = False,
+                 max_num_partial_prefills: int = 1,
+                 max_long_partial_prefills: int = 1,
+                 long_prefill_token_threshold: int = 0,
                  **kwargs
                  ):
+        """
+        Initialize LocalScheduler configuration.
+
+        Args:
+            max_size: Maximum concurrent requests (-1 for unlimited)
+            ttl: Time-to-live in seconds for requests
+            **kwargs: Additional unused arguments
+        """
         self.max_size = max_size
         self.ttl = ttl
-        self.wait_response_timeout = wait_response_timeout
+
+        self.max_model_len = max_model_len
+        self.enable_chunked_prefill = enable_chunked_prefill
+        self.max_num_partial_prefills = max_num_partial_prefills
+        self.max_long_partial_prefills = max_long_partial_prefills
+        self.long_prefill_token_threshold = long_prefill_token_threshold
+        if self.long_prefill_token_threshold == 0:
+            self.long_prefill_token_threshold = int(self.max_model_len * 0.04)
 
     def check(self):
         """
-        check config
+        Validate the configuration values.
+
+        Currently performs no validation as all values are acceptable.
         """
-        assert self.wait_response_timeout > 0, \
-            "LocalScheduler: `wait_response_timeout` must be greater than zero"
-        assert self.ttl > self.wait_response_timeout, \
-            "LocalScheduler: `ttl` must be greater than `wait_response_timeout`"
+        pass
 
     def print(self):
         """
-        print config
+        Print the current configuration to logs.
         """
         llm_logger.info("LocalScheduler Configuration Information :")
         for k, v in self.__dict__.items():
@@ -57,7 +79,15 @@ class LocalSchedulerConfig:
 
 class GlobalSchedulerConfig:
     """
-    GlobalSchedulerConfig class
+    Configuration class for GlobalScheduler (Redis-based).
+
+    Attributes:
+        host: Redis server hostname
+        port: Redis server port
+        db: Redis database number
+        password: Optional Redis password
+        topic: Namespace prefix for queues
+        ttl: Time-to-live in seconds for Redis keys
     """
 
     def __init__(self,
@@ -66,32 +96,56 @@ class GlobalSchedulerConfig:
                  db: int = 0,
                  password=None,
                  topic: str = "default",
-                 ttl: int = 900,
-                 wait_response_timeout: float = 1,
-                 remote_write_time: int = 3,
+                 ttl: float = 900,
+                 min_load_score: float = 3,
+                 max_model_len: int = 8192,
+                 enable_chunked_prefill: bool = False,
+                 max_num_partial_prefills: int = 1,
+                 max_long_partial_prefills: int = 1,
+                 long_prefill_token_threshold: int = 0,
                  **kwargs
                  ):
+        """
+        Initialize GlobalScheduler configuration.
+
+        Args:
+            host: Redis server hostname
+            port: Redis server port
+            db: Redis database number
+            password: Optional Redis password
+            topic: Namespace prefix for queues
+            ttl: Time-to-live in seconds for Redis keys
+            min_load_score: Minimum load score for task assignment
+            **kwargs: Additional unused arguments
+        """
         self.host = host
         self.port = port
         self.db = db
         self.password = password
         self.topic = topic
         self.ttl = ttl
-        self.wait_response_timeout = wait_response_timeout
-        self.remote_write_time = remote_write_time
+        self.min_load_score = min_load_score
+
+        self.max_model_len = max_model_len
+        self.enable_chunked_prefill = enable_chunked_prefill
+        self.max_num_partial_prefills = max_num_partial_prefills
+        self.max_long_partial_prefills = max_long_partial_prefills
+        self.long_prefill_token_threshold = long_prefill_token_threshold
+        if self.long_prefill_token_threshold == 0:
+            self.long_prefill_token_threshold = int(self.max_model_len * 0.04)
 
     def check(self):
         """
-        check config
+        Validate the configuration by testing Redis connection.
+
+        Raises:
+            Exception: If connection to Redis fails
         """
-        assert self.wait_response_timeout > 0, \
-            "GlobalScheduler: `wait_response_timeout` must be greater than zero"
-        assert self.remote_write_time > 0, \
-            "GlobalScheduler: `remote_write_time` must be greater than zero"
-        assert self.ttl > self.remote_write_time, \
-            "GlobalScheduler: `ttl` must be greater than `remote_write_time`"
-        assert self.ttl > self.wait_response_timeout, \
-            "GlobalScheduler: `ttl` must be greater than `wait_response_timeout`"
+
+        if self.ttl <= 0:
+            raise Exception("ttl should be greater than 60")
+        if self.min_load_score < 1:
+            raise Exception("min_load_score should be greater than 0")
 
         r = redis.Redis(self.host, self.port, self.db, self.password)
         try:
@@ -103,21 +157,33 @@ class GlobalSchedulerConfig:
 
     def print(self):
         """
-        print config
+        Print the current configuration to logs.
         """
         llm_logger.info("GlobalScheduler Configuration Information :")
+        password = self.password
+        self.password = "******"
         for k, v in self.__dict__.items():
             llm_logger.info("{:<20}:{:<6}{}".format(k, "", v))
+        self.password = password
         llm_logger.info(
             "=============================================================")
 
 
 class SchedulerConfig:
     """
-    SchedulerConfig class
+    Factory class for scheduler configurations.
+
+    Creates appropriate config based on scheduler type (local/global).
     """
 
     def __init__(self, name="local", **kwargs):
+        """
+        Initialize scheduler configuration factory.
+
+        Args:
+            name: Scheduler type ("local" or "global")
+            **kwargs: Configuration parameters for the specific scheduler
+        """
         self.name = name
         self.config = None
 
@@ -129,23 +195,28 @@ class SchedulerConfig:
 
     def check(self):
         """
-        check config
+        Validate the configuration.
+
+        Raises:
+            Exception: If invalid scheduler type is specified
         """
         if self.name not in ["local", "global"]:
-            raise Exception(
-                "SchedulerConfig: `name` must be `local` or `global`")
+            raise Exception(f'Unknown scheduler type {self.name}')
 
         self.config.check()
 
     def print(self):
         """
-        print config
+        Print the current configuration to logs.
         """
         self.config.print()
 
     def scheduler(self):
         """
-        create scheduler by config
+        Create a scheduler instance based on the configuration.
+
+        Returns:
+            Initialized scheduler instance (LocalScheduler or GlobalScheduler)
         """
 
         if self.name == "global":
@@ -155,10 +226,15 @@ class SchedulerConfig:
                                    password=self.config.password,
                                    topic=self.config.topic,
                                    ttl=self.config.ttl,
-                                   remote_write_time=self.config.remote_write_time,
-                                   wait_response_timeout=self.config.wait_response_timeout)
+                                   min_load_score=self.config.min_load_score,
+                                   enable_chunked_prefill=self.config.enable_chunked_prefill,
+                                   max_num_partial_prefills=self.config.max_num_partial_prefills,
+                                   max_long_partial_prefills=self.config.max_long_partial_prefills,
+                                   long_prefill_token_threshold=self.config.long_prefill_token_threshold,)
 
         return LocalScheduler(max_size=self.config.max_size,
                               ttl=self.config.ttl,
-                              wait_response_timeout=self.config.wait_response_timeout
-                              )
+                              enable_chunked_prefill=self.config.enable_chunked_prefill,
+                              max_num_partial_prefills=self.config.max_num_partial_prefills,
+                              max_long_partial_prefills=self.config.max_long_partial_prefills,
+                              long_prefill_token_threshold=self.config.long_prefill_token_threshold,)

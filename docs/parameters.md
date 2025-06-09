@@ -26,6 +26,16 @@
 |       use_warmup       |   bool   |                   是否进行预热                   |    否    |    False    |
 |  enable_prefix_caching  |   bool   |                 是否开启前缀缓存                 |    否    |    False    |
 |       enabe_mm          |   bool   |                 是否开启多模态                 |    否    |    False    |
+|  cpu_offload_gb  |   float   |                 cpu cache 空间大小                 |    否    |    0    |
+|  cache_queue_port  |   int   |                 cache 传输同步队列端口号                 |    否    |    None    |
+|  enable_chunked_prefill  |   bool   |            是否开启chunked_prefill       |    否    |    False    |
+|  max_num_partial_prefills  |   int   |        开启chunked_prefill后，prefill阶段最大请求条数       |    否    |    1    |
+|  max_long_partial_prefills  |   int   |        开启chunked_prefill后，prefill阶段长请求的最大数量       |    否    |    1    |
+|  long_prefill_token_threshold  |   int   |        开启chunked_prefill后，token数大于该值的请求被认为是长请求       |    否    |    max_model_len的4%    |
+|  splitwise_role |   str   |           分离式部署角色可选值['prefill', 'decode', 'mixed']       |    否    |    'mixed'    |
+|  innode_prefill_ports  |   list[str]   |        prefill 实例内部引擎启动端口 （仅单机PD分离需要）       |    否    |    None    |
+
+
 
 ## 请求参数
 

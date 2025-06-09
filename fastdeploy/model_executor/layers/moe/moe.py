@@ -131,6 +131,34 @@ class FusedMoE(nn.Layer):
 
         self.compute_method = CutlassFusedMoeMethod(moe_compute_params)
 
+    def init_shared_experts_layer(self):
+        """
+        Initialize shared experts.
+        """
+        self.shared_experts_hidden_dim = self.num_shared_experts * self.moe_intermediate_size
+
+        self.shared_experts_prefix = f"ernie.layers.{self.layer_idx}.mlp.shared_experts"
+        self.shared_experts_up_gate_proj = FFN1(
+            inference_args=self.inference_args,
+            layer_name=f"{self.shared_experts_prefix}.up_gate_proj",
+            weight_key=f"{self.shared_experts_prefix}.up_gate_proj.weight",
+            dim_feedforward=self.shared_experts_hidden_dim,
+            bias_key=None,
+            activation=self.activation,
+            use_fast_ffn=True,
+        )
+
+        self.shared_experts_down_proj = FFN2(
+            inference_args=self.inference_args,
+            layer_name=f"{self.shared_experts_prefix}.down_proj",
+            weight_key=f"{self.shared_experts_prefix}.down_proj.weight",
+            dim_feedforward=self.shared_experts_hidden_dim,
+            bias_key=None,
+            use_smooth_quant=False,
+            shift_key=None,
+            smooth_key=None,
+        )
+
     def load_gate_state_dict(self, state_dict):
         """
         load_gate_state_dict function.

@@ -1,9 +1,10 @@
 #!/bin/bash
+set -x
 
 # 环境变量设置
 export ROLLOUT_WORKER_ROOT="${PWD%/*/*}"
 export ROLLOUT_CONTROLLER_HOST=${rollout_controller_host:-"http://10.11.155.41:8771"}
-source ${ROLLOUT_WORKER_ROOT}/fastdeploy/agent/build_env.sh
+source ${ROLLOUT_WORKER_ROOT}/training/agent/build_env.sh
 source "${ROLLOUT_WORKER_ROOT}/${FASTDEPLOY_ENV_NAME}/bin/activate"
 
 # 参数检查
@@ -27,7 +28,7 @@ if [ $CARDS_PER_INSTANCE -lt 1 ] || [ $CARDS_PER_INSTANCE -gt 8 ]; then
     exit 1
 fi
 
-cd ${ROLLOUT_WORKER_ROOT}/fastdeploy/agent
+cd ${ROLLOUT_WORKER_ROOT}/training/agent
 
 # 计算需要的端口总数
 TOTAL_PORTS=$((NUM_INSTANCES * 3))

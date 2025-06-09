@@ -160,7 +160,9 @@ def build_stream_line_model(
         return_state_dicts: bool = False,
         sharing_model=None,
         sharing_state_dicts=None,
-        return_llm_config: bool = False    
+        return_llm_config: bool = False,
+        use_empty_parameter: bool = False,
+        embeddings_column_cut: bool = False,    
 ):
     """
     Build a fused inference model
@@ -210,6 +212,9 @@ def build_stream_line_model(
             )
 
     config, _ = PretrainedConfig.get_config_dict(model_path)
+    config["head_dim"] = config.get(
+        "head_dim", config["hidden_size"] // config["num_attention_heads"]
+    )
     model_config = ModelConfig.from_dict(config)
 
     parallel_config = ParallelConfig()
@@ -266,16 +271,24 @@ def build_stream_line_model(
         moe_intermediate_size = moe_intermediate_size[0]
 
     if not use_ep and pad_vocab:
+        hcg = fleet.get_hybrid_communicate_group()
         config["vocab_size"] = _vocab_size_with_padding(
             config.get("vocab_size", tokenizer.vocab_size),
             config.pop("vocab_size_divisible_unit", 128),
-            paddle.distributed.get_world_size(),
+            hcg.get_model_parallel_world_size(),
         )
 
     group_size = config.get("group_size", -1)
     num_key_value_heads = config.get("num_key_value_heads", -1)
     if num_key_value_heads is None:
         num_key_value_heads = -1
+    
+    # RL need, some model num_key_value_heads less tensor_parallel_degree, need copy
+    if num_key_value_heads < tensor_parallel_degree:
+        logger.warning(
+            f"key value heads num is {num_key_value_heads}, tensor parallel degree is {tensor_parallel_degree}"
+        )
+        num_key_value_heads = tensor_parallel_degree
 
     if config.get("ffn_hidden_size", None) is not None:
         ffn_hidden_size = config["ffn_hidden_size"]
@@ -300,13 +313,20 @@ def build_stream_line_model(
         )
     if num_layers is None:
         raise ValueError(f"num_layers<{num_layers}> is invalid")
+    
+    remove_tail_layer = config.get("remove_tail_layer")
+    if remove_tail_layer is True:
+        num_layers -= 1
+    elif isinstance(remove_tail_layer, int):
+        num_layers -= remove_tail_layer
 
     use_moe = config.get(
         "moe_layer_start_index", num_layers
     ) < num_layers or draft_type in ["mtp", "eagle"]
-
     if not sharing_state_dicts:
-        if use_fake_parameter:
+        if use_empty_parameter:
+            context = paddle.LazyGuard()
+        elif use_fake_parameter:
             context = contextlib.nullcontext()
         elif use_safetensors:
             context = paddle.LazyGuard()
@@ -644,9 +664,9 @@ def build_stream_line_model(
 
     if use_fake_parameter:
         if return_llm_config:
-            return llm_config, tokenizer, model
+            return llm_config, tokenizer, model, None
         else:
-            return config, tokenizer, model
+            return config, tokenizer, model, None
     elif not use_moe:
         for k, v in state_dict.items():
             if convert_dtype(v.dtype) == dtype:

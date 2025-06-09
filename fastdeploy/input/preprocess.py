@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-
+from typing import Dict, Any, Optional
 from fastdeploy.engine.config import ModelConfig
 
 class InputPreprocessor:
@@ -35,12 +35,15 @@ class InputPreprocessor:
     def __init__(
         self,
         model_name_or_path: str,
+        limit_mm_per_prompt: Optional[Dict[str, Any]] = None,
+        mm_processor_kwargs: Optional[Dict[str, Any]] = None,
         enable_mm: bool = False,
     ) -> None:
 
         self.model_name_or_path = model_name_or_path
         self.enable_mm = enable_mm
-
+        self.limit_mm_per_prompt = limit_mm_per_prompt
+        self.mm_processor_kwargs = mm_processor_kwargs
 
     def create_processor(self):
         """
@@ -55,7 +58,8 @@ class InputPreprocessor:
         """
         architectures = ModelConfig(self.model_name_or_path).architectures
         if not self.enable_mm:
-            if "ErnieForCausalLM" not in architectures:
+            if "ErnieForCausalLM" not in architectures \
+                and "ErnieBotLMHeadModel" not in architectures:
                 from fastdeploy.input.text_processor import DataProcessor
                 self.processor = DataProcessor(model_name_or_path=self.model_name_or_path)
             else:
@@ -66,5 +70,7 @@ class InputPreprocessor:
                 raise ValueError(f"Model {self.model_name_or_path} is not a valid ErnieMoEVL model.")
             else:
                 from fastdeploy.input.ernie_vl_processor import ErnieMoEVLProcessor
-                self.processor = ErnieMoEVLProcessor(model_name_or_path=self.model_name_or_path)
+                self.processor = ErnieMoEVLProcessor(model_name_or_path=self.model_name_or_path,
+                                                     limit_mm_per_prompt=self.limit_mm_per_prompt,
+                                                     mm_processor_kwargs=self.mm_processor_kwargs)
         return self.processor

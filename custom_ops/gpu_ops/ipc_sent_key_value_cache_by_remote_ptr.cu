@@ -264,6 +264,14 @@ void SentKeyValueByRemotePtr(const paddle::Tensor& local_key_tensor,
     // using dataT=std::remove_pointer<decltype(local_block_ids_ptr)>;
 }
 
+void SentKeyValueByRemotePtrBlockSync(const paddle::Tensor& local_key_tensor,
+                             const paddle::Tensor& local_value_tensor,
+                             const int64_t& cuda_stream_raw) {
+    cudaStream_t cuda_stream = (cudaStream_t)cuda_stream_raw;
+    cudaStreamSynchronize(cuda_stream);
+    }
+    
+
 PD_BUILD_STATIC_OP(ipc_sent_key_value_cache_by_remote_ptr)
     .Inputs({"local_key_tensor",
              "local_value_tensor",
@@ -275,3 +283,13 @@ PD_BUILD_STATIC_OP(ipc_sent_key_value_cache_by_remote_ptr)
     .Outputs({"remote_block_ids_out"})
     .SetInplaceMap({{"remote_block_ids", "remote_block_ids_out"}})
     .SetKernelFn(PD_KERNEL(SentKeyValueByRemotePtr));
+
+    
+    
+    
+PD_BUILD_STATIC_OP(ipc_sent_key_value_cache_by_remote_ptr_block_sync)
+    .Inputs({"local_key_tensor", "local_value_tensor"})
+    .Attrs({"cuda_stream_raw: int64_t"})
+    .Outputs({"local_key_tensor_out", "local_value_tensor_out"})
+    .SetInplaceMap({{"local_key_tensor", "local_key_tensor_out"},{"local_value_tensor","local_value_tensor_out"}})
+    .SetKernelFn(PD_KERNEL(SentKeyValueByRemotePtrBlockSync));
