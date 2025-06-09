@@ -3,14 +3,13 @@ metrics
 """
 import os
 import shutil
-from typing import Set, TYPE_CHECKING, List
+from typing import Set, TYPE_CHECKING
 
 from prometheus_client import Gauge, Histogram, multiprocess, CollectorRegistry, generate_latest, Counter
 from prometheus_client.registry import Collector
 
 from fastdeploy.metrics import build_1_2_5_buckets
 from fastdeploy.metrics.work_metrics import work_process_metrics
-from fastdeploy.utils import api_server_logger
 
 if TYPE_CHECKING:
     from prometheus_client import Gauge, Histogram, Counter

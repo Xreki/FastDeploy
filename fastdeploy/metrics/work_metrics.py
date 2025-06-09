@@ -6,7 +6,7 @@ import atexit
 import shutil
 from threading import Lock
 
-from prometheus_client import Histogram , Counter
+from prometheus_client import Histogram, Counter
 
 from fastdeploy.metrics.metrics import build_1_2_5_buckets
 
