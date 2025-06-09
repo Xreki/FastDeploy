@@ -128,6 +128,7 @@ class DataProcessor:
         self.video_end = self.VID_END
         self.image_patch_id = self.tokenizer.convert_tokens_to_ids("<|IMAGE_PLACEHOLDER|>")
         self.image_start_id = self.tokenizer.convert_tokens_to_ids(self.image_start)
+        self.video_start_id = self.tokenizer.convert_tokens_to_ids(self.video_start)
 
         self.token_type_mapping = self._build_token_type_mapping()
         self.is_training = True
@@ -174,7 +175,11 @@ class DataProcessor:
         enable_thinking = request.get("enable_thinking")
         if enable_thinking is not None:
             template_input["enable_thinking"] = enable_thinking
-        prompt_token_ids = self.messages2ids(template_input)
+
+        prompt_token_str = self.apply_chat_template(template_input)
+        prompt_token_str = prompt_token_str.replace("<|image@placeholder|>", "").replace("<|video@placeholder|>", "")
+        prompt_token_ids = self.tokenizer.encode(prompt_token_str, add_special_tokens=False)["input_ids"]
+
         #收集多模message
         messages = parse_chat_messages(messages)
         image_message_list = []
@@ -189,12 +194,13 @@ class DataProcessor:
             for item in content_items:
                 if isinstance(item, dict) and item.get("type") in ["image_url", "image", "video_url", "video"]:
                     image_message_list.append(item)
+        
         image_start_index = 0
         image_message_index = 0
         for i in range(len(prompt_token_ids)):
-            if prompt_token_ids[i] == self.image_start_id:
+            if prompt_token_ids[i] in [self.image_start_id, self.video_start_id]:
                 self._add_text(prompt_token_ids[image_start_index:i + 1], outputs)
-                image_start_index = i + 2
+                image_start_index =  i + 1
                 if image_message_list[image_message_index]["type"] in ["image", "image_url"]:
                     self._add_image(image_message_list[image_message_index], outputs)
                 else:
@@ -317,7 +323,7 @@ class DataProcessor:
         outputs["grid_thw"].append(ret["image_grid_thw"])
         outputs["image_type_ids"].append(0)
 
-        self._add_special_token(self.IMG_END, outputs)
+        # self._add_special_token(self.IMG_END, outputs)
 
     def _add_video(self, item: Dict, outputs: Dict) -> None:
         url_info = item.get("video_url", {})
@@ -362,7 +368,7 @@ class DataProcessor:
         outputs["position_ids"].extend(pos_ids)
         outputs["cur_position"] = np.max(pos_ids) + 1
 
-        self._add_special_token(self.VID_END, outputs)
+        # self._add_special_token(self.VID_END, outputs)
 
     def _load_and_process_video(self, url: str, item: Dict) -> List[Image.Image]:
         reader, meta, path = read_video_decord(url, save_to_disk=False)
@@ -444,7 +450,7 @@ class DataProcessor:
         coords = list(zip(time_idx, h_idx, w_idx))
         return [[start_idx + ti, start_idx + hi, start_idx + wi] for ti, hi, wi in coords]
 
-    def messages2ids(self, messages):
+    def apply_chat_template(self, messages):
         """
         Convert multi-turn messages into ID sequences.
         
@@ -459,5 +465,5 @@ class DataProcessor:
             raise ValueError("This model does not support chat_template.")
 
         return self.tokenizer.apply_chat_template(
-            messages, tokenize=True
-        )["input_ids"]
+            messages, tokenize=False
+        )
