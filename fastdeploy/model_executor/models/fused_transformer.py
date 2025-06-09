@@ -370,7 +370,7 @@ class FusedTransformer(nn.Layer):
                         top_k=inference_args.moe_config.top_k,
                         moe_use_gate_correction_bias=inference_args.moe_config.
                         moe_use_gate_correction_bias,
-                        moe_quant_type="w4a8",
+                        moe_quant_type=inference_args.moe_config.moe_quant_type,
                         layer_idx=i,
                         gate_weight_key=f"ernie.layers.{i}.mlp.gate.weight",
                         gate_correction_bias_key=
