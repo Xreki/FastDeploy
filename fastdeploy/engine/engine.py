@@ -377,6 +377,8 @@ class LLMEngine(object):
             "max_tokens",
             min(self.cfg.max_model_len - input_ids_len,
                 request.get("max_tokens")))
+        main_process_metrics.request_params_max_tokens.observe(min(self.cfg.max_model_len - input_ids_len,
+                request.get("max_tokens")))
         min_tokens = request.get("min_tokens")
         if input_ids_len + min_tokens >= self.cfg.max_model_len:
             error_msg = (

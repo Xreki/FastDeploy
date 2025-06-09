@@ -292,12 +292,12 @@ class TokenProcessor(object):
                         f"Speculate accept ratio: {1 - self.total_step * 1.0 / self.number_of_output_tokens}"
                         f" total step: {self.total_step}. total_output_token_num: {self.number_of_output_tokens}"
                     )
+                    if not is_prefill:
+                        self._record_completion_metrics(task, current_time)
                     self._recycle_resources(task_id, i, task, is_prefill)
                     if is_prefill:
                         prefill_batch_result.append(result)
                         prefill_port = task.disaggregate_info['port']
-                    self._record_completion_metrics(task, current_time)
-                    self._recycle_resources(task_id, i, task)
                     break
             if not is_prefill:
                 batch_result.append(result)
@@ -328,6 +328,7 @@ class TokenProcessor(object):
             main_process_metrics.request_decode_time.observe(decode_time)
 
         main_process_metrics.num_requests_running.dec(1)
+        main_process_metrics.request_success_total.inc()
         main_process_metrics.request_inference_time.observe(current_time - task.inference_start_time)
         main_process_metrics.request_generation_tokens.observe(self.tokens_counter[task.request_id])
 

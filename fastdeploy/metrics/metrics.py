@@ -132,6 +132,8 @@ class MetricsManager:
     request_decode_time: 'Histogram'
     request_prompt_tokens: 'Histogram'
     request_generation_tokens: 'Histogram'
+    request_params_max_tokens: 'Histogram'
+    request_success_total: 'Counter'
 
     # 定义所有指标配置
     METRICS = {
@@ -229,6 +231,20 @@ class MetricsManager:
             'kwargs': {
                 'buckets': build_1_2_5_buckets(33792)
             }
+        },
+        'request_params_max_tokens': {
+            'type': Histogram,
+            'name': 'fastdeploy:request_params_max_tokens',
+            'description': 'Histogram of max_tokens parameter in request parameters',
+            'kwargs': {
+                'buckets': build_1_2_5_buckets(33792)
+            }
+        },
+        'request_success_total': {
+            'type': Counter,
+            'name': 'fastdeploy:request_success_total',
+            'description': 'Total number of successfully processed requests',
+            'kwargs': {}
         }
     }
 
