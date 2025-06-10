@@ -34,7 +34,7 @@ from paddlenlp.utils.env import USE_FAST_TOKENIZER
 from paddlenlp.utils.log import logger
 
 from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
-                               KVCacheConfig, LLMConfig, LoadConfig,
+                               KVCacheConfig, FDConfig, LoadConfig,
                                ModelConfig, MoEConfig, ParallelConfig,
                                SpeculativeConfig, TmpConfig)
 from fastdeploy.inference_args import GenerationPhase
@@ -152,7 +152,7 @@ def build_stream_line_model(
         return_state_dicts: bool = False,
         sharing_model=None,
         sharing_state_dicts=None,
-        return_llm_config: bool = False,
+        return_fd_config: bool = False,
         use_empty_parameter: bool = False,
         embeddings_column_cut: bool = False,    
 ):
@@ -640,7 +640,7 @@ def build_stream_line_model(
     else:
         quant_config = None
 
-    llm_config = LLMConfig(
+    fd_config = FDConfig(
         model_config=model_config,
         parallel_config=parallel_config,
         speculative_config=speculative_config,
@@ -656,13 +656,13 @@ def build_stream_line_model(
 
     with context:
         model_cls = ModelRegistry.get_class(model_config.architectures[0])
-        model = model_cls(llm_config)
+        model = model_cls(fd_config)
 
     model.eval()
 
     if use_fake_parameter:
-        if return_llm_config:
-            return llm_config, tokenizer, model, None
+        if return_fd_config:
+            return fd_config, tokenizer, model, None
         else:
             return config, tokenizer, model, None
     elif not use_moe:
@@ -686,7 +686,7 @@ def build_stream_line_model(
             sharing_state_dicts.pop(k)
     possible_state_dict = state_dict if return_state_dicts else None
 
-    if return_llm_config:
-        return llm_config, tokenizer, model, possible_state_dict
+    if return_fd_config:
+        return fd_config, tokenizer, model, possible_state_dict
     else:
         return config, tokenizer, model, possible_state_dict

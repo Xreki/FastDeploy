@@ -18,7 +18,7 @@ from typing import Optional
 
 from paddle import nn
 
-from fastdeploy.config import LLMConfig
+from fastdeploy.config import FDConfig
 from fastdeploy.worker.output import ModelRunnerOutput
 from fastdeploy.worker.V1.model_runner_base import ModelRunnerBase
 
@@ -31,7 +31,7 @@ class WorkerBase(ABC):
 
     def __init__(
         self,
-        llm_config: LLMConfig,
+        fd_config: FDConfig,
         local_rank: int,
         rank: int,
     ) -> None:
@@ -39,16 +39,16 @@ class WorkerBase(ABC):
         Initizalize common worker components.
 
         Args:
-             llm_config:
+             fd_config:
              local_rank:
              rank:
         """
         # Set Configuration
-        self.llm_config = llm_config
-        self.model_config = llm_config.model_config
-        self.load_config = llm_config.load_config
-        self.parallel_config = llm_config.parallel_config
-        self.device_config = llm_config.device_config
+        self.fd_config = fd_config
+        self.model_config = fd_config.model_config
+        self.load_config = fd_config.load_config
+        self.parallel_config = fd_config.parallel_config
+        self.device_config = fd_config.device_config
         # ... config
 
         # Device and Runner

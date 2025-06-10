@@ -132,7 +132,7 @@ class ModelRunner(ModelRunnerBase):
                     break
             self.args.speculate_max_draft_tokens = 5
 
-            llm_config, tokenizer, model, _ = build_stream_line_model(
+            fd_config, tokenizer, model, _ = build_stream_line_model(
                 os.path.join(self.args.model_name_or_path,
                              os.getenv("CONFIG_JSON_FILE", "config.json")),
                 self.args.model_name_or_path,
@@ -150,21 +150,21 @@ class ModelRunner(ModelRunnerBase):
                 return_all_hidden_states=False,
                 moe_quant_type=getattr(self.model_cfg, "moe_quant_type", "weight_only_int4"),
                 use_safetensors=self.model_cfg.is_unified_ckpt,
-                return_llm_config=True)
+                return_fd_config=True)
             model.eval()
-            llm_config.parallel_config.max_model_len = llm_config.model_config.max_seq_len
-            self.llm_config = llm_config
+            fd_config.parallel_config.max_model_len = fd_config.model_config.max_seq_len
+            self.fd_config = fd_config
             self.model = model
             attn_backend_cls = get_attention_backend(
                 self.args.attention_backend)
-            num_heads = self.llm_config.model_config.num_attention_heads // self.llm_config.parallel_config.mp_size
-            self.llm_config.model_config.kv_num_heads = int(
-                self.llm_config.model_config.num_key_value_heads
-            ) // self.llm_config.parallel_config.mp_size
-            head_dim = self.llm_config.model_config.hidden_size // self.llm_config.model_config.num_attention_heads
+            num_heads = self.fd_config.model_config.num_attention_heads // self.fd_config.parallel_config.mp_size
+            self.fd_config.model_config.kv_num_heads = int(
+                self.fd_config.model_config.num_key_value_heads
+            ) // self.fd_config.parallel_config.mp_size
+            head_dim = self.fd_config.model_config.hidden_size // self.fd_config.model_config.num_attention_heads
             self.attn_backend = attn_backend_cls(
-                self.llm_config,
-                kv_num_heads=self.llm_config.model_config.kv_num_heads,
+                self.fd_config,
+                kv_num_heads=self.fd_config.model_config.kv_num_heads,
                 num_heads=num_heads,
                 head_dim=head_dim)
             self._init_kvcache()
@@ -210,7 +210,7 @@ class ModelRunner(ModelRunnerBase):
         cache_kvs_list = []
         # TODO infer 进程初始化cache
         for i in range(self.model_cfg.num_layers):
-            if self.llm_config.kv_cache_config.cache_quant_dtype == "cache_int8":
+            if self.fd_config.kv_cache_config.cache_quant_dtype == "cache_int8":
                 cache_type = 'uint8'
             cache_kvs["key_caches_{}".format(i)] = paddle.full(
                 shape=[

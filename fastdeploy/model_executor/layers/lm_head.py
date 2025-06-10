@@ -70,7 +70,7 @@ class ParallelLMHead(nn.Layer):
 
     def __init__(
         self,
-        llm_config,
+        fd_config,
         num_embeddings,
         embedding_dim,
         prefix="",
@@ -81,7 +81,7 @@ class ParallelLMHead(nn.Layer):
         Parallelized LMhead.
 
         Args:
-            llm_config (LLMConfig): Arguments related to inference, containing
+            fd_config (FDConfig): Arguments related to inference, containing
                 attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
             num_embeddings (int): vocabulary size.
@@ -91,13 +91,13 @@ class ParallelLMHead(nn.Layer):
             prefix (str): full name of the layer in the state dict
         """
         super(ParallelLMHead, self).__init__()
-        self.use_moe = llm_config.model_config.use_moe
+        self.use_moe = fd_config.model_config.use_moe
         self.linear_weight_key = prefix + ".weight"
         if with_bias:
             self.linear_bias_key = prefix + ".bias"
         else:
             self.linear_bias_key = None
-        self.use_ep = llm_config.parallel_config.use_ep
+        self.use_ep = fd_config.parallel_config.use_ep
         self.column_cut = True
         self.fused_linear = True
 
