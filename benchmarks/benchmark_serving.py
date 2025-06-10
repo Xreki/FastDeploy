@@ -1,7 +1,7 @@
 # !/usr/bin/env python3
 # encoding: utf-8
 # SPDX-License-Identifier: Apache-2.0
-r"""Benchmark online serving throughput.
+"""Benchmark online serving throughput.
 
 On the server side, run one of the following commands:
     vLLM OpenAI API server
@@ -919,8 +919,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--tokenizer",
         type=str,
-        help=
-        "Name or path of the tokenizer, if not using the default tokenizer.",  # noqa: E501
+        help="Name or path of the tokenizer, if not using the default tokenizer.",  # noqa: E501
     )
     parser.add_argument("--use-beam-search", action="store_true")
     parser.add_argument(
