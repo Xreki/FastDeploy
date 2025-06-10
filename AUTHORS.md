@@ -2,4 +2,4 @@
 
 | Github account | Name |
 | :------------- | :--- |
-| [Jiang-Jia-Jun](https://github.com/Jiang-Jia-Jun) | JiangJiajun |
+| [Jiang-Jia-Jun](https://github.com/Jiang-Jia-Jun) | Jiang Jiajun |
