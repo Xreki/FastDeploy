@@ -702,8 +702,6 @@ def main(args: argparse.Namespace):
 
     goodput_config_dict = check_goodput_args(args)
 
-    # print("input_requests", input_requests)
-
     # Collect the sampling parameters.
     sampling_params = {
         k: v
