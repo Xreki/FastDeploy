@@ -171,6 +171,7 @@ class PrefixCacheManager:
                                              suffix=pid_suffix,
                                              create=True)
         log_dir = os.getenv("FD_LOG_DIR", "log")
+        cache_manager_processes = []
         for i in range(tensor_parallel_size):
             launch_cmd = (
                 f"FLAGS_allocator_strategy=auto_growth CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7"
@@ -194,14 +195,14 @@ class PrefixCacheManager:
                 + f" >{log_dir}/launch_cache_manager_{int(device_ids[i])}.log 2>&1"
             )
             logger.info(f"Launch cache transfer manager, command:{launch_cmd}")
-            cache_manager_process = subprocess.Popen(
+            cache_manager_processes.append(subprocess.Popen(
                 launch_cmd, shell=True, preexec_fn=os.setsid
-            )
+            ))
         # 等待cache初始化完毕
         logger.info(f"Waiting for cache transfer manager ready...")
         while np.sum(self.cache_ready_signal.value) != tensor_parallel_size:
             time.sleep(1)
-        exit_code = cache_manager_process.poll()
+        exit_code = cache_manager_processes[-1].poll()
         if exit_code is None:
             logger.info(f"Launch cache transfer manager successful")
         else:
@@ -212,6 +213,7 @@ class PrefixCacheManager:
         if cache_config.enable_hierarchical_cache and self.num_cpu_blocks > 0:
             logger.info("Enable hierarchical cache.")
             self._enable_cpu_cache()
+        return cache_manager_processes
 
     def update_cache_config(self, cache_config):
         """
