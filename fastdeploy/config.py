@@ -278,7 +278,7 @@ class MoEConfig:
     moe_layer_start_index = 0
     moe_use_ffn_shared_weight_and_bias = (False, )
     moe_group = (False, )
-    moe_quant_type = "weight_only_int8"
+    moe_quant_type = "weight_only_int4"
     num_max_dispatch_tokens_per_rank = 256
 
     has_multimodality: bool = False

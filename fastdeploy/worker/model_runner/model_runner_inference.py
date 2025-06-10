@@ -34,7 +34,7 @@ from fastdeploy.model_executor.layers.sample.sampler import Sampler
 from fastdeploy.model_executor.ops.gpu import (rebuild_padding, save_output,
                                                set_stop_value_multi_ends,
                                                update_inputs)
-from fastdeploy.inter_communicator import IPCSignal
+
 
 class ModelRunner(ModelRunnerBase):
 
@@ -69,7 +69,6 @@ class ModelRunner(ModelRunnerBase):
                 fill_value=0,
                 dtype='int64',
             )
-
 
     def _load_model(self, model_name, dynamic_load_weight):
         use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
@@ -140,7 +139,8 @@ class ModelRunner(ModelRunnerBase):
                 block_size=self.args.block_size,
                 max_len=self.args.max_model_len,
                 stage_flag="msgid-1 predict",
-                export_model_type=getattr(self.model_cfg, "predict_model_type", "weight_only_int8"),
+                export_model_type=getattr(self.model_cfg, "predict_model_type",
+                                          "weight_only_int8"),
                 use_fake_parameter=False,
                 use_stop_seqs=self.model_cfg.ellm_dynamic_use_stop_seqs,
                 use_beam_search=False,
@@ -148,7 +148,8 @@ class ModelRunner(ModelRunnerBase):
                 speculate_max_draft_token_num=self.args.
                 speculate_max_draft_tokens,
                 return_all_hidden_states=False,
-                moe_quant_type=getattr(self.model_cfg, "moe_quant_type", "weight_only_int4"),
+                moe_quant_type=getattr(self.model_cfg, "moe_quant_type",
+                                       "weight_only_int4"),
                 use_safetensors=self.model_cfg.is_unified_ckpt,
                 return_llm_config=True)
             model.eval()
@@ -200,60 +201,29 @@ class ModelRunner(ModelRunnerBase):
             max_num_blocks=total_block_num)
         cache_type = self.args.dtype
 
-        key_cache_shape = value_cache_shape =  [
-            total_block_num,
-            kv_num_head,
-            self.args.block_size,
-            self.model_cfg.head_dim,
-        ]
-
         cache_kvs_list = []
         # TODO infer 进程初始化cache
-        for i in range(self.model_cfg.num_layers):
-            if self.llm_config.kv_cache_config.cache_quant_dtype == "cache_int8":
-                cache_type = 'uint8'
-            cache_kvs["key_caches_{}".format(i)] = paddle.full(
-                shape=[
-                    total_block_num,
-                    kv_num_head,
-                    self.args.block_size,
-                    self.model_cfg.hidden_size //
-                    self.model_cfg.num_attention_heads,
-                ],
-                fill_value=0,
-                dtype=cache_type,
-            )
-            cache_kvs["value_caches_{}".format(i)] = paddle.full(
-                shape=[
-                    total_block_num,
-                    kv_num_head,
-                    self.args.block_size,
-                    self.model_cfg.hidden_size //
-                    self.model_cfg.num_attention_heads,
-                ],
-                fill_value=0,
-                dtype=cache_type,
-            )
-
-        if not self.args.do_profile and (self.args.enable_prefix_caching or self.args.splitwise_role != "mixed"):
+        if not self.args.do_profile and (self.args.enable_prefix_caching or
+                                         self.args.splitwise_role != "mixed"):
             use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
             if use_pip_eff_llm is None:
-                from fastdeploy.model_executor.ops.gpu import set_data_ipc
-                from fastdeploy.model_executor.ops.gpu import share_external_data
+                from fastdeploy.model_executor.ops.gpu import \
+                    share_external_data
             else:
-                from efficientllm.gpu import set_data_ipc
                 from efficientllm.gpu import share_external_data
-            
+
             for i in range(self.model_cfg.num_layers):
                 key_cache = paddle.empty(shape=[], dtype=cache_type)
                 key_cache_name = f"key_caches_{i}_rank{self.rank}.device{self.device_ids_list[self.rank]}"
                 val_cache_name = f"value_caches_{i}_rank{self.rank}.device{self.device_ids_list[self.rank]}"
-                key_cache = share_external_data(key_cache, key_cache_name, key_cache_shape)
+                key_cache = share_external_data(key_cache, key_cache_name,
+                                                kv_cache_shape)
                 cache_kvs_list.append(key_cache)
                 value_cache = paddle.empty(shape=[], dtype=cache_type)
-                value_cache = share_external_data(value_cache, val_cache_name, key_cache_shape)
+                value_cache = share_external_data(value_cache, val_cache_name,
+                                                  kv_cache_shape)
                 cache_kvs_list.append(value_cache)
-        
+
             self.share_inputs["caches"] = cache_kvs_list
 
         else:
@@ -299,53 +269,67 @@ class ModelRunner(ModelRunnerBase):
         """
         if "caches" not in self.share_inputs:
             self._init_kvcache()
-        if tasks[-1].disaggregate_info is not None and tasks[-1].disaggregate_info["role"] == "prefill":
-            os.environ['PREFILL_NODE_ONE_STEP_STOP'] = "1" 
+        if tasks[-1].disaggregate_info is not None and tasks[
+                -1].disaggregate_info["role"] == "prefill":
+            os.environ['PREFILL_NODE_ONE_STEP_STOP'] = "1"
         for i in range(len(tasks)):
             task = tasks[i]
             idx = task.idx
             length = len(task.prompt_token_ids)
 
-            if tasks[i].disaggregate_info is not None and tasks[i].disaggregate_info["role"] == "decode":
-                self.share_inputs["pre_ids"][idx:idx + 1] = task.prompt_token_ids[-1]
-                self.share_inputs["input_ids"][idx:idx + 1, 0] = task.prompt_token_ids[0]
+            if tasks[i].disaggregate_info is not None and tasks[
+                    i].disaggregate_info["role"] == "decode":
+                self.share_inputs["pre_ids"][idx:idx +
+                                             1] = task.prompt_token_ids[-1]
+                self.share_inputs["input_ids"][idx:idx + 1,
+                                               0] = task.prompt_token_ids[0]
                 self.share_inputs['seq_lens_encoder'][idx:idx + 1] = 0
                 self.share_inputs['seq_lens_decoder'][idx:idx + 1] = length
                 self.share_inputs['seq_lens_this_time'][idx:idx + 1] = 1
                 self.share_inputs['step_seq_lens_encoder'][idx:idx + 1] = 0
-                self.share_inputs['step_seq_lens_decoder'][idx:idx + 1] = length
+                self.share_inputs['step_seq_lens_decoder'][idx:idx +
+                                                           1] = length
                 self.share_inputs['step_idx'][idx:idx + 1] = 1
             else:
                 self.share_inputs["pre_ids"][idx:idx + 1] = -1
                 self.share_inputs["step_idx"][idx:idx + 1] = 0
-                self.share_inputs["input_ids"][idx:idx + 1, :length] = np.array(
-                    task.prompt_token_ids)
+                self.share_inputs["input_ids"][idx:idx +
+                                               1, :length] = np.array(
+                                                   task.prompt_token_ids)
 
                 if self.args.enable_chunked_prefill:
                     # print(f"chunked_prefill, {task} {length}, {task.token_chunk_size}")
                     task.set("chunk_idx", 1)
                     token_chunk_size = task.prefill_chunk_info[0]
-                    self.share_inputs["seq_lens_this_time"][idx:idx + 1] = token_chunk_size
-                    self.share_inputs['input_ids'][idx, :token_chunk_size] = np.array(
-                        task.prompt_token_ids[:token_chunk_size]
-                    )
-                    self.share_inputs['step_seq_lens_encoder'][idx:idx + 1] = token_chunk_size
-                    self.share_inputs['seq_lens_encoder'][idx:idx + 1] = token_chunk_size
-                    self.share_inputs['seq_lens_decoder'][idx:idx + 1] = task.get("seq_lens_decoder", 0)
-                    self.share_inputs['step_seq_lens_decoder'][idx:idx + 1] = task.get("seq_lens_decoder", 0)
+                    self.share_inputs["seq_lens_this_time"][
+                        idx:idx + 1] = token_chunk_size
+                    self.share_inputs['input_ids'][
+                        idx, :token_chunk_size] = np.array(
+                            task.prompt_token_ids[:token_chunk_size])
+                    self.share_inputs['step_seq_lens_encoder'][
+                        idx:idx + 1] = token_chunk_size
+                    self.share_inputs['seq_lens_encoder'][idx:idx +
+                                                          1] = token_chunk_size
+                    self.share_inputs['seq_lens_decoder'][
+                        idx:idx + 1] = task.get("seq_lens_decoder", 0)
+                    self.share_inputs['step_seq_lens_decoder'][
+                        idx:idx + 1] = task.get("seq_lens_decoder", 0)
                 else:
-                    self.share_inputs['seq_lens_decoder'][idx:idx + 1] = task.get("seq_lens_decoder", 0)
-                    self.share_inputs['step_seq_lens_decoder'][idx:idx + 1] = task.get("seq_lens_decoder", 0)
-                    self.share_inputs['seq_lens_this_time'][idx:idx + 1] = length
-                    self.share_inputs['step_seq_lens_encoder'][idx:idx + 1] = length
+                    self.share_inputs['seq_lens_decoder'][
+                        idx:idx + 1] = task.get("seq_lens_decoder", 0)
+                    self.share_inputs['step_seq_lens_decoder'][
+                        idx:idx + 1] = task.get("seq_lens_decoder", 0)
+                    self.share_inputs['seq_lens_this_time'][idx:idx +
+                                                            1] = length
+                    self.share_inputs['step_seq_lens_encoder'][idx:idx +
+                                                               1] = length
                     self.share_inputs['seq_lens_encoder'][idx:idx + 1] = length
-
 
             if len(task.eos_token_ids) < self.args.eos_tokens_lens:
                 task.eos_token_ids.append(task.eos_token_ids[0])
             self.share_inputs["eos_token_id"][:] = np.array(
                 task.eos_token_ids, dtype="int64").reshape(-1, 1)
-            
+
             self.share_inputs["top_p"][idx:idx + 1] = task.get("top_p", 0.7)
             self.share_inputs["temperature"][idx:idx + 1] = task.get(
                 "temperature", 0.95)
@@ -591,17 +575,22 @@ class ModelRunner(ModelRunnerBase):
                 self.share_inputs["seq_lens_this_time"][idx:idx + 1] = 1
                 self.share_inputs['seq_lens_encoder'][idx:idx + 1] = 0
                 self.share_inputs["step_idx"][idx:idx + 1] = 1
-                self.share_inputs["seq_lens_decoder"][idx:idx + 1] = start_idx + task.get("seq_lens_decoder", 0)
+                self.share_inputs["seq_lens_decoder"][
+                    idx:idx + 1] = start_idx + task.get("seq_lens_decoder", 0)
             else:
                 token_chunk_size = task.prefill_chunk_info[task.chunk_idx]
 
-                self.share_inputs["seq_lens_this_time"][idx:idx + 1] = token_chunk_size
-                self.share_inputs['input_ids'][idx, :token_chunk_size] = np.array(
-                    task.prompt_token_ids[start_idx:start_idx + token_chunk_size]
-                )
-                self.share_inputs['seq_lens_encoder'][idx:idx + 1] = token_chunk_size
+                self.share_inputs["seq_lens_this_time"][idx:idx +
+                                                        1] = token_chunk_size
+                self.share_inputs['input_ids'][
+                    idx, :token_chunk_size] = np.array(
+                        task.prompt_token_ids[start_idx:start_idx +
+                                              token_chunk_size])
+                self.share_inputs['seq_lens_encoder'][idx:idx +
+                                                      1] = token_chunk_size
                 self.share_inputs["step_idx"][idx:idx + 1] = 0
-                self.share_inputs["seq_lens_decoder"][idx:idx + 1] = start_idx + task.get("seq_lens_decoder", 0)
+                self.share_inputs["seq_lens_decoder"][
+                    idx:idx + 1] = start_idx + task.get("seq_lens_decoder", 0)
             task.chunk_idx += 1
 
     def dummy_input(self, num_total_tokens, number_of_tasks):
