@@ -468,7 +468,7 @@ class DFNRopeVisionTransformerPretrainedModel(PretrainedModel):
             vit_names.append(f"vision_model.blocks.{layer_idx}.mlp.fc2.bias")
 
         for train_name in vit_names:
-            infer_to_train[train_name[len("vision_model."):]] = train_name
+            infer_to_train[train_name] = train_name
         
         return infer_to_train
     
