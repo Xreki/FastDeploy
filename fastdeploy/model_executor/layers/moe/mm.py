@@ -19,6 +19,7 @@ import paddle
 from paddle import nn
 from fastdeploy.model_executor.layers.moe.moe import MoELayer
 from fastdeploy.model_executor.layers.utils import get_tensor
+from fastdeploy.model_executor.ops.gpu import text_image_gather_scatter
 
 
 class TextMoELayer(MoELayer):
@@ -253,21 +254,18 @@ class MultimodalityMoeLayer(nn.Layer):
         Raises:
             AssertionError: 当未提供token_type_ids参数时会引发此错误。
         """
-        token_type_ids = kwargs.get("token_type_ids", None)
-        assert token_type_ids is not None
-
-        # x.shape is [token_num, hidden_size]
-        fused_moe_out = paddle.zeros_like(x)
-
-        text_mask = token_type_ids == 0  # [token_num]
-        image_mask = token_type_ids == 1
-
-        if text_mask.any():
-            text_out = self.text_moe_layer(x[text_mask])
-            fused_moe_out[text_mask] = text_out
-
-        if image_mask.any():
-            image_out = self.image_moe_layer(x[image_mask])
-            fused_moe_out[image_mask] = image_out
-
-        return fused_moe_out
+        image_input = kwargs.get("image_input", None)
+        if image_input is not None:
+            token_type_ids = kwargs.get("token_type_ids", None)
+            text_input = kwargs.get("text_input", None)
+            text_index = kwargs.get("text_index", None)
+            image_index = kwargs.get("image_index", None)
+            text_image_gather_scatter(
+                    x, text_input, image_input, token_type_ids, text_index, image_index, True)
+            text_out = self.text_moe_layer(text_input)
+            image_out = self.image_moe_layer(image_input)
+            text_image_gather_scatter(
+                    x, text_out, image_out, token_type_ids, text_index, image_index, False)
+        else:
+            x = self.text_moe_layer(x)
+        return x

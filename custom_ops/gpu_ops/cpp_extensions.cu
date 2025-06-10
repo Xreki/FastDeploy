@@ -218,6 +218,7 @@ paddle::Tensor DequantInt8Func(const paddle::Tensor &input,
                                std::string dtype);
 
 paddle::Tensor OpenShmAndGetMetaSignalFunc(const int rank,
+                                           const int device_id,
                                            const bool keep_pd_step_flag);
 
 paddle::Tensor InitSignalLayerwiseFunc(const paddle::Tensor &kv_signal_metadata,
@@ -300,6 +301,19 @@ std::vector<paddle::Tensor> MoEDeepGEMMDePermute(
     const paddle::Tensor& topk_weights
 );
 
+void TextImageIndexOut(
+    const paddle::Tensor& token_type_ids,
+    const paddle::Tensor& text_input,
+    const paddle::Tensor& image_input);
+
+void TextImageGatherScatter(
+    paddle::Tensor& input,
+    paddle::Tensor& text_input,
+    paddle::Tensor& image_input,
+    paddle::Tensor& token_type_ids,
+    paddle::Tensor& text_index,
+    paddle::Tensor& image_index,
+    const bool is_scatter);
 
 
 PYBIND11_MODULE(fastdeploy_ops, m) {
@@ -523,4 +537,9 @@ PYBIND11_MODULE(fastdeploy_ops, m) {
 
   m.def("group_swiglu_with_masked", &GroupSwigluWithMasked,
         "group_swiglu_with_masked function");
+
+  m.def("text_image_index_out", &TextImageIndexOut, "text_image_index_out function");
+
+  m.def("text_image_gather_scatter", &TextImageGatherScatter, "text_image_gather_scatter function");
+
 }

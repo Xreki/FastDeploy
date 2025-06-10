@@ -14,7 +14,7 @@ export FLAGS_cascade_attention_max_partition_size=2048
 
 
 cd $ROLLOUT_WORKER_ROOT
-source ${ROLLOUT_WORKER_ROOT}/fastdeploy/agent/build_env.sh
+source ${ROLLOUT_WORKER_ROOT}/training/agent/build_env.sh
 source "${ROLLOUT_WORKER_ROOT}/${FASTDEPLOY_ENV_NAME}/bin/activate"
 
 unset PADDLE_TRAINER_ENDPOINTS
@@ -26,4 +26,4 @@ export FD_MODEL_NAME="1"
 export FD_LOG_DIR="./log_${INFERENCE_MSG_QUEUE_ID}"
 
 # 注意调整 tensor-parallel-size
-python fastdeploy/entrypoints/openai/api_server.py --config fastdeploy/agent_work.yaml --tensor-parallel-size $5 --port $2 --engine-worker-queue-port $3  1>> $4-stdout.log 2>> $4-stderr.log
+python fastdeploy/entrypoints/openai/api_server.py --config training/agent_work.yaml --tensor-parallel-size $5 --port $2 --engine-worker-queue-port $3  --metrics-port $6 1>> $4-stdout.log 2>> $4-stderr.log

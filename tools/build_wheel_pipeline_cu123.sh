@@ -21,6 +21,10 @@ CPU_USE_BF16="false"
 CPU_USE_BF16=${2:-$CPU_USE_BF16}
 WITH_CPU="false"
 
+# python_tag
+py=$(${python} -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+python_tag="cp${py//./}"
+
 # paddle distributed use to set archs
 unset PADDLE_CUDA_ARCH_LIST
 
@@ -82,9 +86,10 @@ function copy_ops(){
     WHEEL_BASE_NAME="fastdeploy_base_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
     WHEEL_NAME="fastdeploy_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
     echo -e "OPS are for BASE"
-    mkdir -p ../fastdeploy/model_executor/ops/base && cp -r ./${OPS_TMP_DIR_BASE}/${WHEEL_BASE_NAME}/* ../fastdeploy/model_executor/ops/base
+    mkdir -p ../fastdeploy/model_executor/ops/base
+    find ./${OPS_TMP_DIR_BASE} -type f ! -name "*.cu.o" ! -name "*.o" -exec cp --parents {} ../fastdeploy/model_executor/ops/base \;
     echo -e "OPS are for CUDA"
-    cp -r ./${OPS_TMP_DIR}/${WHEEL_NAME}/* ../fastdeploy/model_executor/ops/gpu
+    find ./${OPS_TMP_DIR} -type f ! -name "*.cu.o" ! -name "*.o" -exec cp --parents {} ../fastdeploy/model_executor/ops/gpu \;
     if [ "$WITH_CPU" == "true" ]; then
       WHEEL_CPU_NAME="fastdeploy_cpu_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
       echo -e "OPS are for CPU"
@@ -97,7 +102,7 @@ function copy_ops(){
         mv "$file" "${file/_pd_/}"
       done
       cd ../../../../
-      cp -r ${OPS_TMP_DIR_CPU}/${WHEEL_CPU_NAME}/* ../fastdeploy/model_executor/ops/cpu
+      find ${OPS_TMP_DIR_CPU}/${WHEEL_CPU_NAME} -type f ! -name "*.cu.o" ! -name "*.o" -exec cp --parents {} ../fastdeploy/model_executor/ops/cpu \;
     fi
     return
 
@@ -137,7 +142,7 @@ function build_and_install_ops() {
 
 function build_and_install() {
   echo -e "${BLUE}[build]${NONE} building fastdeploy wheel..."
-  ${python} setup.py bdist_wheel --python-tag py3
+  ${python} setup.py bdist_wheel --python-tag=${python_tag}
   if [ $? -ne 0 ]; then
     echo -e "${RED}[FAIL]${NONE} build fastdeploy wheel failed !"
     exit 1

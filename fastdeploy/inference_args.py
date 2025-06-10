@@ -83,6 +83,7 @@ class InferenceArgs:
         redundant_experts_num: int = 0,
         use_offline_quant=False,
         max_batch_size: int = 128,
+        head_dim=None,
     ):
         """
         Initialization function for quantization of the Transformer model
@@ -139,6 +140,9 @@ class InferenceArgs:
         self.start_layer_index = start_layer_index
         self.hidden_size = hidden_size
         self.head_dim = hidden_size // num_attention_heads
+        self.head_dim = (
+            head_dim if head_dim is not None else hidden_size // num_attention_heads
+        )
         self.num_attention_heads = num_attention_heads
         self.num_key_value_heads = (num_key_value_heads if num_key_value_heads
                                     >= 0 else self.num_attention_heads)

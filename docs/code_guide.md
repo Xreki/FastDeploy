@@ -5,6 +5,7 @@
 - docs：FastDeploy代码库有关的说明文档。
 - fastdeploy
   - agent：大模型服务启动使用到的脚本
+  - cache_manager：大模型缓存管理模块
   - engine：管理大模型整体执行引擎类有关代码
   - entrypoints：用户入口调用接口
   - input：用户输入处理模块，包括预处理，多模态输入处理，tokenize等功能
@@ -18,5 +19,6 @@
   - output：大模型输出有关处理
   - platforms：与底层硬件功能支持有关的平台模块
   - scheduler：大模型请求调度模块
+  - splitwise: 分离式部署相关模块
 - scripts / tools：FastDeploy用于执行功能的辅助脚本，比如编译，单测执行，代码风格纠正等
 - test：项目单测验证使用到的代码

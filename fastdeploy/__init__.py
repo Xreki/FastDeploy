@@ -14,8 +14,5 @@
 # limitations under the License.
 """
 
-import os
-# suppress warning log from paddlepaddle
-os.environ["GLOG_minloglevel"] = "2"
 from fastdeploy.entrypoints.llm import LLM
 from fastdeploy.engine.sampling_params import SamplingParams

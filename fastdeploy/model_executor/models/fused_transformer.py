@@ -67,8 +67,8 @@ class FusedTransformer(nn.Layer):
         base_model_prefix="gpt",
         draft_type="",
         llm_config=None,
-        max_len=32768,
         redundant_table_manger: Optional[RedundantExpertManger] = None,
+        max_len: int = 32768,
     ):
         """
         Initialize the fused transformer model.
@@ -83,6 +83,7 @@ class FusedTransformer(nn.Layer):
             use_neox_rotary_style (bool, optional): Whether to use NeoX rotary position encoding, defaults to False.
             fuse_ffn_act (bool, optional): Whether to fuse FFN and activation layers, defaults to False.
             ring_id (int, optional): Ring ID for multi-process parallel training, defaults to -1.
+            max_len (int, optional): The maximum length of the input sequence, defaults to 32768.
         """
         super().__init__()
         self.inference_args = inference_args
@@ -94,6 +95,7 @@ class FusedTransformer(nn.Layer):
         else:
             self.use_micro_batch = False
 
+        self.max_len = max_len
         self.num_layers = inference_args.num_layers
         self.act_scales = inference_args.act_scale_dict
         self.fuse_ffn_act = fuse_ffn_act
@@ -114,6 +116,10 @@ class FusedTransformer(nn.Layer):
             "prefill", "decode", "mixed"
         ], (f"Invalid role: {self.splitwise_role}. " +
             "Expected one of ['prefill', 'decode', 'mixed'].")
+
+        self.device_id = os.getenv("CUDA_VISIBLE_DEVICES", None)
+        if self.device_id is None:
+            self.device_id = self.rank
 
         if self.nranks > 1:
             assert ring_id != -1
@@ -916,6 +922,7 @@ class FusedTransformer(nn.Layer):
         if self.use_pd_disaggregation:
             kv_signal_metadata = fastdeploy.model_executor.ops.gpu.open_shm_and_get_meta_signal(
                 self.rank,
+                int(self.device_id),
                 self.keep_pd_step_flag,
             )
             self.kv_signal_datas = (

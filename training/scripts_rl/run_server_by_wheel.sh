@@ -14,4 +14,4 @@ export RUN_MODE="test"
 # export PYTHONPATH=/root/paddlejob/workspace/env_run/gaoziyuan/develop_nlp/PaddleNLP/:/root/paddlejob/workspace/env_run/gaoziyuan/develop_nlp/EfficientLLM:$PYTHONPATH
 
 # tensor-parallel-size注意是8
-python fastdeploy/entrypoints/openai/api_server.py --config fastdeploy/agent_work_45T.yaml --port 9809 --engine-worker-queue-port 9091 --tensor-parallel-size 8
+python fastdeploy/entrypoints/openai/api_server.py --config training/agent_work_45T.yaml --port 9809 --engine-worker-queue-port 9091 --tensor-parallel-size 8
