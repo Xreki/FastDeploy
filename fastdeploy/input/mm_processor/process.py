@@ -166,22 +166,9 @@ class DataProcessor:
             "pic_cnt": 0,
             "video_cnt": 0,
         }
-        
-        messages = request.get("messages")
-        template_input = {"messages": messages}
-        add_generation_prompt = request.get("add_generation_prompt")
-        if add_generation_prompt is not None:
-            template_input["add_generation_prompt"] = add_generation_prompt
-        enable_thinking = request.get("enable_thinking")
-        if enable_thinking is not None:
-            template_input["enable_thinking"] = enable_thinking
-
-        prompt_token_str = self.apply_chat_template(template_input)
-        prompt_token_str = prompt_token_str.replace("<|image@placeholder|>", "").replace("<|video@placeholder|>", "")
-        prompt_token_ids = self.tokenizer.encode(prompt_token_str, add_special_tokens=False)["input_ids"]
 
         #收集多模message
-        messages = parse_chat_messages(messages)
+        messages = parse_chat_messages(request.get("messages"))
         image_message_list = []
         for msg in messages:
             role = msg.get("role")
@@ -195,6 +182,7 @@ class DataProcessor:
                 if isinstance(item, dict) and item.get("type") in ["image_url", "image", "video_url", "video"]:
                     image_message_list.append(item)
         
+        prompt_token_ids = self.messages2ids(request)
         image_start_index = 0
         image_message_index = 0
         for i in range(len(prompt_token_ids)):
@@ -268,6 +256,15 @@ class DataProcessor:
         outputs["cur_position"] += 1
 
     def _add_text(self, tokens: [int], outputs: Dict) -> None:
+        outputs["input_ids"].extend(tokens)
+        outputs["token_type_ids"].extend([IDS_TYPE_FLAG["text"]] * len(tokens))
+
+        start = outputs["cur_position"]
+        for i in range(len(tokens)):
+            outputs["position_ids"].append([start + i] * 3)
+        outputs["cur_position"] += len(tokens)
+
+    def _add_text_back(self, tokens: [int], outputs: Dict) -> None:
         outputs["input_ids"].extend(tokens)
         outputs["token_type_ids"].extend([IDS_TYPE_FLAG["text"]] * len(tokens))
 
@@ -450,7 +447,7 @@ class DataProcessor:
         coords = list(zip(time_idx, h_idx, w_idx))
         return [[start_idx + ti, start_idx + hi, start_idx + wi] for ti, hi, wi in coords]
 
-    def apply_chat_template(self, messages):
+    def messages2ids(self, request):
         """
         Convert multi-turn messages into ID sequences.
         
@@ -464,6 +461,11 @@ class DataProcessor:
         if self.tokenizer.chat_template is None:
             raise ValueError("This model does not support chat_template.")
 
-        return self.tokenizer.apply_chat_template(
-            messages, tokenize=False
+        prompt_token_str = self.tokenizer.apply_chat_template(
+            request, tokenize=False
         )
+        print(prompt_token_str)
+        prompt_token_str = prompt_token_str.replace("<|image@placeholder|>", "").replace("<|video@placeholder|>", "")
+        prompt_token_ids = self.tokenizer.encode(prompt_token_str, add_special_tokens=False)["input_ids"]
+
+        return prompt_token_ids
