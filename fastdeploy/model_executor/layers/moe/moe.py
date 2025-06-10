@@ -22,6 +22,7 @@ from paddlenlp.utils.log import logger
 from fastdeploy.model_executor.layers.utils import get_tensor
 
 from .cutlass_fused_moe import CutlassFusedMoeMethod
+from .triton_fused_moe import TritonFusedMoeMethod
 
 
 @dataclass
@@ -67,6 +68,7 @@ class FusedMoE(nn.Layer):
         moe_ffn2_weight_scale_keys=None,
         moe_ffn1_in_scale_keys=None,
         moe_ffn2_in_scale_keys=None,
+        use_method="cutlass",
     ):
         """
         Initialize the Moe layer with given parameters.
@@ -89,7 +91,7 @@ class FusedMoE(nn.Layer):
         self.use_offline_quant = llm_config.tmp_config.use_offline_quant
         moe_tag = self.llm_config.moe_config.moe_tag
         logger.info(f"{moe_tag}MoE is running in {moe_quant_type} mode")
-        
+
         self.moe_quant_type = moe_quant_type
         self.num_experts = num_experts
         self.num_local_experts = self.num_experts // self.ep_size
@@ -117,7 +119,6 @@ class FusedMoE(nn.Layer):
             self.ffn2_expert_weight_scale_key = moe_ffn2_weight_scale_keys
             self.ffn1_expert_in_scale_key = moe_ffn1_in_scale_keys
             self.ffn2_expert_in_scale_key = moe_ffn2_in_scale_keys
-        
 
         moe_compute_params = MoEComputeParams()
         moe_compute_params.global_num_experts = self.num_experts
@@ -129,7 +130,10 @@ class FusedMoE(nn.Layer):
         moe_compute_params.ep_size = self.ep_size
         moe_compute_params.tp_size = self.tp_size
 
-        self.compute_method = CutlassFusedMoeMethod(moe_compute_params)
+        if use_method == "cutlass":
+            self.compute_method = CutlassFusedMoeMethod(moe_compute_params)
+        else:
+            self.compute_method = TritonFusedMoeMethod(moe_compute_params)
 
     def load_gate_state_dict(self, state_dict):
         """
@@ -154,7 +158,8 @@ class FusedMoE(nn.Layer):
         """
         # gate
         if not is_update:
-            gate_weight_tensor = get_tensor(state_dict.pop(self.gate_weight_key))
+            gate_weight_tensor = get_tensor(
+                state_dict.pop(self.gate_weight_key))
             self.gate_weight = self.create_parameter(
                 shape=gate_weight_tensor.shape,
                 dtype="float32",
@@ -212,8 +217,7 @@ class FusedMoE(nn.Layer):
 
         # other weight is with compute_method
         # different method may have different way to create weights
-        self.compute_method.create_weights(self,
-                                           up_gate_proj_weight,
+        self.compute_method.create_weights(self, up_gate_proj_weight,
                                            down_proj_weight, None, None,
                                            weight1_scale, weight2_scale,
                                            ffn1_in_scale, ffn2_in_scale)
