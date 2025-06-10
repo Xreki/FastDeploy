@@ -73,7 +73,7 @@ class CudaGraphPiecewiseBackend:
 
     def __call__(self, **kwargs):
         # Get batch size
-        input_ids: paddle.Tensor = kwargs['input_ids']
+        input_ids: paddle.Tensor = kwargs["forward_meta"].input_ids
         batch_size = input_ids.shape[0]
         entry = self.concrete_size_entries.get(batch_size)
         if entry.runnable is None:
