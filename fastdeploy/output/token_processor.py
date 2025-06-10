@@ -112,7 +112,6 @@ class TokenProcessor(object):
                                          is_blocking)
                 else:
                     get_output(self.output_tokens, rank_id, is_blocking)
-
                 if self.output_tokens[0, 0] == -2:
                     continue
 

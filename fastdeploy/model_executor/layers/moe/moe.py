@@ -19,6 +19,9 @@ from dataclasses import dataclass
 from paddle import nn
 from paddlenlp.utils.log import logger
 
+from fastdeploy.model_executor.layers.activation import SiluAndMul
+from fastdeploy.model_executor.layers.linear import (
+    MergedColumnParallelLinear, RowParallelLinear)
 from fastdeploy.model_executor.layers.utils import get_tensor
 
 from .cutlass_fused_moe import CutlassFusedMoeMethod
@@ -67,6 +70,8 @@ class FusedMoE(nn.Layer):
         moe_ffn2_weight_scale_keys=None,
         moe_ffn1_in_scale_keys=None,
         moe_ffn2_in_scale_keys=None,
+        shared_experts_up_gate_proj_key=None,
+        shared_experts_down_proj_key=None,
     ):
         """
         Initialize the Moe layer with given parameters.
@@ -89,7 +94,7 @@ class FusedMoE(nn.Layer):
         self.use_offline_quant = llm_config.tmp_config.use_offline_quant
         moe_tag = self.llm_config.moe_config.moe_tag
         logger.info(f"{moe_tag}MoE is running in {moe_quant_type} mode")
-        
+
         self.moe_quant_type = moe_quant_type
         self.num_experts = num_experts
         self.num_local_experts = self.num_experts // self.ep_size
@@ -111,13 +116,17 @@ class FusedMoE(nn.Layer):
         self.ffn1_bias_key = moe_ffn1_bias_keys
         self.ffn2_bias_key = moe_ffn2_bias_keys
 
+        self.num_shared_experts = self.moe_config.moe_num_shared_experts
+        if self.num_shared_experts > 0:
+            self.shared_experts_up_gate_proj_key = shared_experts_up_gate_proj_key
+            self.shared_experts_down_proj_key = shared_experts_down_proj_key
+
         if self.moe_quant_type == "w4a8":
             # below keys are only used in MoE W4A8!
             self.ffn1_expert_weight_scale_key = moe_ffn1_weight_scale_keys
             self.ffn2_expert_weight_scale_key = moe_ffn2_weight_scale_keys
             self.ffn1_expert_in_scale_key = moe_ffn1_in_scale_keys
             self.ffn2_expert_in_scale_key = moe_ffn2_in_scale_keys
-        
 
         moe_compute_params = MoEComputeParams()
         moe_compute_params.global_num_experts = self.num_experts
@@ -148,18 +157,48 @@ class FusedMoE(nn.Layer):
                     state_dict.pop(self.ffn2_expert_weight_key.format(j))))
         return up_gate_proj_weight, down_proj_weight
 
+    def load_shared_experts_state_dict(self, state_dict):
+        self.shared_experts_hidden_dim = self.num_shared_experts * self.moe_intermediate_size
+
+        self.shared_experts_prefix = f"ernie.layers.{self.layer_idx}.mlp.shared_experts"
+        self.shared_experts_up_gate_proj = MergedColumnParallelLinear(
+            llm_config=self.llm_config,
+            prefix=self.shared_experts_up_gate_proj_key,
+            with_bias=False,
+            activation=self.llm_config.model_config.hidden_act,
+            use_fast_ffn=True,
+            dim_feedforward=self.shared_experts_hidden_dim)
+        self.shared_experts_up_gate_proj.load_state_dict(state_dict)
+
+        self.shared_experts_down_proj = RowParallelLinear(
+            llm_config=self.llm_config,
+            prefix=self.shared_experts_down_proj_key,
+            input_size=(self.shared_experts_hidden_dim //
+                        self.llm_config.parallel_config.mp_size),
+            output_size=self.llm_config.model_config.hidden_size,
+            with_bias=False,
+            dim_feedforward=self.shared_experts_hidden_dim)
+        self.shared_experts_down_proj.load_state_dict(state_dict)
+
+        self.shared_act_fn = SiluAndMul(
+            llm_config=self.llm_config,
+            bias=None,
+            act_method=self.llm_config.model_config.hidden_act,
+        )
+
     def load_state_dict(self, state_dict, is_update: bool = False):
         """
         load_state_dict function.
         """
         # gate
         if not is_update:
-            gate_weight_tensor = get_tensor(state_dict.pop(self.gate_weight_key))
+            gate_weight_tensor = get_tensor(
+                state_dict.pop(self.gate_weight_key))
             self.gate_weight = self.create_parameter(
                 shape=gate_weight_tensor.shape,
                 dtype="float32",
             )
-            self.gate_weight.set_value(gate_weight_tensor)
+            self.gate_weight.set_value(gate_weight_tensor.cast("float32"))
 
         # gate_correction_bias
         if self.moe_use_gate_correction_bias:
@@ -171,7 +210,8 @@ class FusedMoE(nn.Layer):
                 dtype="float32",
             )
 
-            self.gate_correction_bias.set_value(gate_correction_bias_tensor)
+            self.gate_correction_bias.set_value(
+                gate_correction_bias_tensor.cast("float32"))
         else:
             self.gate_correction_bias = None
 
@@ -212,11 +252,13 @@ class FusedMoE(nn.Layer):
 
         # other weight is with compute_method
         # different method may have different way to create weights
-        self.compute_method.create_weights(self,
-                                           up_gate_proj_weight,
+        self.compute_method.create_weights(self, up_gate_proj_weight,
                                            down_proj_weight, None, None,
                                            weight1_scale, weight2_scale,
                                            ffn1_in_scale, ffn2_in_scale)
+
+        if self.num_shared_experts > 0:
+            self.load_shared_experts_state_dict(state_dict)
 
     def forward(self, x, **kwargs):
         """
@@ -231,4 +273,10 @@ class FusedMoE(nn.Layer):
         """
 
         out = self.compute_method.apply(self, x)
+
+        if self.num_shared_experts > 0:
+            s_x = self.shared_experts_up_gate_proj(x)
+            s_x = self.shared_act_fn(s_x)
+            s_x = self.shared_experts_down_proj(s_x)
+            out = out + s_x
         return out

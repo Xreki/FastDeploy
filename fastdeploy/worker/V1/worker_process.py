@@ -220,40 +220,41 @@ class PaddleDisWorkerProc():
     def determine_num_available_blocks(self):
         """
         """
-        # 1. Get available memory(bytes)
-        available_kv_cache_memory = self.worker.determine_available_memory()
-        print(
-            f"------- available_kv_cache_memory:{available_kv_cache_memory / 1024**3} GB --------"
-        )
+        # # 1. Get available memory(bytes)
+        # available_kv_cache_memory = self.worker.determine_available_memory()
+        # print(
+        #     f"------- available_kv_cache_memory:{available_kv_cache_memory / 1024**3} GB --------"
+        # )
 
-        # 2. Calculate the appropriate number of blocks
-        model_block_memory_used = self.worker.cal_theortical_kvcache()
-        num_blocks_local = int(available_kv_cache_memory //
-                               model_block_memory_used)
-        print(f"------- num_blocks_local:{num_blocks_local} --------")
+        # # 2. Calculate the appropriate number of blocks
+        # model_block_memory_used = self.worker.cal_theortical_kvcache()
+        # num_blocks_local = int(available_kv_cache_memory //
+        #                        model_block_memory_used)
+        # print(f"------- num_blocks_local:{num_blocks_local} --------")
 
-        # 3. Send IPCSignal
-        if self.llm_config.parallel_config.do_profile:
-            get_profile_block_num = np.zeros(shape=[self.rank], dtype=np.int32)
-            self.get_profile_block_num_signal = IPCSignal(
-                name="get_profile_block_num",
-                array=get_profile_block_num,
-                dtype=np.int32,
-                suffix=self.parallel_config.engine_pid,
-                create=False)
-            self.get_profile_block_num_signal.value[
-                self.local_rank] = num_blocks_local
+        # # 3. Send IPCSignal
+        # if self.llm_config.parallel_config.do_profile:
+        #     get_profile_block_num = np.zeros(shape=[self.rank], dtype=np.int32)
+        #     self.get_profile_block_num_signal = IPCSignal(
+        #         name="get_profile_block_num",
+        #         array=get_profile_block_num,
+        #         dtype=np.int32,
+        #         suffix=self.parallel_config.engine_pid,
+        #         create=False)
+        #     self.get_profile_block_num_signal.value[
+        #         self.local_rank] = num_blocks_local
 
-            # Wait all worker send the signal
-            while np.any(self.get_profile_block_num_signal.value <= 0):
-                time.sleep(0.01)
-            num_blocks_global = self.get_profile_block_num_signal.value.min(
-            ).item()
-            self.get_profile_block_num_signal.value[
-                self.local_rank] = num_blocks_global
-        else:
-            num_blocks_global = num_blocks_local
+        #     # Wait all worker send the signal
+        #     while np.any(self.get_profile_block_num_signal.value <= 0):
+        #         time.sleep(0.01)
+        #     num_blocks_global = self.get_profile_block_num_signal.value.min(
+        #     ).item()
+        #     self.get_profile_block_num_signal.value[
+        #         self.local_rank] = num_blocks_global
+        # else:
+        #     num_blocks_global = num_blocks_local
 
+        num_blocks_global = 1500
         # 4. Updata share inputs
         self.worker.reinitialize_kv_cache(num_gpu_blocks=num_blocks_global)
 
@@ -424,6 +425,9 @@ def initialize_llm_config(args) -> LLMConfig:
     model_config.group_size = group_size
     model_config.use_rmsnorm = config.get("use_rmsnorm", True)
     model_config.num_key_value_heads = num_key_value_heads
+    model_config.embedding_use_lm_head_weight = config.get(
+        "embedding_use_lm_head_weight", False)
+    # model_config.export_model_type = config.get("predict_model_type", "weight_only_int8")
     tmp_config.has_zero_point = config.get("has_zero_point", False)
     tmp_config.is_channel_wise = config.get("is_channel_wise", False),
     model_config.start_layer_index = config.get("start_layer_index", 0)
@@ -434,13 +438,15 @@ def initialize_llm_config(args) -> LLMConfig:
     moe_config.moe_use_gate_correction_bias = config.get(
         "moe_use_gate_correction_bias", True)
     moe_config.moe_every2 = config.get("moe_every2", False)
-    moe_config.moe_topk = config.get("moe_topk", 8)
+    moe_config.top_k = config.get("moe_topk", 8)
     moe_config.moe_num_shared_experts = config.get("moe_num_shared_experts", 0)
     moe_config.moe_layer_start_index = config.get("moe_layer_start_index", 0)
     moe_config.moe_use_ffn_shared_weight_and_bias = config.get(
         "moe_use_ffn_shared_weight_and_bias", False)
     moe_config.use_moe = use_moe
     moe_config.moe_group = config.get("moe_group", False)
+    moe_config.moe_quant_type = config.get("moe_quant_type",
+                                           "weight_only_int4")
     tmp_config.weight_block_size = config.get("weight_block_size", [-1, -1])
 
     model_config.ori_vocab_size = config.get("vocab_size", -1)
@@ -516,7 +522,6 @@ def initialize_llm_config(args) -> LLMConfig:
                            decoding_config=decoding_config,
                            quant_config=quant_config,
                            kv_cache_config=kv_cache_config)
-
     return llm_config
 
 

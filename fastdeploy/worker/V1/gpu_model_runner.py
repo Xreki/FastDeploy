@@ -632,12 +632,12 @@ class GPUModelRunner(ModelRunnerBase):
         self.num_gpu_blocks = num_gpu_blocks
 
         # Reset block table and kv cache with global block num
-        del self.share_inputs["caches"]
+        # del self.share_inputs["caches"]
         if self.forward_meta is not None:
             del self.forward_meta.caches
         self.initialize_kv_cache()
 
-        del self.share_inputs["block_tables"]
+        # del self.share_inputs["block_tables"]
         self.share_inputs["block_tables"] = paddle.full(
             [self.parallel_config.max_num_seqs, self.num_gpu_blocks],
             -1,

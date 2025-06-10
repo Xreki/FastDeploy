@@ -137,6 +137,7 @@ class ModelConfig(PretrainedConfig):
         start_layer_index: int = 0,
         output_via_mq: bool = True,
         generation_phase: GenerationPhase = GenerationPhase.PREFILL,
+        embedding_use_lm_head_weight: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -187,6 +188,7 @@ class ModelConfig(PretrainedConfig):
         self.return_all_hidden_states = return_all_hidden_states
         self.start_layer_index = start_layer_index
         self.output_via_mq = output_via_mq
+        self.embedding_use_lm_head_weight = embedding_use_lm_head_weight
 
 
 # This class will be removed in future and replaced by MoEConfig

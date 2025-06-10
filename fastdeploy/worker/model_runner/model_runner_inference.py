@@ -162,7 +162,7 @@ class ModelRunner(ModelRunnerBase):
                 block_size=self.args.block_size,
                 max_len=self.args.max_model_len,
                 stage_flag="msgid-1 predict",
-                export_model_type="weight_only_int8",
+                export_model_type="wint8",
                 use_fake_parameter=False,
                 use_stop_seqs=self.model_cfg.ellm_dynamic_use_stop_seqs,
                 use_beam_search=False,
@@ -170,7 +170,7 @@ class ModelRunner(ModelRunnerBase):
                 speculate_max_draft_token_num=self.args.
                 speculate_max_draft_tokens,
                 return_all_hidden_states=False,
-                moe_quant_type="weight_only_int4",
+                moe_quant_type="w16a16",
                 use_safetensors=True,
                 return_llm_config=True)
             model.eval()

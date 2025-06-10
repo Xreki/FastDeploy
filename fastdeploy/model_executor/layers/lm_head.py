@@ -107,6 +107,7 @@ class ParallelLMHead(nn.Layer):
         RowParallelLinear = fleet.meta_parallel.RowParallelLinear
 
         self.tie_word_embeddings = tie_word_embeddings
+        self.embedding_use_lm_head_weight = llm_config.model_config.embedding_use_lm_head_weight
 
         if self.tie_word_embeddings is None:
             if self.use_ep:
@@ -154,19 +155,22 @@ class ParallelLMHead(nn.Layer):
                     get_tensor(state_dict.pop(self.linear_weight_key)).astype(
                         paddle.get_default_dtype()))
             else:
-                self.out_linear.weight.set_value(
-                    get_tensor(state_dict.pop(self.linear_weight_key)).astype(
-                        paddle.get_default_dtype()))
+                if self.embedding_use_lm_head_weight == True:
+                    self.out_linear.weight.set_value(
+                        get_tensor(state_dict.pop(
+                            self.linear_weight_key)).astype(
+                                paddle.get_default_dtype()).transpose([1, 0]))
+                else:
+                    self.out_linear.weight.set_value(
+                        get_tensor(state_dict.pop(
+                            self.linear_weight_key)).astype(
+                                paddle.get_default_dtype()))
 
-                bias = (
-                    get_tensor(state_dict.pop(self.linear_bias_key)).astype(
-                        paddle.get_default_dtype()
-                    )
-                    if self.linear_bias_key is not None
-                    else paddle.zeros(
-                        self.out_linear.bias.shape, dtype=paddle.get_default_dtype()
-                    )
-                )
+                bias = (get_tensor(state_dict.pop(
+                    self.linear_bias_key)).astype(paddle.get_default_dtype())
+                        if self.linear_bias_key is not None else paddle.zeros(
+                            self.out_linear.bias.shape,
+                            dtype=paddle.get_default_dtype()))
                 self.out_linear.bias.set_value(bias)
 
     def forward(self, input):

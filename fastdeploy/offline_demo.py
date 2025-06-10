@@ -13,16 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-
 from fastdeploy.engine.sampling_params import SamplingParams
 from fastdeploy.entrypoints.llm import LLM
 
-model_name_or_path = "./models/llama-7b"
+model_name_or_path = "/root/paddlejob/workspace/env_run/output/chenjianye/models/ERNIE-4.5-Lite-step-682000"
 
 # 超参设置
-sampling_params = SamplingParams(temperature=0.1, max_tokens=30)
-llm = LLM(model=model_name_or_path, tensor_parallel_size=1)
-output = llm.generate(prompts="who are you？", use_tqdm=True)
-
-# output = llm.generate(prompts=["who are you？", "what can you do？"], use_tqdm=True)
-# print(output)
+sampling_params = SamplingParams(temperature=0.8, max_tokens=30)
+llm = LLM(model=model_name_or_path,
+          tensor_parallel_size=1,
+          num_gpu_blocks_override=1500)
+output = llm.generate(prompts="张三问，今天天气怎么样",
+                      sampling_params=sampling_params,
+                      use_tqdm=True)
+print(output)

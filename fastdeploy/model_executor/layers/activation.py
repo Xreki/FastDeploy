@@ -67,6 +67,7 @@ class SiluAndMul(nn.Layer):
             raise NotImplementedError
 
         self.bias = bias
+        act_method = act_method.lower()
         if act_method == "silu":
             act_method = "swiglu"
         from fastdeploy.utils import get_logger
@@ -80,9 +81,9 @@ class SiluAndMul(nn.Layer):
         self.shift = shift
         self.smooth = smooth
         self.quant_scale = quant_scale
-        self.quant_round_type = llm_config.quant_config.quant_round_type
-        self.quant_max_bound = llm_config.quant_config.quant_max_bound
-        self.quant_min_bound = llm_config.quant_config.quant_min_bound
+        self.quant_round_type = llm_config.quant_config.quant_round_type if llm_config.quant_config else 0
+        self.quant_max_bound = llm_config.quant_config.quant_max_bound if llm_config.quant_config else 0
+        self.quant_min_bound = llm_config.quant_config.quant_min_bound if llm_config.quant_config else 0
 
         self._dtype = self._helper.get_default_dtype()
         if self._dtype == "bfloat16":
