@@ -23,14 +23,6 @@ wget下载到本地用于性能测试
 
 python -m pip install -r requirements.txt
 
-##### （可选）
-
-```
-conda env压缩包：
-放入miniconda3/envs解压即可使用
-https://fastdeploy.bj.bcebos.com/py310-2.tar
-```
-
 ##### 参数说明
 
 ```bash
