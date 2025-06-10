@@ -1,12 +1,27 @@
+"""
+# Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""
 import paddle
 
 from fastdeploy.config import GraphOptimizationConfig, LLMConfig
 from fastdeploy.model_executor.graph_optimization.decorator import \
-    support_graph_opt
+    support_graph_optimization
 from fastdeploy.worker.model_runner.forward_meta import ForwardMeta
 
 
-@support_graph_opt
+@support_graph_optimization
 class TestCase1SubLayer1(paddle.nn.Layer):
     """ Sub layer 1 of test case 1 """
 
@@ -36,7 +51,7 @@ class TestCase1SubLayer2(paddle.nn.Layer):
         return output
 
 
-@support_graph_opt
+@support_graph_optimization
 class TestCase1SubLayer3(paddle.nn.Layer):
     """ """
 
@@ -78,7 +93,7 @@ class TestModel1(paddle.nn.Layer):
         return sublayer3_output
 
 
-@support_graph_opt
+@support_graph_optimization
 class TestModel2(paddle.nn.Layer):
     """ Tast Model """
 

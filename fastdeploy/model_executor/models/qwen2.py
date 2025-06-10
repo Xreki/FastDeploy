@@ -25,7 +25,7 @@ from paddlenlp.utils.log import logger
 
 from fastdeploy.config import LLMConfig, ModelConfig
 from fastdeploy.model_executor.graph_optimization.decorator import \
-    support_graph_opt
+    support_graph_optimization
 from fastdeploy.model_executor.layers.activation import SiluAndMul
 from fastdeploy.model_executor.layers.attention import Attention
 from fastdeploy.model_executor.layers.embeddings import VocabParallelEmbedding
@@ -291,7 +291,7 @@ class Qwen2Model(nn.Layer):
         return out
 
 
-@support_graph_opt
+@support_graph_optimization
 class Qwen2ForCausalLM(ModelForCasualLM):
     """
     Qwen2ForCausalLM
