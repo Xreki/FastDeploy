@@ -120,6 +120,8 @@ class FusedTransformer(nn.Layer):
         self.device_id = os.getenv("CUDA_VISIBLE_DEVICES", None)
         if self.device_id is None:
             self.device_id = self.rank
+        else:
+            self.device_id = self.device_id.split(",")[self.rank]
 
         if self.nranks > 1:
             assert ring_id != -1
