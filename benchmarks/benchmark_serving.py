@@ -1,32 +1,22 @@
-# !/usr/bin/env python3
-# Copyright 2025 vLLM Team
-# Original source: https://github.com/vllm-project/vllm/blob/main/benchmarks/benchmark_serving.py
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at: http://www.apache.org/licenses/LICENSE-2.0
-# SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Benchmark online serving throughput.
-
-On the server side, run one of the following commands:
-    vLLM OpenAI API server
-    vllm serve <your_model> \
-        --swap-space 16 \
-        --disable-log-requests
-
-On the client side, run:
-    python benchmarks/benchmark_serving.py \
-        --backend <backend> \
-        --model <your_model> \
-        --dataset-name sharegpt \
-        --dataset-path <path to dataset> \
-        --request-rate <request_rate> \ # By default <request_rate> is inf
-        --num-prompts <num_prompts> # By default <num_prompts> is 1000
-
-    when using tgi backend, add
-        --endpoint /generate_stream
-    to the end of the command above.
 """
+# Copyright (c) 2025  PaddlePaddle Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""
+
+# This file is modified from https://github.com/vllm-project/vllm/blob/main/benchmarks/benchmark_serving.py
+
+
 import argparse
 import asyncio
 import gc
