@@ -13,25 +13,8 @@ wget下载到本地用于性能测试
   </thead>
   <tbody>
     <tr>
-      <td><strong>EB45T纯文 9903条</strong></td>
-      <td><code>https://fastdeploy.bj.bcebos.com/eb_query/eb45t_spv4_dataserver_1w_fd</code></td>
-    </tr>
-    <tr>
-      <td><strong>EB45T纯文 9903带外挂</strong></td>
-      <td><code>https://fastdeploy.bj.bcebos.com/eb_query/eb45t_spv4_dataserver_1w_waigua_fd</code></td>
-    </tr>
-    <tr>
-      <td><strong>X1-Turbo 5000条</strong></td>
-      <td><code>https://fastdeploy.bj.bcebos.com/eb_query/0316_x1_45t_yiyan_nocot_5000_fd</code></td>
-    </tr>
-    <tr>
-      <td><strong>纯文128K数据 2000条</strong></td>
-      <td><code>https://fastdeploy.bj.bcebos.com/eb_query/mingming_0410_eb_2k_ds_108_32_128k_part1_fd</code></td>
-    </tr>
-    <tr>
-      <td><strong>其他数据</strong></td>
-      <td><code>https://fastdeploy.bj.bcebos.com/eb_query/0416_x1_45t_forqianfan_4998_fd
-https://fastdeploy.bj.bcebos.com/eb_query/0419_api9_yiyan_spv5_forqianfan_4872_fd</code></td>
+      <td><strong>开源数据集 2k条</strong></td>
+      <td><code>https://fastdeploy.bj.bcebos.com/eb_query/filtered_sharedgpt_2000_input_1136_output_200_fd.json</code></td>
     </tr>
   </tbody>
 </table>
@@ -76,7 +59,7 @@ python benchmark_serving.py \
   --host 0.0.0.0 \
   --port 9812 \
   --dataset-name EBChat \
-  --dataset-path ./eb45t_spv4_dataserver_1w_waigua_fd \
+  --dataset-path ./filtered_sharedgpt_2000_input_1136_output_200_fd.json \
   --hyperparameter-path EB45T.yaml \
   --percentile_metrics ttft,tpot,itl,e2el,s_ttft,s_itl,s_e2el,s_decode,input_len,s_input_len,output_len \
   --metric_percentiles 80,95,99,99.9,99.95,99.99 \
@@ -85,7 +68,7 @@ python benchmark_serving.py \
   --save_result
 ```
 
-##### /v1/chat/completions接口完整100并发 9903条压测
+##### /v1/chat/completions接口完整100并发 2000条压测
 
 ```
 # 保存infer_log.txt
@@ -96,11 +79,11 @@ python benchmark_serving.py \
   --host 0.0.0.0 \
   --port 9812 \
   --dataset-name EBChat \
-  --dataset-path ./eb45t_spv4_dataserver_1w_waigua_fd \
+  --dataset-path ./filtered_sharedgpt_2000_input_1136_output_200_fd.json \
   --hyperparameter-path EB45T.yaml \
   --percentile_metrics ttft,tpot,itl,e2el,s_ttft,s_itl,s_e2el,s_decode,input_len,s_input_len,output_len \
   --metric_percentiles 80,95,99,99.9,99.95,99.99 \
-  --num-prompts 9903 \
+  --num-prompts 2000 \
   --max_concurrency 100 \
   --save_result > infer_log.txt 2>&1 &
 ```
@@ -122,7 +105,7 @@ python benchmark_serving.py \
   --hyperparameter-path EB45T.yaml \
   --percentile_metrics ttft,tpot,itl,e2el,s_ttft,s_itl,s_e2el,s_decode,input_len,s_input_len,output_len \
   --metric_percentiles 80,95,99,99.9,99.95,99.99 \
-  --num-prompts 9903 \
+  --num-prompts 2000 \
   --max_concurrency 100 \
   --save_result > infer_log.txt 2>&1 &
 ```

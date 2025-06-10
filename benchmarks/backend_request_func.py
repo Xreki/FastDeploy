@@ -192,7 +192,7 @@ async def async_request_eb_openai_completions(
         }
         # 超参由yaml传入
         payload.update(request_func_input.hyper_parameters)
-        print("payload:", payload)
+        # print("payload:", payload)
         if request_func_input.ignore_eos:
             payload["ignore_eos"] = request_func_input.ignore_eos
         # "temperature": 0.0会导致输出为<unk>
