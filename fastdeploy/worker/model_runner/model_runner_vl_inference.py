@@ -20,19 +20,22 @@ import random
 import numpy as np
 import paddle
 import paddle.distributed.fleet as fleet
-from paddlenlp.transformers.model_utils import load_tp_checkpoint
 from safetensors import safe_open
 
 from fastdeploy.input.mm_processor import DataProcessor
 from fastdeploy.input.mm_processor.tokenizer import ErnieVLTokenizer
-from fastdeploy.model_executor.model_runner.model_runner_base import ModelRunnerBase
-from fastdeploy.model_executor.models.ernie_vl.configuration import ErnieBotMoEVLConfig
-from fastdeploy.model_executor.models.ernie_vl.dfnrope import DFNRopeVisionTransformerConfig
-from fastdeploy.model_executor.models.ernie_vl.dfnrope.modeling import DFNRopeVisionTransformerPretrainedModel
-from fastdeploy.model_executor.models.ernie_vl.modeling_resampler import ScatterOp
-from fastdeploy.model_executor.models.ernie_vl.modeling_resampler import VariableResolutionResamplerModel
-from fastdeploy.model_executor.models.modeling_ernie_bot import ErnieBotFusedModel
-from fastdeploy.model_executor.utils import check_safetensors_model
+from fastdeploy.model_executor.models.ernie import ErnieBotPretrainedModel
+from fastdeploy.model_executor.models.ernie_vl.configuration import \
+    ErnieBotMoEVLConfig
+from fastdeploy.model_executor.models.ernie_vl.dfnrope import \
+    DFNRopeVisionTransformerConfig
+from fastdeploy.model_executor.models.ernie_vl.dfnrope.modeling import \
+    DFNRopeVisionTransformerPretrainedModel
+from fastdeploy.model_executor.models.ernie_vl.modeling_resampler import (
+    ScatterOp, VariableResolutionResamplerModel)
+from fastdeploy.model_executor.models.utils import load_checkpoint
+from fastdeploy.worker.model_runner.model_runner_base import ModelRunnerBase
+from fastdeploy.worker.utils import check_safetensors_model
 
 
 class ModelRunner(ModelRunnerBase):
@@ -188,20 +191,23 @@ class ModelRunner(ModelRunnerBase):
                 tokenizer=tokenizer,
                 output_via_mq=True,
                 pad_vocab=False,
-                export_model_type=getattr(self.model_cfg, "predict_model_type", "W8A16C16"),
-                moe_quant_type=getattr(self.model_cfg, "moe_quant_type", "weight_only_int8"),
+                export_model_type=getattr(self.model_cfg, "predict_model_type",
+                                          "W8A16C16"),
+                moe_quant_type=getattr(self.model_cfg, "moe_quant_type",
+                                       "weight_only_int8"),
                 stage_flag=None,
                 load_model_from_ipc=dynamic_load_weight,
                 nranks=self.nranks,
                 rank=self.rank,
                 local_test=local_test,
                 vision_model=self.vision_model,
-                resampler_model=self.resampler_model
-            )
+                resampler_model=self.resampler_model)
         else:
-            from ..models.export_model import build_stream_line_model
+            from fastdeploy.model_executor.models.export_model import \
+                build_stream_line_model
             _, _, self.model, _ = build_stream_line_model(
-                self.model_cfg,
+                os.path.join(self.args.model_name_or_path,
+                             os.getenv("CONFIG_JSON_FILE", "config.json")),
                 self.args.model_name_or_path,
                 self.args.dtype,
                 self.args.block_size,
@@ -211,8 +217,10 @@ class ModelRunner(ModelRunnerBase):
                 pad_vocab=False,
                 tokenizer=tokenizer,
                 output_via_mq=True,
-                export_model_type=getattr(self.model_cfg, "predict_model_type", "W8A16C16"),
-                moe_quant_type=getattr(self.model_cfg, "moe_quant_type", "weight_only_int8"),
+                export_model_type=getattr(self.model_cfg, "predict_model_type",
+                                          "weight_only_int8"),
+                moe_quant_type=getattr(self.model_cfg, "moe_quant_type",
+                                       "weight_only_int4"),
                 use_safetensors=self.is_safetensors_model,
             )
             self.model.eval()
@@ -322,10 +330,9 @@ class ModelRunner(ModelRunnerBase):
             self.model.set_state_dict(state_dict)
             self.resampler_model.set_state_dict(resampler_state)
         else:
-            cls = ErnieBotFusedModel
-            state_dict = load_tp_checkpoint(
+            state_dict = load_checkpoint(
                 args.model_name_or_path,
-                cls,
+                ErnieBotPretrainedModel,
                 self.model_cfg,
                 return_numpy=True,
             )
@@ -587,7 +594,8 @@ class ModelRunner(ModelRunnerBase):
         fake input to profile
         """
         input_length = num_total_tokens // number_of_tasks
-        block_num = (input_length + self.args.block_size - 1 + self.args.enc_dec_block_num) // self.args.block_size
+        block_num = (input_length + self.args.block_size - 1 +
+                     self.args.enc_dec_block_num) // self.args.block_size
         self.share_inputs["free_list"] = paddle.to_tensor([], dtype="int32")
         self.share_inputs["free_list_len"][0] = 0
 

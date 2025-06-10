@@ -38,8 +38,6 @@ from .model_base import ModelForCasualLM
 
 
 class Ernie45TMLP(nn.Layer):
-    """
-    """
 
     def __init__(
         self,
@@ -80,6 +78,36 @@ class Ernie45TMLP(nn.Layer):
         act_out = self.act_fn(gate_up_out)
         down_out = self.down_proj(act_out)
         return down_out
+
+
+class Ernie45TMoE(nn.Layer):
+
+    def __init__(self, llm_config: LLMConfig, layer_id: int,
+                 prefix: str) -> None:
+        super().__init__()
+
+        self.fused_moe = FusedMoE(
+            llm_config=llm_config,
+            moe_intermediate_size=llm_config.moe_config.moe_intermediate_size,
+            num_experts=llm_config.moe_config.num_experts,
+            top_k=llm_config.moe_config.top_k,
+            moe_use_gate_correction_bias=llm_config.moe_config.
+            moe_use_gate_correction_bias,
+            moe_quant_type=llm_config.moe_config.moe_quant_type,
+            layer_idx=layer_id,
+            gate_weight_key=f"{prefix}.gate.weight",
+            gate_correction_bias_key=
+            f"{prefix}.moe_statics.e_score_correction_bias",
+            ffn1_expert_weight_key=f"{prefix}.experts.{{}}.up_gate_proj.weight",
+            ffn2_expert_weight_key=f"{prefix}.experts.{{}}.down_proj.weight",
+        )
+
+    def load_state_dict(self, state_dict):
+        self.fused_moe.load_state_dict(state_dict)
+
+    def forward(self, hidden_states: paddle.Tensor):
+        out = self.fused_moe(hidden_states)
+        return out
 
 
 class Ernie45TAttention(nn.Layer):
@@ -149,23 +177,10 @@ class Ernie45TDecoderLayer(nn.Layer):
 
         if (llm_config.moe_config.num_experts is not None
                 and layer_id >= llm_config.moe_config.moe_layer_start_index):
-            self.mlp = FusedMoE(
+            self.mlp = Ernie45TMoE(
                 llm_config=llm_config,
-                moe_intermediate_size=llm_config.moe_config.
-                moe_intermediate_size,
-                num_experts=llm_config.moe_config.num_experts,
-                top_k=llm_config.moe_config.top_k,
-                moe_use_gate_correction_bias=llm_config.moe_config.
-                moe_use_gate_correction_bias,
-                moe_quant_type=llm_config.moe_config.moe_quant_type,
-                layer_idx=layer_id,
-                gate_weight_key=f"{prefix}.mlp.gate.weight",
-                gate_correction_bias_key=
-                f"{prefix}.mlp.moe_statics.e_score_correction_bias",
-                ffn1_expert_weight_key=
-                f"{prefix}.mlp.experts.{{}}.up_gate_proj.weight",
-                ffn2_expert_weight_key=
-                f"{prefix}.mlp.experts.{{}}.down_proj.weight",
+                layer_id=layer_id,
+                prefix=f"{prefix}.mlp",
             )
         else:
             self.mlp = Ernie45TMLP(
@@ -284,9 +299,6 @@ class Ernie45TModel(nn.Layer):
         ids_remove_padding: paddle.Tensor,
         forward_meta: ForwardMeta,
     ):
-        """
-        """
-
         hidden_states = self.embeddings(ids_remove_padding=ids_remove_padding)
 
         residual = None

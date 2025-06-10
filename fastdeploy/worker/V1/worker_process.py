@@ -272,8 +272,16 @@ def parse_args():
     Parse args from command line
     """
     parser = argparse.ArgumentParser("FastDeploy LLM Inference")
-    parser.add_argument("-m", "--model_name_or_path", type=str, default="./output", help="model dir")
-    parser.add_argument("-mbs", "--max_num_seqs", type=int, default=34, help="max batch size")
+    parser.add_argument("-m",
+                        "--model_name_or_path",
+                        type=str,
+                        default="./output",
+                        help="model dir")
+    parser.add_argument("-mbs",
+                        "--max_num_seqs",
+                        type=int,
+                        default=34,
+                        help="max batch size")
     parser.add_argument("--total_block_num", type=int, default=2000)
     parser.add_argument("--block_size", type=int, default=64)
     parser.add_argument("--engine_worker_queue_port", type=int, default=9923)
@@ -309,8 +317,12 @@ def parse_args():
                         type=int,
                         default=None,
                         help="Process ID of engine")
-    parser.add_argument("--do_profile", action='store_true', help="do profile or not")
-    parser.add_argument("--dynamic_load_weight", action='store_true', help="dynamic load weight or not")
+    parser.add_argument("--do_profile",
+                        action='store_true',
+                        help="do profile or not")
+    parser.add_argument("--dynamic_load_weight",
+                        action='store_true',
+                        help="dynamic load weight or not")
     parser.add_argument("--pad_token_id",
                         type=int,
                         default=-1,
@@ -344,12 +356,19 @@ def parse_args():
     )
     parser.add_argument("--speculate_max_draft_tokens", type=int, default=1)
 
-    parser.add_argument("--max_num_batched_tokens", type=int, default=2048, help="max num batched tokens")
-    parser.add_argument("--enable_prefix_caching", action='store_true', help="enable prefix cache")
-    parser.add_argument("--splitwise_role", type=str, default="mixed", help="splitwise role")
+    parser.add_argument("--max_num_batched_tokens",
+                        type=int,
+                        default=2048,
+                        help="max num batched tokens")
+    parser.add_argument("--enable_prefix_caching",
+                        action='store_true',
+                        help="enable prefix cache")
+    parser.add_argument("--splitwise_role",
+                        type=str,
+                        default="mixed",
+                        help="splitwise role")
     args = parser.parse_args()
     return args
-
 
 
 def initialize_llm_config(args) -> LLMConfig:
@@ -414,7 +433,6 @@ def initialize_llm_config(args) -> LLMConfig:
     tmp_config.has_zero_point = config.get("has_zero_point", False)
     tmp_config.is_channel_wise = config.get("is_channel_wise", False),
     model_config.start_layer_index = config.get("start_layer_index", 0)
-    model_config.use_moe = use_moe
     moe_config.num_experts = config.get("moe_num_experts", None)
     moe_config.moe_intermediate_size = config.get("moe_intermediate_size",
                                                   None)

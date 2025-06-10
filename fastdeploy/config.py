@@ -128,9 +128,8 @@ class ModelConfig(PretrainedConfig):
         freeze_embedding=False,
         rope_head_dim=None,
         base_model_prefix=None,
-        use_moe=False,
         ffn_hidden_size: Optional[int] = None,
-        dtype=None,
+        dtype="bfloat16",
         export_model_type: str = "weight_only_int8",
         use_stop_seqs: bool = False,
         return_all_hidden_states: bool = False,
@@ -174,7 +173,6 @@ class ModelConfig(PretrainedConfig):
         self.prefix_name = prefix_name
         self.freeze_embedding = freeze_embedding
         self.rope_head_dim = rope_head_dim
-        self.use_moe = use_moe
         self.base_model_prefix = base_model_prefix
         if moe_layer_start_index is not None:
             self.moe_layer_start_index = moe_layer_start_index
@@ -187,6 +185,7 @@ class ModelConfig(PretrainedConfig):
         self.return_all_hidden_states = return_all_hidden_states
         self.start_layer_index = start_layer_index
         self.output_via_mq = output_via_mq
+        self.dtype = dtype
 
 
 # This class will be removed in future and replaced by MoEConfig
@@ -285,7 +284,6 @@ class MoEConfig:
     im_patch_id = (
         100295  # multimodality, TODO(liuyuanle): read from config.json
     )
-    moe_tag = ""
 
 
 @dataclass
@@ -561,11 +559,7 @@ class LoadConfig:
                                                                           1]
 
         layer_name = f"{model_config.base_model_prefix}.decoder.norm"
-        if not model_config.use_moe:
-            mapping[
-                layer_name] = f"{model_config.base_model_prefix}.decoder.norm.weight"
-        else:
-            mapping[layer_name] = "ernie.norm.weight"
+        mapping[layer_name] = "ernie.norm.weight"
 
         layer_name = f"{model_config.base_model_prefix}.e_norm"
         mapping[layer_name] = f"{model_config.base_model_prefix}.e_norm.weight"

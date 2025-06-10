@@ -45,7 +45,6 @@ def parallel_matmul(lm_output, logit_weights, parallel_output):
     hcg = fleet.get_hybrid_communicate_group()
     model_parallel_group = hcg.get_model_parallel_group()
     world_size = hcg.get_model_parallel_world_size()
-    # rank = hcg.get_model_parallel_rank()
 
     if world_size > 1:
         input_parallel = paddle.distributed.collective._c_identity(
@@ -91,7 +90,6 @@ class ParallelLMHead(nn.Layer):
             prefix (str): full name of the layer in the state dict
         """
         super(ParallelLMHead, self).__init__()
-        self.use_moe = llm_config.model_config.use_moe
         self.linear_weight_key = prefix + ".weight"
         if with_bias:
             self.linear_bias_key = prefix + ".bias"
@@ -101,8 +99,6 @@ class ParallelLMHead(nn.Layer):
         self.column_cut = True
         self.fused_linear = True
 
-        hcg = fleet.get_hybrid_communicate_group()
-        mp_rank = hcg.get_model_parallel_rank()
         ColumnParallelLinear = fleet.meta_parallel.ColumnParallelLinear
         RowParallelLinear = fleet.meta_parallel.RowParallelLinear
 
@@ -124,7 +120,8 @@ class ParallelLMHead(nn.Layer):
                         mp_group=fleet.get_hybrid_communicate_group().
                         get_model_parallel_group(),
                         weight_attr=None,
-                        has_bias=True if self.linear_bias_key is not None else False,
+                        has_bias=True
+                        if self.linear_bias_key is not None else False,
                         gather_output=need_gather,
                         fuse_matmul_bias=self.fused_linear,  # False diff更小
                     )
@@ -135,7 +132,8 @@ class ParallelLMHead(nn.Layer):
                         mp_group=fleet.get_hybrid_communicate_group().
                         get_model_parallel_group(),
                         weight_attr=None,
-                        has_bias=True if self.linear_bias_key is not None else False,
+                        has_bias=True
+                        if self.linear_bias_key is not None else False,
                         input_is_parallel=False,
                         fuse_matmul_bias=self.fused_linear,  # False diff更小
                     )
@@ -159,7 +157,8 @@ class ParallelLMHead(nn.Layer):
                         paddle.get_default_dtype()))
 
                 if self.linear_bias_key is not None:
-                    bias = get_tensor(state_dict.pop(self.linear_bias_key)).astype(
+                    bias = get_tensor(state_dict.pop(
+                        self.linear_bias_key)).astype(
                             paddle.get_default_dtype())
                     self.out_linear.bias.set_value(bias)
 
