@@ -36,23 +36,10 @@ from backend_request_func import (ASYNC_REQUEST_FUNCS,
                                   OPENAI_COMPATIBLE_BACKENDS, RequestFuncInput,
                                   RequestFuncOutput)
 from tqdm.asyncio import tqdm
-from transformers import PreTrainedTokenizerBase
 
-try:
-    from vllm.transformers_utils.tokenizer import get_tokenizer
-except ImportError:
-    from backend_request_func import get_tokenizer
+from argparse import ArgumentParser as FlexibleArgumentParser
 
-try:
-    from vllm.utils import FlexibleArgumentParser
-except ImportError:
-    from argparse import ArgumentParser as FlexibleArgumentParser
-
-from benchmark_dataset import (AIMODataset, ASRDataset, BurstGPTDataset,
-                               ConversationDataset, HuggingFaceDataset,
-                               InstructCoderDataset, RandomDataset,
-                               SampleRequest, ShareGPTDataset, SonnetDataset, EBDataset, EBChatDataset,
-                               VisionArenaDataset)
+from benchmark_dataset import (SampleRequest, EBDataset, EBChatDataset)
 from benchmark_utils import convert_to_pytorch_benchmark_format, write_to_json
 
 MILLISECONDS_TO_SECONDS_CONVERSION = 1000
@@ -359,13 +346,12 @@ async def benchmark(
         raise ValueError(f"Unknown backend: {backend}")
 
     print("Starting initial single prompt test run...")
-    test_prompt, test_output_len, test_mm_content = \
+    test_prompt, test_output_len = \
         input_requests[0].prompt, \
-        input_requests[0].expected_output_len, \
-            input_requests[0].multi_modal_data
+        input_requests[0].expected_output_len
     test_history_QA = input_requests[0].history_QA
 
-    assert test_mm_content is None or isinstance(test_mm_content, dict)
+    # assert test_mm_content is None or isinstance(test_mm_content, dict)
     test_input = RequestFuncInput(
         model=model_id,
         model_name=model_name,
@@ -377,7 +363,7 @@ async def benchmark(
         api_url=api_url,
         output_len=test_output_len,
         logprobs=logprobs,
-        multi_modal_content=test_mm_content,
+        # multi_modal_content=test_mm_content,
         ignore_eos=ignore_eos,
         extra_body=extra_body,
     )
@@ -414,7 +400,7 @@ async def benchmark(
                                          api_url=base_url + "/start_profile",
                                          output_len=test_output_len,
                                          logprobs=logprobs,
-                                         multi_modal_content=test_mm_content,
+                                         # multi_modal_content=test_mm_content,
                                          ignore_eos=ignore_eos,
                                          extra_body=extra_body)
         profile_output = await request_func(request_func_input=profile_input)
@@ -450,8 +436,7 @@ async def benchmark(
     benchmark_start_time = time.perf_counter()
     tasks: list[asyncio.Task] = []
     async for request in get_request(input_requests, request_rate, burstiness):
-        prompt, output_len, mm_content = request.prompt, request.expected_output_len, \
-                request.multi_modal_data
+        prompt, output_len = request.prompt, request.expected_output_len
         history_QA = request.history_QA
 
         req_model_id, req_model_name = model_id, model_name
@@ -470,7 +455,7 @@ async def benchmark(
                                               api_url=api_url,
                                               output_len=output_len,
                                               logprobs=logprobs,
-                                              multi_modal_content=mm_content,
+                                              # multi_modal_content=mm_content,
                                               ignore_eos=ignore_eos,
                                               extra_body=extra_body)
         tasks.append(
@@ -1175,3 +1160,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     main(args)
+

@@ -87,3 +87,4 @@ def write_to_json(filename: str, records: list) -> None:
     """write_to_json"""
     with open(filename, "w") as f:
         json.dump(records, f, cls=InfEncoder)
+
