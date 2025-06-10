@@ -43,7 +43,7 @@ def file_download(url, download_dir, save_to_disk=False, retry=0, retry_interval
         save_to_disk: 是否保存在本地路径
 
     """
-    from data_processor.utils.video_utils import VideoReaderWrapper
+    from .utils.video_utils import VideoReaderWrapper
 
     if isinstance(url, Image.Image):
         return url

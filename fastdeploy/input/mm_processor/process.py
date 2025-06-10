@@ -221,7 +221,7 @@ class DataProcessor:
             assert role in self.role_prefixes, f"Unsupported role: {role}"
             prefix = self.role_prefixes[role]
             if prefix:
-                self._add_text(prefix, outputs)
+                self._add_text_back(prefix, outputs)
 
             content_items = msg.get("content")
             if not isinstance(content_items, list):
@@ -230,14 +230,14 @@ class DataProcessor:
             for item in content_items:
                 if isinstance(item, str) or item.get("type") == "text":
                     text = item if isinstance(item, str) else item.get("text", "")
-                    self._add_text(text, outputs)
+                    self._add_text_back(text, outputs)
                 elif item.get("type") == "image_url" or item.get("type") == "image":
-                    self._add_image(item, outputs)
+                    self._add_image_back(item, outputs)
                 elif item.get("type") == "video_url" or item.get("type") == "video":
                     self._add_video(item, outputs)
 
             if role in ("user", "system"):
-                self._add_text("\n", outputs)
+                self._add_text_back("\n", outputs)
             else:
                 self._add_special_token(self.sep_token, outputs)
 
@@ -264,7 +264,8 @@ class DataProcessor:
             outputs["position_ids"].append([start + i] * 3)
         outputs["cur_position"] += len(tokens)
 
-    def _add_text_back(self, tokens: [int], outputs: Dict) -> None:
+    def _add_text_back(self, text: str, outputs: Dict) -> None:
+        tokens = self.tokenizer.encode(text, add_special_tokens=False)["input_ids"]
         outputs["input_ids"].extend(tokens)
         outputs["token_type_ids"].extend([IDS_TYPE_FLAG["text"]] * len(tokens))
 
@@ -320,7 +321,54 @@ class DataProcessor:
         outputs["grid_thw"].append(ret["image_grid_thw"])
         outputs["image_type_ids"].append(0)
 
-        # self._add_special_token(self.IMG_END, outputs)
+    def _add_image_back(self, item: Dict, outputs: Dict) -> None:
+        url_info = item.get("image_url", {})
+        w = url_info.get("image_width", None)
+        h = url_info.get("image_height", None)
+
+        if "image" in item:
+            img = item["image"]
+        else:
+            url = url_info.get("url")
+            data = get_downloadable(url, download_dir=RAW_IMAGE_DIR, save_to_disk=False)
+            img = Image.open(io.BytesIO(data) if isinstance(data, bytes) else data)
+
+        if w and h:
+            img = img.resize((w, h))
+
+        outputs["pic_cnt"] += 1
+        self._add_text(f"Picture {outputs['pic_cnt']}:", outputs)
+        self._add_special_token(self.IMG_START, outputs)
+
+        patches_h, patches_w = self.image_preprocessor.get_smarted_resize(
+            img.height,
+            img.width,
+            min_pixels=self.image_min_pixels,
+            max_pixels=self.image_max_pixels,
+        )[1]
+        num_tokens = (patches_h * patches_w) // (self.spatial_conv_size**2)
+
+        outputs["input_ids"].extend([self.image_patch_id] * num_tokens)
+        outputs["token_type_ids"].extend([IDS_TYPE_FLAG["image"]] * num_tokens)
+
+        pos_ids = self._compute_3d_positions(1, patches_h, patches_w, outputs["cur_position"])
+        outputs["position_ids"].extend(pos_ids)
+        outputs["cur_position"] = np.max(pos_ids) + 1
+
+        # Preprocess pixels
+        ret = self.image_preprocessor.preprocess(
+            images=[img.convert("RGB")],
+            do_normalize=False,
+            do_rescale=False,
+            predetermined_grid_thw=np.array([[patches_h, patches_w]]),
+            do_convert_rgb=True,
+            input_data_format=ChannelDimension.LAST,
+        )
+        outputs["images"].append(ret["pixel_values"])
+        outputs["grid_thw"].append(ret["image_grid_thw"])
+        outputs["image_type_ids"].append(0)
+
+        self._add_special_token(self.IMG_END, outputs)
 
     def _add_video(self, item: Dict, outputs: Dict) -> None:
         url_info = item.get("video_url", {})
@@ -365,7 +413,48 @@ class DataProcessor:
         outputs["position_ids"].extend(pos_ids)
         outputs["cur_position"] = np.max(pos_ids) + 1
 
-        # self._add_special_token(self.VID_END, outputs)
+    def _add_video_back(self, item: Dict, outputs: Dict) -> None:
+        url_info = item.get("video_url", {})
+        url = url_info.get("url")
+        outputs["video_cnt"] += 1
+        self._add_text(f"Video {outputs['video_cnt']}:", outputs)
+        self._add_special_token(self.VID_START, outputs)
+
+        if "video" in item:
+            video_path = item["video"]
+            frames = self._load_and_process_video(video_path, item)
+        else:
+            video_path = get_downloadable(url, save_to_disk=False)
+            frames = self._load_and_process_video(video_path, item)
+        patches_h, patches_w = self.image_preprocessor.get_smarted_resize(
+            frames[0].height,
+            frames[0].width,
+            min_pixels=self.video_min_pixels,
+            max_pixels=self.video_max_pixels,
+        )[1]
+        num_frames = len(frames)
+        num_tokens = (num_frames * patches_h * patches_w) // (self.spatial_conv_size**2 * self.temporal_conv_size)
+
+        pixel_stack = np.stack([np.array(f.convert("RGB")) for f in frames], axis=0)
+        ret = self.image_preprocessor.preprocess(
+            images=None,
+            videos=pixel_stack,
+            do_normalize=False,
+            do_rescale=False,
+            predetermined_grid_thw=np.array([[patches_h, patches_w]] * num_frames),
+            do_convert_rgb=True,
+            input_data_format=ChannelDimension.LAST,
+        )
+        outputs["images"].append(ret["pixel_values_videos"])
+        outputs["grid_thw"].append(ret["video_grid_thw"])
+        outputs["image_type_ids"].extend([1] * num_frames)
+
+        outputs["input_ids"].extend([self.image_patch_id] * num_tokens)
+        outputs["token_type_ids"].extend([IDS_TYPE_FLAG["video"]] * num_tokens)
+
+        pos_ids = self._compute_3d_positions(num_frames, patches_h, patches_w, outputs["cur_position"])
+        outputs["position_ids"].extend(pos_ids)
+        outputs["cur_position"] = np.max(pos_ids) + 1
 
     def _load_and_process_video(self, url: str, item: Dict) -> List[Image.Image]:
         reader, meta, path = read_video_decord(url, save_to_disk=False)
