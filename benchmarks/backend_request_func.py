@@ -1,6 +1,11 @@
 # !/usr/bin/env python3
-# encoding: utf-8
+# Copyright 2025 vLLM Team
+# Original source: https://github.com/vllm-project/vllm/blob/main/benchmarks/backend_request_func.py
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at: http://www.apache.org/licenses/LICENSE-2.0
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """
 request_func.py
 """
@@ -20,8 +25,6 @@ from tqdm.asyncio import tqdm
 from transformers import (AutoTokenizer, PreTrainedTokenizer,
                           PreTrainedTokenizerFast)
 
-# NOTE(simon): do not import vLLM here so the benchmark script
-# can run without vLLM installed.
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
 

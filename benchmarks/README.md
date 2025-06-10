@@ -52,7 +52,7 @@ python benchmark_serving.py \
   --port 9812 \
   --dataset-name EBChat \
   --dataset-path ./filtered_sharedgpt_2000_input_1136_output_200_fd.json \
-  --hyperparameter-path EB45T.yaml \
+  --hyperparameter-path yaml/ernie_45_12k_80g_tp4.yaml \
   --percentile_metrics ttft,tpot,itl,e2el,s_ttft,s_itl,s_e2el,s_decode,input_len,s_input_len,output_len \
   --metric_percentiles 80,95,99,99.9,99.95,99.99 \
   --num-prompts 1 \
@@ -72,7 +72,7 @@ python benchmark_serving.py \
   --port 9812 \
   --dataset-name EBChat \
   --dataset-path ./filtered_sharedgpt_2000_input_1136_output_200_fd.json \
-  --hyperparameter-path EB45T.yaml \
+  --hyperparameter-path yaml/ernie_45_12k_80g_tp4.yaml \
   --percentile_metrics ttft,tpot,itl,e2el,s_ttft,s_itl,s_e2el,s_decode,input_len,s_input_len,output_len \
   --metric_percentiles 80,95,99,99.9,99.95,99.99 \
   --num-prompts 2000 \
@@ -94,7 +94,7 @@ python benchmark_serving.py \
   --port 9812 \
   --dataset-name EBChat \
   --dataset-path ./eb45t_spv4_dataserver_1w_waigua_fd \
-  --hyperparameter-path EB45T.yaml \
+  --hyperparameter-path yaml/ernie_45_12k_80g_tp4.yaml \
   --percentile_metrics ttft,tpot,itl,e2el,s_ttft,s_itl,s_e2el,s_decode,input_len,s_input_len,output_len \
   --metric_percentiles 80,95,99,99.9,99.95,99.99 \
   --num-prompts 2000 \
