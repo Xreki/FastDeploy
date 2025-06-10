@@ -194,7 +194,7 @@ class DataProcessor:
                 else:
                     self._add_video(image_message_list[image_message_index], outputs)
                 image_message_index += 1
-        outputs["input_ids"].extend(prompt_token_ids[image_start_index:])
+        self._add_text(prompt_token_ids[image_start_index:], outputs)
         return outputs
 
     def _add_special_token(self, token: Union[str, int], outputs: Dict) -> None:
