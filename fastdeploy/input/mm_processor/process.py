@@ -182,7 +182,7 @@ class DataProcessor:
                 if isinstance(item, dict) and item.get("type") in ["image_url", "image", "video_url", "video"]:
                     image_message_list.append(item)
         
-        prompt_token_ids = self.messages2ids(request)
+        prompt_token_ids = self.request2ids(request)
         image_start_index = 0
         image_message_index = 0
         for i in range(len(prompt_token_ids)):
@@ -380,7 +380,7 @@ class DataProcessor:
         coords = list(zip(time_idx, h_idx, w_idx))
         return [[start_idx + ti, start_idx + hi, start_idx + wi] for ti, hi, wi in coords]
 
-    def messages2ids(self, request):
+    def request2ids(self, request):
         """
         Convert multi-turn messages into ID sequences.
         
