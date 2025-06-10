@@ -149,7 +149,7 @@ class DataProcessor:
         """Enable evaluation mode (doesn't produce labels)."""
         self.is_training = False
 
-    def process(self, request: List[Dict[str, Any]]) -> Dict[str, Union[np.ndarray, List[np.ndarray], None]]:
+    def process(self, request: Dict[str, Any]) -> Dict[str, Union[np.ndarray, List[np.ndarray], None]]:
         """
         Convert chat messages into model inputs.
         Returns a dict with input_ids, token_type_ids, position_ids, images, grid_thw, image_type_ids, labels.
