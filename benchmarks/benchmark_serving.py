@@ -152,8 +152,6 @@ def calculate_metrics(
     input_requests: list[SampleRequest],
     outputs: list[RequestFuncOutput],
     dur_s: float,
-    # tokenizer: PreTrainedTokenizerBase,
-    selected_percentile_metrics: list[str],
     selected_percentiles: list[float],
     goodput_config_dict: dict[str, float],
 ) -> tuple[BenchmarkMetrics, list[int]]:
@@ -184,9 +182,7 @@ def calculate_metrics(
                 # len(outputs[i].itl) since multiple output tokens may be
                 # bundled together
                 # Note : this may inflate the output token count slightly
-                # output_len = len(
-                #     tokenizer(outputs[i].generated_text,
-                #               add_special_tokens=False).input_ids)
+
             actual_output_lens.append(output_len)
             input_lens.append(outputs[i].prompt_tokens)
             infer_input_lens.append(outputs[i].prompt_tokens)
@@ -323,7 +319,6 @@ async def benchmark(
     base_url: str,
     model_id: str,
     model_name: str,
-    # tokenizer: PreTrainedTokenizerBase,
     input_requests: list[SampleRequest],
     hyper_parameters: dict,
     logprobs: Optional[int],
@@ -351,33 +346,25 @@ async def benchmark(
         input_requests[0].expected_output_len
     test_history_QA = input_requests[0].history_QA
 
-    # assert test_mm_content is None or isinstance(test_mm_content, dict)
     test_input = RequestFuncInput(
         model=model_id,
         model_name=model_name,
         prompt=test_prompt,
         prompt_len=0,
-        # system=test_system,
         history_QA=test_history_QA,
         hyper_parameters=hyper_parameters,
         api_url=api_url,
         output_len=test_output_len,
         logprobs=logprobs,
-        # multi_modal_content=test_mm_content,
         ignore_eos=ignore_eos,
         extra_body=extra_body,
     )
 
     print("test_input:", test_input)
-    # exit(0)
-    # print()
-    # print("input_requests:", input_requests)
 
     test_output = await request_func(request_func_input=test_input)
 
     print("test_output:", test_output)
-
-    # exit(0)
 
     if not test_output.success:
         raise ValueError(
@@ -400,7 +387,6 @@ async def benchmark(
                                          api_url=base_url + "/start_profile",
                                          output_len=test_output_len,
                                          logprobs=logprobs,
-                                         # multi_modal_content=test_mm_content,
                                          ignore_eos=ignore_eos,
                                          extra_body=extra_body)
         profile_output = await request_func(request_func_input=profile_input)
@@ -447,15 +433,12 @@ async def benchmark(
         request_func_input = RequestFuncInput(model=req_model_id,
                                               model_name=req_model_name,
                                               prompt=prompt,
-                                              # 数据集不包含输入长度,只看usage返回
                                               prompt_len=0,
-                                              # system=system,
                                               history_QA=history_QA,
                                               hyper_parameters=hyper_parameters,
                                               api_url=api_url,
                                               output_len=output_len,
                                               logprobs=logprobs,
-                                              # multi_modal_content=mm_content,
                                               ignore_eos=ignore_eos,
                                               extra_body=extra_body)
         tasks.append(
@@ -692,10 +675,6 @@ def main(args: argparse.Namespace):
         api_url = f"http://{args.host}:{args.port}{args.endpoint}"
         base_url = f"http://{args.host}:{args.port}"
 
-    # tokenizer = get_tokenizer(tokenizer_id,
-    #                           tokenizer_mode=tokenizer_mode,
-    #                           trust_remote_code=args.trust_remote_code)
-
     if args.dataset_name is None:
         raise ValueError(
             "Please specify '--dataset-name' and the corresponding "
@@ -706,14 +685,12 @@ def main(args: argparse.Namespace):
         "EB":
         lambda: EBDataset(random_seed=args.seed,
                           dataset_path=args.dataset_path).sample(
-                              # tokenizer=tokenizer,
                               num_requests=args.num_prompts,
                               output_len=args.sharegpt_output_len,
         ),
         "EBChat":
             lambda: EBChatDataset(random_seed=args.seed,
                                   dataset_path=args.dataset_path).sample(
-                # tokenizer=tokenizer,
                 num_requests=args.num_prompts,
                 output_len=args.sharegpt_output_len,
         ),
@@ -725,8 +702,6 @@ def main(args: argparse.Namespace):
         raise ValueError(f"Unknown dataset: {args.dataset_name}") from err
 
     goodput_config_dict = check_goodput_args(args)
-
-    # print("input_requests", input_requests)
 
     # Collect the sampling parameters.
     sampling_params = {
@@ -763,7 +738,6 @@ def main(args: argparse.Namespace):
             base_url=base_url,
             model_id=model_id,
             model_name=model_name,
-            # tokenizer=tokenizer,
             input_requests=input_requests,
             hyper_parameters=hyper_parameters,
             logprobs=args.logprobs,

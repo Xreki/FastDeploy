@@ -37,14 +37,8 @@ AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
 class RequestFuncInput:
     """Input for requesting LLMs via API"""
     prompt: str
-    # system: str
     history_QA: Optional[dict]
     hyper_parameters: dict
-    # temperature: float
-    # repetition_penalty: float
-    # frequency_penalty: float
-    # presence_penalty: float
-    # top_p: float
     api_url: str
     prompt_len: int
     output_len: int
@@ -79,9 +73,9 @@ async def async_request_eb_openai_chat_completions(
 ) -> RequestFuncOutput:
     """Request an LLM using EB OpenAI"""
     api_url = request_func_input.api_url
-    # assert api_url.endswith(
-    #     ("completions", "profile")
-    # ), "OpenAI Chat Completions API URL must end with 'completions'."
+    assert api_url.endswith(
+        ("completions", "profile")
+    ), "OpenAI Chat Completions API URL must end with 'completions'."
 
     async with aiohttp.ClientSession(trust_env=True,
                                      timeout=AIOHTTP_TIMEOUT) as session:
@@ -99,11 +93,9 @@ async def async_request_eb_openai_chat_completions(
         }
         # 超参由yaml传入
         payload.update(request_func_input.hyper_parameters)
-        # print("payload:", payload)
+
         if request_func_input.ignore_eos:
             payload["ignore_eos"] = request_func_input.ignore_eos
-        # if request_func_input.extra_body:
-        #     payload.update(request_func_input.extra_body)
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
@@ -112,7 +104,6 @@ async def async_request_eb_openai_chat_completions(
         output = RequestFuncOutput()
         output.prompt_len = 0
 
-        generated_text = ""
         ttft = 0.0
         st = time.perf_counter()
         most_recent_timestamp = st
@@ -172,7 +163,6 @@ async def async_request_eb_openai_chat_completions(
 
     if pbar:
         pbar.update(1)
-    # print("#####output:", output)
     return output
 
 
@@ -199,12 +189,9 @@ async def async_request_eb_openai_completions(
         }
         # 超参由yaml传入
         payload.update(request_func_input.hyper_parameters)
-        # print("payload:", payload)
+
         if request_func_input.ignore_eos:
             payload["ignore_eos"] = request_func_input.ignore_eos
-        # "temperature": 0.0会导致输出为<unk>
-        #if request_func_input.extra_body:
-        #    payload.update(request_func_input.extra_body)
         headers = {
             "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}"
         }
@@ -504,9 +491,7 @@ async def async_request_openai_completions(
         }
         if request_func_input.ignore_eos:
             payload["ignore_eos"] = request_func_input.ignore_eos
-        # "temperature": 0.0会导致输出为<unk>
-        #if request_func_input.extra_body:
-        #    payload.update(request_func_input.extra_body)
+
         headers = {
             "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}"
         }

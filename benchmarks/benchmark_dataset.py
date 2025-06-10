@@ -40,18 +40,10 @@ class SampleRequest:
     """
 
     prompt: Union[str, Any]
-    # system: Union[str, Any]
     history_QA: Union[str, Any]
     json_data: Optional[dict]
-    # temperature: float
-    # repetition_penalty: float
-    # frequency_penalty: float
-    # presence_penalty: float
-    # top_p: float
     prompt_len: int
     expected_output_len: int
-    # multi_modal_data: Optional[Union[MultiModalDataDict, dict]] = None
-    # lora_request: Optional[LoRARequest] = None
 
 
 class BenchmarkDataset(ABC):
@@ -82,20 +74,6 @@ class BenchmarkDataset(ABC):
         self.hyperparameter_path = hyperparameter_path
         self.hyperparameters = {}
 
-    # def apply_multimodal_chat_transformation(
-    #         self,
-    #         prompt: str,
-    #         mm_content: Optional[MultiModalDataDict] = None) -> list[dict]:
-    #     """
-    #     Transform a prompt and optional multimodal content into a chat format.
-    #     This method is used for chat models that expect a specific conversation
-    #     format.
-    #     """
-    #     content = [{"text": prompt, "type": "text"}]
-    #     if mm_content is not None:
-    #         content.append(mm_content)
-    #     return [{"role": "user", "content": content}]
-
     def load_data(self) -> None:
         """
         Load data from the dataset path into self.data.
@@ -109,49 +87,6 @@ class BenchmarkDataset(ABC):
         # TODO (jenniferzhao): add support for downloading data
         raise NotImplementedError(
             "load_data must be implemented in subclasses.")
-
-    # def get_random_lora_request(
-    #     self,
-    #     tokenizer: PreTrainedTokenizerBase,
-    #     max_loras: Optional[int] = None,
-    #     lora_path: Optional[str] = None,
-    # ) -> tuple[Optional[LoRARequest], AnyTokenizer]:
-    #     """
-    #     Optionally select a random LoRA request and return its associated
-    #     tokenizer.
-    #
-    #     This method is used when LoRA parameters are provided.  It randomly
-    #     selects a LoRA based on max_loras and retrieves a cached tokenizer for
-    #     that LoRA if available. Otherwise, it returns the base tokenizer.
-    #
-    #     Args:
-    #         tokenizer (PreTrainedTokenizerBase): The base tokenizer to use if no
-    #         LoRA is selected.  max_loras (Optional[int]): The maximum number of
-    #         LoRAs available. If None, LoRA is not used.  lora_path
-    #         (Optional[str]): Path to the LoRA parameters on disk. If None, LoRA
-    #         is not used.
-    #
-    #     Returns:
-    #         tuple[Optional[LoRARequest], AnyTokenizer]: A tuple where the first
-    #         element is a LoRARequest (or None if not applicable) and the second
-    #         element is the tokenizer associated with the LoRA request (or the
-    #         base tokenizer).
-    #     """
-    #     if max_loras is None or lora_path is None:
-    #         return None, tokenizer
-    #
-    #     # Generate a random LoRA ID in the range [1, max_loras].
-    #     lora_id = random.randint(1, max_loras)
-    #     lora_request = LoRARequest(
-    #         lora_name=str(lora_id),
-    #         lora_int_id=lora_id,
-    #         lora_path=lora_path_on_disk(lora_path),
-    #     )
-    #     if lora_id not in lora_tokenizer_cache:
-    #         lora_tokenizer_cache[lora_id] = get_lora_tokenizer(lora_request)
-    #     # Return lora_request and the cached tokenizer if available; otherwise,
-    #     # return the base tokenizer
-    #     return lora_request, lora_tokenizer_cache[lora_id] or tokenizer
 
     @abstractmethod
     def sample(self, num_requests: int) -> list[SampleRequest]:
@@ -283,14 +218,6 @@ class EBDataset(BenchmarkDataset):
 
         with open(self.dataset_path, encoding="utf-8") as f:
             self.data = [json.loads(i.strip()) for i in f.readlines()]
-        # Filter entries with at least two conversation turns.
-        # self.data = [
-        #     entry for entry in self.data
-        # ]
-        # print("self.data:", self.data[0:2])
-        # print("self.data len:", len(self.data))
-        # random.seed(self.random_seed)
-        # random.shuffle(self.data)
 
     def sample(
         self,
@@ -313,11 +240,7 @@ class EBDataset(BenchmarkDataset):
             self.top_p = float(entry["topp"])
             self.prompt_len = int(entry["input_token_num"])
             new_output_len = int(entry["max_dec_len"])
-            # if not is_valid_sequence(prompt_len,
-            #                          new_output_len,
-            #                          skip_min_output_len_check=output_len
-            #                          is not None):
-            #     continue
+
             if enable_multimodal_chat:
                 prompt = self.apply_multimodal_chat_transformation(
                     prompt, None)
@@ -328,8 +251,7 @@ class EBDataset(BenchmarkDataset):
                     history_QA=[],
                     expected_output_len=new_output_len,
                 ))
-        # print("samples:", samples)
-        # print("samples len:", len(samples))
+
         self.maybe_oversample_requests(samples, num_requests)
         return samples
 
@@ -351,14 +273,6 @@ class EBChatDataset(BenchmarkDataset):
 
         with open(self.dataset_path, encoding="utf-8") as f:
             self.data = [json.loads(i.strip()) for i in f.readlines()]
-        # Filter entries with at least two conversation turns.
-        # self.data = [
-        #     entry for entry in self.data
-        # ]
-        # print("self.data:", self.data[0:2])
-        # print("self.data len:", len(self.data))
-        # random.seed(self.random_seed)
-        # random.shuffle(self.data)
 
     def sample(
         self,
@@ -371,19 +285,13 @@ class EBChatDataset(BenchmarkDataset):
     ) -> list:
         samples: list = []
         for entry in self.data:
-            # print("entry:", entry)
             if len(samples) >= num_requests:
                 break
             json_data = entry
             prompt = entry["messages"][-1].get("content", "")
-            # system = entry.get("messages", [])[0].get("content", "")
             history_QA = entry.get("messages", [])
             new_output_len = int(entry.get("max_tokens", 12288))
-            # if not is_valid_sequence(prompt_len,
-            #                          new_output_len,
-            #                          skip_min_output_len_check=output_len
-            #                          is not None):
-            #     continue
+
             if enable_multimodal_chat:
                 prompt = self.apply_multimodal_chat_transformation(
                     prompt, None)
@@ -392,21 +300,10 @@ class EBChatDataset(BenchmarkDataset):
                     json_data=json_data,
                     prompt=prompt,
                     prompt_len=0,
-                    # system=system,
                     history_QA=history_QA,
                     expected_output_len=new_output_len,
                 ))
-        # print("samples:", samples)
-        # print("samples len:", len(samples))
+
         self.maybe_oversample_requests(samples, num_requests)
         return samples
-
-
-if __name__ == '__main__':
-    input_requests = EBChatDataset(random_seed=0,
-              dataset_path="./compare_num_json").sample(
-        num_requests=50,
-        output_len=None,
-    )
-    # print(input_requests)
 
