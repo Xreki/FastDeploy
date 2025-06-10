@@ -23,9 +23,9 @@ import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
 
 from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
-                               KVCacheConfig, LLMConfig, LoadConfig,
-                               ModelConfig, MoEConfig, ParallelConfig,
-                               SpeculativeConfig, TmpConfig)
+                               GraphOptimizationConfig, KVCacheConfig,
+                               LLMConfig, LoadConfig, ModelConfig, MoEConfig,
+                               ParallelConfig, SpeculativeConfig, TmpConfig)
 from fastdeploy.inter_communicator import EngineWorkerQueue as TaskQueue
 from fastdeploy.inter_communicator import IPCSignal
 from fastdeploy.model_executor.layers.quantization import \
@@ -371,6 +371,7 @@ def initialize_llm_config(args) -> LLMConfig:
     parallel_config = ParallelConfig()
     load_config = LoadConfig()
     moe_config = MoEConfig()
+    graph_opt_config = GraphOptimizationConfig()
 
     # Note(tangbinhan): used for load_checkpoint
     model_config.tensor_parallel_rank = parallel_config.tensor_parallel_rank
@@ -501,7 +502,8 @@ def initialize_llm_config(args) -> LLMConfig:
                            moe_config=moe_config,
                            decoding_config=decoding_config,
                            quant_config=quant_config,
-                           kv_cache_config=kv_cache_config)
+                           kv_cache_config=kv_cache_config,
+                           graph_opt_config=graph_opt_config)
 
     return llm_config
 

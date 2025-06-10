@@ -52,10 +52,9 @@ class GraphOptBackend:
 
         # 2. Dynamic graph
         else:
-            print(self.cudagraph_piecewise_backend is None)
             if self.cudagraph_piecewise_backend is None:
                 self.cudagraph_piecewise_backend = CudaGraphPiecewiseBackend(
                     llm_config=self.llm_config, runnable=self.runnable)
             # TODO(gongshaotian): handling kwargs
-            assert kwargs["input_ids"] is not None
+            assert kwargs["forward_meta"].input_ids is not None
             return self.cudagraph_piecewise_backend.__call__(**kwargs)

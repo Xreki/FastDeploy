@@ -26,7 +26,7 @@ from fastdeploy.model_executor.graph_optimization.graph_optimization_backend imp
 _T = TypeVar("_T", bound=type[paddle.nn.Layer])
 
 
-def support_graph_opt(cls: Optional[_T] = None) -> _T:
+def support_graph_optimization(cls: Optional[_T] = None) -> _T:
     """
     A decorator for wrapping models or layers with CUDA graph support.
     This enables efficient kernel launch sequencing for improved GPU performance.
@@ -34,7 +34,7 @@ def support_graph_opt(cls: Optional[_T] = None) -> _T:
     Example usage:
 
     '''
-    @support_graph_opt
+    @support_graph_optimization
     class ErnieBot(paddle.nn.Layer):
         def __init__(**kwargs):
             ...

@@ -479,8 +479,9 @@ class GPUModelRunner(ModelRunnerBase):
             # 3. Prepare lora
 
             # 4. Run model
-            model_output = self.model(self.share_inputs["ids_remove_padding"],
-                                      self.forward_meta)
+            model_output = self.model(
+                ids_remove_padding=self.share_inputs["ids_remove_padding"],
+                forward_meta=self.forward_meta)
             hiddden_states = rebuild_padding(
                 model_output,
                 self.share_inputs["cum_offsets"],
