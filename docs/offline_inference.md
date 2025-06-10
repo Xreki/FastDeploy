@@ -53,6 +53,11 @@ for output in outputs:
 * kv_cache_ratio(float): KV Cache分配给输入的比例，推荐值=平均输入长度/(平均输入长度+平均输出长度），默认值0.75
 * use_warmup(int): 是否在启动时进行warmup，会自动生成极限长度数据进行warmup，默认自动计算KV Cache时会使用
 * engine_worker_queue_port(int): 引擎内部进程间通信使用端口号，默认值8002
+* splitwise_role(str): 是否开启splitwise推理，默认值mixed， 支持参数为["mixed", "decode", "prefill"]
+* innode_prefill_ports(list[int]): prefill 实例内部引擎启动端口 （仅单机PD分离需要），默认值None
+* enable_prefix_caching(bool): 是否开启前缀缓冲，默认值False
+* cpu_offload_gb(float): CPU cache offload 的显存大小，默认值0.0
+* cache_queue_port(int): 缓存队列通信端口，默认值为None
 * enable_mm(bool): 启用多模推理，默认值False
 * limit_mm_per_prompt(dict): 限制每个prompt中多模态数据的数量，如：{"image": 1, "video": 1, "audio": 1}
 * mm_processor_kwargs(dict): 多模态处理器参数配置，如：{"spatial_conv_size": 2, "temporal_conv_size": 2, "image_min_pixels": 3136, "video_fps": 2}

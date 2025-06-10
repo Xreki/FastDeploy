@@ -204,7 +204,7 @@ class ModelRunner(ModelRunnerBase):
             total_block_num,
             kv_num_head,
             self.args.block_size,
-            self.model_cfg.hidden_size // self.model_cfg.num_attention_heads,
+            self.model_cfg.head_dim,
         ]
 
         cache_kvs_list = []
@@ -264,8 +264,7 @@ class ModelRunner(ModelRunnerBase):
                         total_block_num,
                         kv_num_head,
                         self.args.block_size,
-                        self.model_cfg.hidden_size //
-                        self.model_cfg.num_attention_heads,
+                        self.model_cfg.head_dim,
                     ],
                     fill_value=0,
                     dtype=cache_type,
@@ -275,8 +274,7 @@ class ModelRunner(ModelRunnerBase):
                         total_block_num,
                         kv_num_head,
                         self.args.block_size,
-                        self.model_cfg.hidden_size //
-                        self.model_cfg.num_attention_heads,
+                        self.model_cfg.head_dim,
                     ],
                     fill_value=0,
                     dtype=cache_type,
