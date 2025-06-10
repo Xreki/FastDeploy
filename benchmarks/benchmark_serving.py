@@ -470,7 +470,6 @@ async def benchmark(
         outputs=outputs,
         dur_s=benchmark_duration,
         # tokenizer=tokenizer,
-        selected_percentile_metrics=selected_percentile_metrics,
         selected_percentiles=selected_percentiles,
         goodput_config_dict=goodput_config_dict,
     )
@@ -702,6 +701,8 @@ def main(args: argparse.Namespace):
         raise ValueError(f"Unknown dataset: {args.dataset_name}") from err
 
     goodput_config_dict = check_goodput_args(args)
+
+    # print("input_requests", input_requests)
 
     # Collect the sampling parameters.
     sampling_params = {
