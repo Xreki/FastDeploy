@@ -39,6 +39,7 @@ from fastdeploy.input.preprocess import InputPreprocessor
 from fastdeploy.inter_communicator import EngineWorkerQueue
 from fastdeploy.inter_communicator import IPCSignal
 from fastdeploy.inter_communicator import ZmqClient
+from fastdeploy.metrics.metrics import main_process_metrics
 from fastdeploy.output.token_processor import TokenProcessor
 from fastdeploy.output.token_processor import WarmUpTokenProcessor
 from fastdeploy.splitwise.splitwise_connector import SplitwiseConnector
@@ -296,6 +297,8 @@ class LLMEngine(object):
                     self.split_connector.send_splitwise_tasks(tasks)
 
                 self.insert_tasks(tasks)
+                main_process_metrics.num_requests_waiting.dec(len(tasks))
+                main_process_metrics.num_requests_running.inc(len(tasks))
             except Exception as e:
                 err_msg = "Error happend while insert task to engine: {}, {}.".format(
                     e, str(traceback.format_exc()))
@@ -337,6 +340,7 @@ class LLMEngine(object):
                         added_requests.pop(request_id)
 
                     if failed is None:
+                        main_process_metrics.num_requests_waiting.inc(1)
                         continue
 
                     error_result = RequestOutput(request_id=request_id,
@@ -376,6 +380,8 @@ class LLMEngine(object):
         request.set(
             "max_tokens",
             min(self.cfg.max_model_len - input_ids_len,
+                request.get("max_tokens")))
+        main_process_metrics.request_params_max_tokens.observe(min(self.cfg.max_model_len - input_ids_len,
                 request.get("max_tokens")))
         min_tokens = request.get("min_tokens")
         if input_ids_len + min_tokens >= self.cfg.max_model_len:
