@@ -26,7 +26,7 @@ from fastdeploy.model_executor.layers.linear import (
 from fastdeploy.model_executor.layers.utils import get_tensor
 
 from .cutlass_fused_moe import CutlassFusedMoeMethod
-# from .triton_fused_moe import TritonFusedMoeMethod
+from .triton_fused_moe import TritonFusedMoeMethod
 
 
 @dataclass

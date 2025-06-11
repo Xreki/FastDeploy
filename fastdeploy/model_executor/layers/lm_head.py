@@ -103,7 +103,7 @@ class ParallelLMHead(nn.Layer):
         RowParallelLinear = fleet.meta_parallel.RowParallelLinear
 
         self.tie_word_embeddings = tie_word_embeddings
-        self.embedding_use_lm_head_weight = fd_config.model_config.embedding_use_lm_head_weight
+        self.weight_sharing = fd_config.model_config.weight_sharing
 
         if self.tie_word_embeddings is None:
             if self.use_ep:
@@ -153,7 +153,7 @@ class ParallelLMHead(nn.Layer):
                     get_tensor(state_dict.pop(self.linear_weight_key)).astype(
                         paddle.get_default_dtype()))
             else:
-                if self.embedding_use_lm_head_weight == True:
+                if self.weight_sharing:
                     self.out_linear.weight.set_value(
                         get_tensor(state_dict.pop(
                             self.linear_weight_key)).astype(

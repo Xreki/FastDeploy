@@ -136,7 +136,7 @@ class VocabParallelEmbedding(nn.Layer):
         Args:
             state_dict (dict): A dictionary containing the checkpoint weights and biases.
         """
-        if self.fd_config.model_config.embedding_use_lm_head_weight == True:
+        if self.weight_sharing:
             # read without pop, this weight will be used in lm_head
             self.word_embeddings.weight.set_value(
                 get_tensor(state_dict["lm_head.weight"]).astype(

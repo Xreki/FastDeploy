@@ -232,30 +232,31 @@ class PaddleDisWorkerProc():
         # model_block_memory_used = self.worker.cal_theortical_kvcache()
         # num_blocks_local = int(available_kv_cache_memory //
         #                        model_block_memory_used)
-        # print(f"------- num_blocks_local:{num_blocks_local} --------")
+        num_blocks_local = 1500
+        print(f"------- num_blocks_local:{num_blocks_local} --------")
 
-        # # 3. Send IPCSignal
-        # if self.fd_config.parallel_config.do_profile:
-        #     get_profile_block_num = np.zeros(shape=[self.rank], dtype=np.int32)
-        #     self.get_profile_block_num_signal = IPCSignal(
-        #         name="get_profile_block_num",
-        #         array=get_profile_block_num,
-        #         dtype=np.int32,
-        #         suffix=self.parallel_config.engine_pid,
-        #         create=False)
-        #     self.get_profile_block_num_signal.value[
-        #         self.local_rank] = num_blocks_local
+        # 3. Send IPCSignal
+        if self.fd_config.parallel_config.do_profile:
+            get_profile_block_num = np.zeros(shape=[self.rank], dtype=np.int32)
+            self.get_profile_block_num_signal = IPCSignal(
+                name="get_profile_block_num",
+                array=get_profile_block_num,
+                dtype=np.int32,
+                suffix=self.parallel_config.engine_pid,
+                create=False)
+            self.get_profile_block_num_signal.value[
+                self.local_rank] = num_blocks_local
 
-        #     # Wait all worker send the signal
-        #     while np.any(self.get_profile_block_num_signal.value <= 0):
-        #         time.sleep(0.01)
-        #     num_blocks_global = self.get_profile_block_num_signal.value.min(
-        #     ).item()
-        #     self.get_profile_block_num_signal.value[
-        #         self.local_rank] = num_blocks_global
-        # else:
-        #     num_blocks_global = num_blocks_local
-        num_blocks_global = 1500
+            # Wait all worker send the signal
+            while np.any(self.get_profile_block_num_signal.value <= 0):
+                time.sleep(0.01)
+            num_blocks_global = self.get_profile_block_num_signal.value.min(
+            ).item()
+            self.get_profile_block_num_signal.value[
+                self.local_rank] = num_blocks_global
+        else:
+            num_blocks_global = num_blocks_local
+
         # 4. Updata share inputs
         self.worker.reinitialize_kv_cache(num_gpu_blocks=num_blocks_global)
 
@@ -431,8 +432,6 @@ def initialize_fd_config(args) -> FDConfig:
     model_config.group_size = group_size
     model_config.use_rmsnorm = config.get("use_rmsnorm", True)
     model_config.num_key_value_heads = num_key_value_heads
-    model_config.embedding_use_lm_head_weight = config.get(
-        "embedding_use_lm_head_weight", False)
     # model_config.export_model_type = config.get("predict_model_type", "weight_only_int8")
     tmp_config.has_zero_point = config.get("has_zero_point", False)
     tmp_config.is_channel_wise = config.get("is_channel_wise", False),

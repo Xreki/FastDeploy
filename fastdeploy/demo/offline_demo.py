@@ -21,7 +21,7 @@ model_name_or_path = "/root/paddlejob/workspace/env_run/output/chenjianye/models
 # 超参设置
 sampling_params = SamplingParams(temperature=0.1, max_tokens=30)
 llm = LLM(model=model_name_or_path, tensor_parallel_size=1)
-output = llm.generate(prompts="今天天气特别冷，",
+output = llm.generate(prompts=["今天天气特别冷，", "星期一的早晨，"],
                       use_tqdm=True,
                       sampling_params=sampling_params)
 
