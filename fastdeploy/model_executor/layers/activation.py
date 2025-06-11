@@ -69,12 +69,7 @@ class SiluAndMul(nn.Layer):
         self.bias = bias
         if act_method == "silu":
             act_method = "swiglu"
-        from fastdeploy.utils import get_logger
 
-        logger = get_logger("worker", "worker.log")
-        logger.info("============avtivation debug start=================")
-        logger.info(f"act_method: {act_method}")
-        logger.info("============avtivation debug end=================")
         self.act_method = act_method
         self.dequant_scales = dequant_scales
         self.shift = shift
