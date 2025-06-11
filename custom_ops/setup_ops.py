@@ -15,13 +15,12 @@
 import glob
 import json
 import os
-import shutil
 import subprocess
 import tarfile
 
 import paddle
 from paddle.utils.cpp_extension import CppExtension, CUDAExtension, setup
-from setuptools import find_namespace_packages, find_packages
+from setuptools import find_namespace_packages
 
 archs = json.loads(os.getenv("BUILDING_ARCS", "[]"))
 use_bf16 = os.getenv("CPU_USE_BF16", "False") == "True"
@@ -100,12 +99,12 @@ def get_gencode_flags(archs):
     """
     cc_s = get_sm_version(archs)
     flags = []
-    for cc in cc_s:
-        if cc == 90:
-            cc = f"{cc}a"
-            flags += ["-gencode", "arch=compute_{0},code=sm_{0}".format(cc)]
-        else:
-            flags += ["-gencode", "arch=compute_{0},code=sm_{0}".format(cc)]
+    #for cc in cc_s:
+    #    if cc == 90:
+    #        cc = f"{cc}a"
+    #        flags += ["-gencode", "arch=compute_{0},code=sm_{0}".format(cc)]
+    #    else:
+    #        flags += ["-gencode", "arch=compute_{0},code=sm_{0}".format(cc)]
     return flags
 
 
@@ -175,33 +174,33 @@ if paddle.is_compiled_with_rocm():
     )
 elif paddle.is_compiled_with_cuda():
     sources = [
-        "gpu_ops/set_mask_value.cu", "gpu_ops/set_value_by_flags.cu",
-        "gpu_ops/ngram_mask.cu", "gpu_ops/gather_idx.cu",
-        "gpu_ops/get_output_ep.cc", "gpu_ops/get_mm_split_fuse.cc",
-        "gpu_ops/token_penalty_multi_scores.cu",
-        "gpu_ops/token_penalty_only_once.cu", "gpu_ops/stop_generation.cu",
-        "gpu_ops/stop_generation_multi_ends.cu",
-        "gpu_ops/stop_generation_multi_stop_seqs.cu", "gpu_ops/set_flags.cu",
-        "gpu_ops/step.cu", "gpu_ops/step_reschedule.cu",
-        "gpu_ops/fused_get_rope.cu", "gpu_ops/get_padding_offset.cu",
-        "gpu_ops/update_inputs.cu", "gpu_ops/update_inputs_beam.cu",
-        "gpu_ops/beam_search_softmax.cu", "gpu_ops/rebuild_padding.cu",
-        "gpu_ops/set_data_ipc.cu", "gpu_ops/read_data_ipc.cu",
-        "gpu_ops/enforce_generation.cu", "gpu_ops/dequant_int8.cu",
-        "gpu_ops/tune_cublaslt_gemm.cu", "gpu_ops/swap_cache_batch.cu",
-        "gpu_ops/swap_cache.cu", "gpu_ops/step_system_cache.cu",
-        "gpu_ops/cpp_extensions.cu", "gpu_ops/share_external_data.cu",
-        "gpu_ops/per_token_quant_fp8.cu",
-        "gpu_ops/extract_text_token_output.cu",
-        "gpu_ops/update_split_fuse_input.cu"
+        # "gpu_ops/set_mask_value.cu", "gpu_ops/set_value_by_flags.cu",
+        # "gpu_ops/ngram_mask.cu", "gpu_ops/gather_idx.cu",
+        # "gpu_ops/get_output_ep.cc", "gpu_ops/get_mm_split_fuse.cc",
+        # "gpu_ops/token_penalty_multi_scores.cu",
+        # "gpu_ops/token_penalty_only_once.cu", "gpu_ops/stop_generation.cu",
+        # "gpu_ops/stop_generation_multi_ends.cu",
+        # "gpu_ops/stop_generation_multi_stop_seqs.cu", "gpu_ops/set_flags.cu",
+        # "gpu_ops/step.cu", "gpu_ops/step_reschedule.cu",
+        # "gpu_ops/fused_get_rope.cu", "gpu_ops/get_padding_offset.cu",
+        # "gpu_ops/update_inputs.cu", "gpu_ops/update_inputs_beam.cu",
+        # "gpu_ops/beam_search_softmax.cu", "gpu_ops/rebuild_padding.cu",
+        # "gpu_ops/set_data_ipc.cu", "gpu_ops/read_data_ipc.cu",
+        # "gpu_ops/enforce_generation.cu", "gpu_ops/dequant_int8.cu",
+        # "gpu_ops/tune_cublaslt_gemm.cu", "gpu_ops/swap_cache_batch.cu",
+        # "gpu_ops/swap_cache.cu", "gpu_ops/step_system_cache.cu",
+        # "gpu_ops/cpp_extensions.cu", "gpu_ops/share_external_data.cu",
+        # "gpu_ops/per_token_quant_fp8.cu",
+        # "gpu_ops/extract_text_token_output.cu",
+        # "gpu_ops/update_split_fuse_input.cu"
     ]
 
     # pd_disaggregation
-    sources += [
-        "gpu_ops/remote_cache_kv_ipc.cc",
-        "gpu_ops/open_shm_and_get_meta_signal.cc",
-        "gpu_ops/init_signal_layerwise.cc",
-    ]
+    #sources += [
+    #    "gpu_ops/remote_cache_kv_ipc.cc",
+    #    "gpu_ops/open_shm_and_get_meta_signal.cc",
+    #    "gpu_ops/init_signal_layerwise.cc",
+    #]
 
     cutlass_dir = "third_party/cutlass"
     if not os.path.exists(cutlass_dir) or not os.listdir(cutlass_dir):
@@ -213,33 +212,33 @@ elif paddle.is_compiled_with_cuda():
             raise ValueError("Git clone cutlass failed!")
 
     # deep gemm
-    dg_third_party_include_dirs = (
-        "third_party/cutlass/include/cute",
-        "third_party/cutlass/include/cutlass",
-    )
+    #dg_third_party_include_dirs = (
+    #    "third_party/cutlass/include/cute",
+    #    "third_party/cutlass/include/cutlass",
+    #)
 
-    dg_include_dir = "gpu_ops/fp8_deep_gemm/deep_gemm/include"
-    os.makedirs(dg_include_dir, exist_ok=True)
+    #dg_include_dir = "gpu_ops/fp8_deep_gemm/deep_gemm/include"
+    #os.makedirs(dg_include_dir, exist_ok=True)
 
-    for d in dg_third_party_include_dirs:
-        dirname = d.split("/")[-1]
-        src_dir = d
-        dst_dir = os.path.join(dg_include_dir, dirname)
+    #for d in dg_third_party_include_dirs:
+    #    dirname = d.split("/")[-1]
+    #    src_dir = d
+    #    dst_dir = os.path.join(dg_include_dir, dirname)
 
-        # Remove existing directory if it exists
-        if os.path.exists(dst_dir):
-            if os.path.islink(dst_dir):
-                os.unlink(dst_dir)
-            else:
-                shutil.rmtree(dst_dir)
-        print(f"Copying {src_dir} to {dst_dir}")
+    # # Remove existing directory if it exists
+    # if os.path.exists(dst_dir):
+    #     if os.path.islink(dst_dir):
+    #         os.unlink(dst_dir)
+    #     else:
+    #         shutil.rmtree(dst_dir)
+    # print(f"Copying {src_dir} to {dst_dir}")
 
-        # Copy the directory
-        try:
-            shutil.copytree(src_dir, dst_dir)
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to copy from {src_dir} to {dst_dir}: {e}")
+    # # Copy the directory
+    # try:
+    #     shutil.copytree(src_dir, dst_dir)
+    # except Exception as e:
+    #     raise RuntimeError(
+    #         f"Failed to copy from {src_dir} to {dst_dir}: {e}")
 
     json_dir = "third_party/nlohmann_json"
     if not os.path.exists(json_dir) or not os.listdir(json_dir):
@@ -251,6 +250,16 @@ elif paddle.is_compiled_with_cuda():
             raise ValueError("Git clone nlohmann_json failed!")
 
     nvcc_compile_args = get_gencode_flags(archs)
+    nvcc_compile_args += [
+        "-O3",
+        "-DNDEBUG",
+        "-U__CUDA_NO_HALF_OPERATORS__",
+        "-U__CUDA_NO_HALF_CONVERSIONS__",
+        "-U__CUDA_NO_BFLOAT16_OPERATORS__",
+        "-U__CUDA_NO_BFLOAT16_CONVERSIONS__",
+        "-U__CUDA_NO_BFLOAT162_OPERATORS__",
+        "-U__CUDA_NO_BFLOAT162_CONVERSIONS__",
+    ]
     nvcc_compile_args += ["-DPADDLE_DEV"]
     nvcc_compile_args += [
         "-Igpu_ops/cutlass_kernels",
@@ -262,14 +271,14 @@ elif paddle.is_compiled_with_cuda():
     cc = max(get_sm_version(archs))
     print(f"cc = {cc}")
     if cc >= 80:
-        # append_attention
-        sources += ["gpu_ops/append_attention.cu"]
-        sources += find_end_files("gpu_ops/append_attn", ".cu")
-        # gemm_dequant
-        sources += ["gpu_ops/int8_gemm_with_cutlass/gemm_dequant.cu"]
-        # speculate_decoding
-        sources += find_end_files("gpu_ops/speculate_decoding", ".cu")
-        sources += find_end_files("gpu_ops/speculate_decoding", ".cc")
+        ## append_attention
+        #sources += ["gpu_ops/append_attention.cu"]
+        #sources += find_end_files("gpu_ops/append_attn", ".cu")
+        ## gemm_dequant
+        #sources += ["gpu_ops/int8_gemm_with_cutlass/gemm_dequant.cu"]
+        ## speculate_decoding
+        #sources += find_end_files("gpu_ops/speculate_decoding", ".cu")
+        #sources += find_end_files("gpu_ops/speculate_decoding", ".cc")
         nvcc_compile_args += ["-DENABLE_BF16"]
         # moe
         sources += find_end_files("gpu_ops/cutlass_kernels/moe_gemm/", ".cu")
@@ -277,63 +286,67 @@ elif paddle.is_compiled_with_cuda():
         sources += find_end_files("gpu_ops/moe/", ".cu")
         nvcc_compile_args += ["-Igpu_ops/moe"]
 
-    if cc >= 89:
-        # Running generate fp8 gemm codes.
-        nvcc_compile_args += ["-DENABLE_FP8"]
-        os.system("python auto_gen_fp8_fp8_gemm_fused_kernels.py")
-        os.system("python auto_gen_fp8_fp8_dual_gemm_fused_kernels.py")
-        os.system("python auto_gen_visitor_fp8_gemm_fused_kernels.py")
+    #if cc >= 89:
+    #    # Running generate fp8 gemm codes.
+    #    nvcc_compile_args += ["-DENABLE_FP8"]
+    #    os.system("python auto_gen_fp8_fp8_gemm_fused_kernels.py")
+    #    os.system("python auto_gen_fp8_fp8_dual_gemm_fused_kernels.py")
+    #    os.system("python auto_gen_visitor_fp8_gemm_fused_kernels.py")
 
-        nvcc_compile_args += [
-            "-Igpu_ops/cutlass_kernels/fp8_gemm_fused/autogen"
-        ]
+    #    nvcc_compile_args += [
+    #        "-Igpu_ops/cutlass_kernels/fp8_gemm_fused/autogen"
+    #    ]
 
-        sources += [
-            "gpu_ops/fp8_gemm_with_cutlass/fp8_fp8_half_gemm.cu",
-            "gpu_ops/cutlass_kernels/fp8_gemm_fused/fp8_fp8_gemm_scale_bias_act.cu",
-            "gpu_ops/fp8_gemm_with_cutlass/fp8_fp8_fp8_dual_gemm.cu",
-            "gpu_ops/cutlass_kernels/fp8_gemm_fused/fp8_fp8_dual_gemm_scale_bias_act.cu",
-            "gpu_ops/fp8_gemm_with_cutlass/fp8_fp8_half_cuda_core_gemm.cu",
-            "gpu_ops/fp8_gemm_with_cutlass/per_channel_fp8_fp8_half_gemm.cu",
-            "gpu_ops/cutlass_kernels/fp8_gemm_fused/visitor_fp8_gemm_fused.cu",
-            "gpu_ops/scaled_gemm_f8_i4_f16_gemm.cu",
-            "gpu_ops/scaled_gemm_f8_i4_f16_weight_quantize.cu",
-            "gpu_ops/cutlass_kernels/cutlass_heuristic.cu",
-            "gpu_ops/cutlass_kernels/cutlass_preprocessors.cu",
-            "gpu_ops/air_topp_sampling.cu",
-        ]
-    if cc >= 90:
-        nvcc_compile_args += [
-            "-gencode",
-            "arch=compute_90a,code=compute_90a",
-            "-O3",
-            "-DNDEBUG",
-        ]
-        os.system("python auto_gen_fp8_fp8_block_gemm_fused_kernels_sm90.py")
-        sources += ["gpu_ops/fp8_gemm_with_cutlass/fp8_fp8_half_block_gemm.cu"]
+    #    sources += [
+    #        "gpu_ops/fp8_gemm_with_cutlass/fp8_fp8_half_gemm.cu",
+    #        "gpu_ops/cutlass_kernels/fp8_gemm_fused/fp8_fp8_gemm_scale_bias_act.cu",
+    #        "gpu_ops/fp8_gemm_with_cutlass/fp8_fp8_fp8_dual_gemm.cu",
+    #        "gpu_ops/cutlass_kernels/fp8_gemm_fused/fp8_fp8_dual_gemm_scale_bias_act.cu",
+    #        "gpu_ops/fp8_gemm_with_cutlass/fp8_fp8_half_cuda_core_gemm.cu",
+    #        "gpu_ops/fp8_gemm_with_cutlass/per_channel_fp8_fp8_half_gemm.cu",
+    #        "gpu_ops/cutlass_kernels/fp8_gemm_fused/visitor_fp8_gemm_fused.cu",
+    #        "gpu_ops/scaled_gemm_f8_i4_f16_gemm.cu",
+    #        "gpu_ops/scaled_gemm_f8_i4_f16_weight_quantize.cu",
+    #        "gpu_ops/cutlass_kernels/cutlass_heuristic.cu",
+    #        "gpu_ops/cutlass_kernels/cutlass_preprocessors.cu",
+    #        "gpu_ops/air_topp_sampling.cu",
+    #    ]
+    #if cc >= 90:
+    #    nvcc_compile_args += [
+    #        "-gencode",
+    #        "arch=compute_90a,code=compute_90a",
+    #        "-O3",
+    #        "-DNDEBUG",
+    #    ]
+    #    os.system("python auto_gen_fp8_fp8_block_gemm_fused_kernels_sm90.py")
+    #    sources += ["gpu_ops/fp8_gemm_with_cutlass/fp8_fp8_half_block_gemm.cu"]
 
     # for fp8 autogen *.cu
-    if cc >= 89:
-        sources += find_end_files(
-            "gpu_ops/cutlass_kernels/fp8_gemm_fused/autogen", ".cu")
+    #if cc >= 89:
+    #    sources += find_end_files(
+    #        "gpu_ops/cutlass_kernels/fp8_gemm_fused/autogen", ".cu")
 
     setup(
         name="fastdeploy_ops",
         ext_modules=CUDAExtension(
             sources=sources,
-            extra_compile_args={"nvcc": nvcc_compile_args},
+            extra_compile_args={
+                "cxx":
+                ["-O3", "-fopenmp", "-lgomp", "-std=c++17", "-DENABLE_BF16"],
+                "nvcc": nvcc_compile_args
+            },
             libraries=["cublasLt"],
         ),
-        packages=find_packages(where="gpu_ops/fp8_deep_gemm"),
-        package_dir={"": "gpu_ops/fp8_deep_gemm"},
-        package_data={
-            "deep_gemm": [
-                "include/deep_gemm/**/*",
-                "include/cute/**/*",
-                "include/cutlass/**/*",
-            ]
-        },
-        include_package_data=True,
+        #packages=find_packages(where="gpu_ops/fp8_deep_gemm"),
+        #package_dir={"": "gpu_ops/fp8_deep_gemm"},
+        #package_data={
+        #    "deep_gemm": [
+        #        "include/deep_gemm/**/*",
+        #        "include/cute/**/*",
+        #        "include/cutlass/**/*",
+        #    ]
+        #},
+        #include_package_data=True,
     )
 elif paddle.is_compiled_with_xpu():
     # TODO zhangsishuai@baidu.com to add xpu ops
