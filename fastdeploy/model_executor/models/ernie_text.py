@@ -31,7 +31,7 @@ from fastdeploy.model_executor.layers.linear import (
     MergedColumnParallelLinear, QKVParallelLinear, RowParallelLinear)
 from fastdeploy.model_executor.layers.lm_head import ParallelLMHead
 from fastdeploy.model_executor.layers.moe.moe import FusedMoE
-from fastdeploy.model_executor.layers.normalization import LayerNorm, RMSNorm
+from fastdeploy.model_executor.layers.normalization import RMSNorm
 from fastdeploy.worker.model_runner import ForwardMeta
 
 from .model_base import ModelForCasualLM
@@ -57,8 +57,7 @@ class Ernie45TMLP(nn.Layer):
         self.down_proj = RowParallelLinear(
             fd_config=fd_config,
             prefix=f"{prefix}.down_proj",
-            input_size=(fd_config.model_config.ffn_hidden_size //
-                        self.nranks),
+            input_size=(fd_config.model_config.ffn_hidden_size // self.nranks),
             output_size=fd_config.model_config.hidden_size,
             with_bias=False,
         )
@@ -266,12 +265,6 @@ class Ernie45TModel(nn.Layer):
             for i in range(self.num_layers)
         ]
 
-        self.last_layernorm = LayerNorm(
-            fd_config,
-            prefix="",
-            hidden_size=fd_config.model_config.hidden_size,
-            eps=1e-5)
-
         self.norm = RMSNorm(
             fd_config,
             hidden_size=fd_config.model_config.hidden_size,
@@ -307,7 +300,7 @@ class Ernie45TModel(nn.Layer):
                                                             hidden_states,
                                                             residual)
 
-        hidden_states, _ = self.last_layernorm(hidden_states, residual)
+        hidden_states = hidden_states + residual
 
         out = self.norm(hidden_states)
 

@@ -378,7 +378,6 @@ class ModelRunner(ModelRunnerBase):
         """
         pre_process
         """
-        from fastdeploy.platforms import current_platform
         if current_platform.is_cuda():
             if self.args.speculate_method is not None:
                 (

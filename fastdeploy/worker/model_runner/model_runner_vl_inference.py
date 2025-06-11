@@ -24,6 +24,10 @@ from safetensors import safe_open
 
 from fastdeploy.input.mm_processor import DataProcessor
 from fastdeploy.input.mm_processor.tokenizer import ErnieVLTokenizer
+from fastdeploy.model_executor.layers.attention import get_attention_backend
+from fastdeploy.model_executor.layers.rotary_embedding import get_rope_3d
+from fastdeploy.model_executor.layers.sample.meta_data import SamplingMetadata
+from fastdeploy.model_executor.layers.sample.sampler import Sampler
 from fastdeploy.model_executor.models.ernie import ErnieBotPretrainedModel
 from fastdeploy.model_executor.models.ernie_vl.configuration import \
     ErnieBotMoEVLConfig
@@ -34,8 +38,18 @@ from fastdeploy.model_executor.models.ernie_vl.dfnrope.modeling import \
 from fastdeploy.model_executor.models.ernie_vl.modeling_resampler import (
     ScatterOp, VariableResolutionResamplerModel)
 from fastdeploy.model_executor.models.utils import load_checkpoint
+from fastdeploy.platforms import current_platform
+from fastdeploy.worker.model_runner.forward_meta import ForwardMeta
 from fastdeploy.worker.model_runner.model_runner_base import ModelRunnerBase
 from fastdeploy.worker.utils import check_safetensors_model
+
+if current_platform.is_cuda() and current_platform.available():
+    from fastdeploy.model_executor.layers.utils import (
+        remove_padding, speculate_remove_padding)
+
+from fastdeploy.model_executor.ops.gpu import (save_output,
+                                               set_stop_value_multi_ends,
+                                               update_inputs)
 
 
 class ModelRunner(ModelRunnerBase):
@@ -84,6 +98,8 @@ class ModelRunner(ModelRunnerBase):
         self.init_extra_input(config, args)
 
         self._reset_paddle_env()
+
+        self.sampler = Sampler()
 
     def _reset_paddle_env(self):
         #FLAGS_gqa_use_tensorcore
@@ -205,7 +221,7 @@ class ModelRunner(ModelRunnerBase):
         else:
             from fastdeploy.model_executor.models.export_model import \
                 build_stream_line_model
-            _, _, self.model, _ = build_stream_line_model(
+            fd_config, _, self.model, _ = build_stream_line_model(
                 os.path.join(self.args.model_name_or_path,
                              os.getenv("CONFIG_JSON_FILE", "config.json")),
                 self.args.model_name_or_path,
@@ -222,11 +238,26 @@ class ModelRunner(ModelRunnerBase):
                 moe_quant_type=getattr(self.model_cfg, "moe_quant_type",
                                        "weight_only_int4"),
                 use_safetensors=self.is_safetensors_model,
+                return_fd_config=True,
             )
             self.model.eval()
-
             self.set_state_dict(self.args)
-            print("load model finished")
+
+            fd_config.parallel_config.max_model_len = fd_config.model_config.max_seq_len
+            self.fd_config = fd_config
+            attn_backend_cls = get_attention_backend(
+                self.args.attention_backend)
+            num_heads = self.fd_config.model_config.num_attention_heads // self.fd_config.parallel_config.mp_size
+            self.fd_config.model_config.kv_num_heads = int(
+                self.fd_config.model_config.num_key_value_heads
+            ) // self.fd_config.parallel_config.mp_size
+            head_dim = self.fd_config.model_config.hidden_size // self.fd_config.model_config.num_attention_heads
+            self.attn_backend = attn_backend_cls(
+                self.fd_config,
+                kv_num_heads=self.fd_config.model_config.kv_num_heads,
+                num_heads=num_heads,
+                head_dim=head_dim)
+            self._init_kvcache()
 
     def init_extra_input(self, config, args):
         head_dim = self.model_cfg.head_dim
@@ -238,6 +269,7 @@ class ModelRunner(ModelRunnerBase):
                         fill_value=0,
                         dtype="float32")
         })
+        self.share_inputs.update({"image_features": None})
 
     def init_rotary_position_embedding(self, max_model_len):
         pass
@@ -311,7 +343,6 @@ class ModelRunner(ModelRunnerBase):
                 for file in files:
                     if file == f"model_state.tp0{self.tensor_parallel_rank}.pdparams":
                         rank_model_paths.append(os.path.join(root, file))
-            print(rank_model_paths)
             state_dict = {}
             for path in rank_model_paths:
                 loaded_dict = paddle.load(path, return_numpy=True)
@@ -466,15 +497,12 @@ class ModelRunner(ModelRunnerBase):
         position_ids_3d_real = paddle.concat([position_ids, dec_pos_ids],
                                              axis=1)
 
-        from ..models.utils import get_rotary_position_embedding_3d
-
-        rope_emb = get_rotary_position_embedding_3d(
-            position_ids_3d_real,
-            head_dim=self.model_cfg.hidden_size //
-            self.model_cfg.num_attention_heads,
-            compression_ratio=1.0,
-            rope_theta=self.model_cfg.rope_theta,
-            seq_len=self.args.max_model_len,
+        rope_emb = get_rope_3d(
+            position_ids=position_ids_3d_real,
+            rotary_dim=self.model_cfg.head_dim,
+            paritial_rotary_factor=1.0,
+            base=self.model_cfg.rope_theta,
+            max_position=self.args.max_model_len,
             freq_allocation=self.model_cfg.freq_allocation,
         )
         return rope_emb
@@ -499,18 +527,16 @@ class ModelRunner(ModelRunnerBase):
                 "pad_token_id": self.args.pad_token_id,
             }
 
-            inputs = self._preprocess(task)
+            inputs = self._preprocess_task(task)
             if inputs.get("images") is not None:
                 self.share_inputs[
                     "image_features"] = self.extract_vision_features(inputs)
             else:
                 # 兼容没有图片和视频的情况
                 self.share_inputs["image_features"] = None
-            print("extract vision features done")
             self.share_inputs["rope_emb"][idx:idx +
                                           1, :] = self.prepare_rope3d(
                                               inputs, **kwargs)
-            print("prepare rope3d done")
             length = inputs["input_ids"].shape[1]
             self.share_inputs["input_ids"][idx:idx +
                                            1, :length] = inputs["input_ids"]
@@ -542,11 +568,116 @@ class ModelRunner(ModelRunnerBase):
                 idx:idx + 1, :encoder_block_num] = np.array(task.block_tables,
                                                             dtype="int32")
 
-            from ..ops.gpu import reset_stop_value
-            reset_stop_value(self.share_inputs["not_need_stop"])
+    def pre_process(self):
+        """
+        pre_process
+        """
+        if current_platform.is_cuda():
+            if self.args.speculate_method is not None:
+                (
+                    ids_remove_padding,
+                    padding_offset,
+                    cum_offsets,
+                    cu_seqlens_q,
+                    cu_seqlens_k,
+                ) = speculate_remove_padding(
+                    max_len=self.args.max_model_len,
+                    input_ids=self.share_inputs["input_ids"],
+                    seq_lens_this_time=self.share_inputs["seq_lens_this_time"],
+                    draft_tokens=self.share_inputs["draft_tokens"],
+                    seq_lens_encoder=self.share_inputs["seq_lens_encoder"])
+            else:
+                (
+                    ids_remove_padding,
+                    padding_offset,
+                    cum_offsets,
+                    cu_seqlens_q,
+                    cu_seqlens_k,
+                ) = remove_padding(
+                    max_len=self.args.max_model_len,
+                    input_ids=self.share_inputs["input_ids"],
+                    seq_lens_this_time=self.share_inputs["seq_lens_this_time"])
+        self.share_inputs["ids_remove_padding"] = ids_remove_padding
+        self.share_inputs["padding_offset"] = padding_offset
+        self.share_inputs["cum_offsets"] = cum_offsets
+        self.share_inputs["cu_seqlens_q"] = cu_seqlens_q
+        self.share_inputs["cu_seqlens_k"] = cu_seqlens_k
+
+        # initialize_forward_meta
+        self.forward_meta = ForwardMeta.init_forward_meta(
+            self.share_inputs, self.attn_backend)
+
+        self.attn_backend.init_attention_metadata(self.forward_meta)
+
+        self.share_inputs["forward_meta"] = self.forward_meta
+
+        self.sampling_metadata = SamplingMetadata(
+            temperature=self.share_inputs["temperature"],
+            top_p=self.share_inputs["top_p"],
+            step_idx=self.share_inputs["step_idx"],
+            prompt_token_ids=self.share_inputs["input_ids"],
+            frequency_penalties=self.share_inputs["frequency_score"],
+            presence_penalties=self.share_inputs["presence_score"],
+            repetition_penalties=self.share_inputs["penalty_score"],
+            min_dec_lens=self.share_inputs["min_dec_len"],
+            bad_words_token_ids=self.share_inputs["bad_tokens"],
+            eos_token_ids=self.share_inputs["eos_token_id"],
+        )
 
     def generate(self):
-        self.model(**self.share_inputs)
+        self.pre_process()
+        hiddden_states = self.model(self.share_inputs["ids_remove_padding"],
+                                    self.share_inputs["image_features"],
+                                    self.forward_meta)
+        logits = self.model.compute_logits(hiddden_states)
+
+        # sampler & save_output
+        next_tokens = self.sampler(logits, self.sampling_metadata)
+        self.post_process(next_tokens)
+
+    def post_process(self, next_tokens):
+        paddle.assign(
+            paddle.where(
+                self.share_inputs["stop_flags"],
+                self.share_inputs["step_idx"],
+                self.share_inputs["step_idx"] + 1,
+            ),
+            self.share_inputs["step_idx"],
+        )
+        length_cond = paddle.greater_equal(self.share_inputs["step_idx"],
+                                           self.share_inputs["max_dec_len"])
+        paddle.assign(
+            paddle.logical_or(self.share_inputs["stop_flags"], length_cond),
+            self.share_inputs["stop_flags"],
+        )
+
+        set_stop_value_multi_ends(
+            next_tokens,
+            self.share_inputs["stop_flags"],
+            self.share_inputs["seq_lens_this_time"],
+            self.share_inputs["eos_token_id"],
+            self.share_inputs["next_tokens"],
+            False,
+        )  # multi ends
+        # update inputs
+        with paddle.framework._no_check_dy2st_diff():
+            update_inputs(
+                self.share_inputs["stop_flags"],
+                self.share_inputs["not_need_stop"],
+                self.share_inputs["seq_lens_this_time"],
+                self.share_inputs["seq_lens_encoder"],
+                self.share_inputs["seq_lens_decoder"],
+                self.share_inputs["input_ids"],
+                self.share_inputs["stop_nums"],
+                next_tokens,
+                self.share_inputs["is_block_step"],
+            )
+        save_output(
+            next_tokens,
+            self.share_inputs["not_need_stop"],
+            self.rank,
+            False,  # use_ep
+        )
 
     def _cal_theortical_kvcache(self):
         """
@@ -626,16 +757,14 @@ class ModelRunner(ModelRunnerBase):
             self.share_inputs["block_tables"][idx : idx + 1, :block_num] = np.arange(idx * block_num, \
                                                                                 (idx + 1) * block_num, 1)
 
-    def _preprocess(self, task):
+    def _preprocess_task(self, task):
         """process batch"""
         one = task.multimodal_inputs
-        print(one)
 
         input_ids = one["input_ids"][np.newaxis, :]
         input_ids = paddle.to_tensor(input_ids, dtype=paddle.int64)
         token_type_ids = one["token_type_ids"][np.newaxis, :]
         token_type_ids = paddle.to_tensor(token_type_ids, dtype=paddle.int64)
-        print(f"token_type_ids {token_type_ids.shape} {token_type_ids.dtype}")
 
         if one["images"] is not None:
             image_type_ids = one["image_type_ids"][np.newaxis, :]
