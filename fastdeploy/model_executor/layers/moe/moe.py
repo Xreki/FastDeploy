@@ -88,9 +88,9 @@ class FusedMoE(nn.Layer):
 
         self.moe_use_gate_correction_bias = moe_use_gate_correction_bias
 
-        self.hidden_size = pd_config.model_config.hidden_size
-        self.moe_config = pd_config.moe_config
-        self.use_offline_quant = pd_config.tmp_config.use_offline_quant
+        self.hidden_size = fd_config.model_config.hidden_size
+        self.moe_config = fd_config.moe_config
+        self.use_offline_quant = fd_config.tmp_config.use_offline_quant
 
         self.moe_quant_type = moe_quant_type
         self.num_experts = num_experts

@@ -371,9 +371,9 @@ def parse_args():
     return args
 
 
-def initialize_pd_config(args) -> PDConfig:
-    """Initialize PDConfig
-    TODO(gongshaotian): Unified all configs to PDConfig
+def initialize_fd_config(args) -> FDConfig:
+    """Initialize FDConfig
+    TODO(gongshaotian): Unified all configs to FDConfig
     """
     # NOTE(gongshaotian): From build stream line model
     config, _ = ModelConfig.get_config_dict(args.model_name_or_path)

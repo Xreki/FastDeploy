@@ -152,7 +152,7 @@ def build_stream_line_model(
     return_state_dicts: bool = False,
     sharing_model=None,
     sharing_state_dicts=None,
-    return_pd_config: bool = False,
+    return_fd_config: bool = False,
     use_empty_parameter: bool = False,
     embeddings_column_cut: bool = False,
 ):
