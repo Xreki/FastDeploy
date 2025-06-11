@@ -453,6 +453,22 @@ def is_port_available(host, port):
             return True
 
 
+def print_gpu_memory_use(gpu_id: int, title: str) -> None:
+    """ Print memory usage """
+    import pynvml
+    pynvml.nvmlInit()
+    handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_id)
+    meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
+    pynvml.nvmlShutdown()
+
+    print(
+        f"\n{title}:",
+        f"\n\tDevice Total memory: {meminfo.total}",
+        f"\n\tDevice Used memory: {meminfo.used}",
+        f"\n\tDevice Free memory: {meminfo.free}",
+    )
+
+
 llm_logger = get_logger("fastdeploy", "fastdeploy.log")
 data_processor_logger = get_logger("data_processor", "data_processor.log")
 api_server_logger = get_logger("api_server", "api_server.log")
