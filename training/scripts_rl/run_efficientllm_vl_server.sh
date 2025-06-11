@@ -10,4 +10,4 @@ export FD_MODEL_NAME="eb45t_vl"
 export RUN_MODE="test"
 
 # tensor-parallel-size注意是8
-python fastdeploy/entrypoints/openai/api_server.py --config training/agent_work_45T_vl.yaml --port 9809 --engine-worker-queue-port 9091 --tensor-parallel-size 8
+python -m fastdeploy.entrypoints.openai.api_server --config agent_work_45T_vl.yaml --port 9809 --engine-worker-queue-port 9091 --tensor-parallel-size 8
