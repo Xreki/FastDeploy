@@ -52,7 +52,7 @@ class FusedMoE(nn.Layer):
 
     def __init__(
         self,
-        llm_config,
+        fd_config,
         moe_intermediate_size: int = -1,
         num_experts: int = -1,
         top_k: int = -1,
@@ -75,22 +75,22 @@ class FusedMoE(nn.Layer):
         """
         Initialize the Moe layer with given parameters.
         Args:
-            llm_config (LLMConfig): Arguments related to inference, containing
+            fd_config (FDConfig): Arguments related to inference, containing
                 attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
         """
         super().__init__()
 
-        self.llm_config = llm_config
+        self.fd_config = fd_config
         self.layer_idx = layer_idx
-        self.tp_size = llm_config.parallel_config.mp_size
-        self.ep_size = llm_config.parallel_config.ep_size
+        self.tp_size = fd_config.parallel_config.mp_size
+        self.ep_size = fd_config.parallel_config.ep_size
 
         self.moe_use_gate_correction_bias = moe_use_gate_correction_bias
 
-        self.hidden_size = llm_config.model_config.hidden_size
-        self.moe_config = llm_config.moe_config
-        self.use_offline_quant = llm_config.tmp_config.use_offline_quant
+        self.hidden_size = fd_config.model_config.hidden_size
+        self.moe_config = fd_config.moe_config
+        self.use_offline_quant = fd_config.tmp_config.use_offline_quant
 
         self.moe_quant_type = moe_quant_type
         self.num_experts = num_experts

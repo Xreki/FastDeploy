@@ -647,7 +647,7 @@ class DecodingConfig:
 
 
 @dataclass
-class LLMConfig:
+class FDConfig:
     """
     The configuration class which contains all fastdeploy-related configuration. This
     simplifies passing around the distinct configurations in the codebase.

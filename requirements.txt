@@ -26,3 +26,4 @@ prometheus-client
 decord
 moviepy
 aistudio-sdk==0.2.6
+triton==3.3

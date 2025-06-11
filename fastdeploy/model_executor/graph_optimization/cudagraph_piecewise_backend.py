@@ -20,7 +20,7 @@ from typing import Callable, Dict, Optional
 import paddle.device.cuda.graphs as graphs
 import paddle.nn.layer
 
-from fastdeploy.config import LLMConfig
+from fastdeploy.config import FDConfig
 from fastdeploy.utils import get_logger
 
 logger = get_logger("cudagrpah_piecewise_backend",
@@ -56,12 +56,12 @@ class CudaGraphPiecewiseBackend:
 
     def __init__(
         self,
-        llm_config: LLMConfig,
+        fd_config: FDConfig,
         runnable: Callable,
     ):
-        self.llm_config = llm_config
+        self.fd_config = fd_config
         self.runnable = runnable
-        self.cuda_graph_capture_size = llm_config.graph_opt_config.cudagraph_capture_sizes
+        self.cuda_graph_capture_size = fd_config.graph_opt_config.cudagraph_capture_sizes
         # runtime_bs -> ConcreteSizeEntry
         self.concrete_size_entries: Dict[int, ConcreteSizeEntry] = {}
 

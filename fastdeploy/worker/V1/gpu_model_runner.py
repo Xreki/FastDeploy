@@ -22,7 +22,7 @@ import numpy as np
 import paddle
 import paddle.nn as nn
 
-from fastdeploy.config import KVCacheConfig, LLMConfig
+from fastdeploy.config import KVCacheConfig, FDConfig
 from fastdeploy.engine.request import Request
 from fastdeploy.model_executor.layers.attention import get_attention_backend
 from fastdeploy.model_executor.layers.attention.base_attention_backend import \
@@ -46,9 +46,9 @@ logger = get_logger("gpu_model_runner", "gpu_model_runner.log")
 class GPUModelRunner(ModelRunnerBase):
     """ """
 
-    def __init__(self, llm_config: LLMConfig, device: str, rank: int,
+    def __init__(self, fd_config: FDConfig, device: str, rank: int,
                  local_rank: int):
-        super().__init__(llm_config=llm_config, device=device)
+        super().__init__(fd_config=fd_config, device=device)
         self.rank = rank
         self.local_rank = local_rank
 
@@ -64,7 +64,7 @@ class GPUModelRunner(ModelRunnerBase):
                                       dtype='int32')
 
         # Initialize share inputs
-        self._init_share_inputs(self.llm_config.parallel_config.max_num_seqs)
+        self._init_share_inputs(self.fd_config.parallel_config.max_num_seqs)
         self.infer_seed_increment = paddle.full(
             shape=[self.parallel_config.max_num_seqs, 1],
             fill_value=4,
@@ -374,7 +374,7 @@ class GPUModelRunner(ModelRunnerBase):
             f"Starting to load model {self.model_config.architectures[0]}")
         time_before_load = time.perf_counter()
         # 1. Load original model
-        self.model = get_model_from_loader(llm_config=self.llm_config)
+        self.model = get_model_from_loader(fd_config=self.fd_config)
 
         # 2. Load lora model
 
@@ -450,7 +450,7 @@ class GPUModelRunner(ModelRunnerBase):
         # Get the attention backend
         attn_cls = get_attention_backend(
             self.parallel_config.attention_backend)
-        attn_backend = attn_cls(self.llm_config,
+        attn_backend = attn_cls(self.fd_config,
                                 kv_num_heads=self.model_config.kv_num_heads,
                                 num_heads=num_heads,
                                 head_dim=head_dim)

@@ -23,7 +23,7 @@ import paddle
 from paddlenlp.transformers import PretrainedModel
 from paddlenlp.utils.log import logger
 
-from fastdeploy.config import LLMConfig, ModelConfig
+from fastdeploy.config import FDConfig, ModelConfig
 
 
 def get_attr(layer, name):
@@ -41,7 +41,7 @@ class ErnieBotPretrainedModel(PretrainedModel):
     ErnieBotPretrainedModel
     """
 
-    config_class = LLMConfig
+    config_class = FDConfig
 
     def _init_weight(self, layer):
         """

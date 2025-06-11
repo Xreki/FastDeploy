@@ -84,7 +84,7 @@ class BlockWiseLinearMethod(QuantMethodBase):
         x, x_scale_tensor = fastdeploy.model_executor.ops.gpu.per_token_quant_padding(
             x, self.quant_config.weight_block_size[0])
         linear_out = paddle.empty(
-            (x.shape[0], layer.llm_config.model_config.hidden_size),
+            (x.shape[0], layer.fd_config.model_config.hidden_size),
             dtype=paddle.bfloat16)
         deep_gemm.gemm_fp8_fp8_bf16_nt(
             (x, x_scale_tensor),

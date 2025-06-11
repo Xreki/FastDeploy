@@ -24,7 +24,7 @@ import paddle.distributed.fleet as fleet
 
 from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
                                GraphOptimizationConfig, KVCacheConfig,
-                               LLMConfig, LoadConfig, ModelConfig, MoEConfig,
+                               FDConfig, LoadConfig, ModelConfig, MoEConfig,
                                ParallelConfig, SpeculativeConfig, TmpConfig)
 from fastdeploy.inter_communicator import EngineWorkerQueue as TaskQueue
 from fastdeploy.inter_communicator import IPCSignal
@@ -47,23 +47,23 @@ class PaddleDisWorkerProc():
 
     def __init__(
         self,
-        llm_config: LLMConfig,
+        fd_config: FDConfig,
     ):
-        self.llm_config = llm_config
-        self.parallel_config = llm_config.parallel_config
+        self.fd_config = fd_config
+        self.parallel_config = fd_config.parallel_config
 
         # Initialize distributed enviroment
         (self.rank, self.local_rank) = self.init_distributed_enviroment()
-        self.llm_config.parallel_config.tensor_parallel_rank = self.local_rank
-        self.llm_config.model_config.tensor_parallel_rank = self.local_rank
-        self.llm_config.parallel_config.tensor_parallel_degree = self.rank
-        self.llm_config.model_config.tensor_parallel_degree = self.rank
-        self.llm_config.parallel_config.mp_size = self.rank
-        self.llm_config.parallel_config.ep_size = 1
-        self.llm_config.parallel_config.column_cut = False
+        self.fd_config.parallel_config.tensor_parallel_rank = self.local_rank
+        self.fd_config.model_config.tensor_parallel_rank = self.local_rank
+        self.fd_config.parallel_config.tensor_parallel_degree = self.rank
+        self.fd_config.model_config.tensor_parallel_degree = self.rank
+        self.fd_config.parallel_config.mp_size = self.rank
+        self.fd_config.parallel_config.ep_size = 1
+        self.fd_config.parallel_config.column_cut = False
 
         # TODO(gongshaotian): Use worker factory to get worker
-        self.worker = GpuWorker(llm_config=llm_config,
+        self.worker = GpuWorker(fd_config=fd_config,
                                 local_rank=self.local_rank,
                                 rank=self.rank)
 
@@ -234,7 +234,7 @@ class PaddleDisWorkerProc():
         print(f"------- num_blocks_local:{num_blocks_local} --------")
 
         # 3. Send IPCSignal
-        if self.llm_config.parallel_config.do_profile:
+        if self.fd_config.parallel_config.do_profile:
             get_profile_block_num = np.zeros(shape=[self.rank], dtype=np.int32)
             self.get_profile_block_num_signal = IPCSignal(
                 name="get_profile_block_num",
@@ -371,9 +371,9 @@ def parse_args():
     return args
 
 
-def initialize_llm_config(args) -> LLMConfig:
-    """Initialize LLMConfig
-    TODO(gongshaotian): Unified all configs to LLMConfig
+def initialize_fd_config(args) -> FDConfig:
+    """Initialize FDConfig
+    TODO(gongshaotian): Unified all configs to FDConfig
     """
     # NOTE(gongshaotian): From build stream line model
     config, _ = ModelConfig.get_config_dict(args.model_name_or_path)
@@ -510,7 +510,7 @@ def initialize_llm_config(args) -> LLMConfig:
     parallel_config.speculate_max_draft_tokens = args.speculate_max_draft_tokens
     parallel_config.max_num_batched_tokens = args.max_num_batched_tokens
 
-    llm_config = LLMConfig(model_config=model_config,
+    fd_config = FDConfig(model_config=model_config,
                            parallel_config=parallel_config,
                            speculative_config=speculative_config,
                            device_config=device_config,
@@ -523,7 +523,7 @@ def initialize_llm_config(args) -> LLMConfig:
                            kv_cache_config=kv_cache_config,
                            graph_opt_config=graph_opt_config)
 
-    return llm_config
+    return fd_config
 
 
 def run_worker_proc():
@@ -533,11 +533,11 @@ def run_worker_proc():
     # Get args form Engine
     args = parse_args()
 
-    # Get llm_config
-    llm_config = initialize_llm_config(args)
+    # Get fd_config
+    fd_config = initialize_fd_config(args)
 
     # Start event loop
-    worker_proc = PaddleDisWorkerProc(llm_config)
+    worker_proc = PaddleDisWorkerProc(fd_config)
     worker_proc.init_device()
     worker_proc.load_model()
     worker_proc.determine_num_available_blocks()

@@ -15,7 +15,7 @@
 """
 import paddle
 
-from fastdeploy.config import GraphOptimizationConfig, LLMConfig
+from fastdeploy.config import GraphOptimizationConfig, FDConfig
 from fastdeploy.model_executor.graph_optimization.decorator import \
     support_graph_optimization
 from fastdeploy.worker.model_runner.forward_meta import ForwardMeta
@@ -25,7 +25,7 @@ from fastdeploy.worker.model_runner.forward_meta import ForwardMeta
 class TestCase1SubLayer1(paddle.nn.Layer):
     """ Sub layer 1 of test case 1 """
 
-    def __init__(self, llm_config: LLMConfig, **kwargs):
+    def __init__(self, fd_config: FDConfig, **kwargs):
         super().__init__()
 
     def forward(self, _, forward_meta: ForwardMeta):
@@ -39,7 +39,7 @@ class TestCase1SubLayer1(paddle.nn.Layer):
 class TestCase1SubLayer2(paddle.nn.Layer):
     """ """
 
-    def __init__(self, llm_config: LLMConfig, **kwargs):
+    def __init__(self, fd_config: FDConfig, **kwargs):
         super().__init__()
 
     def forward(self, _, forward_meta: ForwardMeta):
@@ -55,7 +55,7 @@ class TestCase1SubLayer2(paddle.nn.Layer):
 class TestCase1SubLayer3(paddle.nn.Layer):
     """ """
 
-    def __init__(self, llm_config: LLMConfig, **kwargs):
+    def __init__(self, fd_config: FDConfig, **kwargs):
         super().__init__()
 
     def forward(self, _, forward_meta: ForwardMeta):
@@ -68,15 +68,15 @@ class TestCase1SubLayer3(paddle.nn.Layer):
 class TestModel1(paddle.nn.Layer):
     """ Tast Model """
 
-    def __init__(self, llm_config: LLMConfig, **kwargs):
+    def __init__(self, fd_config: FDConfig, **kwargs):
         super().__init__()
-        self.llm_config = llm_config
+        self.fd_config = fd_config
 
     def forward(self, _, forward_meta: ForwardMeta):
         """ Test model for ward pass """
-        self.sublayer1 = TestCase1SubLayer1(self.llm_config)
-        self.sublayer2 = TestCase1SubLayer2(self.llm_config)
-        self.sublayer3 = TestCase1SubLayer3(self.llm_config)
+        self.sublayer1 = TestCase1SubLayer1(self.fd_config)
+        self.sublayer2 = TestCase1SubLayer2(self.fd_config)
+        self.sublayer3 = TestCase1SubLayer3(self.fd_config)
 
         # sublayer1 use cuda graph
         sub_meta1 = forward_meta
@@ -97,7 +97,7 @@ class TestModel1(paddle.nn.Layer):
 class TestModel2(paddle.nn.Layer):
     """ Tast Model """
 
-    def __init__(self, llm_config: LLMConfig, **kwargs):
+    def __init__(self, fd_config: FDConfig, **kwargs):
         super().__init__()
 
     def forward(self, _, forward_meta: ForwardMeta):
@@ -111,17 +111,17 @@ def run_test_case():
     graph_opt_config = GraphOptimizationConfig()
     graph_opt_config.use_cudagraph = True
     graph_opt_config.cudagraph_capture_sizes = [1]
-    llm_config = LLMConfig(graph_opt_config=graph_opt_config)
+    fd_config = FDConfig(graph_opt_config=graph_opt_config)
 
     # Run Test Case1
-    test_model1 = TestModel1(llm_config=llm_config)
+    test_model1 = TestModel1(fd_config=fd_config)
     input_tensor1 = paddle.zeros([1, 8])
     forward_meta1 = ForwardMeta(input_ids=input_tensor1)
     output1 = test_model1(_=None, forward_meta=forward_meta1)
     print(output1)
 
     # Run Test Case2
-    test_model2 = TestModel2(llm_config=llm_config)
+    test_model2 = TestModel2(fd_config=fd_config)
     input_tensor2 = paddle.zeros([1, 8])
     forward_meta2 = ForwardMeta(input_ids=input_tensor2)
     output2 = test_model2(_=None, forward_meta=forward_meta2)

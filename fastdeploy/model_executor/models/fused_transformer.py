@@ -66,7 +66,7 @@ class FusedTransformer(nn.Layer):
         return_all_hidden_states=False,
         base_model_prefix="gpt",
         draft_type="",
-        llm_config=None,
+        fd_config=None,
         redundant_table_manger: Optional[RedundantExpertManger] = None,
         max_len: int = 32768,
     ):
@@ -127,31 +127,31 @@ class FusedTransformer(nn.Layer):
             assert ring_id != -1
 
         self.norm_before_qkv = RMSNorm(
-            llm_config,
-            hidden_size=llm_config.model_config.hidden_size,
+            fd_config,
+            hidden_size=fd_config.model_config.hidden_size,
             eps=epsilon,
-            prefix=llm_config.load_config.get_weight_key_by_layer_name(
+            prefix=fd_config.load_config.get_weight_key_by_layer_name(
                 f"{base_model_prefix}.decoder.layers.0.norm1").rpartition(
                     '.')[0],
-            quant_scale=llm_config.load_config.get_quant_scale_by_layer_name(
+            quant_scale=fd_config.load_config.get_quant_scale_by_layer_name(
                 f"{base_model_prefix}.decoder.layers.0.norm1"))
 
         self.qkv_linear_layers = nn.LayerList([
             QKVParallelLinear(
-                llm_config=llm_config,
+                fd_config=fd_config,
                 prefix=fmt_keys.qkv_linear_weight_keys[i].rpartition('.')[0],
                 with_bias=fmt_keys.qkv_linear_bias_keys[i] is not None,
             ) for i in range(self.num_layers)
         ])
         self.out_linear_layers = nn.LayerList([
             RowParallelLinear(
-                llm_config=llm_config,
+                fd_config=fd_config,
                 prefix=fmt_keys.out_linear_weight_keys[i].rpartition('.')[0],
                 with_bias=fmt_keys.out_linear_bias_keys[i] is not None,
                 input_size=self.num_heads *
-                (llm_config.model_config.hidden_size //
-                 llm_config.model_config.num_attention_heads),
-                output_size=llm_config.model_config.hidden_size,
+                (fd_config.model_config.hidden_size //
+                 fd_config.model_config.num_attention_heads),
+                output_size=fd_config.model_config.hidden_size,
             ) for i in range(self.num_layers)
         ])
 
@@ -159,7 +159,7 @@ class FusedTransformer(nn.Layer):
 
         self.attn_layers = nn.LayerList([
             Attention(
-                llm_config=llm_config,
+                fd_config=fd_config,
                 layer_id=i,
                 qkv_bias=(None if not (inference_args.weight_dtype == "int8"
                                        and inference_args.act_dtype == "int8")
@@ -180,13 +180,13 @@ class FusedTransformer(nn.Layer):
 
         self.ffn_layernorm_layers = nn.LayerList([
             RMSNorm(
-                llm_config,
-                hidden_size=llm_config.model_config.hidden_size,
+                fd_config,
+                hidden_size=fd_config.model_config.hidden_size,
                 eps=epsilon,
-                prefix=llm_config.load_config.get_weight_key_by_layer_name(
+                prefix=fd_config.load_config.get_weight_key_by_layer_name(
                     f"{base_model_prefix}.decoder.layers.{i}.norm2").
                 rpartition('.')[0],
-                quant_scale=llm_config.load_config.
+                quant_scale=fd_config.load_config.
                 get_quant_scale_by_layer_name(
                     f"{base_model_prefix}.decoder.layers.{i}.norm2"),
                 linear_bias=getattr(self.out_linear_layers[i], "linear_bias",
@@ -196,7 +196,7 @@ class FusedTransformer(nn.Layer):
 
         self.ffn1_layers = nn.LayerList([
             MergedColumnParallelLinear(
-                llm_config=llm_config,
+                fd_config=fd_config,
                 prefix=fmt_keys.ffn1_weight_keys[i].rpartition('.')[0],
                 with_bias=fmt_keys.ffn1_bias_keys[i] is not None,
                 activation=act_method,
@@ -213,12 +213,12 @@ class FusedTransformer(nn.Layer):
 
         self.ffn2_layers = nn.LayerList([
             RowParallelLinear(
-                llm_config=llm_config,
+                fd_config=fd_config,
                 prefix=fmt_keys.ffn2_weight_keys[i].rpartition('.')[0],
                 with_bias=fmt_keys.ffn2_bias_keys[i] is not None,
-                input_size=(llm_config.model_config.ffn_hidden_size //
+                input_size=(fd_config.model_config.ffn_hidden_size //
                             self.nranks),
-                output_size=llm_config.model_config.hidden_size,
+                output_size=fd_config.model_config.hidden_size,
             ) for i in range(self.num_layers if not (
                 self.inference_args.moe_config.use_moe and not self.
                 inference_args.moe_config.moe_use_ffn_shared_weight_and_bias
@@ -227,7 +227,7 @@ class FusedTransformer(nn.Layer):
         if not self.fuse_ffn_act:
             self.bias_act_layers = nn.LayerList([
                 SiluAndMul(
-                    llm_config=llm_config,
+                    fd_config=fd_config,
                     bias=getattr(self.ffn1_layers[i], "ffn1_bias", None),
                     act_method=act_method,
                     dequant_scales=getattr(self.ffn1_layers[i],
@@ -357,7 +357,7 @@ class FusedTransformer(nn.Layer):
                     None for i in range(self.num_dense_layers)
                 ] + [
                     FusedMoE(
-                        llm_config=llm_config,
+                        fd_config=fd_config,
                         moe_intermediate_size=inference_args.moe_config.
                         moe_intermediate_size,
                         num_experts=inference_args.moe_config.num_experts,
@@ -382,13 +382,13 @@ class FusedTransformer(nn.Layer):
 
         self.bias_residual_layernorm_layers = nn.LayerList([
             RMSNorm(
-                llm_config,
-                hidden_size=llm_config.model_config.hidden_size,
+                fd_config,
+                hidden_size=fd_config.model_config.hidden_size,
                 eps=epsilon,
-                prefix=llm_config.load_config.get_weight_key_by_layer_name(
+                prefix=fd_config.load_config.get_weight_key_by_layer_name(
                     f"{base_model_prefix}.decoder.layers.{i + 1}.norm1").
                 rpartition('.')[0],
-                quant_scale=llm_config.load_config.
+                quant_scale=fd_config.load_config.
                 get_quant_scale_by_layer_name(
                     f"{base_model_prefix}.decoder.layers.{i + 1}.norm1"),
                 linear_bias=(getattr(self.ffn2_layers[i], "linear_bias", None)
@@ -398,9 +398,9 @@ class FusedTransformer(nn.Layer):
         ])
 
         self.last_layernorm = LayerNorm(
-            llm_config,
+            fd_config,
             prefix="",
-            hidden_size=llm_config.model_config.hidden_size,
+            hidden_size=fd_config.model_config.hidden_size,
             eps=epsilon,
             linear_bias=(getattr(self.ffn2_layers[self.num_layers -
                                                   1], "linear_bias", None)

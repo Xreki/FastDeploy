@@ -24,7 +24,7 @@ import paddle
 from paddle import nn
 from paddlenlp.utils.log import logger
 
-from fastdeploy.config import LLMConfig
+from fastdeploy.config import FDConfig
 from fastdeploy.model_executor.layers.embeddings import VocabParallelEmbedding
 from fastdeploy.model_executor.layers.lm_head import ParallelLMHead
 from fastdeploy.model_executor.layers.moe.moe import FusedMoE
@@ -58,20 +58,20 @@ class VLMoEMeta:
 
 class Ernie45TVLMoE(nn.Layer):
 
-    def __init__(self, llm_config: LLMConfig, layer_id: int,
+    def __init__(self, fd_config: FDConfig, layer_id: int,
                  prefix: str) -> None:
         super().__init__()
 
         # TODO: Fix 传参
         self.fused_moe_text = FusedMoE(
-            llm_config=llm_config,
-            moe_intermediate_size=llm_config.moe_config.
+            fd_config=fd_config,
+            moe_intermediate_size=fd_config.moe_config.
             moe_intermediate_size[0],
-            num_experts=llm_config.moe_config.num_experts[0],
-            top_k=llm_config.moe_config.top_k,
-            moe_use_gate_correction_bias=llm_config.moe_config.
+            num_experts=fd_config.moe_config.num_experts[0],
+            top_k=fd_config.moe_config.top_k,
+            moe_use_gate_correction_bias=fd_config.moe_config.
             moe_use_gate_correction_bias,
-            moe_quant_type=llm_config.moe_config.moe_quant_type,
+            moe_quant_type=fd_config.moe_config.moe_quant_type,
             layer_idx=layer_id,
             moe_tag="Text",
             gate_weight_key=f"{prefix}.gate.weight",
@@ -83,14 +83,14 @@ class Ernie45TVLMoE(nn.Layer):
         self.fused_moe_text.load_gate_state_dict = self.load_gate_state_dict_text
 
         self.fused_moe_image = FusedMoE(
-            llm_config=llm_config,
-            moe_intermediate_size=llm_config.moe_config.
+            fd_config=fd_config,
+            moe_intermediate_size=fd_config.moe_config.
             moe_intermediate_size[1],
-            num_experts=llm_config.moe_config.num_experts[1],
-            top_k=llm_config.moe_config.top_k,
-            moe_use_gate_correction_bias=llm_config.moe_config.
+            num_experts=fd_config.moe_config.num_experts[1],
+            top_k=fd_config.moe_config.top_k,
+            moe_use_gate_correction_bias=fd_config.moe_config.
             moe_use_gate_correction_bias,
-            moe_quant_type=llm_config.moe_config.moe_quant_type,
+            moe_quant_type=fd_config.moe_config.moe_quant_type,
             layer_idx=layer_id,
             moe_tag="Image",
             gate_weight_key=f"{prefix}.gate.weight_1",
@@ -199,41 +199,41 @@ class Ernie45TVLDecoderLayer(nn.Layer):
 
     def __init__(
         self,
-        llm_config: LLMConfig,
+        fd_config: FDConfig,
         prefix: str = "",
     ) -> None:
         super().__init__()
         layer_id = int(prefix.split(sep='.')[-1])
 
         self.self_attn = Ernie45TVLAttention(
-            llm_config=llm_config,
+            fd_config=fd_config,
             layer_id=layer_id,
             prefix=f"{prefix}.self_attn",
         )
 
-        if (llm_config.moe_config.num_experts is not None
-                and layer_id >= llm_config.moe_config.moe_layer_start_index):
+        if (fd_config.moe_config.num_experts is not None
+                and layer_id >= fd_config.moe_config.moe_layer_start_index):
             self.mlp = Ernie45TVLMoE(
-                llm_config=llm_config,
+                fd_config=fd_config,
                 layer_id=layer_id,
                 prefix=f"{prefix}.mlp",
             )
         else:
             self.mlp = Ernie45TVLMLP(
-                llm_config=llm_config,
+                fd_config=fd_config,
                 prefix=f"{prefix}.mlp",
             )
 
         self.input_layernorm = RMSNorm(
-            llm_config,
-            hidden_size=llm_config.model_config.hidden_size,
+            fd_config,
+            hidden_size=fd_config.model_config.hidden_size,
             eps=1e-5,
             prefix=f"{prefix}.input_layernorm",
         )
 
         self.post_attention_layernorm = RMSNorm(
-            llm_config,
-            hidden_size=llm_config.model_config.hidden_size,
+            fd_config,
+            hidden_size=fd_config.model_config.hidden_size,
             eps=1e-5,
             prefix=f"{prefix}.post_attention_layernorm",
         )
@@ -278,7 +278,7 @@ class Ernie45TVLModel(nn.Layer):
 
     def __init__(
         self,
-        llm_config: LLMConfig = None,
+        fd_config: FDConfig = None,
     ):
         """
         Initializer for the Ernie45TVLModel class.
@@ -288,37 +288,37 @@ class Ernie45TVLModel(nn.Layer):
         """
         super().__init__()
 
-        self.num_layers = llm_config.model_config.num_layers
-        self.im_patch_id = llm_config.moe_config.im_patch_id
-        self._dtype = llm_config.model_config.dtype
-        llm_config.model_config.prefix_name = "ernie"
+        self.num_layers = fd_config.model_config.num_layers
+        self.im_patch_id = fd_config.moe_config.im_patch_id
+        self._dtype = fd_config.model_config.dtype
+        fd_config.model_config.prefix_name = "ernie"
 
         self.embeddings = VocabParallelEmbedding(
-            llm_config=llm_config,
-            num_embeddings=llm_config.model_config.vocab_size,
-            embedding_dim=llm_config.model_config.hidden_size,
+            fd_config=fd_config,
+            num_embeddings=fd_config.model_config.vocab_size,
+            embedding_dim=fd_config.model_config.hidden_size,
             params_dtype=paddle.get_default_dtype,
-            prefix=(f"{llm_config.model_config.prefix_name}.embed_tokens"),
+            prefix=(f"{fd_config.model_config.prefix_name}.embed_tokens"),
         )
 
         self.hidden_layers = [
             Ernie45TVLDecoderLayer(
-                llm_config=llm_config,
-                prefix=f"{llm_config.model_config.prefix_name}.layers.{i}")
+                fd_config=fd_config,
+                prefix=f"{fd_config.model_config.prefix_name}.layers.{i}")
             for i in range(self.num_layers)
         ]
 
         self.last_layernorm = LayerNorm(
-            llm_config,
+            fd_config,
             prefix="",
-            hidden_size=llm_config.model_config.hidden_size,
+            hidden_size=fd_config.model_config.hidden_size,
             eps=1e-5)
 
         self.norm = RMSNorm(
-            llm_config,
-            hidden_size=llm_config.model_config.hidden_size,
+            fd_config,
+            hidden_size=fd_config.model_config.hidden_size,
             eps=1e-5,
-            prefix=f"{llm_config.model_config.prefix_name}.norm",
+            prefix=f"{fd_config.model_config.prefix_name}.norm",
         )
 
     def load_state_dict(self, state_dict):
@@ -420,21 +420,21 @@ class ErnieMoEVLForCausalLM(ModelForCasualLM):
     ErnieMoEVLForCausalLM
     """
 
-    def __init__(self, llm_config: LLMConfig):
+    def __init__(self, fd_config: FDConfig):
         """
         Args:
-            llm_config (LLMConfig): Configurations for the LLM model.
+            fd_config (FDConfig): Configurations for the LLM model.
         """
-        super(ErnieMoEVLForCausalLM, self).__init__(llm_config)
+        super(ErnieMoEVLForCausalLM, self).__init__(fd_config)
 
-        self.model = Ernie45TVLModel(llm_config=llm_config)
+        self.model = Ernie45TVLModel(fd_config=fd_config)
 
-        self.ori_vocab_size = llm_config.model_config.ori_vocab_size
+        self.ori_vocab_size = fd_config.model_config.ori_vocab_size
 
         self.lm_head = ParallelLMHead(
-            llm_config=llm_config,
-            embedding_dim=llm_config.model_config.hidden_size,
-            num_embeddings=llm_config.model_config.vocab_size,
+            fd_config=fd_config,
+            embedding_dim=fd_config.model_config.hidden_size,
+            num_embeddings=fd_config.model_config.vocab_size,
             prefix="lm_head",
         )
 
