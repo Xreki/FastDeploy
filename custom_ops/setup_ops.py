@@ -149,7 +149,6 @@ if paddle.is_compiled_with_rocm():
                 "gpu_ops/save_with_output_msg.cc",
                 "gpu_ops/get_output.cc",
                 "gpu_ops/get_output_msg_with_topk.cc",
-                "gpu_ops/reset_need_stop_value.cc",
                 "gpu_ops/step.cu",
                 "gpu_ops/step_reschedule.cu",
                 "gpu_ops/set_data_ipc.cu",

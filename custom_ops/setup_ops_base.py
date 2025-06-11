@@ -20,7 +20,6 @@ setup(
     ext_modules=CppExtension(sources=[
         "gpu_ops/save_with_output_msg.cc",
         "gpu_ops/get_output.cc",
-        "gpu_ops/reset_need_stop_value.cc",
         "gpu_ops/get_output_msg_with_topk.cc",
         "gpu_ops/transfer_output.cc",
     ], ),
