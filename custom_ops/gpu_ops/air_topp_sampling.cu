@@ -28,40 +28,38 @@
  * limitations under the License.
  */
 
-#include <cuda/atomic>
-#include <curand_kernel.h>
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#include <cuda/atomic>
+#include <curand_kernel.h>
 
 #include "helper.h"
-#include "paddle/phi/common/memory_utils.h"
 #include "paddle/phi/backends/context_pool.h"
+#include "paddle/phi/common/memory_utils.h"
 #include "paddle/phi/core/stream.h"
 
 #define CHECK_INPUT(x) PD_CHECK(x.is_gpu(), #x " must be a GPU Tensor.")
 
 #define FINAL_MASK 0xFFFFFFFF
 
-#define FIXED_BLOCK_DIM_BASE(dim, ...) \
-  case (dim): {                        \
-    constexpr auto kBlockDim = (dim);  \
-    __VA_ARGS__;                       \
+#define FIXED_BLOCK_DIM_BASE(dim, ...)                                         \
+  case (dim): {                                                                \
+    constexpr auto kBlockDim = (dim);                                          \
+    __VA_ARGS__;                                                               \
   } break
 
-
-#define FIXED_BLOCK_DIM(...)                 \
-  FIXED_BLOCK_DIM_BASE(1024, ##__VA_ARGS__); \
-  FIXED_BLOCK_DIM_BASE(512, ##__VA_ARGS__);  \
-  FIXED_BLOCK_DIM_BASE(256, ##__VA_ARGS__);  \
-  FIXED_BLOCK_DIM_BASE(128, ##__VA_ARGS__);  \
-  FIXED_BLOCK_DIM_BASE(64, ##__VA_ARGS__);   \
+#define FIXED_BLOCK_DIM(...)                                                   \
+  FIXED_BLOCK_DIM_BASE(1024, ##__VA_ARGS__);                                   \
+  FIXED_BLOCK_DIM_BASE(512, ##__VA_ARGS__);                                    \
+  FIXED_BLOCK_DIM_BASE(256, ##__VA_ARGS__);                                    \
+  FIXED_BLOCK_DIM_BASE(128, ##__VA_ARGS__);                                    \
+  FIXED_BLOCK_DIM_BASE(64, ##__VA_ARGS__);                                     \
   FIXED_BLOCK_DIM_BASE(32, ##__VA_ARGS__)
 
 template <typename T, typename IdxT = int, typename AccT = T>
-struct alignas(128) Counter
-{
-  T const* in;
-  IdxT const* inIdx;
+struct alignas(128) Counter {
+  T const *in;
+  IdxT const *inIdx;
 
   IdxT oriLen;
 
@@ -70,75 +68,67 @@ struct alignas(128) Counter
   float p;
   IdxT previousLen;
   typename cub::Traits<T>::UnsignedBits kthValueBits;
-  
+
   alignas(128) IdxT filterCnt;
   alignas(128) uint32_t finishedBlockCnt;
 };
 
 template <typename IntType>
-constexpr __host__ __device__ IntType ceilDiv(IntType a, IntType b)
-{
-    return (a + b - 1) / b;
+constexpr __host__ __device__ IntType ceilDiv(IntType a, IntType b) {
+  return (a + b - 1) / b;
 }
 
 template <typename IntType>
-constexpr __host__ __device__ IntType alignTo(IntType a, IntType b)
-{
-    return ceilDiv(a, b) * b;
+constexpr __host__ __device__ IntType alignTo(IntType a, IntType b) {
+  return ceilDiv(a, b) * b;
 }
 
 /**
  * This function calculate the bufLen, which is the size of buffer.
- * When the number of candidates for next pass exceeds the bufLen, we choose not to store the candidates. Otherwise, we
- * will load candidates from the original input data.
+ * When the number of candidates for next pass exceeds the bufLen, we choose not
+ * to store the candidates. Otherwise, we will load candidates from the original
+ * input data.
  */
 template <typename T, typename IdxT>
-__host__ __device__ IdxT calcBufLen(IdxT len)
-{
-    IdxT constexpr ratio = 2 + sizeof(IdxT) * 2 / sizeof(T);   
-    IdxT bufLen = len / (ratio * 8);
-    bufLen = alignTo(bufLen, 256);
-    return bufLen;
+__host__ __device__ IdxT calcBufLen(IdxT len) {
+  IdxT constexpr ratio = 2 + sizeof(IdxT) * 2 / sizeof(T);
+  IdxT bufLen = len / (ratio * 8);
+  bufLen = alignTo(bufLen, 256);
+  return bufLen;
 }
 
 template <typename T, int BitsPerPass>
-__host__ __device__ constexpr int calcNumPasses()
-{
-    return ceilDiv<int>(sizeof(T) * 8, BitsPerPass);
+__host__ __device__ constexpr int calcNumPasses() {
+  return ceilDiv<int>(sizeof(T) * 8, BitsPerPass);
 }
 
 template <typename T>
-__device__ typename cub::Traits<T>::UnsignedBits twiddleIn(T key, bool selectMin)
-{
-    auto bits = reinterpret_cast<typename cub::Traits<T>::UnsignedBits&>(key);
-    bits = cub::Traits<T>::TwiddleIn(bits);
-    if (!selectMin)
-    {
-        bits = ~bits;
-    }
-    return bits;
+__device__ typename cub::Traits<T>::UnsignedBits twiddleIn(T key,
+                                                           bool selectMin) {
+  auto bits = reinterpret_cast<typename cub::Traits<T>::UnsignedBits &>(key);
+  bits = cub::Traits<T>::TwiddleIn(bits);
+  if (!selectMin) {
+    bits = ~bits;
+  }
+  return bits;
 }
 
 template <typename T>
-__device__ T twiddleOut(typename cub::Traits<T>::UnsignedBits bits, bool selectMin)
-{
-    if (!selectMin)
-    {
-        bits = ~bits;
-    }
-    bits = cub::Traits<T>::TwiddleOut(bits);
-    return reinterpret_cast<T&>(bits);
+__device__ T twiddleOut(typename cub::Traits<T>::UnsignedBits bits,
+                        bool selectMin) {
+  if (!selectMin) {
+    bits = ~bits;
+  }
+  bits = cub::Traits<T>::TwiddleOut(bits);
+  return reinterpret_cast<T &>(bits);
 }
 
-template <int BitsPerPass>
-__host__ __device__ constexpr int calcNumBuckets()
-{
-    return 1 << BitsPerPass;
+template <int BitsPerPass> __host__ __device__ constexpr int calcNumBuckets() {
+  return 1 << BitsPerPass;
 }
 
 template <typename T, int BitsPerPass, int Pass>
-__device__ constexpr int calcStartBit()
-{
+__device__ constexpr int calcStartBit() {
   constexpr int tmpBit = sizeof(T) * 8 - (Pass + 1) * BitsPerPass;
 
   constexpr int startBit = tmpBit < 0 ? 0 : tmpBit;
@@ -146,89 +136,79 @@ __device__ constexpr int calcStartBit()
 }
 
 template <typename T, int BitsPerPass, int Pass>
-__device__ constexpr uint32_t calcMask()
-{
-    static_assert(BitsPerPass <= 31);
-    constexpr int numBits = calcStartBit<T, BitsPerPass, Pass - 1>() - calcStartBit<T, BitsPerPass, Pass>();
-    return (1 << numBits) - 1;
+__device__ constexpr uint32_t calcMask() {
+  static_assert(BitsPerPass <= 31);
+  constexpr int numBits = calcStartBit<T, BitsPerPass, Pass - 1>() -
+                          calcStartBit<T, BitsPerPass, Pass>();
+  return (1 << numBits) - 1;
 }
 
 /**
  * Find the bucket based on the radix
  */
 template <typename T, int BitsPerPass>
-__device__ int calcBucket(T x, int startBit, uint32_t mask, bool selectMin)
-{
-    return (twiddleIn(x, selectMin) >> startBit) & mask;
+__device__ int calcBucket(T x, int startBit, uint32_t mask, bool selectMin) {
+  return (twiddleIn(x, selectMin) >> startBit) & mask;
 }
 
 /**
- *  Replace histogram with its own prefix sum (step 2 in `airTopPSampling` description)
+ *  Replace histogram with its own prefix sum (step 2 in `airTopPSampling`
+ * description)
  */
 template <typename IdxT, int BitsPerPass, int BlockSize>
-__device__ void scan(IdxT volatile* histogram, IdxT* histogramOut)
-{
-    int constexpr numBuckets = calcNumBuckets<BitsPerPass>();
-    if constexpr (numBuckets >= BlockSize)
-    {
-        static_assert(numBuckets % BlockSize == 0);
-        int constexpr itemsPerThread = numBuckets / BlockSize;
-        typedef cub::BlockLoad<IdxT, BlockSize, itemsPerThread, cub::BLOCK_LOAD_TRANSPOSE> BlockLoad;
-        typedef cub::BlockStore<IdxT, BlockSize, itemsPerThread, cub::BLOCK_STORE_TRANSPOSE> BlockStore;
-        typedef cub::BlockScan<IdxT, BlockSize> BlockScan;
+__device__ void scan(IdxT volatile *histogram, IdxT *histogramOut) {
+  int constexpr numBuckets = calcNumBuckets<BitsPerPass>();
+  if constexpr (numBuckets >= BlockSize) {
+    static_assert(numBuckets % BlockSize == 0);
+    int constexpr itemsPerThread = numBuckets / BlockSize;
+    typedef cub::BlockLoad<IdxT, BlockSize, itemsPerThread,
+                           cub::BLOCK_LOAD_TRANSPOSE>
+        BlockLoad;
+    typedef cub::BlockStore<IdxT, BlockSize, itemsPerThread,
+                            cub::BLOCK_STORE_TRANSPOSE>
+        BlockStore;
+    typedef cub::BlockScan<IdxT, BlockSize> BlockScan;
 
-        __shared__ union
-        {
-            typename BlockLoad::TempStorage load;
-            typename BlockScan::TempStorage scan;
-            typename BlockStore::TempStorage store;
-        } tempStorage;
+    __shared__ union {
+      typename BlockLoad::TempStorage load;
+      typename BlockScan::TempStorage scan;
+      typename BlockStore::TempStorage store;
+    } tempStorage;
 
-        IdxT threadData[itemsPerThread];
+    IdxT threadData[itemsPerThread];
 
-        BlockLoad(tempStorage.load).Load(histogram, threadData);
-        __syncthreads();
+    BlockLoad(tempStorage.load).Load(histogram, threadData);
+    __syncthreads();
 
-        BlockScan(tempStorage.scan).InclusiveSum(threadData, threadData);
-        __syncthreads();
+    BlockScan(tempStorage.scan).InclusiveSum(threadData, threadData);
+    __syncthreads();
 
-        BlockStore(tempStorage.store).Store(histogramOut, threadData);
+    BlockStore(tempStorage.store).Store(histogramOut, threadData);
+  } else {
+    typedef cub::BlockScan<IdxT, BlockSize> BlockScan;
+    __shared__ typename BlockScan::TempStorage tempStorage;
+
+    IdxT threadData = 0;
+    if (threadIdx.x < numBuckets) {
+      threadData = histogram[threadIdx.x];
     }
-    else
-    {
-        typedef cub::BlockScan<IdxT, BlockSize> BlockScan;
-        __shared__ typename BlockScan::TempStorage tempStorage;
 
-        IdxT threadData = 0;
-        if (threadIdx.x < numBuckets)
-        {
-            threadData = histogram[threadIdx.x];
-        }
+    BlockScan(tempStorage).InclusiveSum(threadData, threadData);
+    __syncthreads();
 
-        BlockScan(tempStorage).InclusiveSum(threadData, threadData);
-        __syncthreads();
-
-        if (threadIdx.x < numBuckets)
-        {
-            histogramOut[threadIdx.x] = threadData;
-        }
+    if (threadIdx.x < numBuckets) {
+      histogramOut[threadIdx.x] = threadData;
     }
+  }
 }
 
 template <typename T, int BitsPerPass, int NumBuckets, int Pass>
-__device__ __forceinline__ void filterAndHistogram(const T *in_buffer,
-                                                   const int *in_idx_buffer,
-                                                   T *out_buffer,
-                                                   int *out_idx_buffer,
-                                                   T *out_scores,
-                                                   int64_t *out_ids,
-                                                   int previous_len,
-                                                   Counter<T> *counter,
-                                                   T *histogram,
-                                                   int *count_histogram,
-                                                   T *histogram_shm,
-                                                   int *count_histogram_shm,
-                                                   const bool early_stop) {
+__device__ __forceinline__ void
+filterAndHistogram(const T *in_buffer, const int *in_idx_buffer, T *out_buffer,
+                   int *out_idx_buffer, T *out_scores, int64_t *out_ids,
+                   int previous_len, Counter<T> *counter, T *histogram,
+                   int *count_histogram, T *histogram_shm,
+                   int *count_histogram_shm, const bool early_stop) {
   // scan and filter
   constexpr int start_bit = calcStartBit<T, BitsPerPass, Pass>();
   const uint32_t mask = calcMask<T, BitsPerPass, Pass>();
@@ -239,13 +219,15 @@ __device__ __forceinline__ void filterAndHistogram(const T *in_buffer,
     VecT v;
     T array[VecSize];
   } vec;
-  for (int i = (blockIdx.x * blockDim.x + threadIdx.x) ; i < ceilDiv(previous_len, VecSize); i += blockDim.x * gridDim.x) {
+  for (int i = (blockIdx.x * blockDim.x + threadIdx.x);
+       i < ceilDiv(previous_len, VecSize); i += blockDim.x * gridDim.x) {
     vec.v = reinterpret_cast<const VecT *>(in_buffer)[i];
     if constexpr (Pass == 0) {
 #pragma unroll
       for (int j = 0; j < VecSize; j++) {
         if (i * VecSize + j < previous_len) {
-          int bucket = calcBucket<T, BitsPerPass>(vec.array[j], start_bit, mask, false);
+          int bucket =
+              calcBucket<T, BitsPerPass>(vec.array[j], start_bit, mask, false);
           atomicAdd(histogram_shm + bucket, vec.array[j]);
           atomicAdd(count_histogram_shm + bucket, 1);
         }
@@ -258,7 +240,9 @@ __device__ __forceinline__ void filterAndHistogram(const T *in_buffer,
       for (int j = 0; j < VecSize; j++) {
         const int idx = i * VecSize + j;
         if (idx < previous_len) {
-          const auto previousBits = (twiddleIn(vec.array[j], false) >> previousStartBit) << previousStartBit;
+          const auto previousBits =
+              (twiddleIn(vec.array[j], false) >> previousStartBit)
+              << previousStartBit;
           if (previousBits == kthValueBits) {
             if (early_stop) {
               const int pos = in_idx_buffer ? in_idx_buffer[idx] : idx;
@@ -270,7 +254,8 @@ __device__ __forceinline__ void filterAndHistogram(const T *in_buffer,
               out_buffer[pos] = vec.array[j];
               out_idx_buffer[pos] = in_idx_buffer ? in_idx_buffer[idx] : idx;
             }
-            int bucket = calcBucket<T, BitsPerPass>(vec.array[j], start_bit, mask, false);
+            int bucket = calcBucket<T, BitsPerPass>(vec.array[j], start_bit,
+                                                    mask, false);
             atomicAdd(histogram_shm + bucket, vec.array[j]);
             atomicAdd(count_histogram_shm + bucket, 1);
           }
@@ -291,23 +276,16 @@ __device__ __forceinline__ void filterAndHistogram(const T *in_buffer,
 }
 
 template <typename T, int BitsPerPass, int BlockSize, int NumBuckets, int Pass>
-__global__ void air_topp_sampling(Counter<T> *counters,
-                                  T *histograms,
-                                  int *count_histograms,
-                                  T *out,
-                                  int64_t *ids,
-                                  T *buf1,
-                                  int *idx_buf1,
-                                  T *buf2,
-                                  int *idx_buf2,
-                                  int* count_iter,
-                                  int* count_iter_begin,
-                                  const int buf_len) {
+__global__ void air_topp_sampling(Counter<T> *counters, T *histograms,
+                                  int *count_histograms, T *out, int64_t *ids,
+                                  T *buf1, int *idx_buf1, T *buf2,
+                                  int *idx_buf2, int *count_iter,
+                                  int *count_iter_begin, const int buf_len) {
 
   /***
    * calc - filter - scan -find
    * TODO: calc - scan - find - filter
-  ***/
+   ***/
   const int bid = blockIdx.y;
   if (count_iter_begin[bid] == count_iter[bid + 1]) {
     // topk
@@ -369,29 +347,18 @@ __global__ void air_topp_sampling(Counter<T> *counters,
   __shared__ T histogram_shm[NumBuckets];
   __shared__ int count_histogram_shm[NumBuckets];
   for (int i = tid; i < NumBuckets; i += blockDim.x) {
-      histogram_shm[i] = 0;
-      count_histogram_shm[i] = 0;
+    histogram_shm[i] = 0;
+    count_histogram_shm[i] = 0;
   }
   __syncthreads();
 
   filterAndHistogram<T, BitsPerPass, NumBuckets, Pass>(
-    in_buf,
-    in_idx_buf,
-    out_buf,
-    out_idx_buf,
-    out,
-    ids,
-    previous_len,
-    counter,
-    histogram,
-    count_histogram,
-    histogram_shm,
-    count_histogram_shm,
-    early_stop
-  );
+      in_buf, in_idx_buf, out_buf, out_idx_buf, out, ids, previous_len, counter,
+      histogram, count_histogram, histogram_shm, count_histogram_shm,
+      early_stop);
   __syncthreads();
   __threadfence();
-  
+
   // find last block
   bool isLastBlock = false;
   if (threadIdx.x == 0) {
@@ -425,13 +392,16 @@ __global__ void air_topp_sampling(Counter<T> *counters,
     __syncthreads();
     // Acquire the summation of each 32 buckets
     for (int i = threadIdx.x; i < NumBuckets; i += BlockSize) {
-      reduce_store_async(warp, warpSum + i / WARP_SIZE, histogram[i], cg::plus<float>{});
+      reduce_store_async(warp, warpSum + i / WARP_SIZE, histogram[i],
+                         cg::plus<float>{});
     }
     __syncthreads();
     // Acquire the summation of all the 2048 buckets
     if (threadIdx.x < WARP_SIZE) {
-      reduce_store_async(warp, blockSum, warpSum[threadIdx.x], cg::plus<float>{});
-      reduce_update_async(warp, blockSum, warpSum[threadIdx.x + WARP_SIZE], cg::plus<float>{});
+      reduce_store_async(warp, blockSum, warpSum[threadIdx.x],
+                         cg::plus<float>{});
+      reduce_update_async(warp, blockSum, warpSum[threadIdx.x + WARP_SIZE],
+                          cg::plus<float>{});
     }
     __syncthreads();
 
@@ -465,8 +435,10 @@ __global__ void air_topp_sampling(Counter<T> *counters,
           prev += histogram[i];
         }
       }
-      counter->sum = current_sum - prev;         // how many values still are there to find
-      counter->len = count_histogram[targetIdx]; // cur - prev; // number of values in next pass
+      counter->sum =
+          current_sum - prev; // how many values still are there to find
+      counter->len = count_histogram[targetIdx]; // cur - prev; // number of
+                                                 // values in next pass
       typename cub::Traits<T>::UnsignedBits bucket = targetIdx;
       int startBit = calcStartBit<T, BitsPerPass, Pass>();
       counter->kthValueBits |= bucket << startBit;
@@ -487,7 +459,7 @@ __global__ void air_topp_sampling(Counter<T> *counters,
     if constexpr (Pass == numPasses - 1) {
       const auto kthValueBits = counter->kthValueBits;
       const auto equal_value = twiddleOut<T>(kthValueBits, false);
-      
+
       const T *last_data = out_buf ? out_buf : in_buf;
       const int *last_idx_data = out_idx_buf ? out_idx_buf : in_idx_buf;
       const int last_len = out_buf ? current_len : counter->oriLen;
@@ -502,15 +474,10 @@ __global__ void air_topp_sampling(Counter<T> *counters,
 }
 
 template <typename T, int BitsPerPass>
-__global__ void air_topp_init(Counter<T> *counters,
-                              T *histograms,
-                              int *count_histograms,
-                              const T *in,
-                              const T *ps,
-                              curandState_t* curandstate,
-                              const int bsz,
-                              const int vocab_size,
-                              const int buf_len,
+__global__ void air_topp_init(Counter<T> *counters, T *histograms,
+                              int *count_histograms, const T *in, const T *ps,
+                              curandState_t *curandstate, const int bsz,
+                              const int vocab_size, const int buf_len,
                               const int num_buckets) {
   const int bid = blockIdx.x;
   const int tid = threadIdx.x;
@@ -542,17 +509,16 @@ __global__ void air_topp_init(Counter<T> *counters,
 }
 
 struct SegmentOffsetIter {
-    explicit SegmentOffsetIter(int num_cols) : num_cols_(num_cols) {}
+  explicit SegmentOffsetIter(int num_cols) : num_cols_(num_cols) {}
 
-    __host__ __device__ __forceinline__ int operator()(int idx) const {
-        return idx * num_cols_;
-    }
+  __host__ __device__ __forceinline__ int operator()(int idx) const {
+    return idx * num_cols_;
+  }
 
-    int num_cols_;
+  int num_cols_;
 };
 
-template <typename T>
-struct Pair {
+template <typename T> struct Pair {
   __device__ __forceinline__ Pair() {}
   __device__ __forceinline__ Pair(T value, int id) : v(value), id(id) {}
 
@@ -561,7 +527,7 @@ struct Pair {
     this->id = id;
   }
 
-  __device__ __forceinline__ void operator=(const Pair<T>& in) {
+  __device__ __forceinline__ void operator=(const Pair<T> &in) {
     v = in.v;
     id = in.id;
   }
@@ -573,13 +539,13 @@ struct Pair {
   __device__ __forceinline__ bool operator>(const T value) const {
     return (static_cast<float>(v) > static_cast<float>(value));
   }
-  __device__ __forceinline__ bool operator<(const Pair<T>& in) const {
+  __device__ __forceinline__ bool operator<(const Pair<T> &in) const {
     return (static_cast<float>(v) < static_cast<float>(in.v)) ||
            ((static_cast<float>(v) == static_cast<float>(in.v)) &&
             (id > in.id));
   }
 
-  __device__ __forceinline__ bool operator>(const Pair<T>& in) const {
+  __device__ __forceinline__ bool operator>(const Pair<T> &in) const {
     return (static_cast<float>(v) > static_cast<float>(in.v)) ||
            ((static_cast<float>(v) == static_cast<float>(in.v)) &&
             (id < in.id));
@@ -592,63 +558,51 @@ struct Pair {
 inline int div_up(int a, int n) { return (a + n - 1) / n; }
 
 template <typename T>
-__device__ __forceinline__ void AddTo(Pair<T> topk[],
-                                      const Pair<T>& p,
+__device__ __forceinline__ void AddTo(Pair<T> topk[], const Pair<T> &p,
                                       int beam_size) {
   for (int k = beam_size - 2; k >= 0; k--) {
     if (topk[k] < p) {
-    topk[k + 1] = topk[k];
+      topk[k + 1] = topk[k];
     } else {
-    topk[k + 1] = p;
-    return;
+      topk[k + 1] = p;
+      return;
     }
   }
   topk[0] = p;
 }
 
 template <typename T, int BlockSize>
-__device__ __forceinline__ void GetTopK(Pair<T> topk[],
-                                        const T* src,
-                                        int idx,
-                                        int dim,
-                                        int beam_size) {
+__device__ __forceinline__ void GetTopK(Pair<T> topk[], const T *src, int idx,
+                                        int dim, int beam_size) {
   while (idx < dim) {
     if (topk[beam_size - 1] < src[idx]) {
-    Pair<T> tmp(src[idx], idx);
-    AddTo<T>(topk, tmp, beam_size);
+      Pair<T> tmp(src[idx], idx);
+      AddTo<T>(topk, tmp, beam_size);
     }
     idx += BlockSize;
   }
 }
 
 template <typename T, int BlockSize>
-__device__ __forceinline__ void GetTopK(Pair<T> topk[],
-                                        const T* src,
-                                        int idx,
-                                        int dim,
-                                        const Pair<T>& max,
+__device__ __forceinline__ void GetTopK(Pair<T> topk[], const T *src, int idx,
+                                        int dim, const Pair<T> &max,
                                         int beam_size) {
   while (idx < dim) {
     if (topk[beam_size - 1] < src[idx]) {
-        Pair<T> tmp(src[idx], idx);
-        if (tmp < max) {
-            AddTo<T>(topk, tmp, beam_size);
-        }
+      Pair<T> tmp(src[idx], idx);
+      if (tmp < max) {
+        AddTo<T>(topk, tmp, beam_size);
+      }
     }
     idx += BlockSize;
   }
 }
 
 template <typename T, int MaxLength, int BlockSize>
-__device__ __forceinline__ void ThreadGetTopK(Pair<T> topk[],
-                                              int* beam,
-                                              int beam_size,
-                                              const T* src,
-                                              bool* firstStep,
-                                              bool* is_empty,
-                                              Pair<T>* max,
-                                              int dim,
-                                              const int tid) {
+__device__ __forceinline__ void
+ThreadGetTopK(Pair<T> topk[], int *beam, int beam_size, const T *src,
+              bool *firstStep, bool *is_empty, Pair<T> *max, int dim,
+              const int tid) {
   if (*beam > 0) {
     int length = (*beam) < beam_size ? *beam : beam_size;
     if (*firstStep) {
@@ -659,53 +613,47 @@ __device__ __forceinline__ void ThreadGetTopK(Pair<T> topk[],
         if (k < MaxLength - (*beam)) {
           topk[k] = topk[k + *beam];
         } else {
-            topk[k].set(std::numeric_limits<T>::min(), -1);
+          topk[k].set(std::numeric_limits<T>::min(), -1);
         }
       }
       if (!(*is_empty)) {
-        GetTopK<T, BlockSize>(
-            topk + MaxLength - *beam, src, tid, dim, *max, length);
+        GetTopK<T, BlockSize>(topk + MaxLength - *beam, src, tid, dim, *max,
+                              length);
       }
     }
 
     *max = topk[MaxLength - 1];
-    if ((*max).id == -1) *is_empty = true;
+    if ((*max).id == -1)
+      *is_empty = true;
     *beam = 0;
   }
 }
 
 template <typename T>
-__forceinline__ __device__ T
-CudaShuffleDownSync(unsigned mask, T val, int delta, int width = warpSize) {
+__forceinline__ __device__ T CudaShuffleDownSync(unsigned mask, T val,
+                                                 int delta,
+                                                 int width = warpSize) {
   return __shfl_down_sync(mask, val, static_cast<unsigned>(delta), width);
 }
 
 template <typename T>
 __forceinline__ __device__ Pair<T> WarpReduce(Pair<T> input) {
 #pragma unroll
-    for (int offset = 16; offset > 0; offset >>= 1) {
-        T tmp_val = 
-            CudaShuffleDownSync(FINAL_MASK, input.v, offset, 32);
-        int tmp_id = 
-            CudaShuffleDownSync(FINAL_MASK, input.id, offset, 32);
-        if (static_cast<float>(input.v) < static_cast<float>(tmp_val)) {
-            input.v = tmp_val;
-            input.id = tmp_id;
-        }
+  for (int offset = 16; offset > 0; offset >>= 1) {
+    T tmp_val = CudaShuffleDownSync(FINAL_MASK, input.v, offset, 32);
+    int tmp_id = CudaShuffleDownSync(FINAL_MASK, input.id, offset, 32);
+    if (static_cast<float>(input.v) < static_cast<float>(tmp_val)) {
+      input.v = tmp_val;
+      input.id = tmp_id;
     }
-    return input;
+  }
+  return input;
 }
 
 template <typename T, int MaxLength, int BlockSize>
-__device__ __forceinline__ void BlockReduce(Pair<T> shared_max[],
-                                            Pair<T> topk[],
-                                            Pair<T> beam_max[],
-                                            int* beam,
-                                            int* k,
-                                            int* count,
-                                            const int tid,
-                                            const int wid,
-                                            const int lane) {
+__device__ __forceinline__ void
+BlockReduce(Pair<T> shared_max[], Pair<T> topk[], Pair<T> beam_max[], int *beam,
+            int *k, int *count, const int tid, const int wid, const int lane) {
   while (true) {
     __syncthreads();
     Pair<T> input_now = topk[0];
@@ -720,28 +668,31 @@ __device__ __forceinline__ void BlockReduce(Pair<T> shared_max[],
                     : Pair<T>(std::numeric_limits<T>::min(), -1);
     if (wid == 0) {
       input_now = WarpReduce(input_now);
-      if (lane == 0) shared_max[0] = input_now;
+      if (lane == 0)
+        shared_max[0] = input_now;
     }
     __syncthreads();
     if (tid == 0) {
-      beam_max[*count] = shared_max[0]; 
+      beam_max[*count] = shared_max[0];
       (*count)++;
     }
     int tid_max = shared_max[0].id % BlockSize;
     if (tid == tid_max) {
       (*beam)++;
     }
-    if (--(*k) == 0) break;
+    if (--(*k) == 0)
+      break;
     __syncthreads();
 
     if (tid == tid_max) {
-        if (*beam < MaxLength) {
-            topk[0] = topk[*beam];
-        }
+      if (*beam < MaxLength) {
+        topk[0] = topk[*beam];
+      }
     }
 
     if (MaxLength < 5) {
-      if (*beam >= MaxLength) break;
+      if (*beam >= MaxLength)
+        break;
     } else {
       unsigned mask = 0u;
       mask = __ballot_sync(FINAL_MASK, true);
@@ -771,30 +722,26 @@ __device__ inline T exponential_transform(T val, T lambda) {
 }
 
 template <typename T, int MaxLength, int TopPBeamTopK, int BlockSize>
-__global__ void KeMatrixTopPBeamTopK(const T* src,
-                                     const T* threshold,
-                                     curandState_t* states,
-                                     T* top_ps,
-                                     int64_t* out_id,  // topk id
-                                     T* out_val,       // topk val
-                                     int64_t* topk_ids,
-                                     T* topk_scores,
-                                     int vocab_size,
-                                     int* count_iter,
-                                     int* count_iter_begin,
-                                     const int k,
+__global__ void KeMatrixTopPBeamTopK(const T *src, const T *threshold,
+                                     curandState_t *states, T *top_ps,
+                                     int64_t *out_id, // topk id
+                                     T *out_val,      // topk val
+                                     int64_t *topk_ids, T *topk_scores,
+                                     int vocab_size, int *count_iter,
+                                     int *count_iter_begin, const int k,
                                      const bool need_batch_random) {
   const int tid = threadIdx.x;
   const int wid = tid / 32;
   const int lane = tid % 32;
   const int bid = blockIdx.x;
-  const float threshold_now = threshold ? static_cast<float>(threshold[bid]) : 0.f;
+  const float threshold_now =
+      threshold ? static_cast<float>(threshold[bid]) : 0.f;
 
   int top_num = TopPBeamTopK;
   float top_p_num = static_cast<float>(top_ps[bid]);
   const int offset = bid * vocab_size;
   int64_t *topk_ids_now = topk_ids + bid * k;
-  T* topk_scores_now = topk_scores + bid * k;
+  T *topk_scores_now = topk_scores + bid * k;
 
   __shared__ Pair<T> shared_max[BlockSize / 32];
   __shared__ Pair<T> beam_max[TopPBeamTopK];
@@ -815,17 +762,11 @@ __global__ void KeMatrixTopPBeamTopK(const T* src,
   }
 
   while (top_num) {
-    ThreadGetTopK<T, MaxLength, BlockSize>(topk,
-                                           &beam,
-                                           TopPBeamTopK,
-                                           src + offset,
-                                           &firststep,
-                                           &is_empty,
-                                           &max,
-                                           vocab_size,
-                                           tid);
-    BlockReduce<T, MaxLength, BlockSize>(
-        shared_max, topk, beam_max, &beam, &top_num, &count, tid, wid, lane);
+    ThreadGetTopK<T, MaxLength, BlockSize>(topk, &beam, TopPBeamTopK,
+                                           src + offset, &firststep, &is_empty,
+                                           &max, vocab_size, tid);
+    BlockReduce<T, MaxLength, BlockSize>(shared_max, topk, beam_max, &beam,
+                                         &top_num, &count, tid, wid, lane);
   }
   if (tid == 0) {
     // printf("offset: %d\n", (int)seed_offset);
@@ -836,20 +777,22 @@ __global__ void KeMatrixTopPBeamTopK(const T* src,
     float max_val = 0.f;
     int max_id = -1;
     for (int i = 0; i < TopPBeamTopK; i++) {
-        if (i < k) {
-            topk_ids_now[i] = static_cast<int64_t>(beam_max[i].id);
-            topk_scores_now[i] = beam_max[i].v;
-        }
-        if (!flag) {
-            float val = static_cast<float>(beam_max[i].v);
-            sum_prob += val;
-        float random_ratio = exponential_transform(curand_uniform(states + bid), 1.0f);
+      if (i < k) {
+        topk_ids_now[i] = static_cast<int64_t>(beam_max[i].id);
+        topk_scores_now[i] = beam_max[i].v;
+      }
+      if (!flag) {
+        float val = static_cast<float>(beam_max[i].v);
+        sum_prob += val;
+        float random_ratio =
+            exponential_transform(curand_uniform(states + bid), 1.0f);
         // for (int t = 0; t < 5; t++) {
         //   float tmp_random_ratio = curand_uniform(&state);
         //   printf("step: %d, tmp_random_ratio: %f\n", t, tmp_random_ratio);
         // }
         float random_val = (val >= threshold_now ? val : 0.f) / random_ratio;
-        // printf("random_ratio: %f, val: %f, random_val: %f\n", random_ratio, val, random_val);
+        // printf("random_ratio: %f, val: %f, random_val: %f\n", random_ratio,
+        // val, random_val);
         if (max_val < random_val) {
           max_val = random_val;
           max_id = i;
@@ -875,29 +818,25 @@ __global__ void KeMatrixTopPBeamTopK(const T* src,
 }
 
 template <typename T, int MaxLength, int TopPBeamTopK, int BlockSize>
-__global__ void KeMatrixTopPBeamTopKFt(const T* src,
-                                       const T* threshold,
-                                       curandState_t* states,
-                                       T* top_ps,
-                                       int64_t* out_id,  // topk id
-                                       T* out_val,       // topk val
-                                       int64_t* topk_ids,
-                                       T* topk_scores,
-                                       int vocab_size,
-                                       int* count_iter,
-                                       int* count_iter_begin,
-                                       const int k,
+__global__ void KeMatrixTopPBeamTopKFt(const T *src, const T *threshold,
+                                       curandState_t *states, T *top_ps,
+                                       int64_t *out_id, // topk id
+                                       T *out_val,      // topk val
+                                       int64_t *topk_ids, T *topk_scores,
+                                       int vocab_size, int *count_iter,
+                                       int *count_iter_begin, const int k,
                                        const bool need_batch_random) {
   const int tid = threadIdx.x;
   const int wid = tid / 32;
   const int lane = tid % 32;
   const int bid = blockIdx.x;
-  const float threshold_now = threshold ? static_cast<float>(threshold[bid]) : 0.f;
+  const float threshold_now =
+      threshold ? static_cast<float>(threshold[bid]) : 0.f;
 
   int top_num = TopPBeamTopK;
   float top_p_num = static_cast<float>(top_ps[bid]);
-  int64_t* topk_ids_now = topk_ids + bid * k;
-  T* topk_scores_now = topk_scores + bid * k;
+  int64_t *topk_ids_now = topk_ids + bid * k;
+  T *topk_scores_now = topk_scores + bid * k;
 
   __shared__ Pair<T> shared_max[BlockSize / 32];
   __shared__ Pair<T> beam_max[TopPBeamTopK];
@@ -918,17 +857,11 @@ __global__ void KeMatrixTopPBeamTopKFt(const T* src,
   }
 
   while (top_num) {
-    ThreadGetTopK<T, MaxLength, BlockSize>(topk,
-                                           &beam,
-                                           TopPBeamTopK,
-                                           src + bid * vocab_size,
-                                           &firststep,
-                                           &is_empty,
-                                           &max,
-                                           vocab_size,
-                                           tid);
-    BlockReduce<T, MaxLength, BlockSize>(
-        shared_max, topk, beam_max, &beam, &top_num, &count, tid, wid, lane);
+    ThreadGetTopK<T, MaxLength, BlockSize>(topk, &beam, TopPBeamTopK,
+                                           src + bid * vocab_size, &firststep,
+                                           &is_empty, &max, vocab_size, tid);
+    BlockReduce<T, MaxLength, BlockSize>(shared_max, topk, beam_max, &beam,
+                                         &top_num, &count, tid, wid, lane);
   }
   if (tid == 0) {
     count_iter_begin[bid] = count_iter[bid];
@@ -971,17 +904,17 @@ __global__ void KeMatrixTopPBeamTopKFt(const T* src,
   }
 }
 
-__global__ void AirToppSetCountIter(int* count_iter, int num) {
-    int tid = threadIdx.x;
-    int bid = blockIdx.x;
-    int idx = bid * blockDim.x + tid;
-    for (int i = idx; i < num; i += gridDim.x * blockDim.x) {
-        count_iter[i] = i;
-    }
+__global__ void AirToppSetCountIter(int *count_iter, int num) {
+  int tid = threadIdx.x;
+  int bid = blockIdx.x;
+  int idx = bid * blockDim.x + tid;
+  for (int i = idx; i < num; i += gridDim.x * blockDim.x) {
+    count_iter[i] = i;
+  }
 }
 
 template <typename T>
-__global__ void FillIndex(T* indices, T num_rows, T num_cols) {
+__global__ void FillIndex(T *indices, T num_rows, T num_cols) {
   int col_id = threadIdx.x;
   int row_id = blockIdx.x;
 
@@ -993,21 +926,15 @@ __global__ void FillIndex(T* indices, T num_rows, T num_cols) {
 }
 
 template <typename T, int TopKMaxLength, int TopPBeamTopK>
-void DispatchKeMatrixTopPBeamTopK(const T* src,
-                                  const T* threshold,
-                                  curandState_t* states,
-                                  T* top_ps,
-                                  int64_t* out_id,  // topk id
-                                  T* out_val,       // topk val
-                                  int64_t* topk_ids,
-                                  T* topk_scores,
-                                  int vocab_size,
-                                  int* count_iter,
-                                  int* count_iter_begin,
-                                  const int k,
-                                  const int bs,
-                                  const bool need_batch_random,
-                                  const std::string& mode,
+void DispatchKeMatrixTopPBeamTopK(const T *src, const T *threshold,
+                                  curandState_t *states, T *top_ps,
+                                  int64_t *out_id, // topk id
+                                  T *out_val,      // topk val
+                                  int64_t *topk_ids, T *topk_scores,
+                                  int vocab_size, int *count_iter,
+                                  int *count_iter_begin, const int k,
+                                  const int bs, const bool need_batch_random,
+                                  const std::string &mode,
                                   cudaStream_t stream) {
   int BlockSize = GetBlockSize(vocab_size);
   if (mode == "truncated") {
@@ -1015,74 +942,49 @@ void DispatchKeMatrixTopPBeamTopK(const T* src,
       FIXED_BLOCK_DIM(
           KeMatrixTopPBeamTopKFt<T, TopKMaxLength, TopPBeamTopK, kBlockDim>
           <<<bs, kBlockDim, 0, stream>>>(
-              src,
-              threshold,
-              states,
-              top_ps,
-              out_id,
-              out_val,
-              topk_ids,
-              topk_scores,
-              vocab_size,
-              count_iter,
-              count_iter_begin,
-              k,
+              src, threshold, states, top_ps, out_id, out_val, topk_ids,
+              topk_scores, vocab_size, count_iter, count_iter_begin, k,
               need_batch_random));
-      default:
-        PD_THROW("the input data shape has error in the topp_beam_topk kernel.");
+    default:
+      PD_THROW("the input data shape has error in the topp_beam_topk kernel.");
     }
   } else {
     switch (BlockSize) {
       FIXED_BLOCK_DIM(
           KeMatrixTopPBeamTopK<T, TopKMaxLength, TopPBeamTopK, kBlockDim>
           <<<bs, kBlockDim, 0, stream>>>(
-              src,
-              threshold,
-              states,
-              top_ps,
-              out_id,
-              out_val,
-              topk_ids,
-              topk_scores,
-              vocab_size,
-              count_iter,
-              count_iter_begin,
-              k,
+              src, threshold, states, top_ps, out_id, out_val, topk_ids,
+              topk_scores, vocab_size, count_iter, count_iter_begin, k,
               need_batch_random));
-      default:
-        PD_THROW("the input data shape has error in the topp_beam_topk kernel.");
+    default:
+      PD_THROW("the input data shape has error in the topp_beam_topk kernel.");
     }
   }
 }
 
 struct BlockPrefixCallbackOp {
-    // Running prefix
-    float running_total;
-    // Constructor
-    __device__ BlockPrefixCallbackOp(float running_total): running_total(running_total) {}
-    // Callback operator to be entered by the first warp of threads in the block.
-    // Thread-0 is responsible for returning a value for seeding the block-wide scan.
-    __device__ float operator()(float block_aggregate)
-    {
-        float old_prefix = running_total;
-        running_total += block_aggregate;
-        return old_prefix;
-    }
+  // Running prefix
+  float running_total;
+  // Constructor
+  __device__ BlockPrefixCallbackOp(float running_total)
+      : running_total(running_total) {}
+  // Callback operator to be entered by the first warp of threads in the block.
+  // Thread-0 is responsible for returning a value for seeding the block-wide
+  // scan.
+  __device__ float operator()(float block_aggregate) {
+    float old_prefix = running_total;
+    running_total += block_aggregate;
+    return old_prefix;
+  }
 };
 
 template <typename T, int BLOCK_SIZE>
-__global__ void topp_sampling(T* sorted_probs,
-                              int64_t* sorted_id,
-                              T* out_val,
-                              int64_t* out_id,
-                              const T* top_ps,
-                              const T* threshold,
-                              curandState_t * states,
-                              const int p_num,
-                              const int vocab_size,
-                              const bool need_batch_random,
-                              int* count_iter,
-                              int* count_iter_begin) {
+__global__ void topp_sampling(T *sorted_probs, int64_t *sorted_id, T *out_val,
+                              int64_t *out_id, const T *top_ps,
+                              const T *threshold, curandState_t *states,
+                              const int p_num, const int vocab_size,
+                              const bool need_batch_random, int *count_iter,
+                              int *count_iter_begin) {
   __shared__ int stop_shared;
   const int tid = threadIdx.x;
   const int bid = blockIdx.x;
@@ -1090,7 +992,8 @@ __global__ void topp_sampling(T* sorted_probs,
   const int lane_id = tid % 32;
   const int warp_id = tid / 32;
   const float p_t = static_cast<float>(top_ps[bid]);
-  const float threshold_now = threshold ? static_cast<float>(threshold[bid]) : 0.f;
+  const float threshold_now =
+      threshold ? static_cast<float>(threshold[bid]) : 0.f;
   if (tid == 0) {
     stop_shared = 0;
   }
@@ -1118,57 +1021,55 @@ __global__ void topp_sampling(T* sorted_probs,
     BlockScan(temp_storage)
         .InclusiveSum(thread_count, thread_offset, prefix_op);
 
-    if (thread_offset < p_t || (thread_offset >= p_t && thread_offset - thread_count < p_t)) {
-      float random_ratio = exponential_transform(curand_uniform(states + bid), 1.0f);
-      float tmp_val = (thread_count >= threshold_now ? thread_count : 0.f) / random_ratio;
+    if (thread_offset < p_t ||
+        (thread_offset >= p_t && thread_offset - thread_count < p_t)) {
+      float random_ratio =
+          exponential_transform(curand_uniform(states + bid), 1.0f);
+      float tmp_val =
+          (thread_count >= threshold_now ? thread_count : 0.f) / random_ratio;
       if (static_cast<float>(max_thread_pair.v) < tmp_val) {
         max_thread_pair.set(static_cast<T>(tmp_val), i);
       }
-      uint32_t activate_mask = __ballot_sync(FINAL_MASK, p_t <= thread_offset);
+    }
+    uint32_t activate_mask = __ballot_sync(FINAL_MASK, p_t <= thread_offset);
 
-      i_activate = i;
-      if (activate_mask != 0) {
-        if (lane_id == 0) {
-          atomicAdd(&stop_shared, 1);
-        }
-      }
-      __syncthreads();
-      if (stop_shared > 0) {
-        break;
+    i_activate = i;
+    if (activate_mask != 0) {
+      if (lane_id == 0) {
+        atomicAdd(&stop_shared, 1);
       }
     }
     __syncthreads();
-    if (stop_shared == 0) {
-      if (tid == 0) {
-        out_id[bid] = sorted_id[offset];
-        out_val[bid] = sorted_probs[offset];
-      }
-      return;
+    if (stop_shared > 0) {
+      break;
     }
-    Pair<T> max_pair = BlockReduce(temp_storage_reduce).Reduce(max_thread_pair, MaxOp<Pair<T>>());
+  }
+  __syncthreads();
+  if (stop_shared == 0) {
     if (tid == 0) {
-      if (max_pair.id == -1) {
-        max_pair.id = 0;
-      }
-      out_id[bid] = sorted_id[offset + max_pair.id];
-      out_val[bid] = sorted_probs[offset + max_pair.id];
+      out_id[bid] = sorted_id[offset];
+      out_val[bid] = sorted_probs[offset];
     }
+    return;
+  }
+  Pair<T> max_pair = BlockReduce(temp_storage_reduce)
+                         .Reduce(max_thread_pair, MaxOp<Pair<T>>());
+  if (tid == 0) {
+    if (max_pair.id == -1) {
+      max_pair.id = 0;
+    }
+    out_id[bid] = sorted_id[offset + max_pair.id];
+    out_val[bid] = sorted_probs[offset + max_pair.id];
   }
 }
 
 template <typename T, int BLOCK_SIZE>
-__global__ void topp_sampling_ft(T* sorted_probs,
-                                 int64_t* sorted_id,
-                                 T* out_val,
-                                 int64_t* out_id,
-                                 const T* top_ps,
-                                 const T* threshold,
-                                 curandState_t* states,
-                                 const int p_num,
-                                 const int vocab_size,
-                                 const bool need_batch_random,
-                                 int* count_iter,
-                                 int* count_iter_begin) {
+__global__ void topp_sampling_ft(T *sorted_probs, int64_t *sorted_id,
+                                 T *out_val, int64_t *out_id, const T *top_ps,
+                                 const T *threshold, curandState_t *states,
+                                 const int p_num, const int vocab_size,
+                                 const bool need_batch_random, int *count_iter,
+                                 int *count_iter_begin) {
   __shared__ int stop_shared;
   __shared__ float rand_p;
   const int tid = threadIdx.x;
@@ -1177,7 +1078,8 @@ __global__ void topp_sampling_ft(T* sorted_probs,
   const int lane_id = tid % 32;
   const int warp_id = tid / 32;
   const float p_t = static_cast<float>(top_ps[bid]);
-  const float threshold_now = threshold ? static_cast<float>(threshold[bid]) : 0.f;
+  const float threshold_now =
+      threshold ? static_cast<float>(threshold[bid]) : 0.f;
   if (tid == 0) {
     stop_shared = 0;
     rand_p = p_t;
@@ -1245,13 +1147,13 @@ __global__ void topp_sampling_ft(T* sorted_probs,
     }
   }
   if (!skip) {
-    int active_lane_id =
-        32 - __popc(selected_shared[warp_id]);  // first not 0
+    int active_lane_id = 32 - __popc(selected_shared[warp_id]); // first not 0
     if (lane_id == active_lane_id) {
       float val = static_cast<float>(sorted_probs[offset + i_activate]);
       if (val < threshold_now) {
         // don't sample low score token
-        int max_id = BlockReduce(temp_storage_reduce).Reduce(threshold_id, MaxOp<int>());
+        int max_id =
+            BlockReduce(temp_storage_reduce).Reduce(threshold_id, MaxOp<int>());
         curandStatePhilox4_32_10_t rng;
         curand_init(bid * blockDim.x + tid, tid, 0, &rng);
         int random_id = curand(&rng) % (max_id + 1);
@@ -1266,77 +1168,46 @@ __global__ void topp_sampling_ft(T* sorted_probs,
 }
 
 template <typename T>
-void DispatchTopPSampling(T* sorted_probs,
-                          int64_t* sorted_id,
-                          T* out_val,
-                          int64_t* out_id,
-                          const T* top_ps,
-                          const T* threshold,
-                          curandState_t* states,
-                          const int p_num,
-                          const int vocab_size,
-                          const int bs,
-                          const bool need_batch_random,
-                          int* count_iter,
-                          int* count_iter_begin,
-                          const std::string& mode,
+void DispatchTopPSampling(T *sorted_probs, int64_t *sorted_id, T *out_val,
+                          int64_t *out_id, const T *top_ps, const T *threshold,
+                          curandState_t *states, const int p_num,
+                          const int vocab_size, const int bs,
+                          const bool need_batch_random, int *count_iter,
+                          int *count_iter_begin, const std::string &mode,
                           cudaStream_t stream) {
   int BlockSize = GetBlockSize(vocab_size);
   if (mode == "truncated") {
     switch (BlockSize) {
       FIXED_BLOCK_DIM(topp_sampling_ft<T, kBlockDim>
                       <<<bs, kBlockDim, 0, stream>>>(
-                          sorted_probs,
-                          sorted_id,
-                          out_val,
-                          out_id,
-                          top_ps,
-                          threshold,
-                          states,
-                          p_num,
-                          vocab_size,
-                          need_batch_random,
-                          count_iter,
-                          count_iter_begin));
-      default:
-        PD_THROW("the input data shape has error in the topp_sampling kernel.");
+                          sorted_probs, sorted_id, out_val, out_id, top_ps,
+                          threshold, states, p_num, vocab_size,
+                          need_batch_random, count_iter, count_iter_begin));
+    default:
+      PD_THROW("the input data shape has error in the topp_sampling kernel.");
     }
   } else {
     switch (BlockSize) {
-      FIXED_BLOCK_DIM(topp_sampling<T, kBlockDim>
-                      <<<bs, kBlockDim, 0, stream>>>(
-                          sorted_probs,
-                          sorted_id,
-                          out_val,
-                          out_id,
-                          top_ps,
-                          threshold,
-                          states,
-                          p_num,
-                          vocab_size,
-                          need_batch_random,
-                          count_iter,
-                          count_iter_begin));
-      default:
-        PD_THROW("the input data shape has error in the topp_sampling kernel.");
+      FIXED_BLOCK_DIM(topp_sampling<T, kBlockDim><<<bs, kBlockDim, 0, stream>>>(
+          sorted_probs, sorted_id, out_val, out_id, top_ps, threshold, states,
+          p_num, vocab_size, need_batch_random, count_iter, count_iter_begin));
+    default:
+      PD_THROW("the input data shape has error in the topp_sampling kernel.");
     }
   }
 }
 
-__global__ void air_topp_setup_kernel(curandState_t* state,
-                            int64_t* seed,
-                             const int bs) {
+__global__ void air_topp_setup_kernel(curandState_t *state, int64_t *seed,
+                                      const int bs) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   for (int i = idx; i < bs; i += gridDim.x * blockDim.x) {
     curand_init(static_cast<uint64_t>(seed[i]), 0, 0, &state[i]);
   }
 }
 
-__global__ void air_topp_setup_kernel(curandState_t* state,
-                             const uint64_t seed,
-                             const uint64_t offset,
-                             const int bs,
-                             const bool need_batch_random) {
+__global__ void air_topp_setup_kernel(curandState_t *state, const uint64_t seed,
+                                      const uint64_t offset, const int bs,
+                                      const bool need_batch_random) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   for (int i = idx; i < bs; i += gridDim.x * blockDim.x) {
     if (need_batch_random) {
@@ -1347,8 +1218,7 @@ __global__ void air_topp_setup_kernel(curandState_t* state,
   }
 }
 
-template <typename T>
-__global__ void print_kernel(T* input, int size) {
+template <typename T> __global__ void print_kernel(T *input, int size) {
   printf("[");
   for (int i = 0; i < size; i++) {
     if (i != size - 1) {
@@ -1360,251 +1230,238 @@ __global__ void print_kernel(T* input, int size) {
 }
 
 template <paddle::DataType D>
-std::vector<paddle::Tensor> LaunchTopPSampling(const paddle::Tensor& x, 
-                                                  const paddle::Tensor& ps, 
-                                                  const paddle::optional<paddle::Tensor>& threshold,
-                                                  const paddle::optional<paddle::Tensor>& topp_seed,
-                                                  int seed,
-                                                  int k,
-                                                  const std::string& mode) {
-    typedef PDTraits<D> traits_;
-    typedef typename traits_::DataType DataType_;
-    typedef typename traits_::data_t data_t;
-    auto stream = x.stream();
-    const auto& in_dims = x.dims();
-    int p_num = ps.numel();
-    int bs = in_dims[0];
-    int vocab_size = in_dims[1];
+std::vector<paddle::Tensor>
+LaunchTopPSampling(const paddle::Tensor &x, const paddle::Tensor &ps,
+                   const paddle::optional<paddle::Tensor> &threshold,
+                   const paddle::optional<paddle::Tensor> &topp_seed, int seed,
+                   int k, const std::string &mode) {
+  typedef PDTraits<D> traits_;
+  typedef typename traits_::DataType DataType_;
+  typedef typename traits_::data_t data_t;
+  auto stream = x.stream();
+  const auto &in_dims = x.dims();
+  int p_num = ps.numel();
+  int bs = in_dims[0];
+  int vocab_size = in_dims[1];
 
-    auto out = paddle::empty({bs, 1}, x.dtype(), x.place());
-    auto ids = paddle::empty({bs, 1}, paddle::DataType::INT64, x.place());
-    auto topk_ids = paddle::empty({bs, k}, paddle::DataType::INT64, x.place());
-    auto topk_scores = paddle::empty({bs, k}, x.dtype(), x.place());
+  auto out = paddle::empty({bs, 1}, x.dtype(), x.place());
+  auto ids = paddle::empty({bs, 1}, paddle::DataType::INT64, x.place());
+  auto topk_ids = paddle::empty({bs, k}, paddle::DataType::INT64, x.place());
+  auto topk_scores = paddle::empty({bs, k}, x.dtype(), x.place());
 
-    auto ps_now = ps.copy_to(ps.place(), false);
-    auto inds_input = paddle::empty({bs, vocab_size}, paddle::DataType::INT64, x.place());
-    auto sorted_out = paddle::empty({bs, vocab_size}, x.dtype(), x.place());
-    auto sorted_id = paddle::empty({bs, vocab_size}, paddle::DataType::INT64, x.place());
-    
-    int BlockSize = GetBlockSize(vocab_size);
-    switch (BlockSize) {
-        FIXED_BLOCK_DIM(FillIndex<int64_t><<<bs, kBlockDim, 0, stream>>>(
-            inds_input.data<int64_t>(), bs, vocab_size));
-        default:
-            PD_THROW("the input data shape has error in the FillIndex kernel.");
-    }
-    int64_t* infer_seed = topp_seed ? const_cast<int64_t *>(topp_seed.get().data<int64_t>()) : nullptr;
-    
-    curandState_t* states{nullptr};
+  auto ps_now = ps.copy_to(x.place(), false);
+  auto inds_input =
+      paddle::empty({bs, vocab_size}, paddle::DataType::INT64, x.place());
+  auto sorted_out = paddle::empty({bs, vocab_size}, x.dtype(), x.place());
+  auto sorted_id =
+      paddle::empty({bs, vocab_size}, paddle::DataType::INT64, x.place());
 
-    phi::Allocator::AllocationPtr curand_states_buf{nullptr};
-    curand_states_buf = phi::memory_utils::Alloc(
-                        x.place(),
-                        bs * sizeof(curandState_t),
-                        phi::Stream(reinterpret_cast<phi::StreamId>(stream)));
-    states = reinterpret_cast<curandState_t*>(curand_states_buf->ptr());
+  int BlockSize = GetBlockSize(vocab_size);
+  switch (BlockSize) {
+    FIXED_BLOCK_DIM(FillIndex<int64_t><<<bs, kBlockDim, 0, stream>>>(
+        inds_input.data<int64_t>(), bs, vocab_size));
+  default:
+    PD_THROW("the input data shape has error in the FillIndex kernel.");
+  }
+  int64_t *infer_seed =
+      topp_seed ? const_cast<int64_t *>(topp_seed.get().data<int64_t>())
+                : nullptr;
 
+  curandState_t *states{nullptr};
 
-    uint64_t seed_now = seed;
-    uint64_t offset = 0;
-    bool need_batch_random = false;
+  phi::Allocator::AllocationPtr curand_states_buf{nullptr};
+  curand_states_buf = phi::memory_utils::Alloc(
+      x.place(), bs * sizeof(curandState_t),
+      phi::Stream(reinterpret_cast<phi::StreamId>(stream)));
+  states = reinterpret_cast<curandState_t *>(curand_states_buf->ptr());
 
-    if (infer_seed) {
-        air_topp_setup_kernel<<<1, 256, 0, stream>>>(states, infer_seed, bs);
+  uint64_t seed_now = seed;
+  uint64_t offset = 0;
+  bool need_batch_random = false;
+
+  if (infer_seed) {
+    air_topp_setup_kernel<<<1, 256, 0, stream>>>(states, infer_seed, bs);
+  } else {
+    if (seed_now == -1) {
+      need_batch_random = true;
+      phi::DeviceContext *dev_ctx =
+          phi::DeviceContextPool::Instance().Get(x.place());
+      auto gen_cuda = dev_ctx->GetGenerator();
+      uint64_t increment = ps.numel() * 4;
+      auto seed_offset = gen_cuda->IncrementOffset(increment);
+      seed_now = seed_offset.first;
+      offset = seed_offset.second;
+      air_topp_setup_kernel<<<1, 256, 0, stream>>>(states, seed_now, offset, bs,
+                                                   need_batch_random);
     } else {
-        if (seed_now == -1) {
-          need_batch_random = true;
-          phi::DeviceContext* dev_ctx = phi::DeviceContextPool::Instance().Get(x.place());
-          auto gen_cuda = dev_ctx->GetGenerator();
-          uint64_t increment = ps.numel() * 4;
-          auto seed_offset = gen_cuda->IncrementOffset(increment);
-          seed_now = seed_offset.first;
-          offset = seed_offset.second;
-          air_topp_setup_kernel<<<1, 256, 0, stream>>>(
-              states, seed_now, offset, bs, need_batch_random);
-        } else {
-          air_topp_setup_kernel<<<1, 256, 0, stream>>>(
-              states, seed_now, offset, bs, need_batch_random);
-        }
+      air_topp_setup_kernel<<<1, 256, 0, stream>>>(states, seed_now, offset, bs,
+                                                   need_batch_random);
     }
+  }
 
-    auto count_iter = paddle::empty({bs + 1}, paddle::DataType::INT32, x.place());
-    auto count_iter_begin = paddle::empty({bs}, paddle::DataType::INT32, x.place());
-    AirToppSetCountIter<<<1, 256, 0, stream>>>(count_iter.data<int>(), bs + 1);
+  auto count_iter = paddle::empty({bs + 1}, paddle::DataType::INT32, x.place());
+  auto count_iter_begin =
+      paddle::empty({bs}, paddle::DataType::INT32, x.place());
+  AirToppSetCountIter<<<1, 256, 0, stream>>>(count_iter.data<int>(), bs + 1);
 
-    const data_t* threshold_data = nullptr;
-    if (threshold) {
-        threshold_data = threshold.get().data<data_t>();
-    }
+  const data_t *threshold_data = nullptr;
+  if (threshold) {
+    threshold_data = threshold.get().data<data_t>();
+  }
 
-    constexpr int TopKMaxLength = 2;
-    constexpr int TopPBeamTopK = 20;
+  constexpr int TopKMaxLength = 2;
+  constexpr int TopPBeamTopK = 20;
 
-    DispatchKeMatrixTopPBeamTopK<DataType_, TopKMaxLength, TopPBeamTopK>(
-      reinterpret_cast<const DataType_*>(x.data<data_t>()),
-      reinterpret_cast<const DataType_*>(threshold_data),
-      states,
-      reinterpret_cast<DataType_*>(ps_now.data<data_t>()),
-      ids.data<int64_t>(),
-      reinterpret_cast<DataType_*>(out.data<data_t>()),
+  DispatchKeMatrixTopPBeamTopK<DataType_, TopKMaxLength, TopPBeamTopK>(
+      reinterpret_cast<const DataType_ *>(x.data<data_t>()),
+      reinterpret_cast<const DataType_ *>(threshold_data), states,
+      reinterpret_cast<DataType_ *>(ps_now.data<data_t>()), ids.data<int64_t>(),
+      reinterpret_cast<DataType_ *>(out.data<data_t>()),
       topk_ids.data<int64_t>(),
-      reinterpret_cast<DataType_*>(topk_scores.data<data_t>()),
-      vocab_size,
-      count_iter.data<int>(),
-      count_iter_begin.data<int>(),
-      k,
-      bs,
-      need_batch_random,
-      mode,
-      stream);
+      reinterpret_cast<DataType_ *>(topk_scores.data<data_t>()), vocab_size,
+      count_iter.data<int>(), count_iter_begin.data<int>(), k, bs,
+      need_batch_random, mode, stream);
 
-    static_assert(std::is_same<DataType_, float>::value, "air_topp only supports float now!");
-    constexpr int BitsPerPass = 11;
-    constexpr int SAMPLING_BLOCK_SIZE = 512;
-    constexpr int INIT_BLOCK_SIZE = 1024;
-    phi::Allocator::AllocationPtr counter_ptr{nullptr};
-    counter_ptr = phi::memory_utils::Alloc(
-                    x.place(),
-                    bs * sizeof(Counter<DataType_>),
-                    phi::Stream(reinterpret_cast<phi::StreamId>(stream)));
-    Counter<DataType_> *counters = reinterpret_cast<Counter<DataType_>*>(counter_ptr->ptr());
-    constexpr int numBuckets = calcNumBuckets<BitsPerPass>();
-    const int buf_len = calcBufLen<DataType_>(vocab_size);
+  static_assert(std::is_same<DataType_, float>::value,
+                "air_topp only supports float now!");
+  constexpr int BitsPerPass = 11;
+  constexpr int SAMPLING_BLOCK_SIZE = 512;
+  constexpr int INIT_BLOCK_SIZE = 1024;
+  phi::Allocator::AllocationPtr counter_ptr{nullptr};
+  counter_ptr = phi::memory_utils::Alloc(
+      x.place(), bs * sizeof(Counter<DataType_>),
+      phi::Stream(reinterpret_cast<phi::StreamId>(stream)));
+  Counter<DataType_> *counters =
+      reinterpret_cast<Counter<DataType_> *>(counter_ptr->ptr());
+  constexpr int numBuckets = calcNumBuckets<BitsPerPass>();
+  const int buf_len = calcBufLen<DataType_>(vocab_size);
 
-    auto histograms = paddle::empty({bs, numBuckets}, x.dtype(), x.place());
-    auto count_histograms = paddle::empty({bs, numBuckets}, paddle::DataType::INT32, x.place());
-    auto buf1 = paddle::empty({bs, bs}, x.dtype(), x.place());
-    auto id_buf1 = paddle::empty({bs, buf_len}, paddle::DataType::INT32, x.place());
-    auto buf2 = paddle::empty({bs, buf_len}, x.dtype(), x.place());
-    auto id_buf2 = paddle::empty({bs, buf_len}, paddle::DataType::INT32, x.place());
+  auto histograms = paddle::empty({bs, numBuckets}, x.dtype(), x.place());
+  auto count_histograms =
+      paddle::empty({bs, numBuckets}, paddle::DataType::INT32, x.place());
+  auto buf1 = paddle::empty({bs, buf_len}, x.dtype(), x.place());
+  auto id_buf1 =
+      paddle::empty({bs, buf_len}, paddle::DataType::INT32, x.place());
+  auto buf2 = paddle::empty({bs, buf_len}, x.dtype(), x.place());
+  auto id_buf2 =
+      paddle::empty({bs, buf_len}, paddle::DataType::INT32, x.place());
 
-    air_topp_init<float, BitsPerPass><<<bs, INIT_BLOCK_SIZE, 0, stream>>>(
-        counters,
-        reinterpret_cast<float*>(histograms.data<data_t>()),
-        count_histograms.data<int32_t>(),
-        reinterpret_cast<const float*>(x.data<data_t>()),
-        reinterpret_cast<const float*>(ps.data<data_t>()),
-        states,
-        bs,
-        vocab_size,
-        buf_len,
-        numBuckets);
+  air_topp_init<float, BitsPerPass><<<bs, INIT_BLOCK_SIZE, 0, stream>>>(
+      counters, reinterpret_cast<float *>(histograms.data<data_t>()),
+      count_histograms.data<int32_t>(),
+      reinterpret_cast<const float *>(x.data<data_t>()),
+      reinterpret_cast<const float *>(ps.data<data_t>()), states, bs,
+      vocab_size, buf_len, numBuckets);
 
-    constexpr int VecSize = 16 / sizeof(data_t);
-    // TODO: good block_num
-    const int max_block_num_vocab = ceilDiv(vocab_size, SAMPLING_BLOCK_SIZE * VecSize);
-    auto kernel = air_topp_sampling<data_t, BitsPerPass, SAMPLING_BLOCK_SIZE, numBuckets, 0>;
-    const int dev_id = 0;
-    int sm_count;
-    int act_blocks_per_sm;
-    cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, dev_id);
-    cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-        &act_blocks_per_sm, kernel, SAMPLING_BLOCK_SIZE, 0);
-    assert(act_blocks_per_sm > 1);
-    const int block_per_wave = sm_count * act_blocks_per_sm;
-    const int block_num_vocab = std::min(max_block_num_vocab, block_per_wave * 4 / bs); // !!!
-    dim3 grid(block_num_vocab, bs);
-    constexpr int numPasses = calcNumPasses<data_t, BitsPerPass>();
-    for (int pass = 0; pass < numPasses; ++pass) {
-        if (pass == 0) {
-          air_topp_sampling<DataType_, BitsPerPass, SAMPLING_BLOCK_SIZE, numBuckets, 0><<<grid, SAMPLING_BLOCK_SIZE, 0, stream>>>(
-              counters,
-              reinterpret_cast<DataType_*>(histograms.data<data_t>()),
-              count_histograms.data<int>(),
-              reinterpret_cast<DataType_*>(out.data<data_t>()),
-              ids.data<int64_t>(),
-              reinterpret_cast<DataType_*>(buf1.data<data_t>()),
-              id_buf1.data<int>(),
-              reinterpret_cast<DataType_*>(buf2.data<data_t>()),
-              id_buf2.data<int>(),
-              count_iter.data<int>(),
-              count_iter_begin.data<int>(),
-              buf_len
-          );
-        } else if (pass == 1) {
-          air_topp_sampling<DataType_, BitsPerPass, SAMPLING_BLOCK_SIZE, numBuckets, 1><<<grid, SAMPLING_BLOCK_SIZE, 0, stream>>>(
-              counters,
-              reinterpret_cast<DataType_*>(histograms.data<data_t>()),
-              count_histograms.data<int>(),
-              reinterpret_cast<DataType_*>(out.data<data_t>()),
-              ids.data<int64_t>(),
-              reinterpret_cast<DataType_*>(buf1.data<data_t>()),
-              id_buf1.data<int>(),
-              reinterpret_cast<DataType_*>(buf2.data<data_t>()),
-              id_buf2.data<int>(),
-              count_iter.data<int>(),
-              count_iter_begin.data<int>(),
-              buf_len
-          );
-        } else if (pass == 2) {
-          air_topp_sampling<DataType_, BitsPerPass, SAMPLING_BLOCK_SIZE, numBuckets, 2><<<grid, SAMPLING_BLOCK_SIZE, 0, stream>>>(
-              counters,
-              reinterpret_cast<DataType_*>(histograms.data<data_t>()),
-              count_histograms.data<int>(),
-              reinterpret_cast<DataType_*>(out.data<data_t>()),
-              ids.data<int64_t>(),
-              reinterpret_cast<DataType_*>(buf1.data<data_t>()),
-              id_buf1.data<int>(),
-              reinterpret_cast<DataType_*>(buf2.data<data_t>()),
-              id_buf2.data<int>(),
-              count_iter.data<int>(),
-              count_iter_begin.data<int>(),
-              buf_len
-          );
-        } else {
-          PD_THROW("pass must be 0,1 or 2!");
-        }
+  constexpr int VecSize = 16 / sizeof(data_t);
+  // TODO: good block_num
+  const int max_block_num_vocab =
+      ceilDiv(vocab_size, SAMPLING_BLOCK_SIZE * VecSize);
+  auto kernel = air_topp_sampling<data_t, BitsPerPass, SAMPLING_BLOCK_SIZE,
+                                  numBuckets, 0>;
+  const int dev_id = 0;
+  int sm_count;
+  int act_blocks_per_sm;
+  cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, dev_id);
+  cudaOccupancyMaxActiveBlocksPerMultiprocessor(&act_blocks_per_sm, kernel,
+                                                SAMPLING_BLOCK_SIZE, 0);
+  assert(act_blocks_per_sm > 1);
+  const int block_per_wave = sm_count * act_blocks_per_sm;
+  const int block_num_vocab =
+      std::min(max_block_num_vocab, block_per_wave * 4 / bs); // !!!
+  dim3 grid(block_num_vocab, bs);
+  constexpr int numPasses = calcNumPasses<data_t, BitsPerPass>();
+  for (int pass = 0; pass < numPasses; ++pass) {
+    if (pass == 0) {
+      air_topp_sampling<DataType_, BitsPerPass, SAMPLING_BLOCK_SIZE, numBuckets,
+                        0><<<grid, SAMPLING_BLOCK_SIZE, 0, stream>>>(
+          counters, reinterpret_cast<DataType_ *>(histograms.data<data_t>()),
+          count_histograms.data<int>(),
+          reinterpret_cast<DataType_ *>(out.data<data_t>()),
+          ids.data<int64_t>(),
+          reinterpret_cast<DataType_ *>(buf1.data<data_t>()),
+          id_buf1.data<int>(),
+          reinterpret_cast<DataType_ *>(buf2.data<data_t>()),
+          id_buf2.data<int>(), count_iter.data<int>(),
+          count_iter_begin.data<int>(), buf_len);
+    } else if (pass == 1) {
+      air_topp_sampling<DataType_, BitsPerPass, SAMPLING_BLOCK_SIZE, numBuckets,
+                        1><<<grid, SAMPLING_BLOCK_SIZE, 0, stream>>>(
+          counters, reinterpret_cast<DataType_ *>(histograms.data<data_t>()),
+          count_histograms.data<int>(),
+          reinterpret_cast<DataType_ *>(out.data<data_t>()),
+          ids.data<int64_t>(),
+          reinterpret_cast<DataType_ *>(buf1.data<data_t>()),
+          id_buf1.data<int>(),
+          reinterpret_cast<DataType_ *>(buf2.data<data_t>()),
+          id_buf2.data<int>(), count_iter.data<int>(),
+          count_iter_begin.data<int>(), buf_len);
+    } else if (pass == 2) {
+      air_topp_sampling<DataType_, BitsPerPass, SAMPLING_BLOCK_SIZE, numBuckets,
+                        2><<<grid, SAMPLING_BLOCK_SIZE, 0, stream>>>(
+          counters, reinterpret_cast<DataType_ *>(histograms.data<data_t>()),
+          count_histograms.data<int>(),
+          reinterpret_cast<DataType_ *>(out.data<data_t>()),
+          ids.data<int64_t>(),
+          reinterpret_cast<DataType_ *>(buf1.data<data_t>()),
+          id_buf1.data<int>(),
+          reinterpret_cast<DataType_ *>(buf2.data<data_t>()),
+          id_buf2.data<int>(), count_iter.data<int>(),
+          count_iter_begin.data<int>(), buf_len);
+    } else {
+      PD_THROW("pass must be 0,1 or 2!");
     }
+  }
   return {out, ids};
 }
 
-std::vector<paddle::Tensor> TopPSampling(const paddle::Tensor& x,
-                                        const paddle::Tensor& ps,
-                                        const paddle::optional<paddle::Tensor>& threshold,
-                                        const paddle::optional<paddle::Tensor>& topp_seed,
-                                        int seed,
-                                        int k,
-                                        const std::string& mode) {
-    switch (x.type()) {
-        case paddle::DataType::FLOAT32: {
-            return LaunchTopPSampling<paddle::DataType::FLOAT32>(x, ps, threshold, topp_seed, seed, k, mode);
-        }
-        // case paddle::DataType::BFLOAT16: {
-        //     return LaunchTopPSampling<paddle::DataType::BFLOAT16>(x, ps, threshold, topp_seed, seed, k, mode);
-        // }
-        // case paddle::DataType::FLOAT16: {
-        //     return LaunchTopPSampling<paddle::DataType::FLOAT16>(x, ps, threshold, topp_seed, seed, k, mode);
-        // }
-        default: {
-            PD_THROW(
-                "NOT supported data type. Only support float. ");
-            break;
-        }
-    }
+std::vector<paddle::Tensor>
+TopPSampling(const paddle::Tensor &x, const paddle::Tensor &ps,
+             const paddle::optional<paddle::Tensor> &threshold,
+             const paddle::optional<paddle::Tensor> &topp_seed, int seed, int k,
+             const std::string &mode) {
+  switch (x.type()) {
+  case paddle::DataType::FLOAT32: {
+    return LaunchTopPSampling<paddle::DataType::FLOAT32>(
+        x, ps, threshold, topp_seed, seed, k, mode);
+  }
+  // case paddle::DataType::BFLOAT16: {
+  //     return LaunchTopPSampling<paddle::DataType::BFLOAT16>(x, ps, threshold,
+  //     topp_seed, seed, k, mode);
+  // }
+  // case paddle::DataType::FLOAT16: {
+  //     return LaunchTopPSampling<paddle::DataType::FLOAT16>(x, ps, threshold,
+  //     topp_seed, seed, k, mode);
+  // }
+  default: {
+    PD_THROW("NOT supported data type. Only support float. ");
+    break;
+  }
+  }
 }
 
-std::vector<std::vector<int64_t>> GetTopPSamplingShape(const std::vector<int64_t>& x_shape,
-                                                        const std::vector<int64_t>& ps_shape,
-                                                        const paddle::optional<std::vector<int64_t>>& threshold_shape,
-                                                        const paddle::optional<std::vector<int64_t>>& topp_seed_shape,
-                                                        int seed,
-                                                        int k) {
+std::vector<std::vector<int64_t>> GetTopPSamplingShape(
+    const std::vector<int64_t> &x_shape, const std::vector<int64_t> &ps_shape,
+    const paddle::optional<std::vector<int64_t>> &threshold_shape,
+    const paddle::optional<std::vector<int64_t>> &topp_seed_shape, int seed,
+    int k) {
   int bs = x_shape[0];
   int vocab_size = x_shape[1];
   return {{bs, 1}, {bs, 1}};
 }
 
-std::vector<paddle::DataType> GetTopPSamplingDtype(const paddle::DataType& x_dytpe,
-                                                    const paddle::DataType& ps_dtype,
-                                                    const paddle::optional<paddle::DataType>& threshold_dtype,
-                                                    const paddle::optional<paddle::DataType>& topp_seed_dtype,
-                                                    int seed,
-                                                    int k) {
+std::vector<paddle::DataType>
+GetTopPSamplingDtype(const paddle::DataType &x_dytpe,
+                     const paddle::DataType &ps_dtype,
+                     const paddle::optional<paddle::DataType> &threshold_dtype,
+                     const paddle::optional<paddle::DataType> &topp_seed_dtype,
+                     int seed, int k) {
   return {x_dytpe, paddle::DataType::INT64};
 }
 
 PD_BUILD_STATIC_OP(air_topp_sampling)
-    .Inputs({"x", "ps", paddle::Optional("threshold"),paddle::Optional("topp_seed") })
+    .Inputs({"x", "ps", paddle::Optional("threshold"),
+             paddle::Optional("topp_seed")})
     .Outputs({"out", "ids"})
     .Attrs({"seed: int", "k: int", "mode: std::string"})
     .SetKernelFn(PD_KERNEL(TopPSampling))
