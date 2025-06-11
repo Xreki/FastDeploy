@@ -16,6 +16,7 @@
 
 from dataclasses import dataclass
 
+import paddle
 from paddle import nn
 from paddlenlp.utils.log import logger
 
@@ -58,6 +59,7 @@ class FusedMoE(nn.Layer):
         moe_use_gate_correction_bias: bool = False,
         moe_quant_type: str = "weight_only_int4",
         layer_idx: int = -1,
+        moe_tag: str = "",
         gate_weight_key=None,
         gate_correction_bias_key=None,
         ffn1_expert_weight_key=None,
@@ -86,23 +88,18 @@ class FusedMoE(nn.Layer):
 
         self.moe_use_gate_correction_bias = moe_use_gate_correction_bias
 
-        self.hidden_size = fd_config.model_config.hidden_size
-        self.moe_config = fd_config.moe_config
-        self.use_offline_quant = fd_config.tmp_config.use_offline_quant
-        moe_tag = self.fd_config.moe_config.moe_tag
-        logger.info(f"{moe_tag}MoE is running in {moe_quant_type} mode")
+        self.hidden_size = pd_config.model_config.hidden_size
+        self.moe_config = pd_config.moe_config
+        self.use_offline_quant = pd_config.tmp_config.use_offline_quant
 
         self.moe_quant_type = moe_quant_type
         self.num_experts = num_experts
         self.num_local_experts = self.num_experts // self.ep_size
 
-        logger.info(f'''MoE config is num_experts:{num_experts},
-             top_k:{top_k},
-             hidden_size:{self.hidden_size},
-             moe_intermediate_size:{moe_intermediate_size}''')
         logger.info(
-            f"MoE is running on moe_quant_type: {self.moe_quant_type}, ep:{self.ep_size}, tp:{self.tp_size} mode"
+            f"MoE config is {num_experts=}, {top_k=}, hidden_size={self.hidden_size}, {moe_intermediate_size=}, moe_quant_type={self.moe_quant_type}, ep_size={self.ep_size}, tp_size={self.tp_size}."
         )
+
         self.moe_intermediate_size = moe_intermediate_size // self.tp_size
 
         self.gate_weight_key = gate_weight_key
@@ -139,10 +136,22 @@ class FusedMoE(nn.Layer):
         """
         load_gate_state_dict function.
         """
+        # gate_correction_bias
+        if self.moe_use_gate_correction_bias:
+            gate_correction_bias_tensor = get_tensor(
+                state_dict.pop(self.gate_correction_bias_key))
+
+            self.gate_correction_bias = self.create_parameter(
+                shape=gate_correction_bias_tensor.shape,
+                dtype="float32",
+            )
+
+            self.gate_correction_bias.set_value(gate_correction_bias_tensor)
+        else:
+            self.gate_correction_bias = None
+
         up_gate_proj_weight = []
-        up_gate_proj_weight_scale = []
         down_proj_weight = []
-        down_proj_weight_scale = []
         for j in range(self.num_experts):
             up_gate_proj_weight.append(
                 get_tensor(
@@ -165,20 +174,6 @@ class FusedMoE(nn.Layer):
                 dtype="float32",
             )
             self.gate_weight.set_value(gate_weight_tensor)
-
-        # gate_correction_bias
-        if self.moe_use_gate_correction_bias:
-            gate_correction_bias_tensor = get_tensor(
-                state_dict.pop(self.gate_correction_bias_key))
-
-            self.gate_correction_bias = self.create_parameter(
-                shape=gate_correction_bias_tensor.shape,
-                dtype="float32",
-            )
-
-            self.gate_correction_bias.set_value(gate_correction_bias_tensor)
-        else:
-            self.gate_correction_bias = None
 
         up_gate_proj_weight, down_proj_weight = self.load_gate_state_dict(
             state_dict)
@@ -222,7 +217,7 @@ class FusedMoE(nn.Layer):
                                            weight1_scale, weight2_scale,
                                            ffn1_in_scale, ffn2_in_scale)
 
-    def forward(self, x, **kwargs):
+    def forward(self, x: paddle.Tensor):
         """
         Defines the forward computation of the moe layer.
 
@@ -235,4 +230,10 @@ class FusedMoE(nn.Layer):
         """
 
         out = self.compute_method.apply(self, x)
+
+        if self.tp_size > 1:
+            from fastdeploy.distributed.communication_op import \
+                tensor_model_parallel_all_reduce
+            tensor_model_parallel_all_reduce(out)
+
         return out

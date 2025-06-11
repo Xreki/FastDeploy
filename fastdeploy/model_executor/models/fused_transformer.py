@@ -348,20 +348,6 @@ class FusedTransformer(nn.Layer):
                         self.decoder_ep_runner.append(
                             DecoderEPMicroBatchRunner(self.moe_layers,
                                                       ep_engine))
-            elif self.inference_args.moe_config.has_multimodality:
-                from ..layers.moe.mm import MultimodalityMoeLayer as MoELayer
-
-                self.moe_layers = nn.LayerList(
-                    [None for i in range(self.num_dense_layers)] + [
-                        MoELayer(
-                            inference_args=inference_args,
-                            layer_name=f"moe_layers.{i}",
-                            layer_idx=i,
-                        ) for i in range(
-                            self.num_dense_layers,
-                            self.num_layers,
-                        )
-                    ])
             else:
                 from ..layers.moe.moe import FusedMoE
 

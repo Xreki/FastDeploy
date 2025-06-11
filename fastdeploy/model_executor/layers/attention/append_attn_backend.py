@@ -147,9 +147,10 @@ class AppendAttentionBackend(AttentionBackend):
 
         # pd_disaggregation
         metadata.kv_signal_data_list = [None] * self.num_layers
+        # TODO (luotingdan): use device ids
         if self.use_pd_disaggregation:
             metadata.kv_signal_metadata = open_shm_and_get_meta_signal(
-                self.rank, self.keep_pd_step_flag)
+                self.rank, self.rank, self.keep_pd_step_flag)
         self.attention_metadata = metadata
 
     def get_attntion_meta(self):

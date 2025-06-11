@@ -38,16 +38,16 @@ from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
                                ModelConfig, MoEConfig, ParallelConfig,
                                SpeculativeConfig, TmpConfig)
 from fastdeploy.inference_args import GenerationPhase
-from fastdeploy.model_executor.models.utils import (convert_ndarray_dtype,
-                                                    load_checkpoint)
+from fastdeploy.model_executor.models.utils import (_vocab_size_with_padding,
+                                                    convert_ndarray_dtype,
+                                                    load_checkpoint,
+                                                    parser_quant_type)
 
 from ..layers.quantization import get_quantization_config
 from .ernie import ErnieBotPretrainedModel
 from .model_base import ModelRegistry
 from .qwen2 import Qwen2PretrainedModel
 from .tokenizer import ErnieBotTokenizer
-from .utils import (_vocab_size_with_padding, convert_ndarray_dtype,
-                    load_checkpoint, parser_quant_type)
 
 model_classes_mapping = {
     "ErnieForCausalLM": ErnieBotPretrainedModel,
@@ -107,54 +107,54 @@ def load_tensor_from_ipc_meta(state_dict):
 
 
 def build_stream_line_model(
-        config_path,
-        model_path,
-        dtype,
-        block_size,
-        max_len,
-        stage_flag,
-        min_dec_len=1,
-        max_dec_len=128,
-        temperature=1,
-        top_k=8,
-        top_p=0.8,
-        pre_caches_length=0,
-        export_model_type="default",
-        use_stop_seqs=False,
-        use_fake_parameter=False,
-        show_topk: int = 0,
-        msg_queue_id=None,
-        pad_vocab=True,
-        tokenizer=None,
-        cache_quant_dtype="none",
-        use_beam_search: bool = False,
-        enf_gen: bool = False,
-        speculate_method=None,
-        speculate_max_draft_token_num: int = 1,
-        speculate_max_candidate_len: int = 5,
-        speculate_verify_window: int = 2,
-        return_all_hidden_states: bool = False,
-        draft_type: str = "None",
-        start_layer_index: int = 0,
-        moe_quant_type: str = "default",
-        use_ep: bool = False,
-        ep_just_for_test: bool = False,
-        generation_phase: GenerationPhase = GenerationPhase.PREFILL,
-        use_micro_batch: bool = False,
-        fake_server_p: bool = False,
-        scale_dir: str = "None",
-        output_via_mq: bool = True,
-        use_safetensors: bool = False,
-        enable_redundant_experts: bool = False,
-        redundant_experts_num: int = 0,
-        max_batch_size: int = 128,
-        use_offline_quant: bool = False,
-        return_state_dicts: bool = False,
-        sharing_model=None,
-        sharing_state_dicts=None,
-        return_fd_config: bool = False,
-        use_empty_parameter: bool = False,
-        embeddings_column_cut: bool = False,    
+    config_path,
+    model_path,
+    dtype,
+    block_size,
+    max_len,
+    stage_flag,
+    min_dec_len=1,
+    max_dec_len=128,
+    temperature=1,
+    top_k=8,
+    top_p=0.8,
+    pre_caches_length=0,
+    export_model_type="default",
+    use_stop_seqs=False,
+    use_fake_parameter=False,
+    show_topk: int = 0,
+    msg_queue_id=None,
+    pad_vocab=True,
+    tokenizer=None,
+    cache_quant_dtype="none",
+    use_beam_search: bool = False,
+    enf_gen: bool = False,
+    speculate_method=None,
+    speculate_max_draft_token_num: int = 1,
+    speculate_max_candidate_len: int = 5,
+    speculate_verify_window: int = 2,
+    return_all_hidden_states: bool = False,
+    draft_type: str = "None",
+    start_layer_index: int = 0,
+    moe_quant_type: str = "default",
+    use_ep: bool = False,
+    ep_just_for_test: bool = False,
+    generation_phase: GenerationPhase = GenerationPhase.PREFILL,
+    use_micro_batch: bool = False,
+    fake_server_p: bool = False,
+    scale_dir: str = "None",
+    output_via_mq: bool = True,
+    use_safetensors: bool = False,
+    enable_redundant_experts: bool = False,
+    redundant_experts_num: int = 0,
+    max_batch_size: int = 128,
+    use_offline_quant: bool = False,
+    return_state_dicts: bool = False,
+    sharing_model=None,
+    sharing_state_dicts=None,
+    return_pd_config: bool = False,
+    use_empty_parameter: bool = False,
+    embeddings_column_cut: bool = False,
 ):
     """
     Build a fused inference model
@@ -205,8 +205,7 @@ def build_stream_line_model(
 
     config, _ = PretrainedConfig.get_config_dict(model_path)
     config["head_dim"] = config.get(
-        "head_dim", config["hidden_size"] // config["num_attention_heads"]
-    )
+        "head_dim", config["hidden_size"] // config["num_attention_heads"])
     model_config = ModelConfig.from_dict(config)
 
     parallel_config = ParallelConfig()
@@ -273,7 +272,7 @@ def build_stream_line_model(
     num_key_value_heads = config.get("num_key_value_heads", -1)
     if num_key_value_heads is None:
         num_key_value_heads = -1
-    
+
     # RL need, some model num_key_value_heads less tensor_parallel_degree, need copy
     if num_key_value_heads < tensor_parallel_degree:
         logger.warning(
@@ -303,7 +302,7 @@ def build_stream_line_model(
             "num_hidden_layers", None)
     if num_layers is None:
         raise ValueError(f"num_layers<{num_layers}> is invalid")
-    
+
     remove_tail_layer = config.get("remove_tail_layer")
     if remove_tail_layer is True:
         num_layers -= 1
@@ -529,7 +528,6 @@ def build_stream_line_model(
     model_config.return_all_hidden_states = return_all_hidden_states
     speculative_config.draft_type = draft_type
     model_config.start_layer_index = start_layer_index
-    model_config.use_moe = use_moe
     if use_moe:
         moe_config.use_moe = use_moe
         moe_config.num_experts = config.get("moe_num_experts", None)
