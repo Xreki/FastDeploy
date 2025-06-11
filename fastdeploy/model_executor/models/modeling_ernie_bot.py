@@ -1766,13 +1766,13 @@ class ErnieBotForGeneration(nn.Layer):
 
         # Static mappings (non-layer specific)
         static_mappings = {
-            "ernie.embeddings.word_embeddings.weight":
+            "model.ernie.embeddings.word_embeddings.weight":
             "ernie.embed_tokens.weight",
-            "ernie.norm.ln_weight": "ernie.norm.weight",
-            "lm_head.out_linear.weight": "lm_head.weight"
+            "model.ernie.norm.ln_weight": "ernie.norm.weight",
+            "model.lm_head.out_linear.weight": "lm_head.weight"
         }
         infer_to_train.update(static_mappings)
-        infer_base_name = "ernie.decoder"
+        infer_base_name = "model.ernie.decoder"
 
         # Helper function to add layer mappings
         def _add_layer_mappings(layer_idx, is_moe_layer=False):

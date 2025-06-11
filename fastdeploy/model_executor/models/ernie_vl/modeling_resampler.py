@@ -226,7 +226,7 @@ class VariableResolutionResamplerModel(nn.Layer):
             "ernie.resampler_model.after_norm.weight",
         ]
         for train_name in resampler_names:
-            infer_to_train[train_name[len("ernie.resampler_model."):]] = train_name
+            infer_to_train[train_name[len("ernie."):]] = train_name
 
         return infer_to_train
 
