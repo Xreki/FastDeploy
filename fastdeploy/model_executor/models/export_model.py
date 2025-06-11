@@ -148,7 +148,7 @@ def build_stream_line_model(
     enable_redundant_experts: bool = False,
     redundant_experts_num: int = 0,
     max_batch_size: int = 128,
-    use_offline_quant: bool = False,
+    is_quantized: bool = False,
     return_state_dicts: bool = False,
     sharing_model=None,
     sharing_state_dicts=None,
@@ -203,8 +203,6 @@ def build_stream_line_model(
     ernie_config.tensor_parallel_degree = tensor_parallel_degree
     ernie_config.is_mtp = draft_type in ["eagle", "mtp"]
     ernie_config.use_ep = use_ep
-    ernie_config.use_offline_quant = use_offline_quant
-    ernie_config.moe_quant_type = moe_quant_type
     if use_ep:
         if isinstance(ernie_config.moe_num_experts, list):
             ernie_config.has_multimodality = True
@@ -220,7 +218,7 @@ def build_stream_line_model(
 
     # use the length of tokenizer as the origin vocab size
     ori_vocab_size = len(tokenizer)
-    moe_intermediate_size = (config.get("moe_intermediate_size", None),)
+    moe_intermediate_size = config.get("moe_intermediate_size", None)
     if isinstance(moe_intermediate_size, list) or isinstance(
         moe_intermediate_size, tuple
     ):
@@ -292,14 +290,154 @@ def build_stream_line_model(
     else:
         ErnieBotBaseModel = ErnieBotFusedModel
         ErnieBotGenModel = ErnieBotForGeneration
+    if use_fake_parameter:
+        context = contextlib.nullcontext()
+    else:
+        context = paddle.LazyGuard()
+
+    use_rmsnorm = config.get("use_rmsnorm", False)
+    logger.info(f"{runtime_timer.log()}")
+    runtime_timer.start(f"{stage_flag} stage set parameters time")
+    
+    with context:
+        model = ErnieBotBaseModel(
+            vocab_size=config["vocab_size"],
+            hidden_size=config["hidden_size"],
+            max_len=max_len,
+            block_size=block_size,
+            num_layers=num_layers,
+            num_attention_heads=config["num_attention_heads"],
+            ffn_hidden_size=ffn_hidden_size,
+            activation="swiglu",
+            hidden_dropout_prob=0,
+            # hidden_dropout_prob=config["hidden_dropout_prob"],
+            max_position_embeddings=config["max_position_embeddings"],
+            type_vocab_size=1,
+            dtype=dtype,
+            sequence_parallel=False,
+            use_rope=True,
+            rope_theta=config.get("rope_theta", 10000.0),
+            rope_3d=config.get("rope_3d", False),
+            weight_sharing=False,
+            inv_compression_ratio=1.0 / config.get("compression_ratio", 1.0),
+            export_model_type=export_model_type,  # export model type.
+            wint4_smooth=wint4_smooth,  # Whether to use smooth for wint4.
+            group_size=group_size,
+            model_path=model_path,  # The path of Inference model.
+            use_rmsnorm=use_rmsnorm,
+            msg_queue_id=msg_queue_id,
+            use_fake_parameter=use_fake_parameter,
+            num_key_value_heads=num_key_value_heads,
+            use_stop_seqs=use_stop_seqs,
+            cache_quant_dtype=cache_quant_dtype,
+            has_zero_point=config.get("has_zero_point", False),
+            is_channel_wise=config.get("is_channel_wise", False),
+            use_fast_ffn=ernie_config.use_fast_ffn,
+            use_avx512=use_avx512,
+            speculate_method=speculate_method,
+            speculate_max_draft_token_num=speculate_max_draft_token_num,
+            return_all_hidden_states=return_all_hidden_states,
+            draft_type=draft_type,
+            start_layer_index=start_layer_index,
+            use_moe=use_moe,
+            moe_num_experts=ernie_config.get("moe_num_experts", None),
+            moe_intermediate_size=ernie_config.get("moe_intermediate_size", None),
+            moe_use_gate_correction_bias=config.get(
+                "moe_use_gate_correction_bias", False
+            ),
+            moe_every2=config.get("moe_every2", False),
+            moe_topk=config.get("moe_topk", 8),
+            moe_num_shared_experts=config.get("moe_num_shared_experts", 0),
+            moe_layer_start_index=ernie_config.get("moe_layer_start_index", 0),
+            moe_use_ffn_shared_weight_and_bias=config.get(
+                "moe_use_ffn_shared_weight_and_bias", False
+            ),
+            moe_group=config.get("moe_group", False),
+            moe_quant_type=moe_quant_type,
+            use_ep=use_ep,
+            ep_just_for_test=ep_just_for_test,
+            generation_phase=generation_phase,
+            use_micro_batch=use_micro_batch,
+            weight_block_size=config.get("weight_block_size", [-1, -1]),
+            scale_dir=scale_dir,
+            output_via_mq=output_via_mq,
+            ernie_config=ernie_config,
+            enable_redundant_experts=enable_redundant_experts,
+            redundant_experts_num=redundant_experts_num,
+            max_batch_size=max_batch_size,
+            sharing_model=sharing_model,
+            embeddings_column_cut=embeddings_column_cut,
+            is_quantized=config.get("is_quantized", False),
+            use_safetensors=use_safetensors,
+        )
+    if use_beam_search:
+        decode_strategy = "beam_search"
+    elif speculate_method is not None:
+        if draft_type in ["draft_model", "eagle", "mtp"]:
+            decode_strategy = "draft_model_sampling"
+        else:
+            decode_strategy = "speculate_decoding"
+    else:
+        decode_strategy = "sampling"
+    configs = {
+        "model_path": model_path,
+        "bos_token_id": tokenizer.bos_token_id,
+        "eos_token_id": tokenizer.eos_token_id,
+        "pad_token_id": tokenizer.pad_token_id,
+        "hidden_size": config["hidden_size"],
+        "num_attention_heads": config["num_attention_heads"],
+        "head_dim": ernie_config.head_dim,
+        "vocab_size": config["vocab_size"],
+        "ori_vocab_size": ori_vocab_size,
+        "hidden_act": config["hidden_act"],
+        "weight_sharing": config.get("weight_sharing", False),
+        "weight_sharing_add_bias": config.get("weight_sharing_add_bias", False),
+        "initializer_range": 0.02,
+        "fused_linear": False,
+        "min_dec_len": min_dec_len,
+        "max_dec_len": max_dec_len,
+        "temperature": temperature,
+        "top_k": top_k,
+        "top_p": top_p,
+        "use_top_k": top_k > 0,
+        "show_topk": show_topk,
+        "use_topp_sampling": True,
+        "inference": False,
+        "export_model_type": export_model_type,
+        "wint4_smooth": wint4_smooth,  # Whether to use smooth for wint4.
+        "group_size": group_size,
+        "use_rmsnorm": use_rmsnorm,
+        "decode_strategy": decode_strategy,
+        # "outputs_op": outputs_op,
+        "cache_quant_dtype": cache_quant_dtype,
+        "use_fake_parameter": use_fake_parameter,
+        "enf_gen": enf_gen,
+        "speculate_max_candidate_len": speculate_max_candidate_len,
+        "speculate_verify_window": speculate_verify_window,
+        "return_all_hidden_states": return_all_hidden_states,
+        "fake_server_p": fake_server_p,
+    }
+
+    with context:
+        model = ErnieBotGenModel(model, configs)
+
+    model.eval()
+
     if not sharing_state_dicts:
-        if use_empty_parameter:
-            context = paddle.LazyGuard()
-        elif use_fake_parameter:
-            context = contextlib.nullcontext()
-        elif use_safetensors:
-            context = paddle.LazyGuard()
-            state_dict = load_checkpoint(model_path, ErnieBotBaseModel, ernie_config)
+        if use_safetensors:
+            #using for safetensor
+            ernie_config.weight_dtype = model.ernie.inference_args.weight_dtype
+            ernie_config.act_dtype = model.ernie.inference_args.act_dtype
+            ernie_config.cachekv_dtype = model.ernie.inference_args.cachekv_dtype
+            ernie_config.moe_quant_type = "" if moe_quant_type.lower(
+            ) == "default" else moe_quant_type.lower()
+            ernie_config.use_offline_quant = model.ernie.inference_args.use_offline_quant
+            ernie_config.set_prequant_weight = model.ernie.inference_args.set_prequant_weight
+            state_dict = load_checkpoint(
+                model_path, 
+                ErnieBotBaseModel, 
+                ernie_config, 
+                load_gpu=model.ernie.inference_args.load_weight_gpu)
         elif use_moe:
             tensor_parallel_degree = dist.get_world_size()
             if tensor_parallel_degree > 1:
@@ -319,7 +457,6 @@ def build_stream_line_model(
                     for i in range(pp_num)
                 ]
 
-            context = paddle.LazyGuard()
             if not use_ep:
                 logger.info(f"start to loading weight: {rank_model_paths}")
                 state_dicts = [None for _ in rank_model_paths]
@@ -450,139 +587,11 @@ def build_stream_line_model(
                     ), "num_key_value_heads must be an integer multiple of tensor_parallel_degree"
             else:
                 model_state_path = os.path.join(model_path, "model_state.pdparams")
-            context = paddle.LazyGuard()
             logger.info(f"start to loading weight: {model_state_path}")
             if os.path.exists(model_state_path):
                 state_dict = paddle.load(model_state_path, return_numpy=True)
     else:
         state_dict = sharing_state_dicts
-        context = paddle.LazyGuard()
-
-    use_rmsnorm = config.get("use_rmsnorm", False)
-    logger.info(f"{runtime_timer.log()}")
-    runtime_timer.start(f"{stage_flag} stage set parameters time")
-
-    with context:
-        model = ErnieBotBaseModel(
-            vocab_size=config["vocab_size"],
-            hidden_size=config["hidden_size"],
-            max_len=max_len,
-            block_size=block_size,
-            num_layers=num_layers,
-            num_attention_heads=config["num_attention_heads"],
-            ffn_hidden_size=ffn_hidden_size,
-            activation="swiglu",
-            hidden_dropout_prob=0,
-            # hidden_dropout_prob=config["hidden_dropout_prob"],
-            max_position_embeddings=config["max_position_embeddings"],
-            type_vocab_size=1,
-            dtype=dtype,
-            sequence_parallel=False,
-            use_rope=True,
-            rope_theta=config.get("rope_theta", 10000.0),
-            rope_3d=config.get("rope_3d", False),
-            weight_sharing=False,
-            inv_compression_ratio=1.0 / config.get("compression_ratio", 1.0),
-            export_model_type=export_model_type,  # export model type.
-            wint4_smooth=wint4_smooth,  # Whether to use smooth for wint4.
-            group_size=group_size,
-            model_path=model_path,  # The path of Inference model.
-            use_rmsnorm=use_rmsnorm,
-            msg_queue_id=msg_queue_id,
-            use_fake_parameter=use_fake_parameter,
-            num_key_value_heads=num_key_value_heads,
-            use_stop_seqs=use_stop_seqs,
-            cache_quant_dtype=cache_quant_dtype,
-            has_zero_point=config.get("has_zero_point", False),
-            is_channel_wise=config.get("is_channel_wise", False),
-            use_fast_ffn=ernie_config.use_fast_ffn,
-            use_avx512=use_avx512,
-            speculate_method=speculate_method,
-            speculate_max_draft_token_num=speculate_max_draft_token_num,
-            return_all_hidden_states=return_all_hidden_states,
-            draft_type=draft_type,
-            start_layer_index=start_layer_index,
-            use_moe=use_moe,
-            moe_num_experts=ernie_config.get("moe_num_experts", None),
-            moe_intermediate_size=ernie_config.get("moe_intermediate_size", None),
-            moe_use_gate_correction_bias=config.get(
-                "moe_use_gate_correction_bias", False
-            ),
-            moe_every2=config.get("moe_every2", False),
-            moe_topk=config.get("moe_topk", 8),
-            moe_num_shared_experts=config.get("moe_num_shared_experts", 0),
-            moe_layer_start_index=ernie_config.get("moe_layer_start_index", 0),
-            moe_use_ffn_shared_weight_and_bias=config.get(
-                "moe_use_ffn_shared_weight_and_bias", False
-            ),
-            moe_group=config.get("moe_group", False),
-            moe_quant_type=moe_quant_type,
-            use_ep=use_ep,
-            ep_just_for_test=ep_just_for_test,
-            generation_phase=generation_phase,
-            use_micro_batch=use_micro_batch,
-            weight_block_size=config.get("weight_block_size", [-1, -1]),
-            scale_dir=scale_dir,
-            output_via_mq=output_via_mq,
-            ernie_config=ernie_config,
-            enable_redundant_experts=enable_redundant_experts,
-            redundant_experts_num=redundant_experts_num,
-            max_batch_size=max_batch_size,
-            use_offline_quant=use_offline_quant,
-            sharing_model=sharing_model,
-            embeddings_column_cut=embeddings_column_cut,
-        )
-    if use_beam_search:
-        decode_strategy = "beam_search"
-    elif speculate_method is not None:
-        if draft_type in ["draft_model", "eagle", "mtp"]:
-            decode_strategy = "draft_model_sampling"
-        else:
-            decode_strategy = "speculate_decoding"
-    else:
-        decode_strategy = "sampling"
-    configs = {
-        "model_path": model_path,
-        "bos_token_id": tokenizer.bos_token_id,
-        "eos_token_id": tokenizer.eos_token_id,
-        "pad_token_id": tokenizer.pad_token_id,
-        "hidden_size": config["hidden_size"],
-        "num_attention_heads": config["num_attention_heads"],
-        "head_dim": ernie_config.head_dim,
-        "vocab_size": config["vocab_size"],
-        "ori_vocab_size": ori_vocab_size,
-        "hidden_act": config["hidden_act"],
-        "weight_sharing": config.get("weight_sharing", False),
-        "weight_sharing_add_bias": config.get("weight_sharing_add_bias", False),
-        "initializer_range": 0.02,
-        "fused_linear": False,
-        "min_dec_len": min_dec_len,
-        "max_dec_len": max_dec_len,
-        "temperature": temperature,
-        "top_k": top_k,
-        "top_p": top_p,
-        "use_top_k": top_k > 0,
-        "show_topk": show_topk,
-        "use_topp_sampling": True,
-        "inference": False,
-        "export_model_type": export_model_type,
-        "wint4_smooth": wint4_smooth,  # Whether to use smooth for wint4.
-        "group_size": group_size,
-        "use_rmsnorm": use_rmsnorm,
-        "decode_strategy": decode_strategy,
-        # "outputs_op": outputs_op,
-        "cache_quant_dtype": cache_quant_dtype,
-        "use_fake_parameter": use_fake_parameter,
-        "enf_gen": enf_gen,
-        "speculate_max_candidate_len": speculate_max_candidate_len,
-        "speculate_verify_window": speculate_verify_window,
-        "return_all_hidden_states": return_all_hidden_states,
-        "fake_server_p": fake_server_p,
-    }
-    with context:
-        model = ErnieBotGenModel(model, configs)
-
-    model.eval()
 
     if use_fake_parameter:
         return config, tokenizer, model, None
@@ -686,7 +695,6 @@ def export_efficientllm_model(args):
         return_all_hidden_states=args.return_all_hidden_states,
         moe_quant_type=args.moe_quant_type,
         use_safetensors=args.use_safetensors,
-        use_offline_quant=args.use_offline_quant,
     )
     max_sec_len = args.max_seq_len
     mp_size = dist.get_world_size()

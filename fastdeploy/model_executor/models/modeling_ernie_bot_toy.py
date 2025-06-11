@@ -605,9 +605,10 @@ class ErnieBotToyFusedModel(ErnieBotToyPretrainedModel):
         enable_redundant_experts: bool = False,
         redundant_experts_num: int = 0,
         max_batch_size: int = 128,
-        use_offline_quant=False,
         sharing_model=None,
         embeddings_column_cut=False,
+        is_quantized: bool = False,
+        use_safetensors: bool = False,
     ):
         """
         Initializer for the ErnieBotFusedModel class.
@@ -733,8 +734,9 @@ class ErnieBotToyFusedModel(ErnieBotToyPretrainedModel):
             enable_redundant_experts=enable_redundant_experts,
             redundant_experts_num=redundant_experts_num,
             max_batch_size=max_batch_size,
-            use_offline_quant=use_offline_quant,
             head_dim=self.head_dim,
+            is_quantized=is_quantized,
+            use_safetensors=use_safetensors,
         )
 
         self.redundant_table_manger = None

@@ -92,7 +92,7 @@ class MoELayer(nn.Layer):
         self.skip_quant = False
         self.moe_config = moe_config
         self.activation = self.moe_config.activation
-        self.use_offline_quant = inference_args.use_offline_quant
+        self.set_prequant_weight = inference_args.set_prequant_weight
         self.top_k = self.moe_config.top_k
 
         moe_quant_type = kwargs.get("moe_quant_type", None)
@@ -502,7 +502,7 @@ class MoELayer(nn.Layer):
         for j in range(self.num_experts):
             up_gate_proj_weight.append(
                 get_tensor(state_dict.pop(self.ffn1_expert_weight_key.format(j)))
-                if self.moe_quant_type == "default" or not self.use_offline_quant
+                if self.moe_quant_type == "default" or not self.set_prequant_weight
                 else get_tensor(
                     state_dict.pop(
                         (self.ffn1_expert_weight_key + ".quant_weight").format(j)
@@ -511,25 +511,25 @@ class MoELayer(nn.Layer):
             )
             down_proj_weight.append(
                 get_tensor(state_dict.pop(self.ffn2_expert_weight_key.format(j)))
-                if self.moe_quant_type == "default" or not self.use_offline_quant
+                if self.moe_quant_type == "default" or not self.set_prequant_weight
                 else get_tensor(
                     state_dict.pop(
                         (self.ffn2_expert_weight_key + ".quant_weight").format(j)
                     )
                 )
             )
-            if self.use_offline_quant:
+            if self.set_prequant_weight and self.moe_quant_type != "w4a8":
                 up_gate_proj_weight_scale.append(
                     get_tensor(
                         state_dict.pop(
-                            (self.ffn1_expert_weight_key + ".quant_scale").format(j)
+                            (self.ffn1_expert_weight_key + ".weight_quanter").format(j)
                         )
                     )
                 )
                 down_proj_weight_scale.append(
                     get_tensor(
                         state_dict.pop(
-                            (self.ffn2_expert_weight_key + ".quant_scale").format(j)
+                            (self.ffn2_expert_weight_key + ".weight_quanter").format(j)
                         )
                     )
                 )
@@ -587,16 +587,15 @@ class MoELayer(nn.Layer):
             up_gate_proj_weight_scale,
             down_proj_weight_scale,
         ) = self.load_gate_state_dict(state_dict)
-
         # ffn1
-        if not self.use_offline_quant or self.moe_quant_type == "default":
+        if not self.set_prequant_weight or self.moe_quant_type == "default":
             ffn1_weight_tensor = paddle.concat(up_gate_proj_weight, axis=0).reshape_(
                 [self.num_local_experts, self.embed_dim, -1]
             )
         ffn1_weight_tensor_list = []
         ffn1_weight_scale_tensor_list = []
         if self.moe_quant_type == "fp8":
-            if self.use_offline_quant:
+            if self.set_prequant_weight:
                 ffn1_weight_tensor_offline = paddle.concat(
                     up_gate_proj_weight, axis=0
                 ).reshape_((self.num_local_experts, -1, self.embed_dim))
@@ -636,7 +635,7 @@ class MoELayer(nn.Layer):
                 self.moe_ffn1_weight.copy_(ffn1_fp8[0], False)
                 self.moe_ffn1_weight_scale.set_value(ffn1_fp8[1])
         elif self.moe_quant_type == "w4a8":
-            if self.use_offline_quant:
+            if self.set_prequant_weight:
                 ffn1_weight_tensor_list = up_gate_proj_weight
             else:
                 if paddle.is_compiled_with_cuda():
@@ -664,7 +663,7 @@ class MoELayer(nn.Layer):
                 )
             )
         elif self.moe_quant_type == "weight_only_int4":  # WINT4 MOE
-            if self.use_offline_quant:
+            if self.set_prequant_weight:
                 ffn1_weight_tensor_list = up_gate_proj_weight
                 ffn1_weight_scale_tensor_list = up_gate_proj_weight_scale
             else:
@@ -692,7 +691,7 @@ class MoELayer(nn.Layer):
                 ffn1_weight_tensor.reshape([self.num_local_experts, self.embed_dim, -1])
             )
         elif self.moe_quant_type == "weight_only_int8":  # WINT8 MOE
-            if self.use_offline_quant:
+            if self.set_prequant_weight:
                 ffn1_weight_tensor_list = up_gate_proj_weight
                 ffn1_weight_scale_tensor_list = up_gate_proj_weight_scale
             else:
@@ -729,7 +728,7 @@ class MoELayer(nn.Layer):
             self.moe_ffn1_bias.set_value(moe_ffn1_bias_tensor)
 
         # ffn2
-        if not self.use_offline_quant or self.moe_quant_type == "default":
+        if not self.set_prequant_weight or self.moe_quant_type == "default":
             ffn2_weight_tensor = paddle.concat(down_proj_weight, axis=0).reshape_(
                 [self.num_local_experts, -1, self.embed_dim]
             )
@@ -737,7 +736,7 @@ class MoELayer(nn.Layer):
         ffn2_weight_tensor_list = []
         ffn2_weight_scale_tensor_list = []
         if self.moe_quant_type == "fp8":
-            if self.use_offline_quant:
+            if self.set_prequant_weight:
                 ffn2_weight_tensor_offline = paddle.concat(
                     down_proj_weight, axis=0
                 ).reshape_((self.num_local_experts, self.embed_dim, -1))
@@ -776,7 +775,7 @@ class MoELayer(nn.Layer):
                 self.moe_ffn2_weight.copy_(ffn2_fp8[0], False)
                 self.moe_ffn2_weight_scale.set_value(ffn2_fp8[1])
         elif self.moe_quant_type == "w4a8":
-            if self.use_offline_quant:
+            if self.set_prequant_weight:
                 ffn2_weight_tensor_list = down_proj_weight
             else:
                 if paddle.is_compiled_with_cuda():
@@ -803,7 +802,7 @@ class MoELayer(nn.Layer):
                 )
             )
         elif self.moe_quant_type == "weight_only_int4":
-            if self.use_offline_quant:
+            if self.set_prequant_weight:
                 ffn2_weight_tensor_list = down_proj_weight
                 ffn2_weight_scale_tensor_list = down_proj_weight_scale
             else:
@@ -837,7 +836,7 @@ class MoELayer(nn.Layer):
                 )
             )
         elif self.moe_quant_type == "weight_only_int8":
-            if self.use_offline_quant:
+            if self.set_prequant_weight:
                 ffn2_weight_tensor_list = down_proj_weight
                 ffn2_weight_scale_tensor_list = down_proj_weight_scale
             else:

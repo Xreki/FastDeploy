@@ -167,7 +167,8 @@ class ErnieBotPretrainedModel(PretrainedModel):
         _get_tensor_quantization_mappings
         """
         # (tangbinhan:todo) support tp quantization
-        logger.info("erine bot inference model _get_tensor_quantization_mappings")
+        logger.info(
+            "erine bot inference model _get_tensor_quantization_mappings")
         from fastdeploy.model_executor.models.utils import quantization_func
 
         def get_quantization_type(config: QuantizationConfig, moe=False):
@@ -218,7 +219,7 @@ class ErnieBotPretrainedModel(PretrainedModel):
                     qkv = qkv.reshape(
                         [
                             config.hidden_size,
-                            config.num_attention_heads,
+                            config.num_attention_heads // config.tensor_parallel_degree,
                             3,
                             config.head_dim,
                         ]
@@ -228,8 +229,9 @@ class ErnieBotPretrainedModel(PretrainedModel):
                         qkv.reshape(
                             [
                                 config.hidden_size,
-                                config.num_attention_heads
-                                + 2 * config.num_key_value_heads,
+                                config.num_attention_heads // config.tensor_parallel_degree
+                                + 2 * (config.num_key_value_heads //
+                                       config.tensor_parallel_degree),
                                 config.head_dim,
                             ]
                         )
@@ -237,15 +239,33 @@ class ErnieBotPretrainedModel(PretrainedModel):
                         .reshape([-1, config.hidden_size])
                     )
                 if q_config.quantization_type in ["Wint8", "Wint4"]:
-                    qkv = qkv.reshape([-1, config.hidden_size]).transpose([1, 0])
+                    qkv = qkv.reshape(
+                        [-1, config.hidden_size]).transpose([1, 0])
 
                 return qkv, None
             else:
                 if q_config.quantization_type in ["Wint8", "Wint4"]:
                     qkv = qkv.reshape([-1, config.hidden_size])
                 if qkv_scale is not None and q_config.quantization_type == "W4AFp8":
-                    qkv_scale = paddle.view(qkv_scale, paddle.get_default_dtype())
+                    qkv_scale = paddle.view(
+                        qkv_scale, paddle.get_default_dtype())
                 return qkv, qkv_scale
+
+        def outlinear_pre_post_quantization_func(
+            before=True,
+            ffn1_weight=None,
+            ffn1_weight_scale=None,
+            q_config: QuantizationConfig = None,
+            config: ErnieBotConfig = None,
+        ):
+            if before:
+                if q_config.quantization_type in [
+                        "PerBlockFp8"] \
+                        or config.weight_dtype in ["int4", "int8"] \
+                        or "float8" in config.weight_dtype:
+                    ffn1_weight = ffn1_weight.transpose([1, 0])
+
+            return ffn1_weight, ffn1_weight_scale
 
         def ffn1_pre_post_quantization_func(
             before=True,
@@ -256,9 +276,9 @@ class ErnieBotPretrainedModel(PretrainedModel):
         ):
             if before:
 
-                if not (
+                if (
                     config.moe_num_experts > 0
-                    and not config.moe_use_ffn_shared_weight_and_bias
+                    and config.moe_use_ffn_shared_weight_and_bias
                 ):
                     # not fast ffn:
                     ffn1_weight = paddle.concat(
@@ -267,10 +287,9 @@ class ErnieBotPretrainedModel(PretrainedModel):
 
                 if q_config.quantization_type in [
                     "PerBlockFp8",
-                    "float8",
                     "int4",
                     "int8",
-                ]:
+                ] or "float8" in q_config.quantization_type:
                     ffn1_weight = ffn1_weight.transpose([1, 0])
             else:
                 if (
@@ -293,10 +312,9 @@ class ErnieBotPretrainedModel(PretrainedModel):
             if before:
                 if q_config.quantization_type in [
                     "PerBlockFp8",
-                    "float8",
                     "int4",
                     "int8",
-                ]:
+                ] or "float8" in q_config.quantization_type:
                     ffn2_weight = ffn2_weight.transpose([1, 0])
             else:
                 if (
@@ -328,11 +346,13 @@ class ErnieBotPretrainedModel(PretrainedModel):
                     )
                 elif q_config.quantization_type == "Wint4":
                     moe_ffn1_weight = moe_ffn1_weight.reshape(
-                        [config.hidden_size, config.moe_intermediate_size]
+                        [config.hidden_size, (config.moe_intermediate_size
+                                              // config.tensor_parallel_degree)]
                     )
                 elif q_config.quantization_type == "Wint8":
                     moe_ffn1_weight = moe_ffn1_weight.reshape(
-                        [config.hidden_size, config.moe_intermediate_size * 2]
+                        [config.hidden_size, (config.moe_intermediate_size
+                                              // config.tensor_parallel_degree) * 2]
                     )
             return moe_ffn1_weight, moe_ffn1_weight_scale
 
@@ -350,14 +370,17 @@ class ErnieBotPretrainedModel(PretrainedModel):
                     moe_ffn2_weight = moe_ffn2_weight.cast("int8")
             else:
                 if q_config.quantization_type == "w4a8":
-                    moe_ffn2_weight = moe_ffn2_weight.reshape([config.hidden_size, -1])
+                    moe_ffn2_weight = moe_ffn2_weight.reshape(
+                        [config.hidden_size, -1])
                 elif q_config.quantization_type == "Wint4":
                     moe_ffn2_weight = moe_ffn2_weight.reshape(
-                        [config.moe_intermediate_size, config.hidden_size // 2]
+                        [(config.moe_intermediate_size
+                            // config.tensor_parallel_degree), config.hidden_size // 2]
                     )
                 elif q_config.quantization_type == "Wint8":
                     moe_ffn2_weight = moe_ffn2_weight.reshape(
-                        [config.moe_intermediate_size, config.hidden_size]
+                        [(config.moe_intermediate_size
+                            // config.tensor_parallel_degree), config.hidden_size]
                     )
 
             return moe_ffn2_weight, moe_ffn2_weight_scale
@@ -384,8 +407,19 @@ class ErnieBotPretrainedModel(PretrainedModel):
                     ernie_config=config,
                 )
             )
-            # o_proj/ff2
+
+            # o_proj
             base_actions[f"{base_model_prefix}.layers.0.self_attn.o_proj.weight"] = (
+                partial(
+                    quantization_func,
+                    config=q_config,
+                    PrePostQuantFn=ffn2_pre_post_quantization_func,
+                    ernie_config=config,
+                )
+            )
+
+            # ff2
+            base_actions[f"{base_model_prefix}.layers.0.mlp.down_proj.weight"] = (
                 partial(
                     quantization_func,
                     config=q_config,
@@ -441,11 +475,13 @@ class ErnieBotPretrainedModel(PretrainedModel):
                     or f"{base_model_prefix}.layers.0.mlp.down_proj.weight" in key
                 ):
                     for i in range(config.moe_layer_start_index):
-                        final_actions[key.replace("layers.0.", f"layers.{i}.")] = action
+                        final_actions[key.replace(
+                            "layers.0.", f"layers.{i}.")] = action
                 elif f"{base_model_prefix}.layers.0." in key:
                     # 其他
                     for i in range(config.num_layers):
-                        final_actions[key.replace("layers.0.", f"layers.{i}.")] = action
+                        final_actions[key.replace(
+                            "layers.0.", f"layers.{i}.")] = action
                 final_actions[key] = action
             return final_actions
 
@@ -503,11 +539,15 @@ class ErnieBotPretrainedModel(PretrainedModel):
                 block_size = size // degree
                 if hasattr(tensor, "get_shape"):
                     return [
-                        slice_tensor(tensor, i * block_size, (i + 1) * block_size)
+                        slice_tensor(tensor, i * block_size,
+                                     (i + 1) * block_size)
                         for i in range(degree)
                     ]
                 else:
-                    return np.split(tensor, degree, axis=-1)
+                    if isinstance(weight, paddle.Tensor):
+                        return paddle.split(tensor, degree, axis=-1)
+                    else:
+                        return np.split(tensor, degree, axis=-1)
 
             q_list = split_tensor(q, tensor_parallel_degree)
             k_list = split_tensor(k, tensor_parallel_degree)
@@ -515,18 +555,29 @@ class ErnieBotPretrainedModel(PretrainedModel):
 
             if tensor_parallel_rank is None:
                 return [
-                    np.concatenate([q_i, k_i, v_i], axis=-1)
+                    (np.concatenate([q_i, k_i, v_i], axis=-1) if not isinstance(weight, paddle.Tensor)
+                     else paddle.concat([q_i, k_i, v_i], axis=-1))
                     for q_i, k_i, v_i in zip(q_list, k_list, v_list)
                 ]
             else:
-                return np.concatenate(
-                    [
-                        q_list[tensor_parallel_rank],
-                        k_list[tensor_parallel_rank],
-                        v_list[tensor_parallel_rank],
-                    ],
-                    axis=-1,
-                )
+                if isinstance(weight, paddle.Tensor):
+                    return paddle.concat(
+                        [
+                            q_list[tensor_parallel_rank],
+                            k_list[tensor_parallel_rank],
+                            v_list[tensor_parallel_rank],
+                        ],
+                        axis=-1,
+                    )
+                else:
+                    return np.concatenate(
+                        [
+                            q_list[tensor_parallel_rank],
+                            k_list[tensor_parallel_rank],
+                            v_list[tensor_parallel_rank],
+                        ],
+                        axis=-1,
+                    )
 
         def gqa_qkv_merge_func(
             weight_list, num_attention_heads, num_key_value_heads, head_dim
@@ -596,32 +647,71 @@ class ErnieBotPretrainedModel(PretrainedModel):
         else:
             qkv_fn = partial(fn, is_column=True)
 
-        def get_moe_parallel_split_mappings(base_actions, base_model_prefix):
-            base_actions[f"{base_model_prefix}.layers.0.self_attn.qkv_proj.weight"] = (
-                qkv_fn
-            )
-            base_actions[f"{base_model_prefix}.layers.0.self_attn.o_proj.weight"] = (
-                partial(fn, is_column=False)
-            )
-            base_actions[f"{base_model_prefix}.layers.0.mlp.up_gate_proj.weight"] = (
-                partial(fn, is_column=True, is_naive_2fuse=True)
-            )
-            base_actions[f"{base_model_prefix}.layers.0.mlp.down_proj.weight"] = (
-                partial(fn, is_column=False)
-            )
+        def get_moe_parallel_split_mappings(base_actions, base_model_prefix, config=None):
+            if not config.use_offline_quant and config.set_prequant_weight:
+                # qkv
+                base_actions[f"{base_model_prefix}.layers.0.self_attn.qkv_proj.weight.quant_weight"] = (
+                    qkv_fn
+                )
+                base_actions[f"{base_model_prefix}.layers.0.self_attn.qkv_proj.weight.weight_quanter"] = (
+                    partial(fn, is_column=False)
+                )
 
-            for expert_idx in range(config.moe_num_experts):
-                base_actions[
-                    f"{base_model_prefix}.layers.{config.moe_layer_start_index}"
-                    f".mlp.experts.{expert_idx}.up_gate_proj.weight"
-                ] = partial(fn, is_column=True, is_naive_2fuse=True)
-                base_actions[
-                    f"{base_model_prefix}.layers.{config.moe_layer_start_index}"
-                    f".mlp.experts.{expert_idx}.down_proj.weight"
-                ] = partial(fn, is_column=False)
+                base_actions[f"{base_model_prefix}.layers.0.self_attn.o_proj.weight.quant_weight"] = (
+                    partial(fn, is_column=True)
+                )
+
+                base_actions[f"{base_model_prefix}.layers.0.mlp.up_gate_proj.weight.quant_weight"] = (
+                    partial(fn, is_column=False, is_naive_2fuse=True)
+                )
+                base_actions[f"{base_model_prefix}.layers.0.mlp.up_gate_proj.weight.weight_quanter"] = (
+                    partial(fn, is_column=False)
+                )
+
+                base_actions[f"{base_model_prefix}.layers.0.mlp.down_proj.weight.quant_weight"] = (
+                    partial(fn, is_column=True)
+                )
+
+                for expert_idx in range(config.moe_num_experts):
+                    base_actions[
+                        f"{base_model_prefix}.layers.{config.moe_layer_start_index}"
+                        f".mlp.experts.{expert_idx}.up_gate_proj.weight.quant_weight"
+                    ] = partial(fn, is_column=True, is_naive_2fuse=True)
+
+                    base_actions[
+                        f"{base_model_prefix}.layers.{config.moe_layer_start_index}"
+                        f".mlp.experts.{expert_idx}.up_gate_proj.weight.weight_quanter"
+                    ] = partial(fn, is_column=True)
+                    base_actions[
+                        f"{base_model_prefix}.layers.{config.moe_layer_start_index}"
+                        f".mlp.experts.{expert_idx}.down_proj.weight.quant_weight"
+                    ] = partial(fn, is_column=False)
+            else:
+                base_actions[f"{base_model_prefix}.layers.0.self_attn.qkv_proj.weight"] = (
+                    qkv_fn
+                )
+                base_actions[f"{base_model_prefix}.layers.0.self_attn.o_proj.weight"] = (
+                    partial(fn, is_column=False)
+                )
+                base_actions[f"{base_model_prefix}.layers.0.mlp.up_gate_proj.weight"] = (
+                    partial(fn, is_column=True, is_naive_2fuse=True)
+                )
+                base_actions[f"{base_model_prefix}.layers.0.mlp.down_proj.weight"] = (
+                    partial(fn, is_column=False)
+                )
+
+                for expert_idx in range(config.moe_num_experts):
+                    base_actions[
+                        f"{base_model_prefix}.layers.{config.moe_layer_start_index}"
+                        f".mlp.experts.{expert_idx}.up_gate_proj.weight"
+                    ] = partial(fn, is_column=True, is_naive_2fuse=True)
+                    base_actions[
+                        f"{base_model_prefix}.layers.{config.moe_layer_start_index}"
+                        f".mlp.experts.{expert_idx}.down_proj.weight"
+                    ] = partial(fn, is_column=False)
             return base_actions
 
-        def get_parallel_split_mappings(base_actions, base_model_prefix=None):
+        def get_parallel_split_mappings(base_actions, base_model_prefix=None, config=None):
             # (tangbinhan:todo) Splitting of non-MoE weights
             base_actions["decoder.layers.0.self_attn.qkv_proj.weight"] = partial(
                 fn, is_column=True
@@ -674,7 +764,7 @@ class ErnieBotPretrainedModel(PretrainedModel):
             }
             if use_moe and config.moe_layer_start_index > 0:
                 base_actions = get_moe_parallel_split_mappings(
-                    base_actions, base_model_prefix
+                    base_actions, base_model_prefix, config
                 )
             else:
                 # (tangbinhan:todo) Splitting of non-MoE weights
@@ -688,7 +778,8 @@ class ErnieBotPretrainedModel(PretrainedModel):
                     or f"{base_model_prefix}.layers.0.mlp.down_proj.weight" in key
                 ):
                     for i in range(config.moe_layer_start_index):
-                        final_actions[key.replace("layers.0.", f"layers.{i}.")] = action
+                        final_actions[key.replace(
+                            "layers.0.", f"layers.{i}.")] = action
                 elif f"layers.{config.moe_layer_start_index}.mlp.experts." in key:
                     for i in range(config.moe_layer_start_index, config.num_layers):
                         final_actions[
@@ -699,7 +790,8 @@ class ErnieBotPretrainedModel(PretrainedModel):
                         ] = action
                 elif f"{base_model_prefix}.layers.0." in key:
                     for i in range(config.num_layers):
-                        final_actions[key.replace("layers.0.", f"layers.{i}.")] = action
+                        final_actions[key.replace(
+                            "layers.0.", f"layers.{i}.")] = action
                 final_actions[key] = action
             return final_actions
 
@@ -778,9 +870,10 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
         enable_redundant_experts: bool = False,
         redundant_experts_num: int = 0,
         max_batch_size: int = 128,
-        use_offline_quant=False,
         sharing_model=None,
         embeddings_column_cut=False,
+        is_quantized=False,
+        use_safetensors=False,
     ):
         """
         Initializer for the ErnieBotFusedModel class.
@@ -922,7 +1015,8 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             enable_redundant_experts=enable_redundant_experts,
             redundant_experts_num=redundant_experts_num,
             max_batch_size=max_batch_size,
-            use_offline_quant=use_offline_quant,
+            is_quantized=is_quantized,
+            use_safetensors=use_safetensors,
         )
 
         if enable_redundant_experts and use_moe:
