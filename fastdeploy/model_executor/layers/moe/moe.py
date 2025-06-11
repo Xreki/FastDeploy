@@ -16,6 +16,7 @@
 
 from dataclasses import dataclass
 
+import paddle
 from paddle import nn
 from paddlenlp.utils.log import logger
 
@@ -25,6 +26,7 @@ from fastdeploy.model_executor.layers.linear import (
 from fastdeploy.model_executor.layers.utils import get_tensor
 
 from .cutlass_fused_moe import CutlassFusedMoeMethod
+# from .triton_fused_moe import TritonFusedMoeMethod
 
 
 @dataclass
@@ -53,13 +55,14 @@ class FusedMoE(nn.Layer):
 
     def __init__(
         self,
-        llm_config,
+        fd_config,
         moe_intermediate_size: int = -1,
         num_experts: int = -1,
         top_k: int = -1,
         moe_use_gate_correction_bias: bool = False,
         moe_quant_type: str = "weight_only_int4",
         layer_idx: int = -1,
+        moe_tag: str = "",
         gate_weight_key=None,
         gate_correction_bias_key=None,
         ffn1_expert_weight_key=None,
@@ -72,40 +75,38 @@ class FusedMoE(nn.Layer):
         moe_ffn2_in_scale_keys=None,
         shared_experts_up_gate_proj_key=None,
         shared_experts_down_proj_key=None,
+        use_method="cutlass",
     ):
         """
         Initialize the Moe layer with given parameters.
         Args:
-            llm_config (LLMConfig): Arguments related to inference, containing
+            fd_config (FDConfig): Arguments related to inference, containing
                 attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
         """
         super().__init__()
 
-        self.llm_config = llm_config
+        self.fd_config = fd_config
         self.layer_idx = layer_idx
-        self.tp_size = llm_config.parallel_config.mp_size
-        self.ep_size = llm_config.parallel_config.ep_size
+        self.tp_size = fd_config.parallel_config.mp_size
+        self.ep_size = fd_config.parallel_config.ep_size
 
         self.moe_use_gate_correction_bias = moe_use_gate_correction_bias
 
-        self.hidden_size = llm_config.model_config.hidden_size
-        self.moe_config = llm_config.moe_config
-        self.use_offline_quant = llm_config.tmp_config.use_offline_quant
-        moe_tag = self.llm_config.moe_config.moe_tag
-        logger.info(f"{moe_tag}MoE is running in {moe_quant_type} mode")
+        self.hidden_size = fd_config.model_config.hidden_size
+        self.moe_config = fd_config.moe_config
+        self.use_offline_quant = fd_config.tmp_config.use_offline_quant
+        # moe_tag = self.fd_config.moe_config.moe_tag
+        # logger.info(f"{moe_tag}MoE is running in {moe_quant_type} mode")
 
         self.moe_quant_type = moe_quant_type
         self.num_experts = num_experts
         self.num_local_experts = self.num_experts // self.ep_size
 
-        logger.info(f'''MoE config is num_experts:{num_experts},
-             top_k:{top_k},
-             hidden_size:{self.hidden_size},
-             moe_intermediate_size:{moe_intermediate_size}''')
         logger.info(
-            f"MoE is running on moe_quant_type: {self.moe_quant_type}, ep:{self.ep_size}, tp:{self.tp_size} mode"
+            f"MoE config is {num_experts=}, {top_k=}, hidden_size={self.hidden_size}, {moe_intermediate_size=}, moe_quant_type={self.moe_quant_type}, ep_size={self.ep_size}, tp_size={self.tp_size}."
         )
+
         self.moe_intermediate_size = moe_intermediate_size // self.tp_size
 
         self.gate_weight_key = gate_weight_key
@@ -138,16 +139,31 @@ class FusedMoE(nn.Layer):
         moe_compute_params.ep_size = self.ep_size
         moe_compute_params.tp_size = self.tp_size
 
-        self.compute_method = CutlassFusedMoeMethod(moe_compute_params)
+        if use_method == "cutlass":
+            self.compute_method = CutlassFusedMoeMethod(moe_compute_params)
+        else:
+            self.compute_method = TritonFusedMoeMethod(moe_compute_params)
 
     def load_gate_state_dict(self, state_dict):
         """
         load_gate_state_dict function.
         """
+        # gate_correction_bias
+        if self.moe_use_gate_correction_bias:
+            gate_correction_bias_tensor = get_tensor(
+                state_dict.pop(self.gate_correction_bias_key))
+
+            self.gate_correction_bias = self.create_parameter(
+                shape=gate_correction_bias_tensor.shape,
+                dtype="float32",
+            )
+
+            self.gate_correction_bias.set_value(gate_correction_bias_tensor)
+        else:
+            self.gate_correction_bias = None
+
         up_gate_proj_weight = []
-        up_gate_proj_weight_scale = []
         down_proj_weight = []
-        down_proj_weight_scale = []
         for j in range(self.num_experts):
             up_gate_proj_weight.append(
                 get_tensor(
@@ -162,28 +178,28 @@ class FusedMoE(nn.Layer):
 
         self.shared_experts_prefix = f"ernie.layers.{self.layer_idx}.mlp.shared_experts"
         self.shared_experts_up_gate_proj = MergedColumnParallelLinear(
-            llm_config=self.llm_config,
+            fd_config=self.fd_config,
             prefix=self.shared_experts_up_gate_proj_key,
             with_bias=False,
-            activation=self.llm_config.model_config.hidden_act,
+            activation=self.fd_config.model_config.hidden_act,
             use_fast_ffn=True,
             dim_feedforward=self.shared_experts_hidden_dim)
         self.shared_experts_up_gate_proj.load_state_dict(state_dict)
 
         self.shared_experts_down_proj = RowParallelLinear(
-            llm_config=self.llm_config,
+            fd_config=self.fd_config,
             prefix=self.shared_experts_down_proj_key,
             input_size=(self.shared_experts_hidden_dim //
-                        self.llm_config.parallel_config.mp_size),
-            output_size=self.llm_config.model_config.hidden_size,
+                        self.fd_config.parallel_config.mp_size),
+            output_size=self.fd_config.model_config.hidden_size,
             with_bias=False,
             dim_feedforward=self.shared_experts_hidden_dim)
         self.shared_experts_down_proj.load_state_dict(state_dict)
 
         self.shared_act_fn = SiluAndMul(
-            llm_config=self.llm_config,
+            fd_config=self.fd_config,
             bias=None,
-            act_method=self.llm_config.model_config.hidden_act,
+            act_method=self.fd_config.model_config.hidden_act,
         )
 
     def load_state_dict(self, state_dict, is_update: bool = False):
@@ -199,21 +215,6 @@ class FusedMoE(nn.Layer):
                 dtype="float32",
             )
             self.gate_weight.set_value(gate_weight_tensor.cast("float32"))
-
-        # gate_correction_bias
-        if self.moe_use_gate_correction_bias:
-            gate_correction_bias_tensor = get_tensor(
-                state_dict.pop(self.gate_correction_bias_key))
-
-            self.gate_correction_bias = self.create_parameter(
-                shape=gate_correction_bias_tensor.shape,
-                dtype="float32",
-            )
-
-            self.gate_correction_bias.set_value(
-                gate_correction_bias_tensor.cast("float32"))
-        else:
-            self.gate_correction_bias = None
 
         up_gate_proj_weight, down_proj_weight = self.load_gate_state_dict(
             state_dict)
@@ -260,7 +261,7 @@ class FusedMoE(nn.Layer):
         if self.num_shared_experts > 0:
             self.load_shared_experts_state_dict(state_dict)
 
-    def forward(self, x, **kwargs):
+    def forward(self, x: paddle.Tensor):
         """
         Defines the forward computation of the moe layer.
 
@@ -279,4 +280,10 @@ class FusedMoE(nn.Layer):
             s_x = self.shared_act_fn(s_x)
             s_x = self.shared_experts_down_proj(s_x)
             out = out + s_x
+
+        if self.tp_size > 1:
+            from fastdeploy.distributed.communication_op import \
+                tensor_model_parallel_all_reduce
+            tensor_model_parallel_all_reduce(out)
+
         return out

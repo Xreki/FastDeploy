@@ -34,20 +34,20 @@ from paddlenlp.utils.env import USE_FAST_TOKENIZER
 from paddlenlp.utils.log import logger
 
 from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
-                               KVCacheConfig, LLMConfig, LoadConfig,
+                               FDConfig, KVCacheConfig, LoadConfig,
                                ModelConfig, MoEConfig, ParallelConfig,
                                SpeculativeConfig, TmpConfig)
 from fastdeploy.inference_args import GenerationPhase
-from fastdeploy.model_executor.models.utils import (convert_ndarray_dtype,
-                                                    load_checkpoint)
+from fastdeploy.model_executor.models.utils import (_vocab_size_with_padding,
+                                                    convert_ndarray_dtype,
+                                                    load_checkpoint,
+                                                    parser_quant_type)
 
 from ..layers.quantization import get_quantization_config
 from .ernie import ErnieBotPretrainedModel
 from .model_base import ModelRegistry
 from .qwen2 import Qwen2PretrainedModel
 from .tokenizer import ErnieBotTokenizer
-from .utils import (_vocab_size_with_padding, convert_ndarray_dtype,
-                    load_checkpoint, parser_quant_type)
 
 model_classes_mapping = {
     "ErnieForCausalLM": ErnieBotPretrainedModel,
@@ -107,52 +107,55 @@ def load_tensor_from_ipc_meta(state_dict):
 
 
 def build_stream_line_model(
-        config_path,
-        model_path,
-        dtype,
-        block_size,
-        max_len,
-        stage_flag,
-        min_dec_len=1,
-        max_dec_len=128,
-        temperature=1,
-        top_k=8,
-        top_p=0.8,
-        pre_caches_length=0,
-        export_model_type="default",
-        use_stop_seqs=False,
-        use_fake_parameter=False,
-        show_topk: int = 0,
-        msg_queue_id=None,
-        pad_vocab=True,
-        tokenizer=None,
-        cache_quant_dtype="none",
-        use_beam_search: bool = False,
-        enf_gen: bool = False,
-        speculate_method=None,
-        speculate_max_draft_token_num: int = 1,
-        speculate_max_candidate_len: int = 5,
-        speculate_verify_window: int = 2,
-        return_all_hidden_states: bool = False,
-        draft_type: str = "None",
-        start_layer_index: int = 0,
-        moe_quant_type: str = "default",
-        use_ep: bool = False,
-        ep_just_for_test: bool = False,
-        generation_phase: GenerationPhase = GenerationPhase.PREFILL,
-        use_micro_batch: bool = False,
-        fake_server_p: bool = False,
-        scale_dir: str = "None",
-        output_via_mq: bool = True,
-        use_safetensors: bool = False,
-        enable_redundant_experts: bool = False,
-        redundant_experts_num: int = 0,
-        max_batch_size: int = 128,
-        use_offline_quant: bool = False,
-        return_state_dicts: bool = False,
-        sharing_model=None,
-        sharing_state_dicts=None,
-        return_llm_config: bool = False):
+    config_path,
+    model_path,
+    dtype,
+    block_size,
+    max_len,
+    stage_flag,
+    min_dec_len=1,
+    max_dec_len=128,
+    temperature=1,
+    top_k=8,
+    top_p=0.8,
+    pre_caches_length=0,
+    export_model_type="default",
+    use_stop_seqs=False,
+    use_fake_parameter=False,
+    show_topk: int = 0,
+    msg_queue_id=None,
+    pad_vocab=True,
+    tokenizer=None,
+    cache_quant_dtype="none",
+    use_beam_search: bool = False,
+    enf_gen: bool = False,
+    speculate_method=None,
+    speculate_max_draft_token_num: int = 1,
+    speculate_max_candidate_len: int = 5,
+    speculate_verify_window: int = 2,
+    return_all_hidden_states: bool = False,
+    draft_type: str = "None",
+    start_layer_index: int = 0,
+    moe_quant_type: str = "default",
+    use_ep: bool = False,
+    ep_just_for_test: bool = False,
+    generation_phase: GenerationPhase = GenerationPhase.PREFILL,
+    use_micro_batch: bool = False,
+    fake_server_p: bool = False,
+    scale_dir: str = "None",
+    output_via_mq: bool = True,
+    use_safetensors: bool = False,
+    enable_redundant_experts: bool = False,
+    redundant_experts_num: int = 0,
+    max_batch_size: int = 128,
+    use_offline_quant: bool = False,
+    return_state_dicts: bool = False,
+    sharing_model=None,
+    sharing_state_dicts=None,
+    return_fd_config: bool = False,
+    use_empty_parameter: bool = False,
+    embeddings_column_cut: bool = False,
+):
     """
     Build a fused inference model
 
@@ -201,6 +204,8 @@ def build_stream_line_model(
             )
 
     config, _ = PretrainedConfig.get_config_dict(model_path)
+    config["head_dim"] = config.get(
+        "head_dim", config["hidden_size"] // config["num_attention_heads"])
     model_config = ModelConfig.from_dict(config)
 
     parallel_config = ParallelConfig()
@@ -256,16 +261,24 @@ def build_stream_line_model(
         moe_intermediate_size = moe_intermediate_size[0]
 
     if not use_ep and pad_vocab:
+        hcg = fleet.get_hybrid_communicate_group()
         config["vocab_size"] = _vocab_size_with_padding(
             config.get("vocab_size", tokenizer.vocab_size),
             config.pop("vocab_size_divisible_unit", 128),
-            paddle.distributed.get_world_size(),
+            hcg.get_model_parallel_world_size(),
         )
 
     group_size = config.get("group_size", -1)
     num_key_value_heads = config.get("num_key_value_heads", -1)
     if num_key_value_heads is None:
         num_key_value_heads = -1
+
+    # RL need, some model num_key_value_heads less tensor_parallel_degree, need copy
+    if num_key_value_heads < tensor_parallel_degree:
+        logger.warning(
+            f"key value heads num is {num_key_value_heads}, tensor parallel degree is {tensor_parallel_degree}"
+        )
+        num_key_value_heads = tensor_parallel_degree
 
     if config.get("ffn_hidden_size", None) is not None:
         ffn_hidden_size = config["ffn_hidden_size"]
@@ -290,12 +303,20 @@ def build_stream_line_model(
     if num_layers is None:
         raise ValueError(f"num_layers<{num_layers}> is invalid")
 
+    remove_tail_layer = config.get("remove_tail_layer")
+    if remove_tail_layer is True:
+        num_layers -= 1
+    elif isinstance(remove_tail_layer, int):
+        num_layers -= remove_tail_layer
+
     use_moe = config.get(
         "moe_layer_start_index",
         num_layers) < num_layers or draft_type in ["mtp", "eagle"]
 
     if not sharing_state_dicts:
-        if use_fake_parameter:
+        if use_empty_parameter:
+            context = paddle.LazyGuard()
+        elif use_fake_parameter:
             context = contextlib.nullcontext()
         elif use_safetensors:
             context = paddle.LazyGuard()
@@ -507,7 +528,6 @@ def build_stream_line_model(
     model_config.return_all_hidden_states = return_all_hidden_states
     speculative_config.draft_type = draft_type
     model_config.start_layer_index = start_layer_index
-    model_config.use_moe = use_moe
     if use_moe:
         moe_config.use_moe = use_moe
         moe_config.num_experts = config.get("moe_num_experts", None)
@@ -618,7 +638,7 @@ def build_stream_line_model(
     else:
         quant_config = None
 
-    llm_config = LLMConfig(
+    fd_config = FDConfig(
         model_config=model_config,
         parallel_config=parallel_config,
         speculative_config=speculative_config,
@@ -634,15 +654,15 @@ def build_stream_line_model(
 
     with context:
         model_cls = ModelRegistry.get_class(model_config.architectures[0])
-        model = model_cls(llm_config)
+        model = model_cls(fd_config)
 
     model.eval()
 
     if use_fake_parameter:
-        if return_llm_config:
-            return llm_config, tokenizer, model
+        if return_fd_config:
+            return fd_config, tokenizer, model, None
         else:
-            return config, tokenizer, model
+            return config, tokenizer, model, None
     elif not use_moe:
         for k, v in state_dict.items():
             if convert_dtype(v.dtype) == dtype:
@@ -664,7 +684,7 @@ def build_stream_line_model(
             sharing_state_dicts.pop(k)
     possible_state_dict = state_dict if return_state_dicts else None
 
-    if return_llm_config:
-        return llm_config, tokenizer, model, possible_state_dict
+    if return_fd_config:
+        return fd_config, tokenizer, model, possible_state_dict
     else:
         return config, tokenizer, model, possible_state_dict

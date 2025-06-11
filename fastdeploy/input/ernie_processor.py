@@ -21,7 +21,12 @@ import re
 
 from fastdeploy.utils import data_processor_logger
 from paddlenlp.generation import GenerationConfig
-from fastdeploy.input.ernie_tokenizer import ErnieBotTokenizer
+
+if os.getenv("FLAG_TOKENIZER_V2"):
+    from fastdeploy.input.ernie_tokenizer_v2 import ErnieBotTokenizer
+else:
+    from fastdeploy.input.ernie_tokenizer_v1 import ErnieBotTokenizer
+
 from fastdeploy.input.text_processor import BaseDataProcessor
 from fastdeploy.engine.config import ModelConfig
 from fastdeploy.utils import data_processor_logger

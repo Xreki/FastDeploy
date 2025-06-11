@@ -16,7 +16,7 @@
 
 from typing import Callable, Optional
 
-from fastdeploy.config import LLMConfig
+from fastdeploy.config import FDConfig
 from fastdeploy.model_executor.graph_optimization.cudagraph_piecewise_backend import \
     CudaGraphPiecewiseBackend
 
@@ -24,20 +24,20 @@ from fastdeploy.model_executor.graph_optimization.cudagraph_piecewise_backend im
 class GraphOptBackend:
     """ """
 
-    llm_config: LLMConfig
+    fd_config: FDConfig
     cudagraph_piecewise_backend: Optional[CudaGraphPiecewiseBackend] = None
 
-    def __init__(self, runnable: Callable, llm_config: LLMConfig):
+    def __init__(self, runnable: Callable, fd_config: FDConfig):
         self.runnable = runnable
-        self.llm_config = llm_config
+        self.fd_config = fd_config
 
     def __call__(self, **kwargs):
         # 1. TODO(gongshaotian): Static graph
-        if self.llm_config.graph_opt_config.graph_opt_level > 0:
+        if self.fd_config.graph_opt_config.graph_opt_level > 0:
             # 1. Prepare cuda grpah input buffers (contain output of subgraphs)
 
             # 2. Convert dynamic grpah to static graph
-            if self.llm_config.graph_opt_config.graph_opt_level > 1:
+            if self.fd_config.graph_opt_config.graph_opt_level > 1:
                 # with cinn
                 pass
             else:
@@ -52,10 +52,9 @@ class GraphOptBackend:
 
         # 2. Dynamic graph
         else:
-            print(self.cudagraph_piecewise_backend is None)
             if self.cudagraph_piecewise_backend is None:
                 self.cudagraph_piecewise_backend = CudaGraphPiecewiseBackend(
-                    llm_config=self.llm_config, runnable=self.runnable)
+                    fd_config=self.fd_config, runnable=self.runnable)
             # TODO(gongshaotian): handling kwargs
-            assert kwargs["input_ids"] is not None
+            assert kwargs["forward_meta"].input_ids is not None
             return self.cudagraph_piecewise_backend.__call__(**kwargs)

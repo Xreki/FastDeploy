@@ -106,6 +106,10 @@ class ModelConfig:
 
         if not hasattr(self, "mla_use_absorb"):
             self.mla_use_absorb = False
+        if not hasattr(self, "head_dim"):
+            assert hasattr(self, "hidden_size") and hasattr(
+                self, "num_attention_heads")
+            self.head_dim = self.hidden_size // self.num_attention_heads
 
     def read_from_env(self):
         """
@@ -158,6 +162,8 @@ class ModelConfig:
             "=============================================================")
 
 
+
+
 class CacheConfig:
     """
     Configuration for the KV cache.
@@ -178,9 +184,15 @@ class CacheConfig:
         gpu_memory_utilization: float,
         cache_dtype: str = "bfloat16",
         num_gpu_blocks_override: Optional[int] = None,
+        cpu_offload_gb: Optional[int] = None,
         kv_cache_ratio: float = 0.75,
         enc_dec_block_num: int = 2,
-        enable_prefix_caching: bool = False,
+        tensor_parallel_size: int = 1,
+        enable_prefix_caching=False,
+        enable_ssd_cache=False,
+        model_cfg=None,
+        cache_queue_port=None,
+        enable_chunked_prefill=False,
     ):
         """
         Initialize the CacheConfig class.
@@ -190,6 +202,7 @@ class CacheConfig:
             gpu_memory_utilization (float): Fraction of GPU memory to use.
             cache_dtype (str): Data type for cache storage. Default is 'bfloat16'.
             num_gpu_blocks_override (Optional[int]): Override for number of GPU blocks.
+            num_cpu_blocks (Optional[int]): Number of CPU blocks.
             kv_cache_ratio (float): Ratio for max block calculation.
             enc_dec_block_num (int): Number of encoder-decoder blocks.
             enable_prefix_caching (bool): Enable prefix caching.
@@ -200,7 +213,61 @@ class CacheConfig:
         self.kv_cache_ratio = kv_cache_ratio
         self.enc_dec_block_num = enc_dec_block_num
         self.cache_dtype = cache_dtype
+        if hasattr(model_cfg, "kvcache_quant_type"):
+            self.cache_dtype = self.model_cfg.kvcache_quant_type
+
+        self.enable_chunked_prefill = enable_chunked_prefill
+
         self.enable_prefix_caching = enable_prefix_caching
+        if cpu_offload_gb is None:
+            self.enable_hierarchical_cache = False
+        else:
+            self.enable_hierarchical_cache = True
+
+        self.enable_ssd_cache = enable_ssd_cache
+        self.model_cfg = model_cfg
+        self.cache_queue_port = cache_queue_port
+        self.cpu_offload_gb = cpu_offload_gb
+
+        if (hasattr(self.model_cfg, "num_key_value_heads")
+            and hasattr(self.model_cfg, "num_key_value_heads")
+            and self.model_cfg.num_key_value_heads is not None
+            and int(self.model_cfg.num_key_value_heads) > 0):
+            kv_num_head = int(
+                self.model_cfg.num_key_value_heads)
+        else:
+            kv_num_head = self.model_cfg.num_attention_heads
+        self.model_cfg.kv_num_head = kv_num_head
+
+
+        # TODO check name
+        if self.cache_dtype.lower() == "wint4":
+            byte_size = 0.5
+        elif self.cache_dtype.lower() == "wint8":
+            byte_size = 1
+        else:
+            byte_size = 2
+
+        self.each_token_cache_space = int(
+            self.model_cfg.num_layers
+            * kv_num_head
+            * self.model_cfg.head_dim
+            * byte_size
+        ) 
+        self.bytes_per_block = int(
+            self.each_token_cache_space * self.block_size
+        ) 
+        self.bytes_per_layer_per_block = int(
+            self.block_size
+            * self.model_cfg.kv_num_head
+            * self.model_cfg.head_dim // tensor_parallel_size
+            * byte_size
+        )
+
+        if self.cpu_offload_gb is None:
+            self.num_cpu_blocks = 0
+        else:
+            self.num_cpu_blocks = int(self.cpu_offload_gb * 1024**3 / self.bytes_per_block)
         self._verify_args()
 
     def metrics_info(self):
@@ -223,20 +290,21 @@ class CacheConfig:
         self.dec_token_num = self.enc_dec_block_num * self.block_size
         if self.num_gpu_blocks_override is not None:
             self.total_block_num = self.num_gpu_blocks_override
-            self.prefill_kvcache_block_num= int(self.total_block_num * self.kv_cache_ratio)
+            self.prefill_kvcache_block_num = int(self.total_block_num * self.kv_cache_ratio)
         else:
             length = num_total_tokens // number_of_tasks
             block_num = (length + self.block_size - 1 + self.enc_dec_block_num) // self.block_size
             self.total_block_num =  block_num * number_of_tasks
-            self.prefill_kvcache_block_num= self.total_block_num
+            self.prefill_kvcache_block_num = self.total_block_num
             llm_logger.info(f"Doing profile, the total_block_num:{self.total_block_num}")
+        
 
     def reset(self, num_gpu_blocks):
         """
         reset gpu block number
         """
         self.total_block_num  = num_gpu_blocks
-        self.prefill_kvcache_block_num= int(self.total_block_num * self.kv_cache_ratio)
+        self.prefill_kvcache_block_num = int(self.total_block_num * self.kv_cache_ratio)
         llm_logger.info((f"Reset block num, the total_block_num:{self.total_block_num},"
             f" prefill_kvcache_block_num:{self.prefill_kvcache_block_num}"))
 
@@ -269,6 +337,11 @@ class Config:
         mm_processor_kwargs (Optional[Dict[str, Any]]): Additional arguments for multi-modal processor.
         speculative_config (Optional[Dict[str, Any]]): Speculative execution configuration.
         use_warmup (bool): Flag to use warmup.
+        engine_worker_queue_port (int): Port for engine worker queue.
+        enable_mm (bool): Flag to enable multi-modal processing.
+        splitwise_role (str): Splitwise role.
+        innode_prefill_ports (Optional[List[int]]): Innode prefill ports. 
+            Temporary configuration, will be removed in the future.
     """
 
     def __init__(
@@ -284,12 +357,17 @@ class Config:
         max_num_seqs: int = 8,
         max_num_batched_tokens: Optional[int] = None,
         pod_ips: Optional[List[str]] = None,
-        mm_processor_kwargs: Optional[Dict[str, Any]] = None,
         speculative_config: Optional[Dict[str, Any]] = None,
         use_warmup: bool = False,
         engine_worker_queue_port: int = 8002,
+        limit_mm_per_prompt: Optional[Dict[str, Any]] = None,
+        mm_processor_kwargs: Optional[Dict[str, Any]] = None,
         enable_mm: bool = False,
-        enable_chunked_prefill: bool = False,
+        splitwise_role: str = "mixed",
+        innode_prefill_ports: Optional[List[int]] = None,
+        max_num_partial_prefills: int = 1,
+        max_long_partial_prefills: int = 1,
+        long_prefill_token_threshold: int = 0,
     ):
         """
         Initialize the Config class.
@@ -309,7 +387,10 @@ class Config:
             mm_processor_kwargs (Optional[Dict[str, Any]]): Additional arguments for multi-modal processor. Default is None.
             speculative_config (Optional[Dict[str, Any]]): Speculative execution configuration. Default is None.
             use_warmup (bool): Flag to use warmup. Default is False.
-            enable_chunked_prefill (bool): Flag to enable chunked prefill. Default is False.
+            engine_worker_queue_port (int): Engine worker queue port. Default is 8002.
+            enable_mm (bool): Flag to enable multi-modal processing. Default is False.
+            splitwise_role (str): Splitwise role. Default is "mixed".
+            innode_prefill_ports (Optional[List[int]]): Innode prefill ports. Default is None.
         """
         self.model_config = model_config
         self.cache_config = cache_config
@@ -322,16 +403,28 @@ class Config:
         self.pod_ips = pod_ips
         self.max_model_len = max_model_len
         self.max_num_seqs = max_num_seqs
+        self.limit_mm_per_prompt = limit_mm_per_prompt
         self.mm_processor_kwargs = mm_processor_kwargs
         self.enable_mm = enable_mm
         self.speculative_config = speculative_config
         self.use_warmup = use_warmup
-        self.enable_chunked_prefill = enable_chunked_prefill
+        self.splitwise_role = splitwise_role
+        self.innode_prefill_ports = innode_prefill_ports
+        self.max_num_partial_prefills = max_num_partial_prefills
+        self.max_long_partial_prefills = max_long_partial_prefills
+        self.long_prefill_token_threshold = long_prefill_token_threshold
 
+        assert self.splitwise_role in ["mixed", "prefill", "decode"]
+
+        # TODO: Temporary configuration, will be removed in the future.
+        if innode_prefill_ports is None:
+            assert self.splitwise_role in ["mixed", "prefill"], \
+                " `innode_prefill_ports` can only support in decode mode"
         # TODO
         self.max_prefill_batch = 3
         if enable_mm:
             self.max_prefill_batch = 1  # TODO:当前多模prefill阶段只支持并行度为1,待优化
+
 
         self.engine_worker_queue_port = engine_worker_queue_port
         self.device_ids = ",".join(
@@ -362,11 +455,16 @@ class Config:
         self.paddle_commit_id = paddle.version.commit
 
         if self.max_num_batched_tokens is None:
-            if self.enable_chunked_prefill:
+            if self.cache_config.enable_chunked_prefill:
                 self.max_num_batched_tokens = 2048
             else:
                 self.max_num_batched_tokens = self.max_model_len
+        
+        if self.long_prefill_token_threshold == 0:
+            self.long_prefill_token_threshold = int(self.max_model_len * 0.04)
+
         self.cache_config.postprocess(self.max_num_batched_tokens, self.max_num_seqs)
+        self.cache_config.max_block_num_per_seq = int(self.max_model_len // self.cache_config.block_size)
 
 
     def check(self):
@@ -384,12 +482,23 @@ class Config:
             8 >= self.tensor_parallel_size > 0
         ), f"tensor_parallel_size: {self.tensor_parallel_size} should be between 1 and 8"
         assert (self.nnode >= 1), f"nnode: {self.nnode} should no less than 1"
-        assert (
-            self.max_model_len >= 16
-        ), f"max_model_len: {self.max_model_len} should be larger than 16"
-        assert (
-            self.max_num_seqs
-            >= 1), f"max_num_seqs: {self.max_num_seqs} should be larger than 1"
+        assert (self.max_model_len >= 16), f"max_model_len: {self.max_model_len} should be larger than 16"
+        assert (self.max_num_seqs >= 1), f"max_num_seqs: {self.max_num_seqs} should be larger than 1"
+        assert (self.max_num_batched_tokens >= self.max_num_seqs), f"max_num_batched_tokens: {self.max_num_batched_tokens} should be larger than or equal to max_num_seqs: {self.max_num_seqs}"
+        assert (self.max_num_batched_tokens <= self.max_model_len * self.max_num_seqs), f"max_num_batched_tokens: {self.max_num_batched_tokens} should be larger" \
+                f"than or equal to max_num_seqs: {self.max_num_seqs} * max_model_len: {self.max_model_len}"
+        assert (self.max_num_partial_prefills >= 1), f"max_num_partial_prefills: {self.max_num_partial_prefills} should be larger than or equal to 1"
+
+        assert (self.max_long_partial_prefills >= 1), f"max_long_partial_prefills: {self.max_long_partial_prefills} should be larger than or equal to 1"
+        assert (self.max_long_partial_prefills <= self.max_num_partial_prefills), f"max_long_partial_prefills: {self.max_long_partial_prefills} should " \
+                f"be less than or equal to max_num_partial_prefills: {self.max_num_partial_prefills}"
+
+        if not self.cache_config.enable_chunked_prefill:
+            assert (self.max_num_batched_tokens >= self.max_model_len), f"max_num_batched_tokens: {self.max_num_batched_tokens} should be larger than or equal to max_model_len: {self.max_model_len}"
+
+        if self.max_num_partial_prefills > 1:
+            assert (self.enable_chunked_prefill is True), f"Chunked prefill must be enabled to set max_num_partial_prefills > 1"
+            assert (self.long_prefill_token_threshold < self.max_model_len), f"long_prefill_token_threshold: {self.long_prefill_token_threshold} should be less than max_model_len: {self.max_model_len}"
 
         self.scheduler_config.check()
 

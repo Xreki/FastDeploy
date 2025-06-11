@@ -32,15 +32,17 @@ class TokenProcessor(object):
     get Token/Score from Paddle inference engine
     """
 
-    def __init__(self, cfg, cached_generated_tokens):
+    def __init__(self, cfg, cached_generated_tokens, engine_worker_queue,
+                 split_connector):
         import paddle
 
         paddle.device.set_device("cpu")
         self.cfg = cfg
         self.cached_generated_tokens = cached_generated_tokens
         self.resource_manager = None
-
+        self.engine_worker_queue = engine_worker_queue
         self.tokens_counter = Counter()
+        self.split_connector = split_connector
 
         self.is_speculate_decoding = False
         if self.is_speculate_decoding:
@@ -91,7 +93,8 @@ class TokenProcessor(object):
         from fastdeploy.model_executor.models import \
             inference_runner_supported_models
         if self.cfg.model_config.architectures not in inference_runner_supported_models \
-            and "ErnieMoEVLForCausalLM" not in self.cfg.model_config.architectures:
+            and "ErnieMoEVLForCausalLM" not in self.cfg.model_config.architectures \
+            and "ErnieBotLMHeadModel" not in self.cfg.model_config.architectures:
             from paddlenlp_ops import get_output, speculate_get_output
         else:
             os.environ["ELLM_LOG_LEVEL"] = "3"
@@ -129,13 +132,36 @@ class TokenProcessor(object):
         """
         self.cached_generated_tokens.put_results(batch_result)
 
-    def _recycle_resources(self, task_id, index, task):
+    def _recycle_resources(self, task_id, index, task, is_prefill=False):
         """
         recycle resources
         """
+        if is_prefill and not self.resource_manager.cache_transfer_finished[
+                task_id]:
+            wait_for_all_finish = time.time()
+            while 1:
+                finished_task_ids = self.engine_worker_queue.get_finished_req()
+                if len(finished_task_ids) > 0:
+                    for finished_task_id in finished_task_ids:
+                        llm_logger.info(
+                            f"finished_task_id: {finished_task_id}")
+                        self.resource_manager.cache_transfer_finished[
+                            finished_task_id] = True
+                    if self.resource_manager.cache_transfer_finished[task_id]:
+                        break
+                else:
+                    time.sleep(0.001)
+            llm_logger.info(
+                f"recycle_resources cost time: {time.time() - wait_for_all_finish}"
+            )
+
+        if task_id in self.resource_manager.cache_transfer_finished and self.resource_manager.cache_transfer_finished[
+                task_id]:
+            del self.resource_manager.cache_transfer_finished[task_id]
+
         self.resource_manager.stop_flags[index] = True
         self.resource_manager.tasks_list[index] = None
-        self.resource_manager._recycle_block_tables(task.block_tables)
+        self.resource_manager._recycle_block_tables(task)
         if task_id in self.tokens_counter:
             del self.tokens_counter[task_id]
 
@@ -151,6 +177,8 @@ class TokenProcessor(object):
             accept_num = tokens[2:batch + 2]
 
         batch_result = list()
+        prefill_batch_result = list()
+        prefill_port = -1
         for i in range(batch):
             if self.resource_manager.stop_flags[i]:
                 continue
@@ -169,12 +197,12 @@ class TokenProcessor(object):
 
             task = self.resource_manager.tasks_list[i]
 
-            if self.cfg.enable_chunked_prefill:
-                if task.get("prefill_token_num", None) is None:
-                    task.set("prefill_token_num", task.token_chunk_size)
-                else:
-                    task.prefill_token_num += task.token_chunk_size
-                if task.prompt_token_ids_len > task.prefill_token_num:
+            if task.get("prefill_chunk_info", None) is not None:
+                if task.get("prefill_chunk_idx", None) is None:
+                    task.set("prefill_chunk_idx", 0)
+
+                if task.prefill_chunk_idx < len(task.prefill_chunk_info):
+                    task.prefill_chunk_idx += 1
                     continue
 
             task_id = task.request_id
@@ -218,11 +246,15 @@ class TokenProcessor(object):
                 if task.messages is not None:
                     result.prompt = task.messages
                 result.prompt_token_ids = task.prompt_token_ids
+                result.num_cached_tokens = task.num_cached_tokens
+
+            is_prefill = task.disaggregate_info is not None and task.disaggregate_info[
+                "role"] == "prefill"
 
             for token_id in token_ids:
                 self.tokens_counter[task_id] += 1
                 result.outputs.token_ids.append(token_id)
-                if token_id in task.eos_token_ids:
+                if token_id in task.eos_token_ids or is_prefill:
                     result.finished = True
                     result.prompt = task.prompt
                     result.prompt_token_ids = task.prompt_token_ids
@@ -237,13 +269,19 @@ class TokenProcessor(object):
                         f"Speculate accept ratio: {1 - self.total_step * 1.0 / self.number_of_output_tokens}"
                         f" total step: {self.total_step}. total_output_token_num: {self.number_of_output_tokens}"
                     )
-                    self._recycle_resources(task_id, i, task)
+                    self._recycle_resources(task_id, i, task, is_prefill)
+                    if is_prefill:
+                        prefill_batch_result.append(result)
+                        prefill_port = task.disaggregate_info['port']
                     main_process_metrics.num_requests_running.dec(1)
                     main_process_metrics.request_inference_time.observe(
                         current_time - task.inference_start_time)
                     break
-            batch_result.append(result)
-
+            if not is_prefill:
+                batch_result.append(result)
+        if len(prefill_batch_result) > 0:
+            self.split_connector.send_first_token(prefill_port,
+                                                  prefill_batch_result)
         self.postprocess(batch_result)
 
 

@@ -28,7 +28,7 @@ class VocabParallelEmbedding(nn.Layer):
 
     def __init__(
         self,
-        llm_config,
+        fd_config,
         num_embeddings,
         embedding_dim=768,
         params_dtype="bfloat16",
@@ -38,7 +38,7 @@ class VocabParallelEmbedding(nn.Layer):
         Initialize the VocabParallelEmbedding layer for the model.
 
         Args:
-            llm_config (LLMConfig): Arguments related to inference, containing
+            fd_config (FDConfig): Arguments related to inference, containing
                 attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
             num_embeddings : vocabulary size.
@@ -48,22 +48,22 @@ class VocabParallelEmbedding(nn.Layer):
                 you can give it any name you like.
         """
         super().__init__()
-        self.llm_config = llm_config
+        self.fd_config = fd_config
         hcg = fleet.get_hybrid_communicate_group()
         self.mp_rank = hcg.get_model_parallel_rank()
-        self.column_cut = llm_config.parallel_config.column_cut
+        self.column_cut = fd_config.parallel_config.column_cut
         self.world_size = hcg.get_model_parallel_world_size()
         self.ring_id = hcg.get_model_parallel_group().id
-        self.use_rope = llm_config.model_config.use_rope
-        self.rope_head_dim = llm_config.model_config.rope_head_dim
-        self.use_ep = llm_config.parallel_config.use_ep
-        self.hidden_dropout_prob = llm_config.model_config.hidden_dropout_prob
-        self.initializer_range = llm_config.model_config.initializer_range
-        self.weight_sharing = llm_config.model_config.weight_sharing
-        self.sequence_parallel = llm_config.parallel_config.sequence_parallel
-        self.weight_sharing_add_bias = llm_config.model_config.weight_sharing_add_bias
-        self.max_position_embeddings = llm_config.model_config.max_position_embeddings
-        self.freeze_embedding = llm_config.model_config.freeze_embedding
+        self.use_rope = fd_config.model_config.use_rope
+        self.rope_head_dim = fd_config.model_config.rope_head_dim
+        self.use_ep = fd_config.parallel_config.use_ep
+        self.hidden_dropout_prob = fd_config.model_config.hidden_dropout_prob
+        self.initializer_range = fd_config.model_config.initializer_range
+        self.weight_sharing = fd_config.model_config.weight_sharing
+        self.sequence_parallel = fd_config.parallel_config.sequence_parallel
+        self.weight_sharing_add_bias = fd_config.model_config.weight_sharing_add_bias
+        self.max_position_embeddings = fd_config.model_config.max_position_embeddings
+        self.freeze_embedding = fd_config.model_config.freeze_embedding
 
         if self.use_ep:
             self.word_embeddings = nn.Embedding(
@@ -136,7 +136,7 @@ class VocabParallelEmbedding(nn.Layer):
         Args:
             state_dict (dict): A dictionary containing the checkpoint weights and biases.
         """
-        if self.llm_config.model_config.embedding_use_lm_head_weight == True:
+        if self.fd_config.model_config.embedding_use_lm_head_weight == True:
             # read without pop, this weight will be used in lm_head
             self.word_embeddings.weight.set_value(
                 get_tensor(state_dict["lm_head.weight"]).astype(

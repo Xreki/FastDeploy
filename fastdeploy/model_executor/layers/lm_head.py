@@ -45,7 +45,6 @@ def parallel_matmul(lm_output, logit_weights, parallel_output):
     hcg = fleet.get_hybrid_communicate_group()
     model_parallel_group = hcg.get_model_parallel_group()
     world_size = hcg.get_model_parallel_world_size()
-    # rank = hcg.get_model_parallel_rank()
 
     if world_size > 1:
         input_parallel = paddle.distributed.collective._c_identity(
@@ -70,7 +69,7 @@ class ParallelLMHead(nn.Layer):
 
     def __init__(
         self,
-        llm_config,
+        fd_config,
         num_embeddings,
         embedding_dim,
         prefix="",
@@ -81,7 +80,7 @@ class ParallelLMHead(nn.Layer):
         Parallelized LMhead.
 
         Args:
-            llm_config (LLMConfig): Arguments related to inference, containing
+            fd_config (FDConfig): Arguments related to inference, containing
                 attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
             num_embeddings (int): vocabulary size.
@@ -91,23 +90,20 @@ class ParallelLMHead(nn.Layer):
             prefix (str): full name of the layer in the state dict
         """
         super(ParallelLMHead, self).__init__()
-        self.use_moe = llm_config.model_config.use_moe
         self.linear_weight_key = prefix + ".weight"
         if with_bias:
             self.linear_bias_key = prefix + ".bias"
         else:
             self.linear_bias_key = None
-        self.use_ep = llm_config.parallel_config.use_ep
+        self.use_ep = fd_config.parallel_config.use_ep
         self.column_cut = True
         self.fused_linear = True
 
-        hcg = fleet.get_hybrid_communicate_group()
-        mp_rank = hcg.get_model_parallel_rank()
         ColumnParallelLinear = fleet.meta_parallel.ColumnParallelLinear
         RowParallelLinear = fleet.meta_parallel.RowParallelLinear
 
         self.tie_word_embeddings = tie_word_embeddings
-        self.embedding_use_lm_head_weight = llm_config.model_config.embedding_use_lm_head_weight
+        self.embedding_use_lm_head_weight = fd_config.model_config.embedding_use_lm_head_weight
 
         if self.tie_word_embeddings is None:
             if self.use_ep:
@@ -125,7 +121,8 @@ class ParallelLMHead(nn.Layer):
                         mp_group=fleet.get_hybrid_communicate_group().
                         get_model_parallel_group(),
                         weight_attr=None,
-                        has_bias=True,
+                        has_bias=True
+                        if self.linear_bias_key is not None else False,
                         gather_output=need_gather,
                         fuse_matmul_bias=self.fused_linear,  # False diff更小
                     )
@@ -136,7 +133,8 @@ class ParallelLMHead(nn.Layer):
                         mp_group=fleet.get_hybrid_communicate_group().
                         get_model_parallel_group(),
                         weight_attr=None,
-                        has_bias=True,
+                        has_bias=True
+                        if self.linear_bias_key is not None else False,
                         input_is_parallel=False,
                         fuse_matmul_bias=self.fused_linear,  # False diff更小
                     )
@@ -166,12 +164,11 @@ class ParallelLMHead(nn.Layer):
                             self.linear_weight_key)).astype(
                                 paddle.get_default_dtype()))
 
-                bias = (get_tensor(state_dict.pop(
-                    self.linear_bias_key)).astype(paddle.get_default_dtype())
-                        if self.linear_bias_key is not None else paddle.zeros(
-                            self.out_linear.bias.shape,
-                            dtype=paddle.get_default_dtype()))
-                self.out_linear.bias.set_value(bias)
+                if self.linear_bias_key is not None:
+                    bias = get_tensor(state_dict.pop(
+                        self.linear_bias_key)).astype(
+                            paddle.get_default_dtype())
+                    self.out_linear.bias.set_value(bias)
 
     def forward(self, input):
         """

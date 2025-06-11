@@ -226,9 +226,4 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
             routed_scaling_factor=1.0,
         )
 
-        if self.tp_size > 1:
-            from fastdeploy.distributed.communication_op import \
-                tensor_model_parallel_all_reduce
-            tensor_model_parallel_all_reduce(fused_moe_out)
-
         return fused_moe_out

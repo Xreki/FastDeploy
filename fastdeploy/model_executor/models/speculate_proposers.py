@@ -311,8 +311,7 @@ class ModelProposer(Proposer):
         self.cache_kvs = []
         self.free_list = list(range(args.max_num_blocks))
         self.used_list = [[] for _ in range(self.beam_batch_size)]
-        head_dim = (self.model_config["hidden_size"] //
-                    self.model_config["num_attention_heads"])
+        head_dim = self.model_config["head_dim"] 
         self.pre_ids = paddle.to_tensor(
             np.zeros((self.beam_batch_size,
                       args.max_dec_len)).astype("int64") - 1)

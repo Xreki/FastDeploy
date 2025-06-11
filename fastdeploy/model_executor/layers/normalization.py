@@ -28,7 +28,7 @@ class RMSNorm(nn.Layer):
 
     def __init__(
         self,
-        llm_config,
+        fd_config,
         hidden_size,
         eps=1e-5,
         prefix="",
@@ -39,7 +39,7 @@ class RMSNorm(nn.Layer):
         Initializes the normalization layer.
 
         Args:
-            llm_config (LLMConfig): Arguments related to inference, containing
+            fd_config (FDConfig): Arguments related to inference, containing
                 attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
             hidden_size (int) : size of hidden state.
@@ -52,7 +52,7 @@ class RMSNorm(nn.Layer):
             NotImplementedError: If the specified norm_type is not supported.
         """
         super().__init__()
-        self.llm_config = llm_config
+        self.fd_config = fd_config
         self.prefix = prefix
         self.hidden_size = hidden_size
         if len(prefix) == 0:
@@ -66,9 +66,9 @@ class RMSNorm(nn.Layer):
         self.quant_scale = quant_scale
         self._dtype = self._helper.get_default_dtype()
         self._norm_weight_dtype = self._dtype
-        self.quant_round_type = self.llm_config.quant_config.quant_round_type if llm_config.quant_config else 0
-        self.quant_max_bound = self.llm_config.quant_config.quant_max_bound if llm_config.quant_config else 0
-        self.quant_min_bound = self.llm_config.quant_config.quant_min_bound if llm_config.quant_config else 0
+        self.quant_round_type = self.fd_config.quant_config.quant_round_type if fd_config.quant_config else 0
+        self.quant_max_bound = self.fd_config.quant_config.quant_max_bound if fd_config.quant_config else 0
+        self.quant_min_bound = self.fd_config.quant_config.quant_min_bound if fd_config.quant_config else 0
 
         self.init_weight()
 
@@ -142,7 +142,7 @@ class LayerNorm(nn.Layer):
 
     def __init__(
         self,
-        llm_config,
+        fd_config,
         hidden_size,
         eps=1e-5,
         prefix="",
@@ -154,7 +154,7 @@ class LayerNorm(nn.Layer):
         Initializes the normalization layer.
 
         Args:
-            llm_config (LLMConfig): Arguments related to inference, containing
+            fd_config (FDConfig): Arguments related to inference, containing
                 attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
             prefix (str): Unique name of the layer, used for naming internal attributes,
@@ -166,7 +166,7 @@ class LayerNorm(nn.Layer):
             NotImplementedError: If the specified norm_type is not supported.
         """
         super().__init__()
-        self.llm_config = llm_config
+        self.fd_config = fd_config
         self.prefix = prefix
         self.hidden_size = hidden_size
         if len(prefix) == 0:
@@ -183,9 +183,9 @@ class LayerNorm(nn.Layer):
         self._dtype = self._helper.get_default_dtype()
         self._norm_weight_dtype = "float32"
 
-        self.quant_round_type = self.llm_config.quant_config.quant_round_type if llm_config.quant_config else 0
-        self.quant_max_bound = self.llm_config.quant_config.quant_max_bound if llm_config.quant_config else 0
-        self.quant_min_bound = self.llm_config.quant_config.quant_min_bound if llm_config.quant_config else 0
+        self.quant_round_type = self.fd_config.quant_config.quant_round_type if fd_config.quant_config else 0
+        self.quant_max_bound = self.fd_config.quant_config.quant_max_bound if fd_config.quant_config else 0
+        self.quant_min_bound = self.fd_config.quant_config.quant_min_bound if fd_config.quant_config else 0
 
         self.init_weight()
 

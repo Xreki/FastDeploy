@@ -81,7 +81,8 @@ async def lifespan(app: FastAPI):
     else:
         pid = os.getpid()
     api_server_logger.info(f"{pid}")
-    engine_client = EngineClient(args.tokenizer, args.max_model_len, args.tensor_parallel_size, pid, args.enable_mm)
+    engine_client = EngineClient(args.tokenizer, args.max_model_len, args.tensor_parallel_size, pid,
+                                 args.limit_mm_per_prompt, args.mm_processor_kwargs, args.enable_mm)
     app.state.dynamic_load_weight = args.dynamic_load_weight
     chat_handler = OpenAIServingChat(engine_client, pid)
     completion_handler = OpenAIServingCompletion(engine_client, pid)

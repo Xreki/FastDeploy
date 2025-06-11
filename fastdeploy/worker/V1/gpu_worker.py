@@ -21,7 +21,7 @@ import paddle
 import paddle.nn as nn
 import pynvml
 
-from fastdeploy.config import LLMConfig
+from fastdeploy.config import FDConfig
 from fastdeploy.engine.request import Request
 from fastdeploy.utils import get_logger
 from fastdeploy.worker.output import ModelRunnerOutput
@@ -36,12 +36,12 @@ class GpuWorker(WorkerBase):
 
     def __init__(
         self,
-        llm_config: LLMConfig,
+        fd_config: FDConfig,
         local_rank: int,
         rank: int,
     ):
         super().__init__(
-            llm_config=llm_config,
+            fd_config=fd_config,
             local_rank=local_rank,
             rank=rank,
         )
@@ -58,13 +58,6 @@ class GpuWorker(WorkerBase):
             paddle.set_default_dtype(self.parallel_config.dtype)
             self.device_ids = self.parallel_config.device_ids.split(",")
 
-            # Get free memory info
-            pynvml.nvmlInit()
-            handler = pynvml.nvmlDeviceGetHandleByIndex(self.local_rank)
-            meminfo = pynvml.nvmlDeviceGetMemoryInfo(handler)
-            pynvml.nvmlShutdown()
-
-            self.free_gpu_memory = meminfo.free
             gc.collect()
             paddle.device.cuda.empty_cache()
         else:
@@ -73,7 +66,7 @@ class GpuWorker(WorkerBase):
 
         # Construct model runner
         self.model_runner: GPUModelRunner = GPUModelRunner(
-            llm_config=self.llm_config,
+            fd_config=self.fd_config,
             device=self.device,
             rank=self.rank,
             local_rank=self.local_rank)
@@ -128,8 +121,7 @@ class GpuWorker(WorkerBase):
         not_paddle_use_mem = after_run_meminfo.used - paddle_reserved_mem_after_run
         peak_memory = paddle_allocated_mem_after_run + not_paddle_use_mem
 
-        available_kv_cache_memory = after_run_meminfo.total * (
-            self.parallel_config.gpu_memory_utilization - 0.04) - peak_memory
+        available_kv_cache_memory = after_run_meminfo.total * self.parallel_config.gpu_memory_utilization - peak_memory
 
         end_time = time.perf_counter()
         logger.info(

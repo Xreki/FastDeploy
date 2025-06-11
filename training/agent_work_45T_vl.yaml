@@ -1,0 +1,8 @@
+# model: "/root/paddlejob/workspace/env_run/gaoziyuan/model/duomo/10.174.147.78:8208/merge_llm_model"
+model: "/root/paddlejob/workspace/env_run/gaoziyuan/model/ERNIE-45-Turbo-VL/merge_llm_model"
+max_model_len: 32768
+max_num_seqs: 10
+kv_cache_ratio: 0.2
+# gpu_memory_utilization: 0.8
+dynamic_load_weight: 1
+enable_mm: 1

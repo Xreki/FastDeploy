@@ -128,9 +128,8 @@ class ModelConfig(PretrainedConfig):
         freeze_embedding=False,
         rope_head_dim=None,
         base_model_prefix=None,
-        use_moe=False,
         ffn_hidden_size: Optional[int] = None,
-        dtype=None,
+        dtype="bfloat16",
         export_model_type: str = "weight_only_int8",
         use_stop_seqs: bool = False,
         return_all_hidden_states: bool = False,
@@ -175,7 +174,6 @@ class ModelConfig(PretrainedConfig):
         self.prefix_name = prefix_name
         self.freeze_embedding = freeze_embedding
         self.rope_head_dim = rope_head_dim
-        self.use_moe = use_moe
         self.base_model_prefix = base_model_prefix
         if moe_layer_start_index is not None:
             self.moe_layer_start_index = moe_layer_start_index
@@ -189,6 +187,7 @@ class ModelConfig(PretrainedConfig):
         self.start_layer_index = start_layer_index
         self.output_via_mq = output_via_mq
         self.embedding_use_lm_head_weight = embedding_use_lm_head_weight
+        self.dtype = dtype
 
 
 # This class will be removed in future and replaced by MoEConfig
@@ -280,14 +279,13 @@ class MoEConfig:
     moe_layer_start_index = 0
     moe_use_ffn_shared_weight_and_bias = (False, )
     moe_group = (False, )
-    moe_quant_type = "weight_only_int8"
+    moe_quant_type = "weight_only_int4"
     num_max_dispatch_tokens_per_rank = 256
 
     has_multimodality: bool = False
     im_patch_id = (
         100295  # multimodality, TODO(liuyuanle): read from config.json
     )
-    moe_tag = ""
 
 
 @dataclass
@@ -563,11 +561,7 @@ class LoadConfig:
                                                                           1]
 
         layer_name = f"{model_config.base_model_prefix}.decoder.norm"
-        if not model_config.use_moe:
-            mapping[
-                layer_name] = f"{model_config.base_model_prefix}.decoder.norm.weight"
-        else:
-            mapping[layer_name] = "ernie.norm.weight"
+        mapping[layer_name] = "ernie.norm.weight"
 
         layer_name = f"{model_config.base_model_prefix}.e_norm"
         mapping[layer_name] = f"{model_config.base_model_prefix}.e_norm.weight"
@@ -655,7 +649,7 @@ class DecodingConfig:
 
 
 @dataclass
-class LLMConfig:
+class FDConfig:
     """
     The configuration class which contains all fastdeploy-related configuration. This
     simplifies passing around the distinct configurations in the codebase.
