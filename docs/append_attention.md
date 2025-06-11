@@ -1,9 +1,7 @@
 Append Attention文档整理
 
 # 一、前言
-对于Append Attention在使用过程中遇到的问题、各种参数的含义、用法，以及prefill与decode场景下append attention分别应该如何使用，需要注意的点以及踩坑部分，沉淀一份文档出来便于各位参考与借鉴。
-
-**时间：2025.4.17**
+对于Append Attention在使用过程中遇到的问题、各种参数的含义、用法，以及prefill与decode场景下append attention分别应该如何使用，需要注意的点以及踩坑部分，便于各位参考与借鉴。
 
 截止目前，Append Attn有 **必填Tensor** 参数**21**个，**可选Tensor** 参数**12**个，**普通非Tensor** 参数**11**个，总计**44**个参数。
 
@@ -242,15 +240,6 @@ def get_padding_offset(bsz, max_seq_len, seq_lens_this_time):
 ```
 
 
-此处附上一份append attention单测，由[@李臻云](https://ku.baidu-int.com?t=mention&mt=contact&id=f5c26f40-35f7-11f0-9175-8197b03284ba)提供。
-
-
-
-
-有关 excess_blocks参数，是由 [PR10446](https://github.com/PaddlePaddle/PaddleNLP/pull/10446) 新增 [@陈凯伦](https://ku.baidu-int.com?t=mention&mt=contact&id=ddc32280-35f8-11f0-9175-8197b03284ba)[@吴飞圣](https://ku.baidu-int.com?t=mention&mt=contact&id=cd16b760-36f9-11f0-9b85-61d37deb2e5c)：动态插入支持输入input_ids，tp并行时所有rank返回token，以及kv_cache显存延迟分配。append attn增加excess_blocks修复动态插入时显存越界。
-
-该参数的创建方法，参照 [Link](llm/predict/predictor.py)
-
 
 
 ## 3.3 通用信息参数
@@ -343,17 +332,6 @@ paddle::Tensor k = paddle::reshape(qkv_with_rope[1], {-1, num_kv_head, head_dim_
 paddle::Tensor v = paddle::reshape(qkv_with_rope[2], {-1, num_kv_head, head_dim_v});
 ```
 至于如何在Python层面访问q、k、v，如法炮制即可。
-
-
-
-# 五、如何修改append attention
-这一部分记录一下之前Sage Attention融入Append Attention过程中遇到的问题。
-
-首先Append Attention经历了层层封装，具体来说有这样几层：
-
-1. append_attention.cu: 定义AppendAttention入口，下面根据输入数据类型来dispatch到不同的AppendAttentionKernel。同时也定义了AppendAttentionKernel，在这个函数里面管理write_cache + prefill + decode的kernel入口。如果以后需要修改函数入口，比如说给append attn添加某些参数，需要顺着这个逻辑进行修改。
-2. append_attn/append_attention_kernel.h：这份头文件里面定义了CascadeAppendAttention内部的构造。会根据输入类型Dispatch到**C4 C8 C16**三种不同的kernel里面去。
-
 
 
 再往下，是一些零散组件。大致有write_cache_with_rope，append_attn_cX_impl.cuh等。可以去append_attn/路径下细看。
