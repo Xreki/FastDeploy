@@ -67,6 +67,7 @@ class SiluAndMul(nn.Layer):
             raise NotImplementedError
 
         self.bias = bias
+        act_method = act_method.lower()
         if act_method == "silu":
             act_method = "swiglu"
 
