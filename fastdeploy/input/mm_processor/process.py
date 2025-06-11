@@ -395,7 +395,7 @@ class DataProcessor:
             raise ValueError("This model does not support chat_template.")
 
         prompt_token_str = self.tokenizer.apply_chat_template(
-            request, tokenize=False
+            request, tokenize=False, add_generation_prompt=request.get("add_generation_prompt", True))
         ).replace("<|image@placeholder|>", "").replace("<|video@placeholder|>", "")
         prompt_token_ids = self.tokenizer.encode(prompt_token_str, add_special_tokens=False)["input_ids"]
 
