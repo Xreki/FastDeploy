@@ -87,6 +87,9 @@ class DefaultModelLoader(BaseModelLoader):
                 continue
             elif convert_dtype(v.dtype) == "float32":
                 continue
+            elif convert_dtype(v.dtype) in ["int8", "uint8"]:
+                # this is for quantization, we don't need to convert it
+                continue
             state_dict[k] = convert_ndarray_dtype(
                 v, fd_config.parallel_config.dtype)
         model.set_state_dict(state_dict)
