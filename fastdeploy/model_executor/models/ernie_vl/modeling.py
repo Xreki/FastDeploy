@@ -91,7 +91,7 @@ class Ernie45TVLMoE(nn.Layer):
             top_k=fd_config.moe_config.top_k,
             moe_use_gate_correction_bias=fd_config.moe_config.
             moe_use_gate_correction_bias,
-            moe_quant_type=fd_config.moe_config.moe_quant_type,
+            moe_quant_type="weight_only_int8",  # not set weight_only_int4
             layer_idx=layer_id,
             moe_tag="Image",
             gate_weight_key=f"{prefix}.gate.weight_1",
