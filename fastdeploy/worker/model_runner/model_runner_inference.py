@@ -441,7 +441,7 @@ class ModelRunner(ModelRunnerBase):
             self.share_inputs["seq_lens_this_time"],
             self.share_inputs["seq_lens_decoder"],
             self.share_inputs["seq_lens_encoder"],
-            self.share_inputs["padding_offset"],
+            None,  #self.share_inputs["padding_offset"],
             self.args.max_model_len,
         )
         logits = self.model.compute_logits(hiddden_states)

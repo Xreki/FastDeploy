@@ -22,7 +22,7 @@ import numpy as np
 import paddle
 import paddle.nn as nn
 
-from fastdeploy.config import KVCacheConfig, FDConfig
+from fastdeploy.config import FDConfig, KVCacheConfig
 from fastdeploy.engine.request import Request
 from fastdeploy.model_executor.layers.attention import get_attention_backend
 from fastdeploy.model_executor.layers.attention.base_attention_backend import \
@@ -488,7 +488,7 @@ class GPUModelRunner(ModelRunnerBase):
                 self.share_inputs["seq_lens_this_time"],
                 self.share_inputs["seq_lens_decoder"],
                 self.share_inputs["seq_lens_encoder"],
-                self.share_inputs["padding_offset"],
+                None,  #self.share_inputs["padding_offset"],
                 self.parallel_config.max_model_len,
             )
 
@@ -564,7 +564,7 @@ class GPUModelRunner(ModelRunnerBase):
             self.share_inputs["seq_lens_this_time"],
             self.share_inputs["seq_lens_decoder"],
             self.share_inputs["seq_lens_encoder"],
-            self.share_inputs["padding_offset"],
+            None,  #self.share_inputs["padding_offset"],
             self.parallel_config.max_model_len,
         )
 
