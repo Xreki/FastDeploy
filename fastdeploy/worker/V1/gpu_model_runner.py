@@ -671,6 +671,8 @@ class GPUModelRunner(ModelRunnerBase):
         - c4:
         """
         byte_of_dtype = 2
+        if self.fd_config.kv_cache_config.cache_quant_dtype == "cache_int8":
+            byte_of_dtype = 1
 
         head_dim = self.model_config.hidden_size // self.model_config.num_attention_heads
         hidden_dim = head_dim * self.model_config.kv_num_heads
