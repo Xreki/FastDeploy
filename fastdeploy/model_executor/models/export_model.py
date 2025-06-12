@@ -423,6 +423,9 @@ def build_stream_line_model(
 
     model.eval()
 
+    if use_fake_parameter:
+        return config, tokenizer, model, None
+
     if not sharing_state_dicts:
         if use_safetensors:
             #using for safetensor
@@ -593,9 +596,7 @@ def build_stream_line_model(
     else:
         state_dict = sharing_state_dicts
 
-    if use_fake_parameter:
-        return config, tokenizer, model, None
-    elif not use_moe:
+    if not use_moe:
         for k, v in state_dict.items():
             if convert_dtype(v.dtype) == dtype:
                 continue
