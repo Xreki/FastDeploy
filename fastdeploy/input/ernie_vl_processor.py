@@ -43,6 +43,7 @@ class ErnieMoEVLProcessor(ErnieProcessor):
             image_preprocessor_name=preprocessor_path,
             **processor_kwargs
         )
+        self.ernie_processor.eval()
 
         self.decode_status = dict()
         self._load_tokenizer()
