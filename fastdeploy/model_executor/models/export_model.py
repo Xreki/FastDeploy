@@ -25,38 +25,30 @@ import threading
 import paddle
 import paddle.distributed as dist
 from paddle.common_ops_import import convert_dtype
-from fastdeploy.model_executor.models.utils import convert_ndarray_dtype
-from paddlenlp.trainer import RuntimeTimer
-from .tokenizer import ErnieBotTokenizer
-from fastdeploy.inference_args import GenerationPhase
-
-from .utils import (
-    _vocab_size_with_padding,
-    generate_rank_mapping,
-    get_infer_model_path,
-    model_convert_fp8,
-)
-from paddlenlp.transformers import AutoTokenizer
 from paddle.distributed import fleet
+from paddlenlp.trainer import RuntimeTimer
+from paddlenlp.transformers import AutoTokenizer
+from paddlenlp.transformers.configuration_utils import PretrainedConfig
+from paddlenlp.trl import llm_utils
 from paddlenlp.utils.env import USE_FAST_TOKENIZER
 from paddlenlp.utils.log import logger
-from fastdeploy.model_executor.models.utils import load_checkpoint
 
 from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
-                               KVCacheConfig, LLMConfig, LoadConfig,
+                               KVCacheConfig, FDConfig, LoadConfig,
                                ModelConfig, MoEConfig, ParallelConfig,
                                SpeculativeConfig, TmpConfig)
 from fastdeploy.inference_args import GenerationPhase
+from fastdeploy.model_executor.models.utils import (_vocab_size_with_padding,
+                                                    convert_ndarray_dtype,
+                                                    load_checkpoint,
+                                                    parser_quant_type)
 
 from ..layers.quantization import get_quantization_config
 from .ernie import ErnieBotPretrainedModel
 from .model_base import ModelRegistry
 from .qwen2 import Qwen2PretrainedModel
 from .tokenizer import ErnieBotTokenizer
-from .utils import (_vocab_size_with_padding, convert_ndarray_dtype,
-                    load_checkpoint, parser_quant_type)
-from paddlenlp.transformers.configuration_utils import PretrainedConfig
-from paddlenlp.trl import llm_utils
+
 model_classes_mapping = {
     "ErnieForCausalLM": ErnieBotPretrainedModel,
     "Qwen2ForCausalLM": Qwen2PretrainedModel,
@@ -115,52 +107,54 @@ def load_tensor_from_ipc_meta(state_dict):
 
 
 def build_stream_line_model(
-        config_path,
-        model_path,
-        dtype,
-        block_size,
-        max_len,
-        stage_flag,
-        min_dec_len=1,
-        max_dec_len=128,
-        temperature=1,
-        top_k=8,
-        top_p=0.8,
-        pre_caches_length=0,
-        export_model_type="default",
-        use_stop_seqs=False,
-        use_fake_parameter=False,
-        show_topk: int = 0,
-        msg_queue_id=None,
-        pad_vocab=True,
-        tokenizer=None,
-        cache_quant_dtype="default",
-        use_beam_search: bool = False,
-        enf_gen: bool = False,
-        speculate_method=None,
-        speculate_max_draft_token_num: int = 1,
-        speculate_max_candidate_len: int = 5,
-        speculate_verify_window: int = 2,
-        return_all_hidden_states: bool = False,
-        draft_type: str = "None",
-        start_layer_index: int = 0,
-        moe_quant_type: str = "default",
-        use_ep: bool = False,
-        ep_just_for_test: bool = False,
-        generation_phase: GenerationPhase = GenerationPhase.PREFILL,
-        use_micro_batch: bool = False,
-        fake_server_p: bool = False,
-        scale_dir: str = "None",
-        output_via_mq: bool = True,
-        use_safetensors: bool = False,
-        enable_redundant_experts: bool = False,
-        redundant_experts_num: int = 0,
-        max_batch_size: int = 128,
-        use_offline_quant: bool = False,
-        return_state_dicts: bool = False,
-        sharing_model=None,
-        sharing_state_dicts=None,
-        return_llm_config: bool = False    
+    config_path,
+    model_path,
+    dtype,
+    block_size,
+    max_len,
+    stage_flag,
+    min_dec_len=1,
+    max_dec_len=128,
+    temperature=1,
+    top_k=8,
+    top_p=0.8,
+    pre_caches_length=0,
+    export_model_type="default",
+    use_stop_seqs=False,
+    use_fake_parameter=False,
+    show_topk: int = 0,
+    msg_queue_id=None,
+    pad_vocab=True,
+    tokenizer=None,
+    cache_quant_dtype="none",
+    use_beam_search: bool = False,
+    enf_gen: bool = False,
+    speculate_method=None,
+    speculate_max_draft_token_num: int = 1,
+    speculate_max_candidate_len: int = 5,
+    speculate_verify_window: int = 2,
+    return_all_hidden_states: bool = False,
+    draft_type: str = "None",
+    start_layer_index: int = 0,
+    moe_quant_type: str = "default",
+    use_ep: bool = False,
+    ep_just_for_test: bool = False,
+    generation_phase: GenerationPhase = GenerationPhase.PREFILL,
+    use_micro_batch: bool = False,
+    fake_server_p: bool = False,
+    scale_dir: str = "None",
+    output_via_mq: bool = True,
+    use_safetensors: bool = False,
+    enable_redundant_experts: bool = False,
+    redundant_experts_num: int = 0,
+    max_batch_size: int = 128,
+    use_offline_quant: bool = False,
+    return_state_dicts: bool = False,
+    sharing_model=None,
+    sharing_state_dicts=None,
+    return_fd_config: bool = False,
+    use_empty_parameter: bool = False,
+    embeddings_column_cut: bool = False,
 ):
     """
     Build a fused inference model
@@ -210,6 +204,8 @@ def build_stream_line_model(
             )
 
     config, _ = PretrainedConfig.get_config_dict(model_path)
+    config["head_dim"] = config.get(
+        "head_dim", config["hidden_size"] // config["num_attention_heads"])
     model_config = ModelConfig.from_dict(config)
 
     parallel_config = ParallelConfig()
@@ -221,6 +217,7 @@ def build_stream_line_model(
     moe_config = MoEConfig()
     decoding_config = DecodingConfig()
     kv_cache_config = KVCacheConfig()
+    kv_cache_config.cache_quant_dtype = cache_quant_dtype
 
     tensor_parallel_rank, tensor_parallel_degree = llm_utils.init_dist_env()
     parallel_config.tensor_parallel_rank = tensor_parallel_rank
@@ -244,38 +241,44 @@ def build_stream_line_model(
     tmp_config.use_offline_quant = use_offline_quant
     if use_ep:
         if isinstance(model_config.moe_num_experts, list):
-            #TODO(YuanRisheng) We need abandon old config(eg.ErnieBotMoEConfig) and 
+            #TODO(YuanRisheng) We need abandon old config(eg.ErnieBotMoEConfig) and
             # support load config file in new config architecture
             model_config.has_multimodality = True
             moe_config.num_experts = model_config.moe_num_experts[0]
         else:
             moe_config.num_experts = model_config.moe_num_experts
         moe_config.num_experts_per_rank = (
-            moe_config.num_experts // parallel_config.tensor_parallel_degree
-        )
+            moe_config.num_experts // parallel_config.tensor_parallel_degree)
         moe_config.num_experts_start_offset = (
-            moe_config.num_experts_per_rank * parallel_config.tensor_parallel_rank
-        )
+            moe_config.num_experts_per_rank *
+            parallel_config.tensor_parallel_rank)
 
     # use the length of tokenizer as the origin vocab size
     ori_vocab_size = len(tokenizer)
-    moe_intermediate_size = (config.get("moe_intermediate_size", None),)
+    moe_intermediate_size = (config.get("moe_intermediate_size", None), )
     if isinstance(moe_intermediate_size, list) or isinstance(
-        moe_intermediate_size, tuple
-    ):
+            moe_intermediate_size, tuple):
         moe_intermediate_size = moe_intermediate_size[0]
 
     if not use_ep and pad_vocab:
+        hcg = fleet.get_hybrid_communicate_group()
         config["vocab_size"] = _vocab_size_with_padding(
             config.get("vocab_size", tokenizer.vocab_size),
             config.pop("vocab_size_divisible_unit", 128),
-            paddle.distributed.get_world_size(),
+            hcg.get_model_parallel_world_size(),
         )
 
     group_size = config.get("group_size", -1)
     num_key_value_heads = config.get("num_key_value_heads", -1)
     if num_key_value_heads is None:
         num_key_value_heads = -1
+
+    # RL need, some model num_key_value_heads less tensor_parallel_degree, need copy
+    if num_key_value_heads < tensor_parallel_degree:
+        logger.warning(
+            f"key value heads num is {num_key_value_heads}, tensor parallel degree is {tensor_parallel_degree}"
+        )
+        num_key_value_heads = tensor_parallel_degree
 
     if config.get("ffn_hidden_size", None) is not None:
         ffn_hidden_size = config["ffn_hidden_size"]
@@ -296,25 +299,32 @@ def build_stream_line_model(
         num_layers = 1
     else:
         num_layers = config.get("num_layers", None) or config.get(
-            "num_hidden_layers", None
-        )
+            "num_hidden_layers", None)
     if num_layers is None:
         raise ValueError(f"num_layers<{num_layers}> is invalid")
 
+    remove_tail_layer = config.get("remove_tail_layer")
+    if remove_tail_layer is True:
+        num_layers -= 1
+    elif isinstance(remove_tail_layer, int):
+        num_layers -= remove_tail_layer
+
     use_moe = config.get(
-        "moe_layer_start_index", num_layers
-    ) < num_layers or draft_type in ["mtp", "eagle"]
+        "moe_layer_start_index",
+        num_layers) < num_layers or draft_type in ["mtp", "eagle"]
 
     if not sharing_state_dicts:
-        if use_fake_parameter:
+        if use_empty_parameter:
+            context = paddle.LazyGuard()
+        elif use_fake_parameter:
             context = contextlib.nullcontext()
         elif use_safetensors:
             context = paddle.LazyGuard()
             model_class = model_classes_mapping[architectures[0]]
             state_dict = load_checkpoint(model_path,
-                                        model_class,
-                                        model_config,
-                                        return_numpy=True)
+                                         model_class,
+                                         model_config,
+                                         return_numpy=True)
         elif use_moe:
             tensor_parallel_degree = dist.get_world_size()
             if tensor_parallel_degree > 1:
@@ -330,7 +340,8 @@ def build_stream_line_model(
 
                 pp_num = subdir_count
                 rank_model_paths = [
-                    os.path.join(model_path, f"pp{i}/model_state.tp0{mp_id}.pdparams")
+                    os.path.join(model_path,
+                                 f"pp{i}/model_state.tp0{mp_id}.pdparams")
                     for i in range(pp_num)
                 ]
 
@@ -340,11 +351,12 @@ def build_stream_line_model(
                 state_dicts = [None for _ in rank_model_paths]
 
                 def load_ckpt(i):
-                    state_dicts[i] = paddle.load(rank_model_paths[i], return_numpy=True)
+                    state_dicts[i] = paddle.load(rank_model_paths[i],
+                                                 return_numpy=True)
 
                 threads = []
                 for i in range(len(rank_model_paths)):
-                    thread = threading.Thread(target=load_ckpt, args=(i,))
+                    thread = threading.Thread(target=load_ckpt, args=(i, ))
                     threads.append(thread)
                     thread.start()
 
@@ -361,26 +373,24 @@ def build_stream_line_model(
                 files = glob.glob(model_path + "/merged_tp1_state_split/*")
                 for file_name in files:
                     try:
-                        state_dicts += [
-                            {file_name.split("/")[-1]: file_name}
-                        ]  # save {layer_name: weight_file_name}
+                        state_dicts += [{
+                            file_name.split("/")[-1]: file_name
+                        }]  # save {layer_name: weight_file_name}
                     except Exception:
                         pass
 
             need_reset_moe_intermediate_size = False
             if not use_ep:
-                logger.info(f"moe_intermediate_size is: {moe_intermediate_size}")
+                logger.info(
+                    f"moe_intermediate_size is: {moe_intermediate_size}")
                 need_reset_moe_intermediate_size = (
-                    (not use_ep)
-                    and (moe_quant_type == "fp8")
-                    and (moe_intermediate_size // 8 % 128 != 0)
-                )
+                    (not use_ep) and (moe_quant_type == "fp8")
+                    and (moe_intermediate_size // 8 % 128 != 0))
                 ori_up_size = moe_intermediate_size // 8 * 2
                 ori_down_size = ori_up_size // 2
                 if need_reset_moe_intermediate_size:
-                    moe_intermediate_size = (
-                        128 - moe_intermediate_size // 8 % 128
-                    ) * 8 + moe_intermediate_size
+                    moe_intermediate_size = (128 - moe_intermediate_size // 8 %
+                                             128) * 8 + moe_intermediate_size
                     logger.info(
                         f"moe_intermediate_size reset to {moe_intermediate_size}!"
                     )
@@ -394,21 +404,22 @@ def build_stream_line_model(
                 # logger.info(f"deal {key}")
                 if ("experts" in key) and ("up_gate_proj" in key):
                     # logger.info("up_gate_proj")
-                    v_new = np.zeros(shape=[value.shape[0], up_size], dtype=value.dtype)
+                    v_new = np.zeros(shape=[value.shape[0], up_size],
+                                     dtype=value.dtype)
                     v_new[:, :ori_down_size] = value[:, :ori_down_size]
-                    v_new[:, down_size : (down_size + ori_down_size)] = value[
-                        :, ori_down_size:
-                    ]
+                    v_new[:, down_size:(down_size +
+                                        ori_down_size)] = value[:,
+                                                                ori_down_size:]
                 elif ("experts" in key) and ("down_proj" in key):
                     # logger.info("down_proj")
-                    v_new = np.zeros(
-                        shape=[down_size, value.shape[1]], dtype=value.dtype
-                    )
+                    v_new = np.zeros(shape=[down_size, value.shape[1]],
+                                     dtype=value.dtype)
                     v_new[:ori_down_size, :] = value
                 else:
                     v_new = value
                 new_state_dict[key] = v_new
-                if ("experts" in key) and ("up_gate_proj" in key or "down_proj" in key):
+                if ("experts" in key) and ("up_gate_proj" in key
+                                           or "down_proj" in key):
                     pass
                     # logger.info(f"padding {key}: {value.shape}->{v_new.shape}")
 
@@ -416,7 +427,8 @@ def build_stream_line_model(
             for state_dict in state_dicts:
                 for key, value in state_dict.items():
                     if need_reset_moe_intermediate_size:
-                        thread = threading.Thread(target=padding, args=(key, value))
+                        thread = threading.Thread(target=padding,
+                                                  args=(key, value))
                         threads.append(thread)
                         thread.start()
                     else:
@@ -433,24 +445,27 @@ def build_stream_line_model(
                 hcg = fleet.get_hybrid_communicate_group()
                 mp_id = hcg.get_model_parallel_rank()
                 rank_model_path = os.path.join(
-                    model_path, f"model_state.tp0{mp_id}.pdparams"
-                )
+                    model_path, f"model_state.tp0{mp_id}.pdparams")
                 if not os.path.exists(rank_model_path):
-                    full_model_path = os.path.join(model_path, "model_state.pdparams")
+                    full_model_path = os.path.join(model_path,
+                                                   "model_state.pdparams")
                     if not os.path.exists(full_model_path):
                         raise ValueError(
                             f"can not find <model_state.tp0{mp_id}.pdparams> "
-                            + f"and model_state.pdparams under dir<{model_path}>"
+                            +
+                            f"and model_state.pdparams under dir<{model_path}>"
                         )
                     raise ValueError(
                         "please run `split_weights.py` to gen weights for multi-gpu inference."
                     )
                 if not os.path.exists(rank_model_path):
-                    full_model_path = os.path.join(model_path, "model_state.pdparams")
+                    full_model_path = os.path.join(model_path,
+                                                   "model_state.pdparams")
                     if not os.path.exists(full_model_path):
                         raise ValueError(
                             f"can not find <model_state.tp0{mp_id}.pdparams> "
-                            + f"and model_state.pdparams under dir<{model_path}>"
+                            +
+                            f"and model_state.pdparams under dir<{model_path}>"
                         )
                     raise ValueError(
                         "please run `split_weights.py` to gen weights for multi-gpu inference."
@@ -461,7 +476,8 @@ def build_stream_line_model(
                         num_key_value_heads % tensor_parallel_degree == 0
                     ), "num_key_value_heads must be an integer multiple of tensor_parallel_degree"
             else:
-                model_state_path = os.path.join(model_path, "model_state.pdparams")
+                model_state_path = os.path.join(model_path,
+                                                "model_state.pdparams")
             context = paddle.LazyGuard()
             logger.info(f"start to loading weight: {model_state_path}")
             if os.path.exists(model_state_path):
@@ -512,18 +528,19 @@ def build_stream_line_model(
     model_config.return_all_hidden_states = return_all_hidden_states
     speculative_config.draft_type = draft_type
     model_config.start_layer_index = start_layer_index
-    model_config.use_moe = use_moe
     if use_moe:
         moe_config.use_moe = use_moe
         moe_config.num_experts = config.get("moe_num_experts", None)
         moe_config.moe_intermediate_size = config.get("moe_intermediate_size",
-                                                    None)
+                                                      None)
         moe_config.moe_use_gate_correction_bias = config.get(
             "moe_use_gate_correction_bias", True)
         moe_config.moe_every2 = config.get("moe_every2", False)
         moe_config.moe_topk = config.get("moe_topk", 8)
-        moe_config.moe_num_shared_experts = config.get("moe_num_shared_experts", 0)
-        moe_config.moe_layer_start_index = config.get("moe_layer_start_index", 0)
+        moe_config.moe_num_shared_experts = config.get(
+            "moe_num_shared_experts", 0)
+        moe_config.moe_layer_start_index = config.get("moe_layer_start_index",
+                                                      0)
         moe_config.moe_use_ffn_shared_weight_and_bias = config.get(
             "moe_use_ffn_shared_weight_and_bias", False)
         moe_config.use_moe = use_moe
@@ -538,7 +555,6 @@ def build_stream_line_model(
     tmp_config.weight_block_size = config.get("weight_block_size", [-1, -1])
     load_config.scale_dir = scale_dir
     model_config.output_via_mq = output_via_mq
-
 
     decoding_config.bos_token_id = tokenizer.bos_token_id
     decoding_config.pad_token_id = tokenizer.pad_token_id
@@ -622,7 +638,7 @@ def build_stream_line_model(
     else:
         quant_config = None
 
-    llm_config = LLMConfig(
+    fd_config = FDConfig(
         model_config=model_config,
         parallel_config=parallel_config,
         speculative_config=speculative_config,
@@ -638,15 +654,15 @@ def build_stream_line_model(
 
     with context:
         model_cls = ModelRegistry.get_class(model_config.architectures[0])
-        model = model_cls(llm_config)
+        model = model_cls(fd_config)
 
     model.eval()
 
     if use_fake_parameter:
-        if return_llm_config:
-            return llm_config, tokenizer, model
+        if return_fd_config:
+            return fd_config, tokenizer, model, None
         else:
-            return config, tokenizer, model
+            return config, tokenizer, model, None
     elif not use_moe:
         for k, v in state_dict.items():
             if convert_dtype(v.dtype) == dtype:
@@ -667,8 +683,8 @@ def build_stream_line_model(
         for k in list(sharing_state_dicts):
             sharing_state_dicts.pop(k)
     possible_state_dict = state_dict if return_state_dicts else None
-    
-    if return_llm_config:
-        return llm_config, tokenizer, model, possible_state_dict
+
+    if return_fd_config:
+        return fd_config, tokenizer, model, possible_state_dict
     else:
         return config, tokenizer, model, possible_state_dict

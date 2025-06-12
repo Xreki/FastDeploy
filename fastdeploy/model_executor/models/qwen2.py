@@ -23,7 +23,7 @@ from paddle import nn
 from paddlenlp.transformers import PretrainedModel
 from paddlenlp.utils.log import logger
 
-from fastdeploy.config import LLMConfig, ModelConfig
+from fastdeploy.config import FDConfig, ModelConfig
 from fastdeploy.model_executor.layers.activation import SiluAndMul
 from fastdeploy.model_executor.layers.attention import Attention
 from fastdeploy.model_executor.layers.embeddings import VocabParallelEmbedding
@@ -41,32 +41,32 @@ class Qwen2MLP(nn.Layer):
 
     def __init__(
         self,
-        llm_config: LLMConfig,
+        fd_config: FDConfig,
         prefix: str = "",
     ) -> None:
         super().__init__()
-        self.nranks = llm_config.parallel_config.mp_size
+        self.nranks = fd_config.parallel_config.mp_size
         self.gate_up_proj = MergedColumnParallelLinear(
-            llm_config=llm_config,
+            fd_config=fd_config,
             prefix=f"{prefix}.up_gate_proj",
             with_bias=False,
-            activation=llm_config.model_config.hidden_act,
+            activation=fd_config.model_config.hidden_act,
             use_fast_ffn=True,
         )
 
         self.down_proj = RowParallelLinear(
-            llm_config=llm_config,
+            fd_config=fd_config,
             prefix=f"{prefix}.down_proj",
-            input_size=(llm_config.model_config.ffn_hidden_size //
+            input_size=(fd_config.model_config.ffn_hidden_size //
                         self.nranks),
-            output_size=llm_config.model_config.hidden_size,
+            output_size=fd_config.model_config.hidden_size,
             with_bias=False,
         )
 
         self.act_fn = SiluAndMul(
-            llm_config=llm_config,
+            fd_config=fd_config,
             bias=getattr(self.gate_up_proj, "linear_bias", None),
-            act_method=llm_config.model_config.hidden_act,
+            act_method=fd_config.model_config.hidden_act,
         )
 
     def load_state_dict(self, state_dict):
@@ -89,25 +89,25 @@ class Qwen2Attention(nn.Layer):
     """
 
     def __init__(self,
-                 llm_config: LLMConfig,
+                 fd_config: FDConfig,
                  layer_id: int,
                  prefix: str = "") -> None:
         super().__init__()
 
-        nranks = llm_config.parallel_config.mp_size
+        nranks = fd_config.parallel_config.mp_size
 
-        self.qkv_proj = QKVParallelLinear(llm_config=llm_config,
+        self.qkv_proj = QKVParallelLinear(fd_config=fd_config,
                                           prefix=f"{prefix}.qkv_proj",
                                           with_bias=True)
 
         self.o_proj = RowParallelLinear(
-            llm_config=llm_config,
+            fd_config=fd_config,
             prefix=f"{prefix}.o_proj",
-            input_size=(llm_config.model_config.hidden_size // nranks),
-            output_size=llm_config.model_config.hidden_size,
+            input_size=(fd_config.model_config.hidden_size // nranks),
+            output_size=fd_config.model_config.hidden_size,
         )
 
-        self.attn = Attention(llm_config=llm_config,
+        self.attn = Attention(fd_config=fd_config,
                               layer_id=layer_id,
                               prefix=prefix,
                               use_neox_rotary_style=True)
@@ -141,33 +141,33 @@ class Qwen2DecoderLayer(nn.Layer):
 
     def __init__(
         self,
-        llm_config: LLMConfig,
+        fd_config: FDConfig,
         prefix: str = "",
     ) -> None:
         super().__init__()
         layer_id = int(prefix.split(sep='.')[-1])
 
         self.self_attn = Qwen2Attention(
-            llm_config=llm_config,
+            fd_config=fd_config,
             layer_id=layer_id,
             prefix=f"{prefix}.self_attn",
         )
 
         self.mlp = Qwen2MLP(
-            llm_config=llm_config,
+            fd_config=fd_config,
             prefix=f"{prefix}.mlp",
         )
 
         self.input_layernorm = RMSNorm(
-            llm_config,
-            hidden_size=llm_config.model_config.hidden_size,
+            fd_config,
+            hidden_size=fd_config.model_config.hidden_size,
             eps=1e-6,
             prefix=f"{prefix}.input_layernorm",
         )
 
         self.post_attention_layernorm = RMSNorm(
-            llm_config,
-            hidden_size=llm_config.model_config.hidden_size,
+            fd_config,
+            hidden_size=fd_config.model_config.hidden_size,
             eps=1e-6,
             prefix=f"{prefix}.post_attention_layernorm",
         )
@@ -216,7 +216,7 @@ class Qwen2Model(nn.Layer):
 
     def __init__(
         self,
-        llm_config: LLMConfig = None,
+        fd_config: FDConfig = None,
     ):
         """
         Initializer for the Qwen2Model class.
@@ -226,29 +226,29 @@ class Qwen2Model(nn.Layer):
         """
         super().__init__()
 
-        self.num_layers = llm_config.model_config.num_layers
-        llm_config.model_config.prefix_name = "qwen2"
+        self.num_layers = fd_config.model_config.num_layers
+        fd_config.model_config.prefix_name = "qwen2"
 
         self.embeddings = VocabParallelEmbedding(
-            llm_config=llm_config,
-            num_embeddings=llm_config.model_config.vocab_size,
-            embedding_dim=llm_config.model_config.hidden_size,
+            fd_config=fd_config,
+            num_embeddings=fd_config.model_config.vocab_size,
+            embedding_dim=fd_config.model_config.hidden_size,
             params_dtype=paddle.get_default_dtype,
-            prefix=(f"{llm_config.model_config.prefix_name}.embed_tokens"),
+            prefix=(f"{fd_config.model_config.prefix_name}.embed_tokens"),
         )
 
         self.layers = nn.LayerList([
             Qwen2DecoderLayer(
-                llm_config=llm_config,
-                prefix=f"{llm_config.model_config.prefix_name}.layers.{i}")
+                fd_config=fd_config,
+                prefix=f"{fd_config.model_config.prefix_name}.layers.{i}")
             for i in range(self.num_layers)
         ])
 
         self.norm = RMSNorm(
-            llm_config,
-            hidden_size=llm_config.model_config.hidden_size,
+            fd_config,
+            hidden_size=fd_config.model_config.hidden_size,
             eps=1e-5,
-            prefix=f"{llm_config.model_config.prefix_name}.norm",
+            prefix=f"{fd_config.model_config.prefix_name}.norm",
         )
 
     def load_state_dict(self, state_dict):
@@ -294,21 +294,21 @@ class Qwen2ForCausalLM(ModelForCasualLM):
     Qwen2ForCausalLM
     """
 
-    def __init__(self, llm_config: LLMConfig):
+    def __init__(self, fd_config: FDConfig):
         """
         Args:
-            llm_config (LLMConfig): Configurations for the LLM model.
+            fd_config (FDConfig): Configurations for the LLM model.
         """
-        super(Qwen2ForCausalLM, self).__init__(llm_config)
+        super(Qwen2ForCausalLM, self).__init__(fd_config)
 
-        self.model = Qwen2Model(llm_config=llm_config)
+        self.model = Qwen2Model(fd_config=fd_config)
 
-        self.ori_vocab_size = llm_config.model_config.ori_vocab_size
+        self.ori_vocab_size = fd_config.model_config.ori_vocab_size
 
         self.lm_head = ParallelLMHead(
-            llm_config=llm_config,
-            embedding_dim=llm_config.model_config.hidden_size,
-            num_embeddings=llm_config.model_config.vocab_size,
+            fd_config=fd_config,
+            embedding_dim=fd_config.model_config.hidden_size,
+            num_embeddings=fd_config.model_config.vocab_size,
             prefix="lm_head",
         )
 
@@ -357,7 +357,7 @@ class Qwen2PretrainedModel(PretrainedModel):
     Qwen2PretrainedModel
     """
 
-    config_class = LLMConfig
+    config_class = FDConfig
 
     def _init_weight(self, layer):
         """

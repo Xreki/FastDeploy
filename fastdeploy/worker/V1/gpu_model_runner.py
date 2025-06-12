@@ -22,7 +22,7 @@ import numpy as np
 import paddle
 import paddle.nn as nn
 
-from fastdeploy.config import KVCacheConfig, LLMConfig
+from fastdeploy.config import FDConfig, KVCacheConfig
 from fastdeploy.engine.request import Request
 from fastdeploy.model_executor.layers.attention import get_attention_backend
 from fastdeploy.model_executor.layers.attention.base_attention_backend import \
@@ -46,9 +46,9 @@ logger = get_logger("gpu_model_runner", "gpu_model_runner.log")
 class GPUModelRunner(ModelRunnerBase):
     """ """
 
-    def __init__(self, llm_config: LLMConfig, device: str, rank: int,
+    def __init__(self, fd_config: FDConfig, device: str, rank: int,
                  local_rank: int):
-        super().__init__(llm_config=llm_config, device=device)
+        super().__init__(fd_config=fd_config, device=device)
         self.rank = rank
         self.local_rank = local_rank
 
@@ -64,7 +64,7 @@ class GPUModelRunner(ModelRunnerBase):
                                       dtype='int32')
 
         # Initialize share inputs
-        self._init_share_inputs(self.llm_config.parallel_config.max_num_seqs)
+        self._init_share_inputs(self.fd_config.parallel_config.max_num_seqs)
         self.infer_seed_increment = paddle.full(
             shape=[self.parallel_config.max_num_seqs, 1],
             fill_value=4,
@@ -374,7 +374,7 @@ class GPUModelRunner(ModelRunnerBase):
             f"Starting to load model {self.model_config.architectures[0]}")
         time_before_load = time.perf_counter()
         # 1. Load original model
-        self.model = get_model_from_loader(llm_config=self.llm_config)
+        self.model = get_model_from_loader(fd_config=self.fd_config)
 
         # 2. Load lora model
 
@@ -450,7 +450,7 @@ class GPUModelRunner(ModelRunnerBase):
         # Get the attention backend
         attn_cls = get_attention_backend(
             self.parallel_config.attention_backend)
-        attn_backend = attn_cls(self.llm_config,
+        attn_backend = attn_cls(self.fd_config,
                                 kv_num_heads=self.model_config.kv_num_heads,
                                 num_heads=num_heads,
                                 head_dim=head_dim)
@@ -479,15 +479,16 @@ class GPUModelRunner(ModelRunnerBase):
             # 3. Prepare lora
 
             # 4. Run model
-            model_output = self.model(self.share_inputs["ids_remove_padding"],
-                                      self.forward_meta)
+            model_output = self.model(
+                ids_remove_padding=self.share_inputs["ids_remove_padding"],
+                forward_meta=self.forward_meta)
             hiddden_states = rebuild_padding(
                 model_output,
                 self.share_inputs["cum_offsets"],
                 self.share_inputs["seq_lens_this_time"],
                 self.share_inputs["seq_lens_decoder"],
                 self.share_inputs["seq_lens_encoder"],
-                self.share_inputs["padding_offset"],
+                None,  #self.share_inputs["padding_offset"],
                 self.parallel_config.max_model_len,
             )
 
@@ -563,7 +564,7 @@ class GPUModelRunner(ModelRunnerBase):
             self.share_inputs["seq_lens_this_time"],
             self.share_inputs["seq_lens_decoder"],
             self.share_inputs["seq_lens_encoder"],
-            self.share_inputs["padding_offset"],
+            None,  #self.share_inputs["padding_offset"],
             self.parallel_config.max_model_len,
         )
 
@@ -619,8 +620,12 @@ class GPUModelRunner(ModelRunnerBase):
                         batch_size=self.parallel_config.max_num_seqs)
 
         # 3. gc
+        del self.share_inputs["caches"]
+        if self.forward_meta is not None:
+            del self.forward_meta.caches
+        del self.share_inputs["block_tables"]
         # paddle.device.cuda.synchronize()
-        # paddle.device.cuda.empty_cache()
+        paddle.device.cuda.empty_cache()
         # gc.collect()
 
     def update_share_input_block_num(self, num_gpu_blocks: int) -> None:
@@ -632,12 +637,8 @@ class GPUModelRunner(ModelRunnerBase):
         self.num_gpu_blocks = num_gpu_blocks
 
         # Reset block table and kv cache with global block num
-        del self.share_inputs["caches"]
-        if self.forward_meta is not None:
-            del self.forward_meta.caches
         self.initialize_kv_cache()
 
-        del self.share_inputs["block_tables"]
         self.share_inputs["block_tables"] = paddle.full(
             [self.parallel_config.max_num_seqs, self.num_gpu_blocks],
             -1,

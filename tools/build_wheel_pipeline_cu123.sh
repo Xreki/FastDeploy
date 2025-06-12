@@ -21,6 +21,10 @@ CPU_USE_BF16="false"
 CPU_USE_BF16=${2:-$CPU_USE_BF16}
 WITH_CPU="false"
 
+# python_tag
+py=$(${python} -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+python_tag="cp${py//./}"
+
 # paddle distributed use to set archs
 unset PADDLE_CUDA_ARCH_LIST
 
@@ -83,7 +87,7 @@ function copy_ops(){
     WHEEL_NAME="fastdeploy_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
     echo -e "OPS are for BASE"
     mkdir -p ../fastdeploy/model_executor/ops/base
-    find ./${OPS_TMP_DIR_BASE} -type f ! -name "*.cu.o" ! -name "*.o" -exec cp --parents {} ../fastdeploy/model_executor/ops/base \;
+    cp -r ./${OPS_TMP_DIR_BASE}/${WHEEL_BASE_NAME}/* ../fastdeploy/model_executor/ops/base
     echo -e "OPS are for CUDA"
     find ./${OPS_TMP_DIR} -type f ! -name "*.cu.o" ! -name "*.o" -exec cp --parents {} ../fastdeploy/model_executor/ops/gpu \;
     if [ "$WITH_CPU" == "true" ]; then
@@ -98,7 +102,7 @@ function copy_ops(){
         mv "$file" "${file/_pd_/}"
       done
       cd ../../../../
-      find ${OPS_TMP_DIR_CPU}/${WHEEL_CPU_NAME} -type f ! -name "*.cu.o" ! -name "*.o" -exec cp --parents {} ../fastdeploy/model_executor/ops/cpu \;
+      cp -r ./${OPS_TMP_DIR_CPU}/${WHEEL_CPU_NAME}/* ../fastdeploy/model_executor/ops/cpu
     fi
     return
 
@@ -110,16 +114,18 @@ function build_and_install_ops() {
   echo -e "${BLUE}[build]${NONE} build and install fastdeploy_custom_ops..."
   echo -e "${BLUE}[build]${NONE} build and install fastdeploy_base_ops..."
   ${python} setup_ops_base.py install --install-lib ${OPS_TMP_DIR_BASE}
+  find ${OPS_TMP_DIR_BASE} -type f -name "*.o" -exec rm -f {} \;
   echo -e "${BLUE}[build]${NONE} build and install fastdeploy_custom_ops gpu ops..."
   BUILDING_ARCS="[80, 90]" ${python} setup_ops.py install --install-lib ${OPS_TMP_DIR}
+  find ${OPS_TMP_DIR} -type f -name "*.o" -exec rm -f {} \;
   if [ "$WITH_CPU" == "true" ]; then
     echo -e "${BLUE}[build]${NONE} build and install fastdeploy_custom_ops cpu ops..."
     if [ "$CPU_USE_BF16" == "true" ]; then
         CPU_USE_BF16=True ${python} setup_ops_cpu.py install --install-lib ${OPS_TMP_DIR_CPU}
-        :
+        find ${OPS_TMP_DIR_CPU} -type f -name "*.o" -exec rm -f {} \;
     elif [ "$CPU_USE_BF16" == "false" ]; then
         ${python} setup_ops_cpu.py install --install-lib ${OPS_TMP_DIR_CPU}
-        :
+        find ${OPS_TMP_DIR_CPU} -type f -name "*.o" -exec rm -f {} \;
     else
         echo "Error: Invalid parameter '$CPU_USE_BF16'. Please use true or false."
         exit 1
@@ -138,7 +144,7 @@ function build_and_install_ops() {
 
 function build_and_install() {
   echo -e "${BLUE}[build]${NONE} building fastdeploy wheel..."
-  ${python} setup.py bdist_wheel --python-tag py3
+  ${python} setup.py bdist_wheel --python-tag=${python_tag}
   if [ $? -ne 0 ]; then
     echo -e "${RED}[FAIL]${NONE} build fastdeploy wheel failed !"
     exit 1

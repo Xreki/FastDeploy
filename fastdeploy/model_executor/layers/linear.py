@@ -36,7 +36,7 @@ class LinearBase(nn.Layer):
 
     def __init__(
         self,
-        llm_config,
+        fd_config,
         prefix: str = "",
         input_size: int = None,
         output_size: int = None,
@@ -48,7 +48,7 @@ class LinearBase(nn.Layer):
         Initializes a linear layer and provides additional parameters required for inference and quantization.
 
         Args:
-            llm_config (LLMConfig): Inference-related parameters containing attributes such as
+            fd_config (FDConfig): Inference-related parameters containing attributes such as
                 weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
             prefix (str): Unique name of the layer, used to name internal attributes.
@@ -68,11 +68,11 @@ class LinearBase(nn.Layer):
         else:
             raise NotImplementedError
 
-        self.llm_config = llm_config
+        self.fd_config = fd_config
         self.skip_quant = skip_quant
-        self.use_smooth_quant = llm_config.model_config.use_smooth_quant
-        self.weight_dtype = llm_config.model_config.weight_dtype
-        self.act_dtype = llm_config.model_config.act_dtype
+        self.use_smooth_quant = fd_config.model_config.use_smooth_quant
+        self.weight_dtype = fd_config.model_config.weight_dtype
+        self.act_dtype = fd_config.model_config.act_dtype
         self.input_size = input_size
         self.output_size = output_size
         self.with_bias = with_bias
@@ -87,9 +87,9 @@ class LinearBase(nn.Layer):
 
         self._dtype = self._helper.get_default_dtype()
 
-        if llm_config.quant_config:
-            self.quant_method = llm_config.quant_config.get_quant_method(self)
-        self.use_offline_quant = llm_config.tmp_config.use_offline_quant
+        if fd_config.quant_config:
+            self.quant_method = fd_config.quant_config.get_quant_method(self)
+        self.use_offline_quant = fd_config.tmp_config.use_offline_quant
         
     def is_y_transposed(self):
         """
@@ -229,7 +229,7 @@ class LinearBase(nn.Layer):
             assert self.weight_key is not None, 'weight_key should not be None.'
             weight_tensor = get_tensor(state_dict.pop(self.weight_key))
 
-            if self.llm_config.quant_config:
+            if self.fd_config.quant_config:
                 self.quant_method.process_loaded_weights(self, weight_tensor)
             else:
                 self.linear_weight.set_value(weight_tensor)
@@ -275,7 +275,7 @@ class LinearBase(nn.Layer):
         Raises:
             NotImplementedError: If the weight dtype is not float8 or act dtype is not equal to weight dtype.
         """
-        if self.llm_config.quant_config:
+        if self.fd_config.quant_config:
             linear_out = self.quant_method.apply(self, x)
         else:
             linear_out = paddle.matmul(x, self.linear_weight)
@@ -290,7 +290,7 @@ class ReplicatedLinear(LinearBase):
 
     def __init__(
         self,
-        llm_config,
+        fd_config,
         prefix: str = "",
         input_size: int = None,
         output_size: int = None,
@@ -302,7 +302,7 @@ class ReplicatedLinear(LinearBase):
         Initialize a linear layer with additional parameters for inference and quantization.
 
         Args:
-            llm_config (LLMConfig): Arguments related to inference, containing
+            fd_config (FDConfig): Arguments related to inference, containing
                 attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
             prefix (str): Unique name of the layer, used for naming internal attributes,
@@ -310,14 +310,14 @@ class ReplicatedLinear(LinearBase):
             layer_index (int): The index of the linear layer in the model
 
         """
-        super().__init__(llm_config=llm_config,
+        super().__init__(fd_config=fd_config,
                          prefix=prefix,
                          input_size=input_size,
                          output_size=output_size,
                          with_bias=with_bias,
                          add_bias=add_bias,
                          skip_quant=skip_quant)
-        self.nranks = llm_config.parallel_config.mp_size
+        self.nranks = fd_config.parallel_config.mp_size
         self.input_size = input_size
         self.init_weight()
         self.quant_method.create_weights(self)
@@ -366,7 +366,7 @@ class ColumnParallelLinear(LinearBase):
 
     def __init__(
         self,
-        llm_config,
+        fd_config,
         prefix: str = "",
         input_size: int = None,
         output_size: int = None,
@@ -378,7 +378,7 @@ class ColumnParallelLinear(LinearBase):
         Initialize a linear layer with additional parameters for inference and quantization.
 
         Args:
-            llm_config (LLMConfig): Arguments related to inference, containing
+            fd_config (FDConfig): Arguments related to inference, containing
                 attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
             prefix (str): Unique name of the layer, used for naming internal attributes,
@@ -386,14 +386,14 @@ class ColumnParallelLinear(LinearBase):
             layer_index (int): The index of the linear layer in the model
 
         """
-        super().__init__(llm_config=llm_config,
+        super().__init__(fd_config=fd_config,
                          prefix=prefix,
                          input_size=input_size,
                          output_size=output_size,
                          with_bias=with_bias,
                          add_bias=add_bias,
                          skip_quant=skip_quant)
-        self.nranks = llm_config.parallel_config.mp_size
+        self.nranks = fd_config.parallel_config.mp_size
         self.input_size = input_size
         self.output_size = divide(output_size, self.nranks)
         self.init_weight()
@@ -450,7 +450,7 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
 
     def __init__(
         self,
-        llm_config,
+        fd_config,
         prefix,
         with_bias=False,
         add_bias=False,
@@ -463,7 +463,7 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         Initialize the fused ffn1 Linear layer with given parameters.
 
         Args:
-            llm_config (LLMConfig): Arguments related to inference, containing
+            fd_config (FDConfig): Arguments related to inference, containing
                 attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
 
@@ -478,14 +478,14 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         """
         self.use_fast_ffn = use_fast_ffn
         self.activation = activation
-        self.embed_dim = llm_config.model_config.hidden_size
-        self.dim_feedforward = llm_config.model_config.ffn_hidden_size
-        self.nranks = llm_config.parallel_config.mp_size
+        self.embed_dim = fd_config.model_config.hidden_size
+        self.dim_feedforward = fd_config.model_config.ffn_hidden_size
+        self.nranks = fd_config.parallel_config.mp_size
         self.dim_feedforward_per_rank = divide(self.dim_feedforward,
                                                self.nranks)
         input_size = self.embed_dim
         output_size = self.dim_feedforward * 2
-        super().__init__(llm_config=llm_config,
+        super().__init__(fd_config=fd_config,
                          prefix=prefix,
                          input_size=input_size,
                          output_size=output_size,
@@ -543,12 +543,12 @@ class QKVParallelLinear(ColumnParallelLinear):
     QKVParallelLinear Layer.
     """
 
-    def __init__(self, llm_config, prefix, with_bias=False, add_bias=True):
+    def __init__(self, fd_config, prefix, with_bias=False, add_bias=True):
         """
         Initialize the QKV Linear layer with given parameters.
 
         Args:
-            llm_config (LLMConfig): Arguments related to inference, containing
+            fd_config (FDConfig): Arguments related to inference, containing
                 attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
 
@@ -558,16 +558,16 @@ class QKVParallelLinear(ColumnParallelLinear):
             with_bias (bool, optional): Whether to include bias term. Defaults to True.
             skip_quant (bool, optional): Whether to skip quantization steps. Defaults to False.
         """
-        self.num_heads = llm_config.model_config.num_attention_heads
-        self.kv_num_heads = llm_config.model_config.num_key_value_heads
-        self.embed_dim = llm_config.model_config.hidden_size
-        self.head_dim = llm_config.model_config.head_dim
-        self.nranks = llm_config.parallel_config.mp_size
+        self.num_heads = fd_config.model_config.num_attention_heads
+        self.kv_num_heads = fd_config.model_config.num_key_value_heads
+        self.embed_dim = fd_config.model_config.hidden_size
+        self.head_dim = fd_config.model_config.head_dim
+        self.nranks = fd_config.parallel_config.mp_size
         self.num_heads_per_rank = divide(self.num_heads, self.nranks)
         self.kv_num_heads_per_rank = divide(self.kv_num_heads, self.nranks)
         input_size = self.embed_dim
         output_size = (self.num_heads + 2 * self.kv_num_heads) * self.head_dim
-        super().__init__(llm_config=llm_config,
+        super().__init__(fd_config=fd_config,
                          prefix=prefix,
                          input_size=input_size,
                          output_size=output_size,
@@ -602,7 +602,7 @@ class QKVParallelLinear(ColumnParallelLinear):
             ])
             weight_tensor = paddle.transpose(weight_tensor, perm=[1, 0])
 
-        if self.llm_config.quant_config:
+        if self.fd_config.quant_config:
             self.quant_method.process_loaded_weights(self, weight_tensor)
         else:
             self.linear_weight.set_value(weight_tensor)
@@ -654,7 +654,7 @@ class RowParallelLinear(LinearBase):
 
     def __init__(
         self,
-        llm_config,
+        fd_config,
         prefix: str = "",
         input_size: int = None,
         output_size: int = None,
@@ -666,7 +666,7 @@ class RowParallelLinear(LinearBase):
         Initialize a linear layer with additional parameters for inference and quantization.
 
         Args:
-            llm_config (LLMConfig): Arguments related to inference, containing
+            fd_config (FDConfig): Arguments related to inference, containing
                 attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
             prefix (str): Unique name of the layer, used for naming internal attributes,
@@ -674,23 +674,23 @@ class RowParallelLinear(LinearBase):
             layer_index (int): The index of the linear layer in the model
 
         """
-        super().__init__(llm_config=llm_config,
+        super().__init__(fd_config=fd_config,
                          prefix=prefix,
                          input_size=input_size,
                          output_size=output_size,
                          with_bias=with_bias,
                          add_bias=add_bias,
                          skip_quant=skip_quant)
-        self.llm_config = llm_config
+        self.fd_config = fd_config
         self.skip_quant = False
-        self.use_smooth_quant = llm_config.model_config.use_smooth_quant
-        self.weight_dtype = llm_config.model_config.weight_dtype
-        self.act_dtype = llm_config.model_config.act_dtype
-        self.nranks = llm_config.parallel_config.mp_size
-        self.embed_dim = llm_config.model_config.hidden_size
-        self.head_dim = llm_config.model_config.hidden_size // llm_config.model_config.num_attention_heads
-        self.num_heads = llm_config.model_config.num_attention_heads // self.nranks
-        self.dim_feedforward = llm_config.model_config.ffn_hidden_size // self.nranks
+        self.use_smooth_quant = fd_config.model_config.use_smooth_quant
+        self.weight_dtype = fd_config.model_config.weight_dtype
+        self.act_dtype = fd_config.model_config.act_dtype
+        self.nranks = fd_config.parallel_config.mp_size
+        self.embed_dim = fd_config.model_config.hidden_size
+        self.head_dim = fd_config.model_config.hidden_size // fd_config.model_config.num_attention_heads
+        self.num_heads = fd_config.model_config.num_attention_heads // self.nranks
+        self.dim_feedforward = fd_config.model_config.ffn_hidden_size // self.nranks
         self.with_bias = with_bias
         self.prefix = prefix
         self.shift_key = f"{prefix}.shift_bias"
@@ -702,8 +702,8 @@ class RowParallelLinear(LinearBase):
 
         self._dtype = self._helper.get_default_dtype()
 
-        if llm_config.quant_config:
-            self.quant_method = llm_config.quant_config.get_quant_method(self)
+        if fd_config.quant_config:
+            self.quant_method = fd_config.quant_config.get_quant_method(self)
             self.quant_method.create_weights(self)
 
         self.init_weight()
@@ -749,7 +749,7 @@ class RowParallelLinear(LinearBase):
             )
 
     def forward_cuda(self, x):
-        if self.llm_config.quant_config:
+        if self.fd_config.quant_config:
             out = self.quant_method.apply(self, x)
         else:
             out = paddle.matmul(x, self.linear_weight)

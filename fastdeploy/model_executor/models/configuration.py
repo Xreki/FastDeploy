@@ -233,6 +233,8 @@ class ErnieBotConfig(PretrainedConfig):
                 "use_var_len_flash_attn",
             ]
         )
+        if not hasattr(self, "head_dim"):
+            self.head_dim = self.hidden_size // self.num_attention_heads
 
 
 class ErnieBotMoEConfig(ErnieBotConfig):

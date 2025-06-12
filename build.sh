@@ -20,6 +20,10 @@ export python=$PYTHON_VERSION
 CPU_USE_BF16=${3:-"false"}
 BUILDING_ARCS=${4:-""}
 
+# python_tag
+py=$(${python} -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+python_tag="cp${py//./}"
+
 # paddle distributed use to set archs
 unset PADDLE_CUDA_ARCH_LIST
 
@@ -122,13 +126,14 @@ function build_and_install_ops() {
   export no_proxy=bcebos.com,paddlepaddle.org.cn,${no_proxy}
   echo -e "${BLUE}[build]${NONE} build and install fastdeploy_base_ops..."
   ${python} setup_ops_base.py install --install-lib ${OPS_TMP_DIR_BASE}
+  find ${OPS_TMP_DIR_BASE} -type f -name "*.o" -exec rm -f {} \;
   echo -e "${BLUE}[build]${NONE} build and install fastdeploy_ops..."
   if [ "$CPU_USE_BF16" == "true" ]; then
       CPU_USE_BF16=True ${python} setup_ops.py install --install-lib ${OPS_TMP_DIR}
-      :
+      find ${OPS_TMP_DIR} -type f -name "*.o" -exec rm -f {} \;
   elif [ "$CPU_USE_BF16" == "false" ]; then
       ${python} setup_ops.py install --install-lib ${OPS_TMP_DIR}
-      :
+      find ${OPS_TMP_DIR} -type f -name "*.o" -exec rm -f {} \;
   else
       echo "Error: Invalid parameter '$CPU_USE_BF16'. Please use true or false."
       exit 1
@@ -147,9 +152,9 @@ function build_and_install_ops() {
 function build_and_install() {
   echo -e "${BLUE}[build]${NONE} building fastdeploy wheel..."
   if [ "$BUILDING_ARCS" == "" ]; then
-      ${python} setup.py bdist_wheel --python-tag py3
+      ${python} setup.py bdist_wheel --python-tag=${python_tag}
   else
-      BUILDING_ARCS=${BUILDING_ARCS} ${python} setup.py bdist_wheel --python-tag py3
+      BUILDING_ARCS=${BUILDING_ARCS} ${python} setup.py bdist_wheel --python-tag=${python_tag}
   fi
 
   if [ $? -ne 0 ]; then

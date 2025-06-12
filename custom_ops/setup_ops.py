@@ -148,7 +148,6 @@ if paddle.is_compiled_with_rocm():
                 "gpu_ops/save_with_output_msg.cc",
                 "gpu_ops/get_output.cc",
                 "gpu_ops/get_output_msg_with_topk.cc",
-                "gpu_ops/reset_need_stop_value.cc",
                 "gpu_ops/step.cu",
                 "gpu_ops/step_reschedule.cu",
                 "gpu_ops/set_data_ipc.cu",
@@ -192,7 +191,9 @@ elif paddle.is_compiled_with_cuda():
         "gpu_ops/share_external_data.cu",
         "gpu_ops/per_token_quant_fp8.cu",
         "gpu_ops/extract_text_token_output.cu",
-        "gpu_ops/update_split_fuse_input.cu"
+        "gpu_ops/update_split_fuse_input.cu",
+        "gpu_ops/text_image_index_out.cu",
+        "gpu_ops/text_image_gather_scatter.cu"
     ]
 
     # pd_disaggregation
@@ -201,6 +202,8 @@ elif paddle.is_compiled_with_cuda():
         "gpu_ops/open_shm_and_get_meta_signal.cc",
         "gpu_ops/init_signal_layerwise.cc",
         "gpu_ops/cpp_extensions.cc",
+        "gpu_ops/get_data_ptr_ipc.cu",
+        "gpu_ops/ipc_sent_key_value_cache_by_remote_ptr.cu",
     ]
 
     cutlass_dir = "third_party/cutlass"

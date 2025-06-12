@@ -106,11 +106,12 @@ class DynamicLoadModel(nn.Layer):
         self.model_cfg = model_cfg if model_cfg else os.path.join(
             self.model_path, os.getenv("CONFIG_JSON_FILE", "config.json"))
 
-        # build model
-        self.model = self._build_model()
         self.vision_model, self.resampler_model = vision_model, resampler_model
         if use_for_train:
             self.inject_pp_vision_model()
+
+        # build model
+        self.model = self._build_model()
 
         # Create a list of all models to process
         self.models = [self.model]
@@ -133,48 +134,63 @@ class DynamicLoadModel(nn.Layer):
         """
         注入vision model参数
         """
+        from fastdeploy.input.mm_processor.tokenizer import ErnieVLTokenizer
+        tokenizer = ErnieVLTokenizer.from_pretrained(
+            os.path.dirname(self.model_path),
+            model_max_length=self.max_len,
+            padding_side="right",
+            use_fast=False,
+        )
+        tokenizer.ignored_index = -100
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.unk_token
+        self.tokenizer = tokenizer
+
         vision_model_name_or_path = f"{os.path.dirname(self.model_path)}/DFNRopeVisionTransformer"
-        config = ErnieBotMoEVLConfig.from_pretrained(
-            self.model_path,
-            tensor_parallel_degree=self.nranks,
-            tensor_parallel_rank=self.rank,
-            moe_group="dummy",
-        )
-        vision_config = DFNRopeVisionTransformerConfig.from_pretrained(
-            vision_model_name_or_path,
-            tensor_parallel_degree=1,
-            tensor_parallel_rank=0,
-            attn_sep=False,
-            dtype="bfloat16",
-        )
-        config.vision_config = vision_config
-        config.pixel_hidden_size = config.vision_config.hidden_size
+        context = paddle.LazyGuard()
+        with context:
+            config = ErnieBotMoEVLConfig.from_pretrained(
+                self.model_path,
+                tensor_parallel_degree=self.nranks,
+                tensor_parallel_rank=self.rank,
+                moe_group="dummy",
+            )
+            vision_config = DFNRopeVisionTransformerConfig.from_pretrained(
+                vision_model_name_or_path,
+                tensor_parallel_degree=1,
+                tensor_parallel_rank=0,
+                attn_sep=False,
+                dtype="bfloat16",
+            )
+            config.vision_config = vision_config
+            config.pixel_hidden_size = config.vision_config.hidden_size
 
-        config.tensor_parallel_output = False
-        config.sequence_parallel = False
+            config.tensor_parallel_output = False
+            config.sequence_parallel = False
 
-        vision_model = DFNRopeVisionTransformerPretrainedModel.from_pretrained(
-            vision_model_name_or_path, config=config.vision_config)
-        vision_model = paddle.amp.decorate(models=vision_model,
-                                           level="O2",
-                                           dtype="bfloat16")
+            vision_model = DFNRopeVisionTransformerPretrainedModel.from_config(
+                config=config.vision_config)
 
-        resampler_model = VariableResolutionResamplerModel(
-            config.pixel_hidden_size,
-            config.hidden_size,
-            config.spatial_conv_size,
-            config.temporal_conv_size,
-            config=config,
-        )
-        resampler_model = paddle.amp.decorate(models=resampler_model,
-                                              level="O2",
-                                              dtype="bfloat16")
+            vision_model = paddle.amp.decorate(models=vision_model,
+                                            level="O2",
+                                            dtype="bfloat16")
 
-        vision_model.eval()
-        resampler_model.eval()
-        self.vision_model = vision_model
-        self.resampler_model = resampler_model
-        logger.info("inject vision model successfully")
+            resampler_model = VariableResolutionResamplerModel(
+                config.pixel_hidden_size,
+                config.hidden_size,
+                config.spatial_conv_size,
+                config.temporal_conv_size,
+                config=config,
+            )
+            resampler_model = paddle.amp.decorate(models=resampler_model,
+                                                level="O2",
+                                                dtype="bfloat16")
+
+            vision_model.eval()
+            resampler_model.eval()
+            self.vision_model = vision_model
+            self.resampler_model = resampler_model
+            logger.info("inject vision model successfully")
 
     def _build_model(self) -> paddle.nn.Layer:
         """Build the FastDeploy model architecture."""
@@ -201,8 +217,7 @@ class DynamicLoadModel(nn.Layer):
                                                   False),
             tokenizer=self.tokenizer,
             pad_vocab=self.pad_vocab,
-            use_empty_parameter=self.use_empty_parameter,
-        )
+            use_empty_parameter=self.use_empty_parameter)
         model.eval()
 
         return model
@@ -271,6 +286,13 @@ class DynamicLoadModel(nn.Layer):
         """Update model parameters from IPC state dictionary."""
         self.log_memory_usage("start update parameters")
 
+        if self.vision_model and self.vision_model:
+            for model in [self.resampler_model, self.vision_model]:
+                for name, param in model.state_dict().items():
+                    logger.info(f"Clearing model parameter: {name}")
+                    param._clear_data()
+
+
         paddle.device.cuda.empty_cache()
         if not self.first_load:
             paddle.distributed.restart_process_group()
@@ -285,26 +307,28 @@ class DynamicLoadModel(nn.Layer):
             set_start = time.perf_counter()
             print("使用shared_buf_to_local_test")
             state_dict = paddle.load(model_path)
-            infer_model_state_dict = self.model.state_dict()
+            model_state_dicts = [self.model.state_dict()]
+            if self.resampler_model and self.vision_model:
+                model_state_dicts.append(self.resampler_model.state_dict())
+                model_state_dicts.append(self.vision_model.state_dict())
 
             for name, param in state_dict.items():
                 replace_name = name.replace("gpt.", "ernie.")
-                if replace_name in infer_model_state_dict:
-                    logger.info(f"Updating model parameter: {name}")
-                    update_param = infer_model_state_dict[replace_name]
+                for model_state_dict in model_state_dicts:
+                    if replace_name in model_state_dict:
+                        logger.info(f"Updating model parameter: {name}, shape : {param.shape}")
+                        update_param = model_state_dict[replace_name]
 
-                    if update_param.dtype != param.dtype:
-                        raise TypeError(
-                            f"Type mismatch for {name}: {param.dtype} vs {update_param.dtype}"
-                        )
-                    if update_param.shape != param.shape:
-                        raise ValueError(
-                            f"Shape mismatch for {name}: {param.shape} vs {update_param.shape}"
-                        )
+                        if update_param.dtype != param.dtype:
+                            raise TypeError(
+                                f"Type mismatch for {name}: {param.dtype} vs {update_param.dtype}"
+                            )
+                        if update_param.shape != param.shape:
+                            raise ValueError(
+                                f"Shape mismatch for {name}: {param.shape} vs {update_param.shape}"
+                            )
 
-                    param._share_buffer_to(update_param)
-                else:
-                    logger.error(f"No matching parameter found for {name}")
+                        param._share_buffer_to(update_param)
 
             logger.info(
                 f"set_state_dict completed in {time.perf_counter()  - set_start:.2f} seconds"
@@ -439,12 +463,14 @@ class DynamicLoadModel(nn.Layer):
         """
         logger.info("Verifying parameters are cleared...")
         all_update = True
-        for name, param in self.model.state_dict().items():
-            if not param._is_initialized():
-                if erro_log:
-                    logger.error(
-                        f"Parameter {name}-{param} was not properly cleared!")
-                all_update = False
+
+        for model in self.models:
+            for name, param in model.state_dict().items():
+                if not param._is_initialized():
+                    if erro_log:
+                        logger.error(
+                            f"Parameter {name}-{param} was not properly cleared!")
+                    all_update = False
 
         if all_update:
             logger.info("All parameters verified as updated successfully")

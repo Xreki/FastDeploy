@@ -169,46 +169,75 @@ class Worker:
 
         if self.model_cfg.architectures in inference_runner_supported_models:
             if os.getenv('USE_PIP_EFF_LLM'):
-                from efficientllm.gpu import step_paddle
+                from efficientllm.gpu import step_paddle, step_system_cache
             else:
-                from fastdeploy.model_executor.ops.gpu import step_paddle
+                from fastdeploy.model_executor.ops.gpu import step_paddle, step_system_cache
             from fastdeploy.worker.model_runner.model_runner_inference import ModelRunner
         elif "ErnieMoEVLForCausalLM" in self.model_cfg.architectures:
             if os.getenv('USE_PIP_EFF_LLM'):
-                from efficientllm.gpu import step_paddle
+                from efficientllm.ops.gpu import step_paddle
             else:
                 from fastdeploy.model_executor.ops.gpu import step_paddle
             from fastdeploy.worker.model_runner.model_runner_vl_inference import ModelRunner
         else:
             from paddlenlp_ops import step_paddle
 
-        step_paddle(
-            self.infer_engine.share_inputs["stop_flags"],
-            self.infer_engine.share_inputs["seq_lens_this_time"],
-            self.infer_engine.share_inputs["step_seq_lens_encoder"],
-            self.infer_engine.share_inputs["seq_lens_encoder"],
-            self.infer_engine.share_inputs["seq_lens_decoder"],
-            self.infer_engine.share_inputs["block_tables"],
-            self.infer_engine.share_inputs["encoder_block_lens"],
-            self.infer_engine.share_inputs["is_block_step"],
-            self.infer_engine.share_inputs["step_block_list"],
-            self.infer_engine.share_inputs["step_lens"],
-            self.infer_engine.share_inputs["recover_block_list"],
-            self.infer_engine.share_inputs["recover_lens"],
-            self.infer_engine.share_inputs["need_block_list"],
-            self.infer_engine.share_inputs["need_block_len"],
-            self.infer_engine.share_inputs["used_list_len"],
-            self.infer_engine.share_inputs["free_list"],
-            self.infer_engine.share_inputs["free_list_len"],
-            self.infer_engine.share_inputs["input_ids"],
-            self.infer_engine.share_inputs["pre_ids"],
-            self.infer_engine.share_inputs["step_idx"],
-            self.infer_engine.share_inputs["next_tokens"],
-            self.infer_engine.share_inputs["first_token_ids"],
-            self.args.block_size,
-            self.args.enc_dec_block_num,
-        )
 
+        if self.args.enable_prefix_caching:
+            step_system_cache(
+                self.infer_engine.share_inputs["stop_flags"],
+                self.infer_engine.share_inputs["seq_lens_this_time"],
+                self.infer_engine.share_inputs["step_seq_lens_encoder"],
+                self.infer_engine.share_inputs["step_seq_lens_decoder"],
+                self.infer_engine.share_inputs["seq_lens_encoder"],
+                self.infer_engine.share_inputs["seq_lens_decoder"],
+                self.infer_engine.share_inputs["block_tables"],
+                self.infer_engine.share_inputs["encoder_block_lens"],
+                self.infer_engine.share_inputs["is_block_step"],
+                self.infer_engine.share_inputs["step_block_list"],
+                self.infer_engine.share_inputs["step_lens"],
+                self.infer_engine.share_inputs["recover_block_list"],
+                self.infer_engine.share_inputs["recover_lens"],
+                self.infer_engine.share_inputs["need_block_list"],
+                self.infer_engine.share_inputs["need_block_len"],
+                self.infer_engine.share_inputs["used_list_len"],
+                self.infer_engine.share_inputs["free_list"],
+                self.infer_engine.share_inputs["free_list_len"],
+                self.infer_engine.share_inputs["input_ids"],
+                self.infer_engine.share_inputs["pre_ids"],
+                self.infer_engine.share_inputs["step_idx"],
+                self.infer_engine.share_inputs["next_tokens"],
+                self.infer_engine.share_inputs["first_token_ids"],
+                self.args.block_size,
+                self.args.enc_dec_block_num)
+        
+        else:
+            step_paddle(
+                self.infer_engine.share_inputs["stop_flags"],
+                self.infer_engine.share_inputs["seq_lens_this_time"],
+                self.infer_engine.share_inputs["step_seq_lens_encoder"],
+                self.infer_engine.share_inputs["seq_lens_encoder"],
+                self.infer_engine.share_inputs["seq_lens_decoder"],
+                self.infer_engine.share_inputs["block_tables"],
+                self.infer_engine.share_inputs["encoder_block_lens"],
+                self.infer_engine.share_inputs["is_block_step"],
+                self.infer_engine.share_inputs["step_block_list"],
+                self.infer_engine.share_inputs["step_lens"],
+                self.infer_engine.share_inputs["recover_block_list"],
+                self.infer_engine.share_inputs["recover_lens"],
+                self.infer_engine.share_inputs["need_block_list"],
+                self.infer_engine.share_inputs["need_block_len"],
+                self.infer_engine.share_inputs["used_list_len"],
+                self.infer_engine.share_inputs["free_list"],
+                self.infer_engine.share_inputs["free_list_len"],
+                self.infer_engine.share_inputs["input_ids"],
+                self.infer_engine.share_inputs["pre_ids"],
+                self.infer_engine.share_inputs["step_idx"],
+                self.infer_engine.share_inputs["next_tokens"],
+                self.infer_engine.share_inputs["first_token_ids"],
+                self.args.block_size,
+                self.args.enc_dec_block_num,
+            )
     def check_model_weights_status(self):
         """
         check model weights status
@@ -303,8 +332,9 @@ class Worker:
                 for req_dict, bsz in tasks:
                     num_running_requests = int(bsz)
                     req_dicts.extend(req_dict)
+                req_ids = [req.request_id for req in req_dicts ]
                 logger.info(f"Rank: {self.rank}, num_running_requests: {num_running_requests}, " \
-                            f"num_insert_requests: {len(req_dicts)}")
+                            f"num_insert_requests: {len(req_dicts)}. {req_ids}")
 
                 self.infer_engine.dy_input_preprocess(req_dicts)
                 self.infer_engine.share_inputs["not_need_stop"][0] = True
@@ -319,8 +349,9 @@ class Worker:
             self.infer_engine.share_inputs[
                 "infer_seed"][:] %= self.MAX_INFER_SEED
 
-            self.infer_engine.update_chunked_prefill(req_dicts[0].token_chunk_size)
+            self.infer_engine.update_chunked_prefill(req_dicts)
             self.step_cuda()
+
 
     def determine_num_available_blocks(self):
         """Profiles the peak memory usage of the model to determine how many
@@ -490,14 +521,8 @@ def parse_args():
                         type=int,
                         default=None,
                         help="Process ID of engine")
-    parser.add_argument("--do_profile",
-                        type=int,
-                        default=0,
-                        help="do profile or not")
-    parser.add_argument("--dynamic_load_weight",
-                        type=int,
-                        default=0,
-                        help="dynamic load weight or not")
+    parser.add_argument("--do_profile", action='store_true', help="do profile or not")
+    parser.add_argument("--dynamic_load_weight", action='store_true', help="dynamic load weight or not")
     parser.add_argument("--pad_token_id",
                         type=int,
                         default=-1,
@@ -532,6 +557,8 @@ def parse_args():
     parser.add_argument("--speculate_max_draft_tokens", type=int, default=1)
 
     parser.add_argument("--max_num_batched_tokens", type=int, default=2048, help="max num batched tokens")
+    parser.add_argument("--enable_prefix_caching", action='store_true', help="enable prefix cache")
+    parser.add_argument("--splitwise_role", type=str, default="mixed", help="splitwise role")
     args = parser.parse_args()
     return args
 
