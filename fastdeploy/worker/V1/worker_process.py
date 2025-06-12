@@ -384,6 +384,13 @@ def initialize_fd_config(args) -> FDConfig:
     device_config = DeviceConfig()
     # model_config = ModelConfig()
     kv_cache_config = KVCacheConfig()
+
+    cachekv_dtype = config.get("cache_quant_type", None)
+    if cachekv_dtype is not None:
+        logger.info(
+            f"cachekv is set to [{cachekv_dtype}] according to your config file's cache_quant_type field"
+        )
+        kv_cache_config.cache_quant_dtype = config["cache_quant_type"]
     decoding_config = DecodingConfig()
     decoding_config = MoEConfig()
     tmp_config = TmpConfig()
