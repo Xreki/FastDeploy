@@ -34,7 +34,7 @@ from paddlenlp.utils.env import USE_FAST_TOKENIZER
 from paddlenlp.utils.log import logger
 
 from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
-                               KVCacheConfig, FDConfig, LoadConfig,
+                               FDConfig, KVCacheConfig, LoadConfig,
                                ModelConfig, MoEConfig, ParallelConfig,
                                SpeculativeConfig, TmpConfig)
 from fastdeploy.inference_args import GenerationPhase
@@ -44,13 +44,13 @@ from fastdeploy.model_executor.models.utils import (_vocab_size_with_padding,
                                                     parser_quant_type)
 
 from ..layers.quantization import get_quantization_config
-from .ernie import ErnieBotPretrainedModel
+from .ernie45t_moe import ErniePretrainedModel
 from .model_base import ModelRegistry
 from .qwen2 import Qwen2PretrainedModel
 from .tokenizer import ErnieBotTokenizer
 
 model_classes_mapping = {
-    "ErnieForCausalLM": ErnieBotPretrainedModel,
+    "ErnieForCausalLM": ErniePretrainedModel,
     "Qwen2ForCausalLM": Qwen2PretrainedModel,
 }
 

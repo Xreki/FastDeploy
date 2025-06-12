@@ -28,14 +28,14 @@ from fastdeploy.model_executor.layers.attention import get_attention_backend
 from fastdeploy.model_executor.layers.rotary_embedding import get_rope_3d
 from fastdeploy.model_executor.layers.sample.meta_data import SamplingMetadata
 from fastdeploy.model_executor.layers.sample.sampler import Sampler
-from fastdeploy.model_executor.models.ernie import ErnieBotPretrainedModel
-from fastdeploy.model_executor.models.ernie_vl.configuration import \
+from fastdeploy.model_executor.models.ernie45t_moe import ErniePretrainedModel
+from fastdeploy.model_executor.models.ernie45t_vl.configuration import \
     ErnieBotMoEVLConfig
-from fastdeploy.model_executor.models.ernie_vl.dfnrope import \
+from fastdeploy.model_executor.models.ernie45t_vl.dfnrope import \
     DFNRopeVisionTransformerConfig
-from fastdeploy.model_executor.models.ernie_vl.dfnrope.modeling import \
+from fastdeploy.model_executor.models.ernie45t_vl.dfnrope.modeling import \
     DFNRopeVisionTransformerPretrainedModel
-from fastdeploy.model_executor.models.ernie_vl.modeling_resampler import (
+from fastdeploy.model_executor.models.ernie45t_vl.modeling_resampler import (
     ScatterOp, VariableResolutionResamplerModel)
 from fastdeploy.model_executor.models.utils import load_checkpoint
 from fastdeploy.platforms import current_platform
@@ -363,7 +363,7 @@ class ModelRunner(ModelRunnerBase):
         else:
             state_dict = load_checkpoint(
                 args.model_name_or_path,
-                ErnieBotPretrainedModel,
+                ErniePretrainedModel,
                 self.model_cfg,
                 return_numpy=True,
             )
