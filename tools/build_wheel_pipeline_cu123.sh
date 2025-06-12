@@ -89,7 +89,7 @@ function copy_ops(){
     mkdir -p ../fastdeploy/model_executor/ops/base
     cp -r ./${OPS_TMP_DIR_BASE}/${WHEEL_BASE_NAME}/* ../fastdeploy/model_executor/ops/base
     echo -e "OPS are for CUDA"
-    find ./${OPS_TMP_DIR} -type f ! -name "*.cu.o" ! -name "*.o" -exec cp --parents {} ../fastdeploy/model_executor/ops/gpu \;
+    cp -r ./${OPS_TMP_DIR}/${WHEEL_NAME}/* ../fastdeploy/model_executor/ops/gpu
     if [ "$WITH_CPU" == "true" ]; then
       WHEEL_CPU_NAME="fastdeploy_cpu_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
       echo -e "OPS are for CPU"
@@ -187,7 +187,7 @@ python_version_check
 trap 'abort' 0
 set -e
 
-# init
+init
 build_and_install_ops
 build_and_install
 cleanup
