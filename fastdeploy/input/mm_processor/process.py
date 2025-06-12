@@ -32,6 +32,7 @@ from .process_video import read_frames_decord, read_video_decord
 from .utils.io_utils import RAW_IMAGE_DIR, get_downloadable
 from .utils.render_timestamp import render_frame_timestamp
 from .tokenizer.tokenizer_vl import ErnieVLTokenizer
+from fastdeploy.entrypoints.chat_utils import parse_chat_messages
 
 IDS_TYPE_FLAG = {"text": 0, "image": 1, "video": 2, "audio": 3}
 
@@ -95,7 +96,6 @@ class DataProcessor:
         video_max_frames: int = 180,
         video_min_frames: int = 16,
         video_fps: int = 2,
-        **kwargs
     ) -> None:
         # Tokenizer and image preprocessor
         self.tokenizer = ErnieVLTokenizer.from_pretrained(tokenizer_name, verbose=False)
@@ -127,6 +127,8 @@ class DataProcessor:
         self.video_start = self.VID_START
         self.video_end = self.VID_END
         self.image_patch_id = self.tokenizer.convert_tokens_to_ids("<|IMAGE_PLACEHOLDER|>")
+        self.image_start_id = self.tokenizer.convert_tokens_to_ids(self.image_start)
+        self.video_start_id = self.tokenizer.convert_tokens_to_ids(self.video_start)
 
         self.token_type_mapping = self._build_token_type_mapping()
         self.is_training = True
@@ -147,7 +149,7 @@ class DataProcessor:
         """Enable evaluation mode (doesn't produce labels)."""
         self.is_training = False
 
-    def process(self, messages: List[Dict[str, Any]]) -> Dict[str, Union[np.ndarray, List[np.ndarray], None]]:
+    def process(self, request: Dict[str, Any]) -> Dict[str, Union[np.ndarray, List[np.ndarray], None]]:
         """
         Convert chat messages into model inputs.
         Returns a dict with input_ids, token_type_ids, position_ids, images, grid_thw, image_type_ids, labels.
@@ -164,37 +166,35 @@ class DataProcessor:
             "pic_cnt": 0,
             "video_cnt": 0,
         }
-        self._add_special_token(self.cls_token, outputs)
 
+        #收集多模message
+        messages = parse_chat_messages(request.get("messages"))
+        image_message_list = []
         for msg in messages:
             role = msg.get("role")
             assert role in self.role_prefixes, f"Unsupported role: {role}"
-            prefix = self.role_prefixes[role]
-            if prefix:
-                self._add_text(prefix, outputs)
 
             content_items = msg.get("content")
             if not isinstance(content_items, list):
                 content_items = [content_items]
 
             for item in content_items:
-                if isinstance(item, str) or item.get("type") == "text":
-                    text = item if isinstance(item, str) else item.get("text", "")
-                    self._add_text(text, outputs)
-                elif item.get("type") == "image_url" or item.get("type") == "image":
-                    self._add_image(item, outputs)
-                elif item.get("type") == "video_url" or item.get("type") == "video":
-                    self._add_video(item, outputs)
-
-            if role in ("user", "system"):
-                self._add_text("\n", outputs)
-            else:
-                self._add_special_token(self.sep_token, outputs)
-
-        if not self.is_training:
-            # Append assistant prefix in eval
-            self._add_text(self.role_prefixes["bot"], outputs)
-
+                if isinstance(item, dict) and item.get("type") in ["image_url", "image", "video_url", "video"]:
+                    image_message_list.append(item)
+        
+        prompt_token_ids = self.request2ids(request)
+        image_start_index = 0
+        image_message_index = 0
+        for i in range(len(prompt_token_ids)):
+            if prompt_token_ids[i] in [self.image_start_id, self.video_start_id]:
+                self._add_text(prompt_token_ids[image_start_index:i + 1], outputs)
+                image_start_index =  i + 1
+                if image_message_list[image_message_index]["type"] in ["image", "image_url"]:
+                    self._add_image(image_message_list[image_message_index], outputs)
+                else:
+                    self._add_video(image_message_list[image_message_index], outputs)
+                image_message_index += 1
+        self._add_text(prompt_token_ids[image_start_index:], outputs)
         return outputs
 
     def _add_special_token(self, token: Union[str, int], outputs: Dict) -> None:
@@ -205,8 +205,7 @@ class DataProcessor:
         outputs["position_ids"].append([pos] * 3)
         outputs["cur_position"] += 1
 
-    def _add_text(self, text: str, outputs: Dict) -> None:
-        tokens = self.tokenizer.encode(text, add_special_tokens=False)["input_ids"]
+    def _add_text(self, tokens: [int], outputs: Dict) -> None:
         outputs["input_ids"].extend(tokens)
         outputs["token_type_ids"].extend([IDS_TYPE_FLAG["text"]] * len(tokens))
 
@@ -231,8 +230,6 @@ class DataProcessor:
             img = img.resize((w, h))
 
         outputs["pic_cnt"] += 1
-        self._add_text(f"Picture {outputs['pic_cnt']}:", outputs)
-        self._add_special_token(self.IMG_START, outputs)
 
         patches_h, patches_w = self.image_preprocessor.get_smarted_resize(
             img.height,
@@ -262,14 +259,10 @@ class DataProcessor:
         outputs["grid_thw"].append(ret["image_grid_thw"])
         outputs["image_type_ids"].append(0)
 
-        self._add_special_token(self.IMG_END, outputs)
-
     def _add_video(self, item: Dict, outputs: Dict) -> None:
         url_info = item.get("video_url", {})
         url = url_info.get("url")
         outputs["video_cnt"] += 1
-        self._add_text(f"Video {outputs['video_cnt']}:", outputs)
-        self._add_special_token(self.VID_START, outputs)
 
         if "video" in item:
             video_path = item["video"]
@@ -306,8 +299,6 @@ class DataProcessor:
         pos_ids = self._compute_3d_positions(num_frames, patches_h, patches_w, outputs["cur_position"])
         outputs["position_ids"].extend(pos_ids)
         outputs["cur_position"] = np.max(pos_ids) + 1
-
-        self._add_special_token(self.VID_END, outputs)
 
     def _load_and_process_video(self, url: str, item: Dict) -> List[Image.Image]:
         reader, meta, path = read_video_decord(url, save_to_disk=False)
@@ -388,3 +379,24 @@ class DataProcessor:
 
         coords = list(zip(time_idx, h_idx, w_idx))
         return [[start_idx + ti, start_idx + hi, start_idx + wi] for ti, hi, wi in coords]
+
+    def request2ids(self, request):
+        """
+        Convert multi-turn messages into ID sequences.
+        
+        Args:
+            messages: Either a request dict containing 'messages' field, 
+                                or a list of message dicts directly
+            
+        Returns:
+            List of token IDs as strings (converted from token objects)
+        """
+        if self.tokenizer.chat_template is None:
+            raise ValueError("This model does not support chat_template.")
+
+        prompt_token_str = self.tokenizer.apply_chat_template(
+            request, tokenize=False
+        ).replace("<|image@placeholder|>", "").replace("<|video@placeholder|>", "")
+        prompt_token_ids = self.tokenizer.encode(prompt_token_str, add_special_tokens=False)["input_ids"]
+
+        return prompt_token_ids
