@@ -111,9 +111,24 @@ class ErnieBotTokenizer(PretrainedTokenizer):
         vocab.update(self.added_tokens_encoder)
         return vocab
 
-    def tokenize(self, text):
+    def tokenize(self, text, **kwargs):
         """Returns a tokenized string."""
-        return self._tokenize(text)
+        no_split_token = set(self.unique_no_split_tokens)
+        tokens = self.tokens_trie.split(text)
+
+        tokenized_text = []
+        for token in tokens:
+            # Need to skip eventual empty (fully stripped) tokens
+            if not token:
+                continue
+            if token in no_split_token:
+                tokenized_text.append(token)
+            else:
+                tokenized_text.extend(self._tokenize(token))
+        # ["This", " is", " something", "<special_token_1>", "else"]
+        return tokenized_text
+
+        # return self._tokenize(text)
 
     def _tokenize(self, text):
         """Returns a tokenized string."""
