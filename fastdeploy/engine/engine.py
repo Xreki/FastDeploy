@@ -685,7 +685,7 @@ class LLMEngine(object):
                 llm_logger.info(f"Killing cache manager process {p.pid}")
                 try:
                     os.killpg(p.pid, signal.SIGTERM)
-                except:
+                except:  # noqa: E722
                     pass
         self.worker_ready_signal.clear()
         self.exist_task_signal.clear()
@@ -765,7 +765,7 @@ class LLMEngine(object):
             f" --max_num_batched_tokens {self.cfg.max_num_batched_tokens}"
             f" --splitwise_role {self.cfg.splitwise_role}"
             f" --kv_cache_ratio {self.cfg.cache_config.kv_cache_ratio} --dtype {self.cfg.cache_config.cache_dtype}"
-        )
+            f" --ori_vocab_size {len(self.data_processor.tokenizer)}")
 
         worker_append_flag = {
             "enable_chunked_prefill":

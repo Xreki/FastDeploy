@@ -30,6 +30,7 @@ from fastdeploy.model_executor.models.utils import (convert_ndarray_dtype,
 MODEL_CLASSES = {
     "ErnieForCausalLM": ErniePretrainedModel,
     "Qwen2ForCausalLM": Qwen2PretrainedModel,
+    "ErnieBotLMHeadModel": ErniePretrainedModel
 }
 
 

@@ -373,7 +373,8 @@ class Ernie45TAttention(nn.Layer):
         self.o_proj = RowParallelLinear(
             fd_config=fd_config,
             prefix=f"{prefix}.o_proj",
-            input_size=(fd_config.model_config.hidden_size // nranks),
+            input_size=(fd_config.model_config.head_dim *
+                        fd_config.model_config.num_attention_heads // nranks),
             output_size=fd_config.model_config.hidden_size,
         )
 

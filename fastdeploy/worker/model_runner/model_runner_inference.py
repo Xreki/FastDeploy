@@ -173,8 +173,7 @@ class ModelRunner(ModelRunnerBase):
     def init_rotary_position_embedding(self, max_model_len):
         tmp_position_ids = paddle.arange(max_model_len).reshape((1, -1))
         self.share_inputs["rope_emb"] = get_rope(
-            rotary_dim=self.model_cfg.hidden_size //
-            self.model_cfg.num_attention_heads,
+            rotary_dim=self.model_cfg.head_dim,
             position_ids=tmp_position_ids,
             base=self.rope_theta,
             model_config=self.config)

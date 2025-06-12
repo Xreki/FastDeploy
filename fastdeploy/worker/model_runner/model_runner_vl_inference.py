@@ -251,7 +251,7 @@ class ModelRunner(ModelRunnerBase):
             self.fd_config.model_config.kv_num_heads = int(
                 self.fd_config.model_config.num_key_value_heads
             ) // self.fd_config.parallel_config.mp_size
-            head_dim = self.fd_config.model_config.hidden_size // self.fd_config.model_config.num_attention_heads
+            head_dim = self.fd_config.model_config.head_dim
             self.attn_backend = attn_backend_cls(
                 self.fd_config,
                 kv_num_heads=self.fd_config.model_config.kv_num_heads,
@@ -690,9 +690,7 @@ class ModelRunner(ModelRunnerBase):
         #TODO
         # 支持c8 c4
 
-        hidden_size = self.model_cfg.hidden_size
-        attention_heads = self.model_cfg.num_attention_heads
-        hidden_dim = hidden_size / attention_heads * self.model_cfg.kv_num_head
+        hidden_dim = self.model_cfg.head_dim * self.model_cfg.kv_num_head
         theoretical_kv_cache_memory = (2 * byte_of_cache *
                                        self.args.block_size * num_layers *
                                        hidden_dim)
