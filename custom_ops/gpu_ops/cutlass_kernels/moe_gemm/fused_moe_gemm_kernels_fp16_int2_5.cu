@@ -21,7 +21,6 @@
 
 namespace phi {
 
-template class MoeGemmRunner<half,
-                             WintQuantTraits<half, WintQuantMethod::kNone>>;
+template class MoeGemmRunner<half, WintQuantTraits<half, WintQuantMethod::kWeightOnlyInt25>>;
 
-} // namespace phi
+}  // namespace phi

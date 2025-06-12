@@ -15,16 +15,21 @@
  */
 
 #pragma once
+
 #include <cuda_runtime_api.h>
 #include <string>
+
 #include "paddle/phi/kernels/fusion/cutlass/cutlass_extensions/ft_gemm_configs.h"
+#include "cutlass_kernels/moe_gemm/wint_type_traits.h"
 
 namespace phi {
 
 template <typename T, /*The type used for activations/scales/compute*/
-          typename WeightType /* The type for the MoE weights */>
+          typename WeightQuantTraits /* The quant traits for the MoE weights */>
 class MoeGemmRunner {
  public:
+  using WeightType = typename WeightQuantTraits::WeightType;
+
   MoeGemmRunner();
 
   void moe_gemm_bias_act(const T* A,

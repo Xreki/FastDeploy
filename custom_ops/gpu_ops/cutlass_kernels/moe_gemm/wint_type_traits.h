@@ -23,54 +23,12 @@
 #include "cutlass/layout/layout.h"
 #include "cutlass/numeric_types.h"
 
-namespace wintx {
-
 enum WintQuantMethod {
   kNone = 0,
   kWeightOnlyInt8 = 1,
   kWeightOnlyInt4 = 2,
   kWeightOnlyInt25 = 3,
   kWeightOnlyInt2 = 4
-};
-
-template <int32_t GroupSize, int32_t NumPackedValues>
-constexpr int32_t CalcPackedSize() {
-  return (GroupSize + NumPackedValues - 1) / NumPackedValues;
-}
-
-template <WintQuantMethod Method> struct WintTypeTraits {
-  using WeightType = cutlass::bfloat16_t;
-
-  CUTLASS_DEVICE
-  static int64_t CaclPackedDim(int64_t dim) { return dim; }
-};
-
-template <> struct WintTypeTraits<WintQuantMethod::kWeightOnlyInt8> {
-  using WeightType = uint8_t;
-
-  CUTLASS_DEVICE
-  static int64_t CaclPackedDim(int64_t dim) { return dim; }
-};
-
-template <> struct WintTypeTraits<WintQuantMethod::kWeightOnlyInt4> {
-  using WeightType = cutlass::uint4b_t;
-
-  CUTLASS_DEVICE
-  static int64_t CaclPackedDim(int64_t dim) { return dim; }
-};
-
-template <> struct WintTypeTraits<WintQuantMethod::kWeightOnlyInt25> {
-  using WeightType = uint16_t;
-
-  static constexpr int32_t kGroupSize = 64;
-  static constexpr int32_t kNumPackedValues = 7;
-  static constexpr int32_t kPackedSize =
-      CalcPackedSize<kGroupSize, kNumPackedValues>(); // 10
-
-  CUTLASS_DEVICE
-  static int64_t CaclPackedDim(int64_t dim) {
-    return dim * kPackedSize / kGroupSize;
-  }
 };
 
 // Convert CUDA data type to cutlass data type
@@ -86,17 +44,93 @@ template <> struct CutlassDataType<__nv_bfloat16> {
   using Type = cutlass::bfloat16_t;
 };
 
-template <typename ElementT, typename WeightT> struct CutlassMmaTraits {
-  using MmaWeightType = typename CutlassDataType<ElementT>::Type;
-};
+template <typename ElementT, WintQuantMethod Method> struct WintQuantTraits;
 
-template <typename ElementT> struct CutlassMmaTraits<ElementT, uint8_t> {
-  using MmaWeightType = uint8_t;
+template <typename ElementT>
+struct WintQuantTraits<ElementT, WintQuantMethod::kNone> {
+  using WeightType = ElementT;
+  using MmaWeightType = typename CutlassDataType<ElementT>::Type;
+
+  static constexpr WintQuantMethod kQuantMethod = WintQuantMethod::kNone;
+
+  struct Arguments {};
+
+  CUTLASS_DEVICE
+  static int64_t CaclPackedDim(int64_t dim) { return dim; }
 };
 
 template <typename ElementT>
-struct CutlassMmaTraits<ElementT, cutlass::uint4b_t> {
+struct WintQuantTraits<ElementT, WintQuantMethod::kWeightOnlyInt8> {
+  using WeightType = uint8_t;
+  using MmaWeightType = uint8_t;
+
+  static constexpr WintQuantMethod kQuantMethod =
+      WintQuantMethod::kWeightOnlyInt8;
+
+  struct Arguments {};
+
+  CUTLASS_DEVICE
+  static int64_t CaclPackedDim(int64_t dim) { return dim; }
+};
+
+template <typename ElementT>
+struct WintQuantTraits<ElementT, WintQuantMethod::kWeightOnlyInt4> {
+  using WeightType = cutlass::uint4b_t;
   using MmaWeightType = cutlass::uint4b_t;
+
+  static constexpr WintQuantMethod kQuantMethod =
+      WintQuantMethod::kWeightOnlyInt4;
+
+  struct Arguments {};
+
+  CUTLASS_DEVICE
+  static int64_t CaclPackedDim(int64_t dim) { return dim; }
+};
+
+template <typename ElementT>
+struct WintQuantTraits<ElementT, WintQuantMethod::kWeightOnlyInt25> {
+  using WeightType = uint16_t;
+  using MmaWeightType = typename CutlassDataType<ElementT>::Type;
+  // using MmaWeightType = cutlass::uint4b_t;
+
+  static constexpr WintQuantMethod kQuantMethod =
+      WintQuantMethod::kWeightOnlyInt25;
+
+  static constexpr int32_t kGroupSize = 64;
+  static constexpr int32_t kNumPackedValues = 7;
+  static constexpr int32_t kPackedSize = 10;
+
+  struct Arguments {};
+
+  CUTLASS_DEVICE
+  static int64_t CaclPackedDim(int64_t dim) {
+    return dim * kPackedSize / kGroupSize;
+  }
+};
+
+template <typename ElementT>
+struct WintQuantTraits<ElementT, WintQuantMethod::kWeightOnlyInt2> {
+  using WeightType = uint8_t;
+  using MmaWeightType = typename CutlassDataType<ElementT>::Type;
+  // using MmaWeightType = cutlass::uint4b_t;
+
+  static constexpr WintQuantMethod kQuantMethod =
+      WintQuantMethod::kWeightOnlyInt2;
+
+  static constexpr int32_t kGroupSize = 64;
+  static constexpr int32_t kNumPackedValues = 4;
+  static constexpr int32_t kPackedSize = 16;
+
+  struct Arguments {
+    const uint8_t *local_scale_ptr; // quanted 4-bits
+    const float *code_scale_ptr;
+    const float *code_zp_ptr;
+  };
+
+  CUTLASS_DEVICE
+  static int64_t CaclPackedDim(int64_t dim) {
+    return dim * kPackedSize / kGroupSize;
+  }
 };
 
 template <typename T> std::string GetCutlassDataTypeString() {
@@ -124,5 +158,3 @@ template <typename Layout> std::string GetCutlassLayoutString() {
   }
   return "unknown";
 }
-
-} // namespace wintx

@@ -23,11 +23,7 @@
 
 #define UNZIP_ENABLE_VECTORIZE 0
 
-namespace wintx {
-
-template <typename T, int N> using Array = AlignedVector<T, N>;
-
-template <typename T, wintx::WintQuantMethod QuantMethod, int TileRows,
+template <typename T, WintQuantMethod QuantMethod, int TileRows,
           int TileColumns, int NumThreads = 128>
 struct UnzipAndDequantFunctor {
   __device__ void operator()(const T *in_ptr, const T *supper_scale_ptr,
@@ -36,9 +32,11 @@ struct UnzipAndDequantFunctor {
 
 #if UNZIP_ENABLE_VECTORIZE
 
+template <typename T, int N> using Array = AlignedVector<T, N>;
+
 template <typename T, int TileRows, int TileColumns, int NumThreads>
-struct UnzipAndDequantFunctor<T, wintx::WintQuantMethod::kWeightOnlyInt25,
-                              TileRows, TileColumns, NumThreads> {
+struct UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt25, TileRows,
+                              TileColumns, NumThreads> {
   using ZippedT = uint16_t;
   using ScaleComputeT = float;
 
@@ -48,7 +46,7 @@ struct UnzipAndDequantFunctor<T, wintx::WintQuantMethod::kWeightOnlyInt25,
 
   static constexpr int32_t kWeightMask = 0x7;
   static constexpr int32_t kLocalScaleMask = 0x1FFF;
-  static constexpr int32_t kBBZip = 4;
+  static constexpr int32_t kBZP = 4;
 
   static constexpr int N =
       (TileColumns > NumThreads) ? (TileColumns / NumThreads) : 2;
@@ -69,7 +67,7 @@ struct UnzipAndDequantFunctor<T, wintx::WintQuantMethod::kWeightOnlyInt25,
       int32_t shifted_value =
           (static_cast<int32_t>(zipped_values[i]) >> shift_bit) &
           WeightOnlyTraits::kWeightMask;
-      int32_t value = shifted_value - WeightOnlyTraits::kBBZip;
+      int32_t value = shifted_value - WeightOnlyTraits::kBZP;
 
       ScaleComputeT scaled_value =
           static_cast<ScaleComputeT>(value) * scales[i];
@@ -169,8 +167,8 @@ struct UnzipAndDequantFunctor<T, wintx::WintQuantMethod::kWeightOnlyInt25,
 #else
 
 template <typename T, int TileRows, int TileColumns, int NumThreads>
-struct UnzipAndDequantFunctor<T, wintx::WintQuantMethod::kWeightOnlyInt25,
-                              TileRows, TileColumns, NumThreads> {
+struct UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt25, TileRows,
+                              TileColumns, NumThreads> {
   using ZippedT = uint16_t;
   using ScaleComputeT = float;
 
@@ -180,12 +178,12 @@ struct UnzipAndDequantFunctor<T, wintx::WintQuantMethod::kWeightOnlyInt25,
 
   static constexpr int32_t kWeightMask = 0x7;
   static constexpr int32_t kLocalScaleMask = 0x1FFF;
-  static constexpr int32_t kBBZip = 4;
+  static constexpr int32_t kBZP = 4;
 
   __device__ inline T Compute(int32_t zipped_value, int32_t shift_bit,
                               ScaleComputeT scale) {
     int32_t shifted_value = (zipped_value >> shift_bit) & kWeightMask;
-    int32_t value = shifted_value - kBBZip;
+    int32_t value = shifted_value - kBZP;
 
     ScaleComputeT scaled_value = static_cast<ScaleComputeT>(value) * scale;
     return static_cast<T>(scaled_value);
@@ -241,22 +239,24 @@ struct UnzipAndDequantFunctor<T, wintx::WintQuantMethod::kWeightOnlyInt25,
 };
 
 template <typename T, int TileRows, int TileColumns, int NumThreads>
-struct UnzipAndDequantFunctor<T, wintx::WintQuantMethod::kWeightOnlyInt2,
-                              TileRows, TileColumns, NumThreads> {
+struct UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt2, TileRows,
+                              TileColumns, NumThreads> {
   using ZippedT = uint8_t;
   using ScaleComputeT = float;
 
   static constexpr int32_t kGroupSize = 64;
   static constexpr int32_t kPackNum = 4;
-  static constexpr int16_t kWeightMask = 0x3F;
-  static constexpr int32_t kBBZip = 32;
+  static constexpr int32_t kWeightMask = 0x3F;
+  static constexpr int32_t kLocalScaleMask = 0xF;
+  static constexpr int32_t kBZP = 32;
 
-  __device__ void operator()(const uint8_t *in_ptr, const T *local_scale_ptr,
+  __device__ void operator()(const uint8_t *in_ptr,
+                             const uint8_t *local_scale_ptr,
                              const float *code_scale_ptr,
-                             const float *code_zip_ptr,
-                             const T *super_scale_ptr, T *out_ptr,
+                             const float *code_zp_ptr, const T *super_scale_ptr,
+                             T *out_ptr, const int64_t block_start_row,
                              const int64_t in_stride) {
-    int16_t shift_bits[4] = {9, 6, 3, 0};
+    int32_t shift_bits[4] = {9, 6, 3, 0};
 
     int tid = threadIdx.x;
 
@@ -268,25 +268,32 @@ struct UnzipAndDequantFunctor<T, wintx::WintQuantMethod::kWeightOnlyInt2,
             static_cast<ScaleComputeT>(in_ptr[zipped_offset]);
         ScaleComputeT code_scale =
             static_cast<ScaleComputeT>(code_scale_ptr[col]);
-        ScaleComputeT code_zip = static_cast<ScaleComputeT>(code_zip_ptr[col]);
+        ScaleComputeT code_zp = static_cast<ScaleComputeT>(code_zp_ptr[col]);
 
-        int16_t decode_value = static_cast<int16_t>(
-            floor(zipped_value * code_scale + code_zip + 0.5));
-        int16_t shift_bit = shift_bits[row % kPackNum];
-        int16_t shifted_value = (decode_value >> shift_bit) & kWeightMask;
+        int32_t decode_value =
+            static_cast<int32_t>(floor(zipped_value * code_scale + code_zp +
+                                       static_cast<ScaleComputeT>(0.5)));
+        int32_t shift_bit = shift_bits[row % kPackNum];
+        int32_t shifted_value = (decode_value >> shift_bit) & kWeightMask;
 
-        int local_scale_row = row / kGroupSize;
+        int local_scale_row = row / (kGroupSize * 2);
         int local_scale_offset = local_scale_row * in_stride + col;
-        T scale = static_cast<T>(local_scale_ptr[local_scale_offset]);
+        int local_scale_shift =
+            (((block_start_row + row) / kGroupSize) % 2) * 4;
+        int32_t local_scale =
+            static_cast<int32_t>(local_scale_ptr[local_scale_offset]);
+        int32_t shifted_local_scale =
+            (local_scale >> local_scale_shift) & kLocalScaleMask;
+        ScaleComputeT scale = static_cast<ScaleComputeT>(shifted_local_scale);
 
         if (super_scale_ptr) {
-          T super_scale = static_cast<T>(super_scale_ptr[col]);
+          ScaleComputeT super_scale =
+              static_cast<ScaleComputeT>(super_scale_ptr[col]);
           scale = scale * super_scale;
         }
 
-        out_ptr[row * TileColumns + col] =
-            static_cast<T>(scale) *
-            (static_cast<T>(shifted_value) - static_cast<T>(kBBZip));
+        ScaleComputeT value = static_cast<ScaleComputeT>(shifted_value - kBZP);
+        out_ptr[row * TileColumns + col] = static_cast<T>(scale * value);
       }
     }
     __syncthreads();
@@ -294,8 +301,6 @@ struct UnzipAndDequantFunctor<T, wintx::WintQuantMethod::kWeightOnlyInt2,
 };
 
 #endif
-
-} // namespace wintx
 
 template <typename T, int TileRows, int TileColumns, int NumThreads>
 __global__ void Wint25UnzipKernel(const uint16_t *zipped_weight_ptr,
@@ -318,8 +323,8 @@ __global__ void Wint25UnzipKernel(const uint16_t *zipped_weight_ptr,
       super_scale_ptr + blockIdx.z * num_columns + block_start_column;
 
   // unzip to shared memory
-  wintx::UnzipAndDequantFunctor<T, wintx::WintQuantMethod::kWeightOnlyInt25,
-                                TileRows, TileColumns, NumThreads>
+  UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt25, TileRows,
+                         TileColumns, NumThreads>
       unzip_functor;
   unzip_functor(block_zipped_weight_ptr, block_super_scale_ptr, smem,
                 num_columns);
@@ -337,10 +342,11 @@ __global__ void Wint25UnzipKernel(const uint16_t *zipped_weight_ptr,
 
 template <typename T, int64_t TileRows, int64_t TileColumns, int NumThreads>
 __global__ void
-Wint2UnzipKernel(const uint8_t *zipped_weight_ptr, const T *local_scale_ptr,
-                 const float *code_scale_ptr, const float *code_zip_ptr,
-                 const T *super_scale_ptr, T *weight_ptr, const int64_t batch,
-                 const int64_t num_rows, const int64_t num_columns) {
+Wint2UnzipKernel(const uint8_t *zipped_weight_ptr,
+                 const uint8_t *local_scale_ptr, const float *code_scale_ptr,
+                 const float *code_zp_ptr, const T *super_scale_ptr,
+                 T *weight_ptr, const int64_t batch, const int64_t num_rows,
+                 const int64_t num_columns) {
   __shared__ T smem[TileRows * TileColumns];
 
   int64_t block_start_column = blockIdx.x * TileColumns;
@@ -353,27 +359,29 @@ Wint2UnzipKernel(const uint8_t *zipped_weight_ptr, const T *local_scale_ptr,
   const uint8_t *block_zipped_weight_ptr =
       zipped_weight_ptr + block_zipped_offset;
 
-  int64_t block_start_local_scale_row = block_start_row / 64;
+  // local_scale is uint4
+  int64_t block_start_local_scale_row = block_start_row / (64 * 2);
   int64_t block_local_scale_offset =
       block_start_local_scale_row * num_columns + block_start_column;
-  const T *block_local_scale_ptr = local_scale_ptr + block_local_scale_offset;
+  const uint8_t *block_local_scale_ptr =
+      local_scale_ptr + block_local_scale_offset;
 
   const float *block_code_scale_ptr =
       code_scale_ptr + blockIdx.z * num_columns + block_start_column;
-  const float *block_code_zip_ptr =
-      code_zip_ptr + blockIdx.z * num_columns + block_start_column;
+  const float *block_code_zp_ptr =
+      code_zp_ptr + blockIdx.z * num_columns + block_start_column;
   const T *block_super_scale_ptr =
       super_scale_ptr
           ? super_scale_ptr + blockIdx.z * num_columns + block_start_column
           : nullptr;
 
   // unzip to shared memory
-  wintx::UnzipAndDequantFunctor<T, wintx::WintQuantMethod::kWeightOnlyInt2,
-                                TileRows, TileColumns, NumThreads>
+  UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt2, TileRows,
+                         TileColumns, NumThreads>
       unzip_functor;
   unzip_functor(block_zipped_weight_ptr, block_local_scale_ptr,
-                block_code_scale_ptr, block_code_zip_ptr, block_super_scale_ptr,
-                smem, num_columns);
+                block_code_scale_ptr, block_code_zp_ptr, block_super_scale_ptr,
+                smem, block_start_row, num_columns);
 
   // write back to global memory
   for (int row = 0; row < TileRows; ++row) {
@@ -408,10 +416,10 @@ void Wint25UnzipKernelLauncher(const uint16_t *zipped_weight,
 
 template <typename T>
 void Wint2UnzipKernelLauncher(const uint8_t *zipped_weight,
-                              const T *local_scale, const float *code_scale,
-                              const float *code_zip, const T *supper_scale,
-                              T *weight, const int64_t batch,
-                              const int64_t num_rows,
+                              const uint8_t *local_scale,
+                              const float *code_scale, const float *code_zp,
+                              const T *supper_scale, T *weight,
+                              const int64_t batch, const int64_t num_rows,
                               const int64_t num_columns) {
   constexpr int kTileRows = 64;
   constexpr int kTileColumns = 128;
@@ -424,7 +432,7 @@ void Wint2UnzipKernelLauncher(const uint8_t *zipped_weight,
   dim3 grid_dim(block_dim_x, block_dim_y, batch);
 
   Wint2UnzipKernel<T, kTileRows, kTileColumns, kNumThreads>
-      <<<grid_dim, block_dim>>>(zipped_weight, local_scale, code_scale,
-                                code_zip, supper_scale, weight, batch, num_rows,
+      <<<grid_dim, block_dim>>>(zipped_weight, local_scale, code_scale, code_zp,
+                                supper_scale, weight, batch, num_rows,
                                 num_columns);
 }

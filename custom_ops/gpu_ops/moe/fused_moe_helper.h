@@ -16,6 +16,7 @@ limitations under the License. */
 #pragma once
 
 #include "cutlass_kernels/moe_gemm/fused_moe_gemm_kernels.h"
+#include "cutlass_kernels/moe_gemm/wint_type_traits.h"
 #include "moe/fused_moe_op.h"
 
 namespace phi {
@@ -53,11 +54,17 @@ void moe_token_type_ids_kernelLauncher(T *gating_output,
 
 template <typename T, typename NvType> class MoeHelper {
 public:
-  MoeHelper(const std::string gemm_method,
-            MoeGemmRunner<NvType, NvType> *fp16_moe_gemm_runner,
-            MoeGemmRunner<NvType, uint8_t> *int8_moe_gemm_runner,
-            MoeGemmRunner<NvType, cutlass::uint4b_t> *int4_moe_gemm_runner,
-            int layernum = 0)
+  MoeHelper(
+      const std::string gemm_method,
+      MoeGemmRunner<NvType, WintQuantTraits<NvType, WintQuantMethod::kNone>>
+          *fp16_moe_gemm_runner,
+      MoeGemmRunner<NvType,
+                    WintQuantTraits<NvType, WintQuantMethod::kWeightOnlyInt8>>
+          *int8_moe_gemm_runner,
+      MoeGemmRunner<NvType,
+                    WintQuantTraits<NvType, WintQuantMethod::kWeightOnlyInt4>>
+          *int4_moe_gemm_runner,
+      int layernum = 0)
       : gemm_method_(gemm_method), fp16_moe_gemm_runner_(fp16_moe_gemm_runner),
         int8_moe_gemm_runner_(int8_moe_gemm_runner),
         int4_moe_gemm_runner_(int4_moe_gemm_runner), layernum_(layernum) {}
@@ -343,9 +350,14 @@ public:
 
 private:
   std::string gemm_method_;
-  MoeGemmRunner<NvType, NvType> *fp16_moe_gemm_runner_;
-  MoeGemmRunner<NvType, uint8_t> *int8_moe_gemm_runner_;
-  MoeGemmRunner<NvType, cutlass::uint4b_t> *int4_moe_gemm_runner_;
+  MoeGemmRunner<NvType, WintQuantTraits<NvType, WintQuantMethod::kNone>>
+      *fp16_moe_gemm_runner_;
+  MoeGemmRunner<NvType,
+                WintQuantTraits<NvType, WintQuantMethod::kWeightOnlyInt8>>
+      *int8_moe_gemm_runner_;
+  MoeGemmRunner<NvType,
+                WintQuantTraits<NvType, WintQuantMethod::kWeightOnlyInt4>>
+      *int4_moe_gemm_runner_;
   int layernum_;
   CubKeyValueSorter sorter_;
 };
