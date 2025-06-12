@@ -234,11 +234,10 @@ def build_stream_line_model(
     model_config.tensor_parallel_degree = parallel_config.tensor_parallel_degree
     model_config.use_ep = use_ep
     model_config.is_mtp = speculative_config.is_mtp
-
+    model_config.use_offline_quant = False
     additional_config.use_fake_parameter = use_fake_parameter
     additional_config.ep_just_for_test = ep_just_for_test
 
-    tmp_config.use_offline_quant = use_offline_quant
     if use_ep:
         if isinstance(model_config.moe_num_experts, list):
             #TODO(YuanRisheng) We need abandon old config(eg.ErnieBotMoEConfig) and

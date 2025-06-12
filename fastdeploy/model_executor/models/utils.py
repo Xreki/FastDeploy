@@ -1410,33 +1410,25 @@ def load_checkpoint(model_path, cls, config, return_numpy=True, load_gpu=True):
     load checkpoint
     """
     if config.use_ep:
-        state_dict = load_ep_checkpoint(model_path,
-                                        config,
-                                        return_numpy=True,
-                                        return_key_name=True)
+        state_dict = load_ep_checkpoint(
+            model_path, config, return_numpy=True, return_key_name=True
+        )
     else:
-        if load_gpu:
-            # 预切
-            rank_dirs = [
-                f
-                for f in os.listdir(model_path)
-                if f.startswith("rank") and os.path.isdir(os.path.join(model_path, f))
-            ]
-            if len(rank_dirs) > 1:
-                if config.tensor_parallel_degree != len(rank_dirs):
-                    raise ValueError(
-                        f"Your model only supports loading with tp{len(rank_dirs)}"
-                    )
-                state_dict = get_state_dict(
-                    model_path, config, use_fastsafetensor=True)
-            else:
-                state_dict = get_tp_state_dict(
-                    model_path, cls, config, use_fastsafetensor=True)
+        rank_dirs = [
+            f
+            for f in os.listdir(model_path)
+            if f.startswith("rank") and os.path.isdir(os.path.join(model_path, f))
+        ]
+        if len(rank_dirs) > 1:
+            if config.tensor_parallel_degree != len(rank_dirs):
+                raise ValueError(
+                    f"Your model only supports loading with tp{len(rank_dirs)}"
+                )
+            state_dict = get_state_dict(model_path, config)
         else:
-            state_dict = load_tp_checkpoint(model_path,
-                                            cls,
-                                            config,
-                                            return_numpy=return_numpy)
+            state_dict = load_tp_checkpoint(
+                model_path, cls, config, return_numpy=return_numpy
+            )
     return state_dict
 
 
