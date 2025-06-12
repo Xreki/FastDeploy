@@ -1017,6 +1017,7 @@ class ErnieBotFusedModel(ErnieBotPretrainedModel):
             max_batch_size=max_batch_size,
             is_quantized=is_quantized,
             use_safetensors=use_safetensors,
+            ernie_config=ernie_config,
         )
 
         if enable_redundant_experts and use_moe:
