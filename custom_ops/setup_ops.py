@@ -22,7 +22,6 @@ import tarfile
 import paddle
 from paddle.utils.cpp_extension import CppExtension, CUDAExtension, setup
 from setuptools import find_namespace_packages, find_packages
-from setuptools.command.install_lib import install_lib
 archs = json.loads(os.getenv("BUILDING_ARCS", "[]"))
 use_bf16 = os.getenv("CPU_USE_BF16", "False") == "True"
 
