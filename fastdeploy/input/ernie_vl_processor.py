@@ -79,7 +79,9 @@ class ErnieMoEVLProcessor(ErnieProcessor):
             request.set("stop_token_ids", stop_seqs)
             request.set("stop_seqs_len", stop_seqs_len)
 
-        output = self.ernie_processor.process(request)
+        messages = request.get("messages")
+        messages = parse_chat_messages(messages)
+        output = self.ernie_processor.process(messages)
         metadata = request.get("metadata")
         # 如果metadata包含之前输出的token，将这些token添加到input_ids末尾
         if metadata and metadata.get("generated_token_ids"):
