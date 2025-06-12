@@ -23,9 +23,10 @@ import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
 
 from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
-                               GraphOptimizationConfig, KVCacheConfig,
-                               FDConfig, LoadConfig, ModelConfig, MoEConfig,
-                               ParallelConfig, SpeculativeConfig, TmpConfig)
+                               FDConfig, GraphOptimizationConfig,
+                               KVCacheConfig, LoadConfig, ModelConfig,
+                               MoEConfig, ParallelConfig, SpeculativeConfig,
+                               TmpConfig)
 from fastdeploy.inter_communicator import EngineWorkerQueue as TaskQueue
 from fastdeploy.inter_communicator import IPCSignal
 from fastdeploy.model_executor.layers.quantization import \
@@ -382,6 +383,13 @@ def initialize_fd_config(args) -> FDConfig:
     device_config = DeviceConfig()
     # model_config = ModelConfig()
     kv_cache_config = KVCacheConfig()
+
+    cachekv_dtype = config.get("cache_quant_type", None)
+    if cachekv_dtype is not None:
+        logger.info(
+            f"cachekv is set to [{cachekv_dtype}] according to your config file's cache_quant_type field"
+        )
+        kv_cache_config.cache_quant_dtype = config["cache_quant_type"]
     decoding_config = DecodingConfig()
     decoding_config = MoEConfig()
     tmp_config = TmpConfig()
@@ -446,6 +454,8 @@ def initialize_fd_config(args) -> FDConfig:
         "moe_use_ffn_shared_weight_and_bias", False)
     moe_config.use_moe = use_moe
     moe_config.moe_group = config.get("moe_group", False)
+    moe_config.moe_quant_type = config.get("moe_quant_type",
+                                           "weight_only_int4")
     tmp_config.weight_block_size = config.get("weight_block_size", [-1, -1])
 
     model_config.ori_vocab_size = config.get("vocab_size", -1)
@@ -511,17 +521,17 @@ def initialize_fd_config(args) -> FDConfig:
     parallel_config.max_num_batched_tokens = args.max_num_batched_tokens
 
     fd_config = FDConfig(model_config=model_config,
-                           parallel_config=parallel_config,
-                           speculative_config=speculative_config,
-                           device_config=device_config,
-                           additional_config=additional_config,
-                           load_config=load_config,
-                           tmp_config=tmp_config,
-                           moe_config=moe_config,
-                           decoding_config=decoding_config,
-                           quant_config=quant_config,
-                           kv_cache_config=kv_cache_config,
-                           graph_opt_config=graph_opt_config)
+                         parallel_config=parallel_config,
+                         speculative_config=speculative_config,
+                         device_config=device_config,
+                         additional_config=additional_config,
+                         load_config=load_config,
+                         tmp_config=tmp_config,
+                         moe_config=moe_config,
+                         decoding_config=decoding_config,
+                         quant_config=quant_config,
+                         kv_cache_config=kv_cache_config,
+                         graph_opt_config=graph_opt_config)
 
     return fd_config
 

@@ -57,11 +57,15 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
 
         assert len(ffn1_tensor) == self.num_local_experts
         assert len(ffn2_tensor) == self.num_local_experts
+
+        pack_num = 1
+        if self.moe_quant_type == "w4a8":
+            pack_num = 2
         assert ffn1_tensor[0].shape == [
-            self.hidden_size, self.moe_intermediate_size * 2
+            self.hidden_size // pack_num, self.moe_intermediate_size * 2
         ]
         assert ffn2_tensor[0].shape == [
-            self.moe_intermediate_size, self.hidden_size
+            self.moe_intermediate_size // pack_num, self.hidden_size
         ]
 
         added_weight_attrs = ["moe_ffn1_weight", "moe_ffn2_weight"]

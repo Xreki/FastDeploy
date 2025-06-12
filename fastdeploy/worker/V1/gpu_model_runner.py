@@ -415,6 +415,10 @@ class GPUModelRunner(ModelRunnerBase):
 
         for i in range(self.model_config.num_layers):
             cache_type = self.parallel_config.dtype
+
+            if self.fd_config.kv_cache_config.cache_quant_dtype == "cache_int8":
+                cache_type = 'uint8'
+
             cache_kvs["key_caches_{}".format(i)] = paddle.full(
                 shape=kv_cache_shape,
                 fill_value=0,
