@@ -14,8 +14,6 @@
 # limitations under the License.
 """
 
-""" Ernie model configuration"""
-
 from paddlenlp.transformers.configuration_utils import PretrainedConfig
 
 __all__ = [

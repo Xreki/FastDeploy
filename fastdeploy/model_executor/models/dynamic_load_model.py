@@ -15,26 +15,24 @@
 """
 from __future__ import annotations
 
-import json
 import os
 import time
 from multiprocessing.shared_memory import SharedMemory
-from typing import Any
-from typing import Dict
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 import paddle
 from paddle import nn
-from paddle.distributed import fleet
-from paddlenlp.trl import llm_utils
 from paddlenlp.utils.log import logger
 
-from fastdeploy.model_executor.models.ernie_vl.configuration import ErnieBotMoEVLConfig
-from fastdeploy.model_executor.models.ernie_vl.dfnrope import DFNRopeVisionTransformerConfig
-from fastdeploy.model_executor.models.ernie_vl.dfnrope.modeling import DFNRopeVisionTransformerPretrainedModel
-from fastdeploy.model_executor.models.ernie_vl.modeling_resampler import ScatterOp
-from fastdeploy.model_executor.models.ernie_vl.modeling_resampler import VariableResolutionResamplerModel
+from fastdeploy.model_executor.models.ernie45t_vl.configuration import \
+    ErnieBotMoEVLConfig
+from fastdeploy.model_executor.models.ernie45t_vl.dfnrope import \
+    DFNRopeVisionTransformerConfig
+from fastdeploy.model_executor.models.ernie45t_vl.dfnrope.modeling import \
+    DFNRopeVisionTransformerPretrainedModel
+from fastdeploy.model_executor.models.ernie45t_vl.modeling_resampler import \
+    VariableResolutionResamplerModel
 
 
 class DynamicLoadModel(nn.Layer):
@@ -127,8 +125,7 @@ class DynamicLoadModel(nn.Layer):
         if self.load_model_from_ipc:
             self.update_parameters()
 
-        logger.info(
-            "FastDeploy model built successfully by DynamicLoadModel")
+        logger.info("FastDeploy model built successfully by DynamicLoadModel")
 
     def inject_pp_vision_model(self):
         """
@@ -172,8 +169,8 @@ class DynamicLoadModel(nn.Layer):
                 config=config.vision_config)
 
             vision_model = paddle.amp.decorate(models=vision_model,
-                                            level="O2",
-                                            dtype="bfloat16")
+                                               level="O2",
+                                               dtype="bfloat16")
 
             resampler_model = VariableResolutionResamplerModel(
                 config.pixel_hidden_size,
@@ -183,8 +180,8 @@ class DynamicLoadModel(nn.Layer):
                 config=config,
             )
             resampler_model = paddle.amp.decorate(models=resampler_model,
-                                                level="O2",
-                                                dtype="bfloat16")
+                                                  level="O2",
+                                                  dtype="bfloat16")
 
             vision_model.eval()
             resampler_model.eval()
@@ -292,7 +289,6 @@ class DynamicLoadModel(nn.Layer):
                     logger.info(f"Clearing model parameter: {name}")
                     param._clear_data()
 
-
         paddle.device.cuda.empty_cache()
         if not self.first_load:
             paddle.distributed.restart_process_group()
@@ -316,7 +312,9 @@ class DynamicLoadModel(nn.Layer):
                 replace_name = name.replace("gpt.", "ernie.")
                 for model_state_dict in model_state_dicts:
                     if replace_name in model_state_dict:
-                        logger.info(f"Updating model parameter: {name}, shape : {param.shape}")
+                        logger.info(
+                            f"Updating model parameter: {name}, shape : {param.shape}"
+                        )
                         update_param = model_state_dict[replace_name]
 
                         if update_param.dtype != param.dtype:
@@ -380,7 +378,9 @@ class DynamicLoadModel(nn.Layer):
 
                     update_param._share_buffer_to(param)
                 else:
-                    logger.error(f"No matching parameter found for {name} in global state_dict")
+                    logger.error(
+                        f"No matching parameter found for {name} in global state_dict"
+                    )
 
         logger.info(
             f"Parameter sharing completed in {time.perf_counter() - share_start:.2f} seconds"
@@ -469,7 +469,8 @@ class DynamicLoadModel(nn.Layer):
                 if not param._is_initialized():
                     if erro_log:
                         logger.error(
-                            f"Parameter {name}-{param} was not properly cleared!")
+                            f"Parameter {name}-{param} was not properly cleared!"
+                        )
                     all_update = False
 
         if all_update:

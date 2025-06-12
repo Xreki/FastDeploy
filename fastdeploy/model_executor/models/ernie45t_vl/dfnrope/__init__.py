@@ -14,11 +14,9 @@
 # limitations under the License.
 """
 
-
-"""
-dfnrope Padele实现
-"""
 from .configuration import DFNRopeVisionTransformerConfig
 from .modeling import DFNRopeVisionTransformerPretrainedModel
 
-__all__ = ['DFNRopeVisionTransformerConfig', 'DFNRopeVisionTransformerPretrainedModel']
+__all__ = [
+    'DFNRopeVisionTransformerConfig', 'DFNRopeVisionTransformerPretrainedModel'
+]

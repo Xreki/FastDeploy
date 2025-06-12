@@ -30,8 +30,8 @@ from fastdeploy.model_executor.layers.lm_head import ParallelLMHead
 from fastdeploy.model_executor.layers.moe.moe import FusedMoE
 from fastdeploy.model_executor.layers.normalization import RMSNorm
 from fastdeploy.model_executor.layers.utils import get_tensor
-from fastdeploy.model_executor.models.ernie_text import (Ernie45TAttention,
-                                                         Ernie45TMLP)
+from fastdeploy.model_executor.models.ernie45t_moe import (Ernie45TAttention,
+                                                           Ernie45TMLP)
 from fastdeploy.model_executor.ops.gpu import (extract_text_token_output,
                                                text_image_gather_scatter,
                                                text_image_index_out)

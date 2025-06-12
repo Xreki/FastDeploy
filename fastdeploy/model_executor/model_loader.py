@@ -21,14 +21,14 @@ from paddle import nn
 from paddle.common_ops_import import convert_dtype
 
 from fastdeploy.config import FDConfig, LoadConfig, ModelConfig
-from fastdeploy.model_executor.models.ernie import ErnieBotPretrainedModel
+from fastdeploy.model_executor.models.ernie45t_moe import ErniePretrainedModel
 from fastdeploy.model_executor.models.model_base import ModelRegistry
 from fastdeploy.model_executor.models.qwen2 import Qwen2PretrainedModel
 from fastdeploy.model_executor.models.utils import (convert_ndarray_dtype,
                                                     load_checkpoint)
 
 MODEL_CLASSES = {
-    "ErnieForCausalLM": ErnieBotPretrainedModel,
+    "ErnieForCausalLM": ErniePretrainedModel,
     "Qwen2ForCausalLM": Qwen2PretrainedModel,
 }
 
