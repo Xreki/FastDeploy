@@ -1,2 +1,2 @@
 #!/bin/bash
-python fastdeploy/openai_demo.py
+python ../fastdeploy/demo/openai_demo.py

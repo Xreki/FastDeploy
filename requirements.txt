@@ -27,3 +27,4 @@ decord
 moviepy
 aistudio-sdk==0.2.6
 triton==3.3
+fastsafetensors @ https://paddlenlp.bj.bcebos.com/whl/fastsafetensors-0.1.13-cp310-cp310-linux_x86_64.whl

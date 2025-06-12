@@ -102,10 +102,10 @@ class OpenAIServingCompletion:
                         created_time=created_time,
                         model_name=request.model
                     )
-                except ValueError as e:
+                except Exception as e:
                     return ErrorResponse(code=400, message=str(e))
 
-        except ValueError as e:
+        except Exception as e:
             return ErrorResponse(message=str(e), code=400)
 
 

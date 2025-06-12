@@ -221,7 +221,7 @@ class LinearBase(nn.Layer):
                     state_dict.pop(self.weight_key + ".quant_weight")
                 ),
                 quant_scale=get_tensor(
-                    state_dict.pop(self.weight_key + ".quant_scale")
+                    state_dict.pop(self.weight_key + ".weight_quanter")
                 ),
             )
         else:
