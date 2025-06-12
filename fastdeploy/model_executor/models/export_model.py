@@ -44,13 +44,13 @@ from fastdeploy.model_executor.models.utils import (_vocab_size_with_padding,
                                                     parser_quant_type)
 
 from ..layers.quantization import get_quantization_config
-from .ernie import ErnieBotPretrainedModel
+from .ernie45t_moe import ErniePretrainedModel
 from .model_base import ModelRegistry
 from .qwen2 import Qwen2PretrainedModel
 from .tokenizer import ErnieBotTokenizer
 
 model_classes_mapping = {
-    "ErnieForCausalLM": ErnieBotPretrainedModel,
+    "ErnieForCausalLM": ErniePretrainedModel,
     "Qwen2ForCausalLM": Qwen2PretrainedModel,
 }
 
@@ -546,8 +546,6 @@ def build_stream_line_model(
         moe_config.use_moe = use_moe
         moe_config.moe_group = config.get("moe_group", False)
         moe_config.moe_quant_type = moe_quant_type
-        # if top_k > 0:
-        #     moe_config.top_k = top_k
     parallel_config.use_ep = use_ep
     additional_config.ep_just_for_test = ep_just_for_test
     model_config.generation_phase = generation_phase

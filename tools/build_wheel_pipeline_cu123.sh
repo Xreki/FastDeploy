@@ -21,10 +21,6 @@ CPU_USE_BF16="false"
 CPU_USE_BF16=${2:-$CPU_USE_BF16}
 WITH_CPU="false"
 
-# python_tag
-py=$(${python} -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-python_tag="cp${py//./}"
-
 # paddle distributed use to set archs
 unset PADDLE_CUDA_ARCH_LIST
 
@@ -55,8 +51,8 @@ function python_version_check() {
   PY_MAIN_VERSION=`${python} -V 2>&1 | awk '{print $2}' | awk -F '.' '{print $1}'`
   PY_SUB_VERSION=`${python} -V 2>&1 | awk '{print $2}' | awk -F '.' '{print $2}'`
   echo -e "find python version ${PY_MAIN_VERSION}.${PY_SUB_VERSION}"
-  if [ $PY_MAIN_VERSION -ne "3" -o $PY_SUB_VERSION -lt "8" ]; then
-    echo -e "${RED}FAIL:${NONE} please use Python >= 3.8 !"
+  if [ $PY_MAIN_VERSION -ne "3" -o $PY_SUB_VERSION -lt "9" ]; then
+    echo -e "${RED}FAIL:${NONE} please use Python >= 3.9 !"
     exit 1
   fi
 }
@@ -144,7 +140,7 @@ function build_and_install_ops() {
 
 function build_and_install() {
   echo -e "${BLUE}[build]${NONE} building fastdeploy wheel..."
-  ${python} setup.py bdist_wheel --python-tag=${python_tag}
+  ${python} setup.py bdist_wheel --python-tag=py3
   if [ $? -ne 0 ]; then
     echo -e "${RED}[FAIL]${NONE} build fastdeploy wheel failed !"
     exit 1

@@ -378,7 +378,6 @@ class ModelRunner(ModelRunnerBase):
         """
         pre_process
         """
-        from fastdeploy.platforms import current_platform
         if current_platform.is_cuda():
             if self.args.speculate_method is not None:
                 (
@@ -442,7 +441,7 @@ class ModelRunner(ModelRunnerBase):
             self.share_inputs["seq_lens_this_time"],
             self.share_inputs["seq_lens_decoder"],
             self.share_inputs["seq_lens_encoder"],
-            None,
+            None,  #self.share_inputs["padding_offset"],
             self.args.max_model_len,
         )
         logits = self.model.compute_logits(hiddden_states)

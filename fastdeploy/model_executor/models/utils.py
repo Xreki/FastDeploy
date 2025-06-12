@@ -49,14 +49,6 @@ from fastdeploy.platforms import current_platform
 from .configuration import ErnieBotConfig, QuantizationConfig
 from .tokenizer import ErnieBotTokenizer
 
-MODEL_LIB_NAMES = [
-    "ernie_bot.modeling",
-    "ernie_bot.modeling_pp",
-    "ernie_bot.modeling_moe",
-    "ernie_bot.modeling_rm",
-    "ernie_bot.proxy_distill",
-]
-
 MAX_BSZ = 512
 MAX_DRAFT_TOKENS = 6
 

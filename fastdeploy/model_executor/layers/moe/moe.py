@@ -96,15 +96,13 @@ class FusedMoE(nn.Layer):
         self.hidden_size = fd_config.model_config.hidden_size
         self.moe_config = fd_config.moe_config
         self.use_offline_quant = fd_config.tmp_config.use_offline_quant
-        # moe_tag = self.fd_config.moe_config.moe_tag
-        # logger.info(f"{moe_tag}MoE is running in {moe_quant_type} mode")
 
         self.moe_quant_type = moe_quant_type
         self.num_experts = num_experts
         self.num_local_experts = self.num_experts // self.ep_size
 
         logger.info(
-            f"MoE config is {num_experts=}, {top_k=}, hidden_size={self.hidden_size}, {moe_intermediate_size=}, moe_quant_type={self.moe_quant_type}, ep_size={self.ep_size}, tp_size={self.tp_size}."
+            f"{moe_tag}MoE config is {num_experts=}, {top_k=}, hidden_size={self.hidden_size}, {moe_intermediate_size=}, moe_quant_type={self.moe_quant_type}, ep_size={self.ep_size}, tp_size={self.tp_size}."
         )
 
         self.moe_intermediate_size = moe_intermediate_size // self.tp_size
@@ -144,6 +142,41 @@ class FusedMoE(nn.Layer):
         else:
             self.compute_method = TritonFusedMoeMethod(moe_compute_params)
 
+        if self.moe_use_gate_correction_bias:
+            self.gate_correction_bias = self.create_parameter(
+                shape=[1, self.num_experts],
+                dtype="float32",
+            )
+        else:
+            self.gate_correction_bias = None
+
+        if self.num_shared_experts > 0:
+            self.shared_experts_hidden_dim = self.num_shared_experts * self.moe_intermediate_size
+            self.shared_experts_prefix = f"ernie.layers.{self.layer_idx}.mlp.shared_experts"
+
+            self.shared_experts_up_gate_proj = MergedColumnParallelLinear(
+                fd_config=self.fd_config,
+                prefix=self.shared_experts_up_gate_proj_key,
+                with_bias=False,
+                activation=self.fd_config.model_config.hidden_act,
+                use_fast_ffn=True,
+                dim_feedforward=self.shared_experts_hidden_dim)
+
+            self.shared_experts_down_proj = RowParallelLinear(
+                fd_config=self.fd_config,
+                prefix=self.shared_experts_down_proj_key,
+                input_size=(self.shared_experts_hidden_dim //
+                            self.fd_config.parallel_config.mp_size),
+                output_size=self.fd_config.model_config.hidden_size,
+                with_bias=False,
+                dim_feedforward=self.shared_experts_hidden_dim)
+
+            self.shared_act_fn = SiluAndMul(
+                fd_config=self.fd_config,
+                bias=None,
+                act_method=self.fd_config.model_config.hidden_act,
+            )
+
     def load_gate_state_dict(self, state_dict):
         """
         load_gate_state_dict function.
@@ -153,15 +186,7 @@ class FusedMoE(nn.Layer):
             gate_correction_bias_tensor = get_tensor(
                 state_dict.pop(
                     self.gate_correction_bias_key).astype("float32"))
-
-            self.gate_correction_bias = self.create_parameter(
-                shape=gate_correction_bias_tensor.shape,
-                dtype="float32",
-            )
-
             self.gate_correction_bias.set_value(gate_correction_bias_tensor)
-        else:
-            self.gate_correction_bias = None
 
         up_gate_proj_weight = []
         down_proj_weight = []
@@ -175,33 +200,8 @@ class FusedMoE(nn.Layer):
         return up_gate_proj_weight, down_proj_weight
 
     def load_shared_experts_state_dict(self, state_dict):
-        self.shared_experts_hidden_dim = self.num_shared_experts * self.moe_intermediate_size
-
-        self.shared_experts_prefix = f"ernie.layers.{self.layer_idx}.mlp.shared_experts"
-        self.shared_experts_up_gate_proj = MergedColumnParallelLinear(
-            fd_config=self.fd_config,
-            prefix=self.shared_experts_up_gate_proj_key,
-            with_bias=False,
-            activation=self.fd_config.model_config.hidden_act,
-            use_fast_ffn=True,
-            dim_feedforward=self.shared_experts_hidden_dim)
         self.shared_experts_up_gate_proj.load_state_dict(state_dict)
-
-        self.shared_experts_down_proj = RowParallelLinear(
-            fd_config=self.fd_config,
-            prefix=self.shared_experts_down_proj_key,
-            input_size=(self.shared_experts_hidden_dim //
-                        self.fd_config.parallel_config.mp_size),
-            output_size=self.fd_config.model_config.hidden_size,
-            with_bias=False,
-            dim_feedforward=self.shared_experts_hidden_dim)
         self.shared_experts_down_proj.load_state_dict(state_dict)
-
-        self.shared_act_fn = SiluAndMul(
-            fd_config=self.fd_config,
-            bias=None,
-            act_method=self.fd_config.model_config.hidden_act,
-        )
 
     def load_state_dict(self, state_dict, is_update: bool = False):
         """

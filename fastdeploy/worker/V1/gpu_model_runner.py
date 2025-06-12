@@ -488,7 +488,7 @@ class GPUModelRunner(ModelRunnerBase):
                 self.share_inputs["seq_lens_this_time"],
                 self.share_inputs["seq_lens_decoder"],
                 self.share_inputs["seq_lens_encoder"],
-                None,
+                None,  #self.share_inputs["padding_offset"],
                 self.parallel_config.max_model_len,
             )
 
@@ -564,7 +564,7 @@ class GPUModelRunner(ModelRunnerBase):
             self.share_inputs["seq_lens_this_time"],
             self.share_inputs["seq_lens_decoder"],
             self.share_inputs["seq_lens_encoder"],
-            self.share_inputs["padding_offset"],
+            None,  #self.share_inputs["padding_offset"],
             self.parallel_config.max_model_len,
         )
 

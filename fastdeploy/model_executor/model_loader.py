@@ -21,14 +21,14 @@ from paddle import nn
 from paddle.common_ops_import import convert_dtype
 
 from fastdeploy.config import FDConfig, LoadConfig, ModelConfig
-from fastdeploy.model_executor.models.ernie import ErnieBotPretrainedModel
+from fastdeploy.model_executor.models.ernie45t_moe import ErniePretrainedModel
 from fastdeploy.model_executor.models.model_base import ModelRegistry
 from fastdeploy.model_executor.models.qwen2 import Qwen2PretrainedModel
 from fastdeploy.model_executor.models.utils import (convert_ndarray_dtype,
                                                     load_checkpoint)
 
 MODEL_CLASSES = {
-    "ErnieForCausalLM": ErnieBotPretrainedModel,
+    "ErnieForCausalLM": ErniePretrainedModel,
     "Qwen2ForCausalLM": Qwen2PretrainedModel,
 }
 
@@ -86,6 +86,9 @@ class DefaultModelLoader(BaseModelLoader):
             if convert_dtype(v.dtype) == fd_config.parallel_config.dtype:
                 continue
             elif convert_dtype(v.dtype) == "float32":
+                continue
+            elif convert_dtype(v.dtype) in ["int8", "uint8"]:
+                # this is for quantization, we don't need to convert it
                 continue
             state_dict[k] = convert_ndarray_dtype(
                 v, fd_config.parallel_config.dtype)

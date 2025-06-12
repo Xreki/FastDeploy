@@ -28,10 +28,10 @@ from fastdeploy.config import FDConfig
 from fastdeploy.model_executor.layers.embeddings import VocabParallelEmbedding
 from fastdeploy.model_executor.layers.lm_head import ParallelLMHead
 from fastdeploy.model_executor.layers.moe.moe import FusedMoE
-from fastdeploy.model_executor.layers.normalization import LayerNorm, RMSNorm
+from fastdeploy.model_executor.layers.normalization import RMSNorm
 from fastdeploy.model_executor.layers.utils import get_tensor
-from fastdeploy.model_executor.models.ernie_text import (Ernie45TAttention,
-                                                         Ernie45TMLP)
+from fastdeploy.model_executor.models.ernie45t_moe import (Ernie45TAttention,
+                                                           Ernie45TMLP)
 from fastdeploy.model_executor.ops.gpu import (extract_text_token_output,
                                                text_image_gather_scatter,
                                                text_image_index_out)
@@ -54,6 +54,7 @@ class VLMoEMeta:
     text_input: Optional[paddle.Tensor] = None
     text_index: Optional[paddle.Tensor] = None
     image_index: Optional[paddle.Tensor] = None
+    token_type_ids: Optional[paddle.Tensor] = None
 
 
 class Ernie45TVLMoE(nn.Layer):
@@ -90,7 +91,7 @@ class Ernie45TVLMoE(nn.Layer):
             top_k=fd_config.moe_config.top_k,
             moe_use_gate_correction_bias=fd_config.moe_config.
             moe_use_gate_correction_bias,
-            moe_quant_type=fd_config.moe_config.moe_quant_type,
+            moe_quant_type="weight_only_int8",  # not set weight_only_int4
             layer_idx=layer_id,
             moe_tag="Image",
             gate_weight_key=f"{prefix}.gate.weight_1",
@@ -176,22 +177,29 @@ class Ernie45TVLMoE(nn.Layer):
         state_dict.pop(self.fused_moe_text.gate_correction_bias_key)
 
     def forward(self, hidden_states: paddle.Tensor, vl_moe_meta: VLMoEMeta):
-        image_input = vl_moe_meta.get("image_input", None)
-        if image_input is not None:
-            token_type_ids = vl_moe_meta.get("token_type_ids", None)
-            text_input = vl_moe_meta.get("text_input", None)
-            text_index = vl_moe_meta.get("text_index", None)
-            image_index = vl_moe_meta.get("image_index", None)
-            text_image_gather_scatter(hidden_states, text_input, image_input,
-                                      token_type_ids, text_index, image_index,
-                                      True)
-            text_out = self.text_moe_layer(text_input)
-            image_out = self.image_moe_layer(image_input)
-            text_image_gather_scatter(hidden_states, text_out, image_out,
-                                      token_type_ids, text_index, image_index,
-                                      False)
+        if vl_moe_meta.image_input is not None:
+            text_image_gather_scatter(
+                hidden_states,
+                vl_moe_meta.text_input,
+                vl_moe_meta.image_input,
+                vl_moe_meta.token_type_ids,
+                vl_moe_meta.text_index,
+                vl_moe_meta.image_index,
+                True,
+            )
+            text_out = self.fused_moe_text(vl_moe_meta.text_input)
+            image_out = self.fused_moe_image(vl_moe_meta.image_input)
+            text_image_gather_scatter(
+                hidden_states,
+                text_out,
+                image_out,
+                vl_moe_meta.token_type_ids,
+                vl_moe_meta.text_index,
+                vl_moe_meta.image_index,
+                False,
+            )
         else:
-            hidden_states = self.text_moe_layer(hidden_states)
+            hidden_states = self.fused_moe_text(hidden_states)
         return hidden_states
 
 
@@ -308,12 +316,6 @@ class Ernie45TVLModel(nn.Layer):
             for i in range(self.num_layers)
         ]
 
-        self.last_layernorm = LayerNorm(
-            fd_config,
-            prefix="",
-            hidden_size=fd_config.model_config.hidden_size,
-            eps=1e-5)
-
         self.norm = RMSNorm(
             fd_config,
             hidden_size=fd_config.model_config.hidden_size,
@@ -339,6 +341,7 @@ class Ernie45TVLModel(nn.Layer):
     def forward(
         self,
         ids_remove_padding: paddle.Tensor,
+        image_features: paddle.Tensor,
         forward_meta: ForwardMeta,
     ):
         text_input = None
@@ -357,8 +360,7 @@ class Ernie45TVLModel(nn.Layer):
         text_token_num = ((token_num - image_token_num) if
                           (token_num - image_token_num) > 0 else 1)
         if image_mask.any():
-            hidden_states[image_mask] = forward_meta.image_features.cast(
-                self._dtype)
+            hidden_states[image_mask] = image_features.cast(self._dtype)
             text_input = paddle.full(
                 shape=[text_token_num, hidden_states.shape[1]],
                 fill_value=1,
@@ -376,6 +378,7 @@ class Ernie45TVLModel(nn.Layer):
             image_input=image_input,
             text_index=text_index,
             image_index=image_index,
+            token_type_ids=token_type_ids,
         )
         # -----------------------
 
@@ -388,7 +391,7 @@ class Ernie45TVLModel(nn.Layer):
                 vl_moe_meta,
             )
 
-        hidden_states, _ = self.last_layernorm(hidden_states, residual)
+        hidden_states = hidden_states + residual
 
         # -----------------------
         hidden_states = hidden_states.cast("float32")
@@ -466,8 +469,10 @@ class ErnieMoEVLForCausalLM(ModelForCasualLM):
     def forward(
         self,
         ids_remove_padding: paddle.Tensor,
+        image_features: paddle.Tensor,
         forward_meta: ForwardMeta,
     ):
-        hidden_states = self.model(ids_remove_padding, forward_meta)
+        hidden_states = self.model(ids_remove_padding, image_features,
+                                   forward_meta)
 
         return hidden_states
