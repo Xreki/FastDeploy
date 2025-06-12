@@ -151,7 +151,8 @@ class FusedMoE(nn.Layer):
         # gate_correction_bias
         if self.moe_use_gate_correction_bias:
             gate_correction_bias_tensor = get_tensor(
-                state_dict.pop(self.gate_correction_bias_key))
+                state_dict.pop(
+                    self.gate_correction_bias_key).astype("float32"))
 
             self.gate_correction_bias = self.create_parameter(
                 shape=gate_correction_bias_tensor.shape,

@@ -259,7 +259,7 @@ class Ernie45TModel(nn.Layer):
             embedding_dim=fd_config.model_config.hidden_size,
             params_dtype=paddle.get_default_dtype(),
             prefix=(f"{fd_config.model_config.prefix_name}.embed_tokens"),
-        )
+            weight_sharing_key="lm_head.weight")
 
         self.hidden_layers = [
             Ernie45TDecoderLayer(

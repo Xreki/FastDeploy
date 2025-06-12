@@ -33,6 +33,7 @@ class VocabParallelEmbedding(nn.Layer):
         embedding_dim=768,
         params_dtype="bfloat16",
         prefix="",
+        weight_sharing_key="",
     ):
         """
         Initialize the VocabParallelEmbedding layer for the model.
@@ -128,6 +129,7 @@ class VocabParallelEmbedding(nn.Layer):
         self.dropout = nn.Dropout(self.hidden_dropout_prob)
         self.rope_head_dim_shape_tensor = paddle.ones((self.rope_head_dim),
                                                       dtype="int8")
+        self.weight_sharing_key = weight_sharing_key
 
     def load_state_dict(self, state_dict):
         """
@@ -139,7 +141,7 @@ class VocabParallelEmbedding(nn.Layer):
         if self.weight_sharing:
             # read without pop, this weight will be used in lm_head
             self.word_embeddings.weight.set_value(
-                get_tensor(state_dict["lm_head.weight"]).astype(
+                get_tensor(state_dict[self.weight_sharing_key]).astype(
                     paddle.get_default_dtype()))
         else:
             self.word_embeddings.weight.set_value(

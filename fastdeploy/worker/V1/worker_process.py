@@ -222,17 +222,16 @@ class PaddleDisWorkerProc():
     def determine_num_available_blocks(self):
         """
         """
-        # # 1. Get available memory(bytes)
-        # available_kv_cache_memory = self.worker.determine_available_memory()
-        # print(
-        #     f"------- available_kv_cache_memory:{available_kv_cache_memory / 1024**3} GB --------"
-        # )
+        # 1. Get available memory(bytes)
+        available_kv_cache_memory = self.worker.determine_available_memory()
+        print(
+            f"------- available_kv_cache_memory:{available_kv_cache_memory / 1024**3} GB --------"
+        )
 
-        # # 2. Calculate the appropriate number of blocks
-        # model_block_memory_used = self.worker.cal_theortical_kvcache()
-        # num_blocks_local = int(available_kv_cache_memory //
-        #                        model_block_memory_used)
-        num_blocks_local = 1500
+        # 2. Calculate the appropriate number of blocks
+        model_block_memory_used = self.worker.cal_theortical_kvcache()
+        num_blocks_local = int(available_kv_cache_memory //
+                               model_block_memory_used)
         print(f"------- num_blocks_local:{num_blocks_local} --------")
 
         # 3. Send IPCSignal
@@ -380,6 +379,7 @@ def initialize_fd_config(args) -> FDConfig:
     # NOTE(gongshaotian): From build stream line model
     config, _ = ModelConfig.get_config_dict(args.model_name_or_path)
     model_config = ModelConfig.from_dict(config)
+    paddle.set_default_dtype(args.dtype)
 
     device_config = DeviceConfig()
     # model_config = ModelConfig()
@@ -432,7 +432,8 @@ def initialize_fd_config(args) -> FDConfig:
     model_config.group_size = group_size
     model_config.use_rmsnorm = config.get("use_rmsnorm", True)
     model_config.num_key_value_heads = num_key_value_heads
-    # model_config.export_model_type = config.get("predict_model_type", "weight_only_int8")
+    model_config.export_model_type = config.get("predict_model_type",
+                                                "weight_only_int8")
     tmp_config.has_zero_point = config.get("has_zero_point", False)
     tmp_config.is_channel_wise = config.get("is_channel_wise", False),
     model_config.start_layer_index = config.get("start_layer_index", 0)
