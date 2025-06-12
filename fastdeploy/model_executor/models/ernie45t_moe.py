@@ -330,16 +330,52 @@ class Ernie45TMoE(nn.Layer):
             f"{prefix}.moe_statics.e_score_correction_bias",
             ffn1_expert_weight_key=f"{prefix}.experts.{{}}.up_gate_proj.weight",
             ffn2_expert_weight_key=f"{prefix}.experts.{{}}.down_proj.weight",
-            shared_experts_up_gate_proj_key=
-            f"{prefix}.shared_experts.up_gate_proj",
-            shared_experts_down_proj_key=f"{prefix}.shared_experts.down_proj",
         )
+
+        self.num_shared_experts = fd_config.moe_config.moe_num_shared_experts
+        if self.num_shared_experts > 0:
+            shared_experts_hidden_dim = self.num_shared_experts * fd_config.moe_config.moe_intermediate_size
+            self.shared_experts_prefix = f"ernie.layers.{layer_id}.mlp.shared_experts"
+
+            self.shared_experts_up_gate_proj = MergedColumnParallelLinear(
+                fd_config=fd_config,
+                prefix=f"{prefix}.shared_experts.up_gate_proj",
+                with_bias=False,
+                activation=fd_config.model_config.hidden_act,
+                use_fast_ffn=True,
+                ffn_hidden_size=shared_experts_hidden_dim)
+
+            self.shared_experts_down_proj = RowParallelLinear(
+                fd_config=fd_config,
+                prefix=f"{prefix}.shared_experts.down_proj",
+                input_size=(shared_experts_hidden_dim //
+                            fd_config.parallel_config.mp_size),
+                output_size=fd_config.model_config.hidden_size,
+                with_bias=False,
+                ffn_hidden_size=shared_experts_hidden_dim)
+
+            self.shared_act_fn = SiluAndMul(
+                fd_config=fd_config,
+                bias=None,
+                act_method=fd_config.model_config.hidden_act,
+            )
+
+    def load_shared_experts_state_dict(self, state_dict):
+        self.shared_experts_up_gate_proj.load_state_dict(state_dict)
+        self.shared_experts_down_proj.load_state_dict(state_dict)
 
     def load_state_dict(self, state_dict):
         self.fused_moe.load_state_dict(state_dict)
+        if self.num_shared_experts > 0:
+            self.load_shared_experts_state_dict(state_dict)
 
     def forward(self, hidden_states: paddle.Tensor):
         out = self.fused_moe(hidden_states)
+        if self.num_shared_experts > 0:
+            s_x = self.shared_experts_up_gate_proj(hidden_states)
+            s_x = self.shared_act_fn(s_x)
+            s_x = self.shared_experts_down_proj(s_x)
+            out = out + s_x
         return out
 
 
@@ -489,8 +525,7 @@ class Ernie45TModel(nn.Layer):
             num_embeddings=fd_config.model_config.vocab_size,
             embedding_dim=fd_config.model_config.hidden_size,
             params_dtype=paddle.get_default_dtype(),
-            prefix=(f"{fd_config.model_config.prefix_name}.embed_tokens"),
-            weight_sharing_key="lm_head.weight")
+            prefix=(f"{fd_config.model_config.prefix_name}.embed_tokens"))
 
         self.hidden_layers = [
             Ernie45TDecoderLayer(
@@ -552,6 +587,7 @@ class ErnieForCausalLM(ModelForCasualLM):
             fd_config (FDConfig): Configurations for the LLM model.
         """
         super(ErnieForCausalLM, self).__init__(fd_config)
+        self.fd_config = fd_config
 
         self.model = Ernie45TModel(fd_config=fd_config)
 
@@ -581,6 +617,9 @@ class ErnieForCausalLM(ModelForCasualLM):
         """
         self.model.load_state_dict(state_dict)
         self.lm_head.load_state_dict(state_dict)
+        if self.fd_config.model_config.tie_word_embeddings:
+            self.model.embeddings.word_embeddings.weight.set_value(
+                self.lm_head.out_linear.weight.transpose([1, 0]))
 
     def compute_logits(self, hidden_states: paddle.Tensor):
         logits = self.lm_head(hidden_states)

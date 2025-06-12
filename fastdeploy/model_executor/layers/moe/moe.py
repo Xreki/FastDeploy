@@ -20,9 +20,6 @@ import paddle
 from paddle import nn
 from paddlenlp.utils.log import logger
 
-from fastdeploy.model_executor.layers.activation import SiluAndMul
-from fastdeploy.model_executor.layers.linear import (
-    MergedColumnParallelLinear, RowParallelLinear)
 from fastdeploy.model_executor.layers.utils import get_tensor
 
 from .cutlass_fused_moe import CutlassFusedMoeMethod
@@ -73,8 +70,6 @@ class FusedMoE(nn.Layer):
         moe_ffn2_weight_scale_keys=None,
         moe_ffn1_in_scale_keys=None,
         moe_ffn2_in_scale_keys=None,
-        shared_experts_up_gate_proj_key=None,
-        shared_experts_down_proj_key=None,
         use_method="cutlass",
     ):
         """
@@ -115,11 +110,6 @@ class FusedMoE(nn.Layer):
         self.ffn1_bias_key = moe_ffn1_bias_keys
         self.ffn2_bias_key = moe_ffn2_bias_keys
 
-        self.num_shared_experts = self.moe_config.moe_num_shared_experts
-        if self.num_shared_experts > 0:
-            self.shared_experts_up_gate_proj_key = shared_experts_up_gate_proj_key
-            self.shared_experts_down_proj_key = shared_experts_down_proj_key
-
         if self.moe_quant_type == "w4a8":
             # below keys are only used in MoE W4A8!
             self.ffn1_expert_weight_scale_key = moe_ffn1_weight_scale_keys
@@ -150,33 +140,6 @@ class FusedMoE(nn.Layer):
         else:
             self.gate_correction_bias = None
 
-        if self.num_shared_experts > 0:
-            self.shared_experts_hidden_dim = self.num_shared_experts * self.moe_intermediate_size
-            self.shared_experts_prefix = f"ernie.layers.{self.layer_idx}.mlp.shared_experts"
-
-            self.shared_experts_up_gate_proj = MergedColumnParallelLinear(
-                fd_config=self.fd_config,
-                prefix=self.shared_experts_up_gate_proj_key,
-                with_bias=False,
-                activation=self.fd_config.model_config.hidden_act,
-                use_fast_ffn=True,
-                dim_feedforward=self.shared_experts_hidden_dim)
-
-            self.shared_experts_down_proj = RowParallelLinear(
-                fd_config=self.fd_config,
-                prefix=self.shared_experts_down_proj_key,
-                input_size=(self.shared_experts_hidden_dim //
-                            self.fd_config.parallel_config.mp_size),
-                output_size=self.fd_config.model_config.hidden_size,
-                with_bias=False,
-                dim_feedforward=self.shared_experts_hidden_dim)
-
-            self.shared_act_fn = SiluAndMul(
-                fd_config=self.fd_config,
-                bias=None,
-                act_method=self.fd_config.model_config.hidden_act,
-            )
-
     def load_gate_state_dict(self, state_dict):
         """
         load_gate_state_dict function.
@@ -198,10 +161,6 @@ class FusedMoE(nn.Layer):
                 get_tensor(
                     state_dict.pop(self.ffn2_expert_weight_key.format(j))))
         return up_gate_proj_weight, down_proj_weight
-
-    def load_shared_experts_state_dict(self, state_dict):
-        self.shared_experts_up_gate_proj.load_state_dict(state_dict)
-        self.shared_experts_down_proj.load_state_dict(state_dict)
 
     def load_state_dict(self, state_dict, is_update: bool = False):
         """
@@ -259,9 +218,6 @@ class FusedMoE(nn.Layer):
                                            weight1_scale, weight2_scale,
                                            ffn1_in_scale, ffn2_in_scale)
 
-        if self.num_shared_experts > 0:
-            self.load_shared_experts_state_dict(state_dict)
-
     def forward(self, x: paddle.Tensor):
         """
         Defines the forward computation of the moe layer.
@@ -275,12 +231,6 @@ class FusedMoE(nn.Layer):
         """
 
         out = self.compute_method.apply(self, x)
-
-        if self.num_shared_experts > 0:
-            s_x = self.shared_experts_up_gate_proj(x)
-            s_x = self.shared_act_fn(s_x)
-            s_x = self.shared_experts_down_proj(s_x)
-            out = out + s_x
 
         if self.tp_size > 1:
             from fastdeploy.distributed.communication_op import \
