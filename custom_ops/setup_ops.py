@@ -188,7 +188,7 @@ elif paddle.is_compiled_with_cuda():
         "gpu_ops/enforce_generation.cu", "gpu_ops/dequant_int8.cu",
         "gpu_ops/tune_cublaslt_gemm.cu", "gpu_ops/swap_cache_batch.cu",
         "gpu_ops/swap_cache.cu", "gpu_ops/step_system_cache.cu",
-        "gpu_ops/share_external_data.cu",
+        "gpu_ops/cpp_extensions.cc","gpu_ops/share_external_data.cu",
         "gpu_ops/per_token_quant_fp8.cu",
         "gpu_ops/extract_text_token_output.cu",
         "gpu_ops/update_split_fuse_input.cu",
@@ -201,7 +201,6 @@ elif paddle.is_compiled_with_cuda():
         "gpu_ops/remote_cache_kv_ipc.cc",
         "gpu_ops/open_shm_and_get_meta_signal.cc",
         "gpu_ops/init_signal_layerwise.cc",
-        "gpu_ops/cpp_extensions.cc",
         "gpu_ops/get_data_ptr_ipc.cu",
         "gpu_ops/ipc_sent_key_value_cache_by_remote_ptr.cu",
     ]
@@ -336,9 +335,6 @@ elif paddle.is_compiled_with_cuda():
                 "include/cute/**/*",
                 "include/cutlass/**/*",
             ]
-        },
-        exclude_package_data={
-        "": ["*.cu.o","*.o"],  # 排除中间文件
         },
         include_package_data=True,
     )
