@@ -21,10 +21,6 @@ CPU_USE_BF16="false"
 CPU_USE_BF16=${2:-$CPU_USE_BF16}
 WITH_CPU="false"
 
-# python_tag
-py=$(${python} -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-python_tag="cp${py//./}"
-
 # paddle distributed use to set archs
 unset PADDLE_CUDA_ARCH_LIST
 
@@ -144,7 +140,7 @@ function build_and_install_ops() {
 
 function build_and_install() {
   echo -e "${BLUE}[build]${NONE} building fastdeploy wheel..."
-  ${python} setup.py bdist_wheel --python-tag=${python_tag}
+  ${python} setup.py bdist_wheel --python-tag=py3
   if [ $? -ne 0 ]; then
     echo -e "${RED}[FAIL]${NONE} build fastdeploy wheel failed !"
     exit 1
