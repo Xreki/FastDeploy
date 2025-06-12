@@ -95,13 +95,20 @@ class AppendAttentionBackend(AttentionBackend):
 
         self.kv_num_heads = kv_num_heads
         self.num_heads = num_heads
-        self.head_dim = head_dim
+        # self.head_dim = head_dim
+        self.head_dim = 128
         self.num_layers = llm_config.model_config.num_layers
 
         # pd_disaggregation
         self.use_pd_disaggregation = int(
             os.getenv("FLAGS_use_pd_disaggregation", 0))
         self.start_layer_index = llm_config.model_config.start_layer_index
+        
+        # def print_members(obj):
+        #     for k, v in vars(obj).items():
+        #         print(f"{k}: {v}")
+        # print("!!!AttentionBackend")
+        # print_members(self)
 
     def init_attention_metadata(self, forward_meta: ForwardMeta):
         """Initialize attntion metadata hence all layers in the forward pass can reuse it."""
@@ -151,6 +158,7 @@ class AppendAttentionBackend(AttentionBackend):
             metadata.kv_signal_metadata = open_shm_and_get_meta_signal(
                 self.rank, self.keep_pd_step_flag)
         self.attention_metadata = metadata
+        
 
     def get_attntion_meta(self):
         """get_attntion_meta"""
@@ -185,7 +193,28 @@ class AppendAttentionBackend(AttentionBackend):
                 layer.layer_id] = init_signal_layerwise(
                     metadata.kv_signal_metadata,
                     layer.layer_id + self.start_layer_index)
+        # print("attention q shape:", q.shape)
+        # print("attention k shape:", k.shape)
+        # print("attention v shape:", v.shape)
+        # print("attention qkv shape:", qkv.shape)
 
+        # import pdb;pdb.set_trace()
+        # print("qkv", qkv)
+        # if layer.layer_id < 1:
+        #     print("@@ seq_lens_encoder", forward_meta.seq_lens_encoder)
+        #     print("@@ seq_lens_decoder", forward_meta.seq_lens_decoder)
+        #     print("@@ seq_lens_this_time", forward_meta.seq_lens_this_time)
+        #     print("@@ padding_offset", forward_meta.padding_offset)
+        #     print("@@ cum_offsets", forward_meta.cum_offsets)
+        #     print("@@ encoder_batch_ids", metadata.encoder_batch_ids)
+        #     print("@@ kv_batch_ids", metadata.kv_batch_ids)
+        #     print("@@ decoder_batch_ids", metadata.decoder_batch_ids)
+        #     print("@@ max_len_kv", metadata.max_len_kv)
+        #     print("@@ set_max_lengths", metadata.set_max_lengths)
+        # print(qkv)
+        # import sys;sys.exit()
+        # print("qkv shape: ", qkv.shape)
+        # print("cache shape: ", forward_meta.caches[2 * layer.layer_id].shape)
         res = append_attention(
             qkv,
             forward_meta.caches[2 * layer.layer_id],
@@ -237,3 +266,88 @@ class AppendAttentionBackend(AttentionBackend):
             self.speculate_method is not None,
         )[0]
         return res
+
+    def native_attention_impl(
+        self,
+        query,
+        key,
+        value,
+        cache_k=None,
+        cache_v=None,
+        mask=None,
+        scale=1.0
+    ):
+        batch = query.shape[0]
+        heads = query.shape[1]
+        seq_len = query.shape[2]
+        head_dim = query.shape[3]
+        kv_head = key.shape[1]
+
+        key = key.reshape([batch, kv_head, 1, seq_len, head_dim])
+        key = paddle.tile(key, [1, 1, heads // kv_head, 1, 1])
+        key = key.reshape([batch, heads, seq_len, head_dim])
+
+        if cache_k is not None:
+            cache_k = cache_k.reshape([batch, kv_head, 1, -1, head_dim])
+            cache_k = paddle.tile(cache_k, [1, 1, heads // kv_head, 1, 1])
+            cache_k = cache_k.reshape([batch, heads, -1, head_dim])
+            key = paddle.concat([cache_k, key], axis=2)
+
+        value = value.reshape([batch, kv_head, 1, seq_len, head_dim])
+        value = paddle.tile(value, [1, 1, heads // kv_head, 1, 1])
+        value = value.reshape([batch, heads, seq_len, head_dim])
+
+        if cache_v is not None:
+            cache_v = cache_v.reshape([batch, kv_head, 1, -1, head_dim])
+            cache_v = paddle.tile(cache_v, [1, 1, heads // kv_head, 1, 1])
+            cache_v = cache_v.reshape([batch, heads, -1, head_dim])
+            value = paddle.concat([cache_v, value], axis=2)
+
+        qk_res = paddle.matmul(query, key, transpose_y=True)
+        attention = qk_res * scale
+        if mask is not None:
+            attention = attention + mask
+        softmax_result = paddle.nn.functional.softmax(attention, -1)
+        result = paddle.matmul(paddle.cast(
+            softmax_result, dtype=value.dtype), value)
+        return result
+    
+    def forward_native_backend(
+        self,
+        q,
+        k,
+        v,
+        qkv,
+        layer: Attention,
+        forward_meta: ForwardMeta,
+    ):
+        """
+        forward_mixed
+        """
+        metadata = self.attention_metadata
+
+        seq_q_length = forward_meta.seq_lens_this_time
+        seq_kv_length = forward_meta.seq_lens_decoder
+
+        seq_lens_encoder = forward_meta["seq_lens_encoder"]
+        seq_lens_decoder = forward_meta["seq_lens_decoder"]
+        seq_lens_this_time = forward_meta["seq_lens_this_time"]
+        
+        bsz = seq_lens_encoder.shape[0]
+        max_len_encoder = seq_lens_encoder.max().item()
+        encoder_ids = paddle.arange(max_len_encoder).tile([bsz, 1])  # 每个批次生成完整索引
+        encoder_mask = paddle.arange(max_len_encoder).unsqueeze(0) < seq_lens_encoder  # 根据 encoder 长度生成掩码
+        encoder_ids = paddle.masked_select(encoder_ids, encoder_mask)  # 筛选有效的 Encoder 索引
+
+        # 生成批次索引用于保持顺序
+        encoder_batch_indices = paddle.repeat_interleave(
+            paddle.arange(bsz), seq_lens_encoder.squeeze(-1)
+        )  # 每个样本的索引重复对应的长度
+
+        # 处理 Decoder 部分
+        decoder_mask = seq_lens_decoder > 0  # 筛选非零 decoder 长度
+        decoder_ids = paddle.masked_select(seq_lens_decoder, decoder_mask)  # 提取非零 decoder 索引
+        decoder_batch_indices = paddle.masked_select(paddle.arange(bsz), decoder_mask.squeeze(-1))  # 提取有效的批次索引
+        
+        return res
+

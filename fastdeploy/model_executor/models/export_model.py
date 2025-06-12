@@ -45,6 +45,7 @@ from ..layers.quantization import get_quantization_config
 from .ernie import ErnieBotPretrainedModel
 from .model_base import ModelRegistry
 from .qwen2 import Qwen2PretrainedModel
+from .qwen3moe import Qwen3PretrainedModel
 from .tokenizer import ErnieBotTokenizer
 from .utils import (_vocab_size_with_padding, convert_ndarray_dtype,
                     load_checkpoint, parser_quant_type)
@@ -52,6 +53,7 @@ from .utils import (_vocab_size_with_padding, convert_ndarray_dtype,
 model_classes_mapping = {
     "ErnieForCausalLM": ErnieBotPretrainedModel,
     "Qwen2ForCausalLM": Qwen2PretrainedModel,
+    "Qwen3MoeForCausalLM": Qwen3PretrainedModel,
 }
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -290,9 +292,7 @@ def build_stream_line_model(
     if num_layers is None:
         raise ValueError(f"num_layers<{num_layers}> is invalid")
 
-    use_moe = config.get(
-        "moe_layer_start_index",
-        num_layers) < num_layers or draft_type in ["mtp", "eagle"]
+    use_moe = config.get("moe_num_experts", 0) > 0 or draft_type in ["mtp", "eagle"]
 
     if not sharing_state_dicts:
         if use_fake_parameter:
@@ -482,6 +482,9 @@ def build_stream_line_model(
 
     logger.info(f"{runtime_timer.log()}")
     runtime_timer.start(f"{stage_flag} stage set parameters time")
+    def print_members(obj):
+        for k, v in vars(obj).items():
+            print(f"{k}: {v}")
 
     if config["hidden_act"].lower() == "swiglu":
         model_config.hidden_act = "swiglu"
@@ -514,7 +517,7 @@ def build_stream_line_model(
         moe_config.moe_intermediate_size = config.get("moe_intermediate_size",
                                                       None)
         moe_config.moe_use_gate_correction_bias = config.get(
-            "moe_use_gate_correction_bias", True)
+            "moe_use_gate_correction_bias", False)
         moe_config.moe_every2 = config.get("moe_every2", False)
         moe_config.moe_topk = config.get("moe_topk", 8)
         moe_config.moe_num_shared_experts = config.get(
@@ -555,6 +558,8 @@ def build_stream_line_model(
     )
     model_config.weight_dtype = weight_dtype
     model_config.act_dtype = act_dtype
+    print_members(model_config)
+    # import sys;sys.exit()
 
     if weight_dtype == "int8" and act_dtype in ["bfloat16", "float16"]:
         quant_cls = get_quantization_config("weight_only")

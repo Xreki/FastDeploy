@@ -445,7 +445,8 @@ class GPUModelRunner(ModelRunnerBase):
         self.model_config.kv_num_heads = int(
             self.model_config.num_key_value_heads
         ) // self.parallel_config.mp_size
-        head_dim = self.model_config.hidden_size // self.model_config.num_attention_heads
+        # head_dim = self.model_config.hidden_size // self.model_config.num_attention_heads
+        head_dim = 128
 
         # Get the attention backend
         attn_cls = get_attention_backend(
@@ -667,7 +668,8 @@ class GPUModelRunner(ModelRunnerBase):
         """
         byte_of_dtype = 2
 
-        head_dim = self.model_config.hidden_size // self.model_config.num_attention_heads
+        # head_dim = self.model_config.hidden_size // self.model_config.num_attention_heads
+        head_dim = 128
         hidden_dim = head_dim * self.model_config.kv_num_heads
 
         required_memory = (

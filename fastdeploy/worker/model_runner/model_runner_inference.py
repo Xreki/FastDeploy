@@ -183,7 +183,8 @@ class ModelRunner(ModelRunnerBase):
             self.llm_config.model_config.kv_num_heads = int(
                 self.llm_config.model_config.num_key_value_heads
             ) // self.llm_config.parallel_config.mp_size
-            head_dim = self.llm_config.model_config.hidden_size // self.llm_config.model_config.num_attention_heads
+            # head_dim = self.llm_config.model_config.hidden_size // self.llm_config.model_config.num_attention_heads
+            head_dim = 128
             self.attn_backend = attn_backend_cls(
                 self.llm_config,
                 kv_num_heads=self.llm_config.model_config.kv_num_heads,
@@ -194,8 +195,9 @@ class ModelRunner(ModelRunnerBase):
     def init_rotary_position_embedding(self, max_model_len):
         tmp_position_ids = paddle.arange(max_model_len).reshape((1, -1))
         self.share_inputs["rope_emb"] = get_rope(
-            rotary_dim=self.model_cfg.hidden_size //
-            self.model_cfg.num_attention_heads,
+            # rotary_dim=self.model_cfg.hidden_size //
+            # self.model_cfg.num_attention_heads,
+            rotary_dim=128,
             position_ids=tmp_position_ids,
             base=self.rope_theta,
             model_config=self.config)
@@ -219,18 +221,22 @@ class ModelRunner(ModelRunnerBase):
         self.model_cfg.kv_num_head = kv_num_head
         kv_cache_shape = self.attn_backend.get_kv_cache_shape(
             max_num_blocks=total_block_num)
+        # print("kv_shape: ", kv_cache_shape)
 
         for i in range(self.model_cfg.num_layers):
             cache_type = self.args.dtype
             if self.llm_config.kv_cache_config.cache_quant_dtype == "cache_int8":
                 cache_type = 'uint8'
+            print("kv_shape: ", i, [total_block_num,
+                    kv_num_head,
+                    self.args.block_size,
+                    128])
             cache_kvs["key_caches_{}".format(i)] = paddle.full(
                 shape=[
                     total_block_num,
                     kv_num_head,
                     self.args.block_size,
-                    self.model_cfg.hidden_size //
-                    self.model_cfg.num_attention_heads,
+                    128
                 ],
                 fill_value=0,
                 dtype=cache_type,
@@ -240,8 +246,7 @@ class ModelRunner(ModelRunnerBase):
                     total_block_num,
                     kv_num_head,
                     self.args.block_size,
-                    self.model_cfg.hidden_size //
-                    self.model_cfg.num_attention_heads,
+                    128
                 ],
                 fill_value=0,
                 dtype=cache_type,
@@ -501,10 +506,12 @@ class ModelRunner(ModelRunnerBase):
 
         hidden_size = self.model_cfg.hidden_size
         attention_heads = self.model_cfg.num_attention_heads
-        hidden_dim = hidden_size / attention_heads * self.model_cfg.kv_num_head
+        # hidden_dim = hidden_size / attention_heads * self.model_cfg.kv_num_head
+        hidden_dim = 128
         theoretical_kv_cache_memory = (2 * byte_of_cache *
                                        self.args.block_size * num_layers *
                                        hidden_dim)
+        print("!!!! each cache is theoretical_kv_cache_memory", theoretical_kv_cache_memory/1024/1024/1024)
         return theoretical_kv_cache_memory
 
     def _update_share_input_block_num(self):
