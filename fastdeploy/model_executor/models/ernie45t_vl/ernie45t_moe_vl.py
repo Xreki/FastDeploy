@@ -110,16 +110,8 @@ class Ernie45TVLMoE(nn.Layer):
         if self.fused_moe_text.moe_use_gate_correction_bias:
             gate_correction_bias_tensor = get_tensor(
                 state_dict[self.fused_moe_text.gate_correction_bias_key])
-
-            self.fused_moe_text.gate_correction_bias = self.fused_moe_text.create_parameter(
-                shape=[1, self.fused_moe_text.num_experts],
-                dtype="float32",
-            )
-
             self.fused_moe_text.gate_correction_bias.set_value(
                 gate_correction_bias_tensor[0].unsqueeze(0))
-        else:
-            self.fused_moe_text.gate_correction_bias = None
 
         up_gate_proj_weight = []
         down_proj_weight = []
@@ -142,16 +134,8 @@ class Ernie45TVLMoE(nn.Layer):
         if self.fused_moe_image.moe_use_gate_correction_bias:
             gate_correction_bias_tensor = get_tensor(
                 state_dict[self.fused_moe_image.gate_correction_bias_key])
-
-            self.fused_moe_image.gate_correction_bias = self.fused_moe_image.create_parameter(
-                shape=[1, self.fused_moe_image.num_experts],
-                dtype="float32",
-            )
-
             self.fused_moe_image.gate_correction_bias.set_value(
                 gate_correction_bias_tensor[1].unsqueeze(0))
-        else:
-            self.fused_moe_image.gate_correction_bias = None
 
         up_gate_proj_weight = []
         down_proj_weight = []
