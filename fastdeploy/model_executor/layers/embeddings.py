@@ -48,6 +48,7 @@ class VocabParallelEmbedding(nn.Layer):
                 you can give it any name you like.
         """
         super().__init__()
+        self.fd_config = fd_config
         hcg = fleet.get_hybrid_communicate_group()
         self.mp_rank = hcg.get_model_parallel_rank()
         self.column_cut = fd_config.parallel_config.column_cut
@@ -63,6 +64,7 @@ class VocabParallelEmbedding(nn.Layer):
         self.weight_sharing_add_bias = fd_config.model_config.weight_sharing_add_bias
         self.max_position_embeddings = fd_config.model_config.max_position_embeddings
         self.freeze_embedding = fd_config.model_config.freeze_embedding
+        self.tie_word_embeddings = fd_config.model_config.tie_word_embeddings
 
         if self.use_ep:
             self.word_embeddings = nn.Embedding(
@@ -78,8 +80,7 @@ class VocabParallelEmbedding(nn.Layer):
                     get_model_parallel_group(),
                     weight_attr=paddle.ParamAttr(
                         initializer=nn.initializer.Normal(
-                            mean=0.0, std=self.initializer_range),
-                    ),
+                            mean=0.0, std=self.initializer_range), ),
                 )
             else:
                 # column cut embedding
@@ -94,10 +95,8 @@ class VocabParallelEmbedding(nn.Layer):
             self.position_embeddings = nn.Embedding(
                 self.max_position_embeddings,
                 embedding_dim,
-                weight_attr=paddle.ParamAttr(
-                    initializer=nn.initializer.Normal(
-                        mean=0.0, std=self.initializer_range),
-                ),
+                weight_attr=paddle.ParamAttr(initializer=nn.initializer.Normal(
+                    mean=0.0, std=self.initializer_range), ),
             )
 
         self.prefix = prefix
@@ -109,8 +108,8 @@ class VocabParallelEmbedding(nn.Layer):
                     shape=[num_embeddings],
                     dtype=paddle.get_default_dtype(),
                     attr=paddle.ParamAttr(
-                        initializer=paddle.nn.initializer.Constant(value=0.0),
-                    ),
+                        initializer=paddle.nn.initializer.Constant(
+                            value=0.0), ),
                     is_bias=True,
                 )
             else:
@@ -138,9 +137,13 @@ class VocabParallelEmbedding(nn.Layer):
         Args:
             state_dict (dict): A dictionary containing the checkpoint weights and biases.
         """
-        self.word_embeddings.weight.set_value(
-            get_tensor(state_dict.pop(self.prefix + ".weight")).astype(
-                paddle.get_default_dtype()))
+        if self.tie_word_embeddings:
+            # load after lm_head finished
+            pass
+        else:
+            self.word_embeddings.weight.set_value(
+                get_tensor(state_dict.pop(self.prefix + ".weight")).astype(
+                    paddle.get_default_dtype()))
 
     def forward(self, ids_remove_padding=None):
         """

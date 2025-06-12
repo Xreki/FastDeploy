@@ -136,6 +136,7 @@ class ModelConfig(PretrainedConfig):
         start_layer_index: int = 0,
         output_via_mq: bool = True,
         generation_phase: GenerationPhase = GenerationPhase.PREFILL,
+        tie_word_embeddings: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -186,6 +187,7 @@ class ModelConfig(PretrainedConfig):
         self.start_layer_index = start_layer_index
         self.output_via_mq = output_via_mq
         self.dtype = dtype
+        self.tie_word_embeddings = tie_word_embeddings
 
 
 # This class will be removed in future and replaced by MoEConfig

@@ -1461,7 +1461,7 @@ def parser_quant_type(quant_type):
     conver_dict = {
         "8": "int8",
         "4": "int4",
-        "16": paddle.get_default_dtype,
+        "16": paddle.get_default_dtype(),
         "fp8": "float8_e4m3fn",
         "fp16": "float16",
         "bf16": "bfloat16",

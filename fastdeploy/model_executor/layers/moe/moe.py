@@ -132,6 +132,14 @@ class FusedMoE(nn.Layer):
         else:
             self.compute_method = TritonFusedMoeMethod(moe_compute_params)
 
+        if self.moe_use_gate_correction_bias:
+            self.gate_correction_bias = self.create_parameter(
+                shape=[1, self.num_experts],
+                dtype="float32",
+            )
+        else:
+            self.gate_correction_bias = None
+
     def load_gate_state_dict(self, state_dict):
         """
         load_gate_state_dict function.
@@ -139,16 +147,9 @@ class FusedMoE(nn.Layer):
         # gate_correction_bias
         if self.moe_use_gate_correction_bias:
             gate_correction_bias_tensor = get_tensor(
-                state_dict.pop(self.gate_correction_bias_key))
-
-            self.gate_correction_bias = self.create_parameter(
-                shape=gate_correction_bias_tensor.shape,
-                dtype="float32",
-            )
-
+                state_dict.pop(
+                    self.gate_correction_bias_key).astype("float32"))
             self.gate_correction_bias.set_value(gate_correction_bias_tensor)
-        else:
-            self.gate_correction_bias = None
 
         up_gate_proj_weight = []
         down_proj_weight = []
@@ -173,7 +174,7 @@ class FusedMoE(nn.Layer):
                 shape=gate_weight_tensor.shape,
                 dtype="float32",
             )
-            self.gate_weight.set_value(gate_weight_tensor)
+            self.gate_weight.set_value(gate_weight_tensor.cast("float32"))
 
         up_gate_proj_weight, down_proj_weight = self.load_gate_state_dict(
             state_dict)

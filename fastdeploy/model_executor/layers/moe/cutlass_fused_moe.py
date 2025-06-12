@@ -57,11 +57,15 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
 
         assert len(ffn1_tensor) == self.num_local_experts
         assert len(ffn2_tensor) == self.num_local_experts
+
+        pack_num = 1
+        if self.moe_quant_type == "w4a8":
+            pack_num = 2
         assert ffn1_tensor[0].shape == [
-            self.hidden_size, self.moe_intermediate_size * 2
+            self.hidden_size // pack_num, self.moe_intermediate_size * 2
         ]
         assert ffn2_tensor[0].shape == [
-            self.moe_intermediate_size, self.hidden_size
+            self.moe_intermediate_size // pack_num, self.hidden_size
         ]
 
         added_weight_attrs = ["moe_ffn1_weight", "moe_ffn2_weight"]
@@ -124,6 +128,20 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
                             dtype=quanted_weight_scale.dtype,
                         ))
                     getattr(layer, scale_name).set_value(quanted_weight_scale)
+        else:
+            # default type
+            ffn1_tensor = paddle.stack(ffn1_tensor, axis=0)
+            ffn2_tensor = paddle.stack(ffn2_tensor, axis=0)
+            for idx, weight_tensor in enumerate([ffn1_tensor, ffn2_tensor]):
+                weight_name = added_weight_attrs[idx]
+                setattr(
+                    layer, weight_name,
+                    layer.create_parameter(
+                        shape=weight_tensor.shape,
+                        dtype=weight_tensor.dtype,
+                        default_initializer=paddle.nn.initializer.Constant(0),
+                    ))
+                getattr(layer, weight_name).set_value(weight_tensor)
 
         if self.moe_quant_type == "w4a8":
             assert moe_ffn1_weight_scale is not None

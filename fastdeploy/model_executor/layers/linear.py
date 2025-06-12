@@ -14,19 +14,12 @@
 # limitations under the License.
 """
 
-import os
-
-import fastdeploy
-from paddlenlp.utils.log import logger
-
 import paddle
 from paddle import nn
 
 from fastdeploy.platforms import current_platform
 
 from .utils import _set_var_distributed, divide, get_tensor
-
-import fastdeploy.model_executor.ops.gpu.deep_gemm as deep_gemm
 
 
 class LinearBase(nn.Layer):
@@ -70,7 +63,8 @@ class LinearBase(nn.Layer):
 
         self.fd_config = fd_config
         self.skip_quant = skip_quant
-        self.use_smooth_quant = fd_config.model_config.use_smooth_quant
+        self.use_smooth_quant = fd_config.model_config.use_smooth_quant if hasattr(
+            fd_config.model_config, "use_smooth_quant") else False
         self.weight_dtype = fd_config.model_config.weight_dtype
         self.act_dtype = fd_config.model_config.act_dtype
         self.input_size = input_size
@@ -90,7 +84,7 @@ class LinearBase(nn.Layer):
         if fd_config.quant_config:
             self.quant_method = fd_config.quant_config.get_quant_method(self)
         self.use_offline_quant = fd_config.tmp_config.use_offline_quant
-        
+
     def is_y_transposed(self):
         """
         Returns whether the y tensor should be transposed for inference.
@@ -191,7 +185,6 @@ class LinearBase(nn.Layer):
 
         return self.weight_dtype
 
-
     def load_offline_quant_state_dict(self, quant_weight, quant_scale=None):
         """
         Load offline the checkpoint state dictionary into the layer.
@@ -203,7 +196,8 @@ class LinearBase(nn.Layer):
                 self.linear_weight.set_value(quant_weight)
         else:
             if self.inference_args.weight_block_size[0] != -1:
-                self.linear_weight.copy_(quant_weight.view(paddle.float8_e4m3fn), False)
+                self.linear_weight.copy_(
+                    quant_weight.view(paddle.float8_e4m3fn), False)
             else:
                 self.linear_weight.set_value(quant_weight)
             self.linear_weight_scale.set_value(quant_scale)
@@ -218,11 +212,9 @@ class LinearBase(nn.Layer):
         if self.use_offline_quant:
             self.load_offline_quant_state_dict(
                 quant_weight=get_tensor(
-                    state_dict.pop(self.weight_key + ".quant_weight")
-                ),
+                    state_dict.pop(self.weight_key + ".quant_weight")),
                 quant_scale=get_tensor(
-                    state_dict.pop(self.weight_key + ".weight_quanter")
-                ),
+                    state_dict.pop(self.weight_key + ".quant_scale")),
             )
         else:
             # weight
@@ -236,15 +228,15 @@ class LinearBase(nn.Layer):
 
         # bias
         if self.with_bias:
-            bias_tensor = paddle.to_tensor(get_tensor(state_dict.pop(self.bias_key)))
+            bias_tensor = paddle.to_tensor(
+                get_tensor(state_dict.pop(self.bias_key)))
             self.linear_bias.set_value(bias_tensor)
 
         # smooth quant
         if self.use_smooth_quant:
             if self.shift_key in state_dict:
-                shift_tensor = get_tensor(state_dict.pop(self.shift_key)).astype(
-                    paddle.get_default_dtype()
-                )
+                shift_tensor = get_tensor(state_dict.pop(
+                    self.shift_key)).astype(paddle.get_default_dtype())
             else:
                 shift_tensor = paddle.zeros(
                     shape=self.linear_shift_shape,
@@ -252,9 +244,8 @@ class LinearBase(nn.Layer):
                 )
             self.linear_shift.set_value(shift_tensor)
             if self.smooth_key in state_dict:
-                smooth_tensor = get_tensor(state_dict.pop(self.smooth_key)).astype(
-                    paddle.get_default_dtype()
-                )
+                smooth_tensor = get_tensor(state_dict.pop(
+                    self.smooth_key)).astype(paddle.get_default_dtype())
             else:
                 smooth_tensor = paddle.ones(
                     shape=[self.linear_smooth_shape],
@@ -320,7 +311,8 @@ class ReplicatedLinear(LinearBase):
         self.nranks = fd_config.parallel_config.mp_size
         self.input_size = input_size
         self.init_weight()
-        self.quant_method.create_weights(self)
+        if fd_config.quant_config:
+            self.quant_method.create_weights(self)
 
     def init_weight(self):
         """
@@ -397,8 +389,8 @@ class ColumnParallelLinear(LinearBase):
         self.input_size = input_size
         self.output_size = divide(output_size, self.nranks)
         self.init_weight()
-
-        self.quant_method.create_weights(self)
+        if fd_config.quant_config:
+            self.quant_method.create_weights(self)
 
     def init_weight(self):
         """
@@ -448,16 +440,15 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
     MergedColumnParallelLinear Layer.
     """
 
-    def __init__(
-        self,
-        fd_config,
-        prefix,
-        with_bias=False,
-        add_bias=False,
-        activation="gelu",
-        use_fast_ffn=False,
-        skip_quant=False,
-    ):
+    def __init__(self,
+                 fd_config,
+                 prefix,
+                 with_bias=False,
+                 add_bias=False,
+                 activation="gelu",
+                 use_fast_ffn=False,
+                 skip_quant=False,
+                 ffn_hidden_size=None):
         """Packed linear layers with column parallelism.
 
         Initialize the fused ffn1 Linear layer with given parameters.
@@ -479,12 +470,12 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         self.use_fast_ffn = use_fast_ffn
         self.activation = activation
         self.embed_dim = fd_config.model_config.hidden_size
-        self.dim_feedforward = fd_config.model_config.ffn_hidden_size
+        self.ffn_hidden_size = ffn_hidden_size if ffn_hidden_size is not None else fd_config.model_config.ffn_hidden_size
         self.nranks = fd_config.parallel_config.mp_size
-        self.dim_feedforward_per_rank = divide(self.dim_feedforward,
+        self.ffn_hidden_size_per_rank = divide(self.ffn_hidden_size,
                                                self.nranks)
         input_size = self.embed_dim
-        output_size = self.dim_feedforward * 2
+        output_size = self.ffn_hidden_size * 2
         super().__init__(fd_config=fd_config,
                          prefix=prefix,
                          input_size=input_size,
@@ -626,9 +617,8 @@ class QKVParallelLinear(ColumnParallelLinear):
         # smooth quant
         if self.use_smooth_quant:
             if self.shift_key in state_dict:
-                shift_tensor = get_tensor(state_dict.pop(self.shift_key)).astype(
-                    paddle.get_default_dtype()
-                )
+                shift_tensor = get_tensor(state_dict.pop(
+                    self.shift_key)).astype(paddle.get_default_dtype())
             else:
                 shift_tensor = paddle.zeros(
                     shape=self.linear_shift_shape,
@@ -636,9 +626,8 @@ class QKVParallelLinear(ColumnParallelLinear):
                 )
             self.linear_shift.set_value(shift_tensor)
             if self.smooth_key in state_dict:
-                smooth_tensor = get_tensor(state_dict.pop(self.smooth_key)).astype(
-                    paddle.get_default_dtype()
-                )
+                smooth_tensor = get_tensor(state_dict.pop(
+                    self.smooth_key)).astype(paddle.get_default_dtype())
             else:
                 smooth_tensor = paddle.ones(
                     shape=[self.linear_smooth_shape],
@@ -661,6 +650,7 @@ class RowParallelLinear(LinearBase):
         with_bias: bool = False,
         add_bias: bool = False,
         skip_quant: bool = False,
+        ffn_hidden_size: int = None,
     ):
         """
         Initialize a linear layer with additional parameters for inference and quantization.
@@ -683,14 +673,16 @@ class RowParallelLinear(LinearBase):
                          skip_quant=skip_quant)
         self.fd_config = fd_config
         self.skip_quant = False
-        self.use_smooth_quant = fd_config.model_config.use_smooth_quant
+        self.use_smooth_quant = fd_config.model_config.use_smooth_quant if hasattr(
+            fd_config.model_config, "use_smooth_quant") else False
         self.weight_dtype = fd_config.model_config.weight_dtype
         self.act_dtype = fd_config.model_config.act_dtype
         self.nranks = fd_config.parallel_config.mp_size
         self.embed_dim = fd_config.model_config.hidden_size
         self.head_dim = fd_config.model_config.hidden_size // fd_config.model_config.num_attention_heads
         self.num_heads = fd_config.model_config.num_attention_heads // self.nranks
-        self.dim_feedforward = fd_config.model_config.ffn_hidden_size // self.nranks
+        self.ffn_hidden_size = ffn_hidden_size if ffn_hidden_size is not None else fd_config.model_config.ffn_hidden_size // self.nranks
+
         self.with_bias = with_bias
         self.prefix = prefix
         self.shift_key = f"{prefix}.shift_bias"

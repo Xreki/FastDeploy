@@ -201,6 +201,8 @@ class ModelRunner(ModelRunnerBase):
             max_num_blocks=total_block_num)
         cache_type = self.args.dtype
 
+        if self.fd_config.kv_cache_config.cache_quant_dtype == "cache_int8":
+            cache_type = 'uint8'
         cache_kvs_list = []
         # TODO infer 进程初始化cache
         if not self.args.do_profile and (self.args.enable_prefix_caching or
@@ -228,7 +230,6 @@ class ModelRunner(ModelRunnerBase):
 
         else:
             for i in range(self.model_cfg.num_layers):
-                cache_type = self.args.dtype
                 cache_kvs["key_caches_{}".format(i)] = paddle.full(
                     shape=[
                         total_block_num,

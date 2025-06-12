@@ -76,9 +76,9 @@ class SiluAndMul(nn.Layer):
         self.shift = shift
         self.smooth = smooth
         self.quant_scale = quant_scale
-        self.quant_round_type = fd_config.quant_config.quant_round_type
-        self.quant_max_bound = fd_config.quant_config.quant_max_bound
-        self.quant_min_bound = fd_config.quant_config.quant_min_bound
+        self.quant_round_type = fd_config.quant_config.quant_round_type if fd_config.quant_config else 0
+        self.quant_max_bound = fd_config.quant_config.quant_max_bound if fd_config.quant_config else 0
+        self.quant_min_bound = fd_config.quant_config.quant_min_bound if fd_config.quant_config else 0
 
         self._dtype = self._helper.get_default_dtype()
         if self._dtype == "bfloat16":

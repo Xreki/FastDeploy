@@ -66,6 +66,9 @@ class RMSNorm(nn.Layer):
         self.quant_scale = quant_scale
         self._dtype = self._helper.get_default_dtype()
         self._norm_weight_dtype = self._dtype
+        self.quant_round_type = self.fd_config.quant_config.quant_round_type if fd_config.quant_config else 0
+        self.quant_max_bound = self.fd_config.quant_config.quant_max_bound if fd_config.quant_config else 0
+        self.quant_min_bound = self.fd_config.quant_config.quant_min_bound if fd_config.quant_config else 0
 
         self.init_weight()
 
@@ -122,9 +125,9 @@ class RMSNorm(nn.Layer):
             bias=self.linear_bias,
             residual=residual_input,
             quant_scale=-1 if self.quant_scale is None else self.quant_scale,
-            quant_round_type=self.fd_config.quant_config.quant_round_type,
-            quant_max_bound=self.fd_config.quant_config.quant_max_bound,
-            quant_min_bound=self.fd_config.quant_config.quant_min_bound,
+            quant_round_type=self.quant_round_type,
+            quant_max_bound=self.quant_max_bound,
+            quant_min_bound=self.quant_min_bound,
         )
         if residual_input is not None:
             return norm_out[0], norm_out[1]
@@ -179,6 +182,10 @@ class LayerNorm(nn.Layer):
         self.linear_bias = linear_bias
         self._dtype = self._helper.get_default_dtype()
         self._norm_weight_dtype = "float32"
+
+        self.quant_round_type = self.fd_config.quant_config.quant_round_type if fd_config.quant_config else 0
+        self.quant_max_bound = self.fd_config.quant_config.quant_max_bound if fd_config.quant_config else 0
+        self.quant_min_bound = self.fd_config.quant_config.quant_min_bound if fd_config.quant_config else 0
 
         self.init_weight()
 
@@ -249,9 +256,9 @@ class LayerNorm(nn.Layer):
             bias=self.linear_bias,
             residual=residual_input,
             quant_scale=-1,
-            quant_round_type=self.fd_config.quant_config.quant_round_type,
-            quant_max_bound=self.fd_config.quant_config.quant_max_bound,
-            quant_min_bound=self.fd_config.quant_config.quant_min_bound,
+            quant_round_type=self.quant_round_type,
+            quant_max_bound=self.quant_max_bound,
+            quant_min_bound=self.quant_min_bound,
         )
         if residual_input is not None:
             return norm_out[0], norm_out[1]

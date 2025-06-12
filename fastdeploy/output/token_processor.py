@@ -40,7 +40,8 @@ class TokenProcessor(object):
     get Token/Score from Paddle inference engine
     """
 
-    def __init__(self, cfg, cached_generated_tokens, engine_worker_queue, split_connector):
+    def __init__(self, cfg, cached_generated_tokens, engine_worker_queue,
+                 split_connector):
         import paddle
 
         paddle.device.set_device("cpu")
@@ -139,7 +140,6 @@ class TokenProcessor(object):
                                          is_blocking)
                 else:
                     get_output(self.output_tokens, rank_id, is_blocking)
-
                 if self.output_tokens[0, 0] == -2:
                     continue
                 self._process_prefill_metrics()
@@ -176,22 +176,27 @@ class TokenProcessor(object):
         """
         recycle resources
         """
-        if is_prefill and not self.resource_manager.cache_transfer_finished[task_id]:
+        if is_prefill and not self.resource_manager.cache_transfer_finished[
+                task_id]:
             wait_for_all_finish = time.time()
             while 1:
                 finished_task_ids = self.engine_worker_queue.get_finished_req()
                 if len(finished_task_ids) > 0:
                     for finished_task_id in finished_task_ids:
-                        llm_logger.info(f"finished_task_id: {finished_task_id}")
-                        self.resource_manager.cache_transfer_finished[finished_task_id] = True
+                        llm_logger.info(
+                            f"finished_task_id: {finished_task_id}")
+                        self.resource_manager.cache_transfer_finished[
+                            finished_task_id] = True
                     if self.resource_manager.cache_transfer_finished[task_id]:
                         break
                 else:
                     time.sleep(0.001)
-            llm_logger.info(f"recycle_resources cost time: {time.time() - wait_for_all_finish}")
+            llm_logger.info(
+                f"recycle_resources cost time: {time.time() - wait_for_all_finish}"
+            )
 
-
-        if task_id in self.resource_manager.cache_transfer_finished and self.resource_manager.cache_transfer_finished[task_id]:
+        if task_id in self.resource_manager.cache_transfer_finished and self.resource_manager.cache_transfer_finished[
+                task_id]:
             del self.resource_manager.cache_transfer_finished[task_id]
 
         self.resource_manager.stop_flags[index] = True
@@ -273,8 +278,8 @@ class TokenProcessor(object):
                 result.prompt_token_ids = task.prompt_token_ids
                 result.num_cached_tokens = task.num_cached_tokens
 
-            is_prefill = task.disaggregate_info is not None and task.disaggregate_info["role"] == "prefill"
-
+            is_prefill = task.disaggregate_info is not None and task.disaggregate_info[
+                "role"] == "prefill"
 
             for token_id in token_ids:
                 self.tokens_counter[task_id] += 1
@@ -304,7 +309,8 @@ class TokenProcessor(object):
             if not is_prefill:
                 batch_result.append(result)
         if len(prefill_batch_result) > 0:
-            self.split_connector.send_first_token(prefill_port, prefill_batch_result)
+            self.split_connector.send_first_token(prefill_port,
+                                                  prefill_batch_result)
         self.postprocess(batch_result)
 
     def _record_metrics(self, task, current_time, token_ids):

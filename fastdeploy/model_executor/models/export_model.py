@@ -534,7 +534,7 @@ def build_stream_line_model(
         moe_config.moe_use_gate_correction_bias = config.get(
             "moe_use_gate_correction_bias", True)
         moe_config.moe_every2 = config.get("moe_every2", False)
-        moe_config.moe_topk = config.get("moe_topk", 8)
+        moe_config.top_k = config.get("moe_topk", 8)
         moe_config.moe_num_shared_experts = config.get(
             "moe_num_shared_experts", 0)
         moe_config.moe_layer_start_index = config.get("moe_layer_start_index",
@@ -544,8 +544,6 @@ def build_stream_line_model(
         moe_config.use_moe = use_moe
         moe_config.moe_group = config.get("moe_group", False)
         moe_config.moe_quant_type = moe_quant_type
-        if top_k > 0:
-            moe_config.top_k = top_k
     parallel_config.use_ep = use_ep
     additional_config.ep_just_for_test = ep_just_for_test
     model_config.generation_phase = generation_phase
