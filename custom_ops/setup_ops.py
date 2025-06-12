@@ -188,7 +188,7 @@ elif paddle.is_compiled_with_cuda():
         "gpu_ops/enforce_generation.cu", "gpu_ops/dequant_int8.cu",
         "gpu_ops/tune_cublaslt_gemm.cu", "gpu_ops/swap_cache_batch.cu",
         "gpu_ops/swap_cache.cu", "gpu_ops/step_system_cache.cu",
-        "gpu_ops/cpp_extensions.cc","gpu_ops/share_external_data.cu",
+        "gpu_ops/cpp_extensions.cc", "gpu_ops/share_external_data.cu",
         "gpu_ops/per_token_quant_fp8.cu",
         "gpu_ops/extract_text_token_output.cu",
         "gpu_ops/update_split_fuse_input.cu",
