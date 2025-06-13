@@ -256,7 +256,7 @@ def background_start(job_id: str, model_path: str, model_version: str,
                      modify_model_conf: bool) -> None:
     """Start worker by calling downstream HTTP APIs"""
     global start_cmd_executed
-    #  增加一个版本信息，如果版本不一致，则需要通过storageagent下载模型并轮询状态，如果有多个线程走到这里
+    #  增加一个版本信息，如果版本不一致，则需要通过storageagent下载模型并轮询状态，如果有多个线程走到这里,pdc todo
     try:
         #  如果max_model_len被修改，需要重启进程
         if modify_model_conf and start_cmd_executed:
