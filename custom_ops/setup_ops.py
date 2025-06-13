@@ -221,7 +221,7 @@ elif paddle.is_compiled_with_cuda():
         "gpu_ops/update_split_fuse_input.cu",
         "gpu_ops/text_image_index_out.cu",
         "gpu_ops/text_image_gather_scatter.cu",
-        "gpu_ops/sample_kernels/top_p_sampling_reject.cu",
+        "gpu_ops/sample_kernels/rejection_top_p_sampling.cu",
     ]
 
     # pd_disaggregation
@@ -294,7 +294,7 @@ elif paddle.is_compiled_with_cuda():
     nvcc_version = get_nvcc_version()
     print(f'nvcc_version = {nvcc_version}')
     if nvcc_version >= 12.0:
-        sources += ["gpu_ops/air_topp_sampling.cu"]
+        sources += ["gpu_ops/sample_kernels/air_top_p_sampling.cu"]
     cc = max(get_sm_version(archs))
     print(f"cc = {cc}")
     if cc >= 80:
