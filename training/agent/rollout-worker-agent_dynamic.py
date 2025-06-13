@@ -256,6 +256,7 @@ def background_start(job_id: str, model_path: str, model_version: str,
                      modify_model_conf: bool) -> None:
     """Start worker by calling downstream HTTP APIs"""
     global start_cmd_executed
+    #  增加一个版本信息，如果版本不一致，则需要通过storageagent下载模型并轮询状态，如果有多个线程走到这里
     try:
         #  如果max_model_len被修改，需要重启进程
         if modify_model_conf and start_cmd_executed:
@@ -368,7 +369,7 @@ def start() -> str:
         new_max_model_len = int(info["max_model_len"])
         new_max_num_seqs = int(info["max_num_seqs"])
         if max_model_len != new_max_model_len or max_num_seqs != new_max_num_seqs:
-            set_max_model_len(new_max_model_len, new_max_num_seqs)
+            set_max_model_len(new_max_model_len, new_max_num_seqs, str(info["job_id"]))
             modify_model_conf = True
             max_model_len = new_max_model_len
             max_num_seqs = new_max_num_seqs
@@ -644,7 +645,7 @@ def set_parallel_degree(degree: str):
     parallel_degree = degree
 
 
-def set_max_model_len(max_model_len: int, max_num_seqs: int):
+def set_max_model_len(max_model_len: int, max_num_seqs: int, job_id: str):
     """Set max model length in all agent_work YAML files"""
     try:
         pattern = os.path.join(rollout_worker_root, "training", "agent_work*.yaml")
@@ -683,6 +684,17 @@ def set_max_model_len(max_model_len: int, max_num_seqs: int):
                 else:
                     print(f"{yaml_path}: 不存在 max_model_len 字段，跳过")
                     logging.info(f"{yaml_path}: 不存在 max_model_len 字段，跳过")
+                    continue
+
+                if 'scheduler' in data and 'topic' in data['scheduler']:
+                    old_value = data['scheduler']['topic']
+                    scheduler_topic = job_id + '-' + str(max_model_len)
+                    data['scheduler']['topic'] = scheduler_topic
+                    print(f"{yaml_path}: scheduler.topic 从 {old_value} 修改为 {scheduler_topic}")
+                    logging.info(f"{yaml_path}: scheduler.topic 从 {old_value} 修改为 {scheduler_topic}")
+                else:
+                    print(f"{yaml_path}: 不存在 scheduler.topic 字段，跳过")
+                    logging.info(f"{yaml_path}: 不存在 scheduler.topic 字段，跳过")
                     continue
 
                 # 原子写入，防止并发读到一半的内容
