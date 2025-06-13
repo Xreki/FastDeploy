@@ -492,7 +492,7 @@ class GPUModelRunner(ModelRunnerBase):
                 self.share_inputs["seq_lens_this_time"],
                 self.share_inputs["seq_lens_decoder"],
                 self.share_inputs["seq_lens_encoder"],
-                None,  #self.share_inputs["padding_offset"],
+                None,  # speculative decoding requires
                 self.parallel_config.max_model_len,
             )
 
