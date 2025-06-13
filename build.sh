@@ -126,11 +126,19 @@ function build_and_install_ops() {
   find ${OPS_TMP_DIR_BASE} -type f -name "*.o" -exec rm -f {} \;
   echo -e "${BLUE}[build]${NONE} build and install fastdeploy_ops..."
   if [ "$CPU_USE_BF16" == "true" ]; then
+    if [ "$BUILDING_ARCS" == "" ]; then
       CPU_USE_BF16=True ${python} setup_ops.py install --install-lib ${OPS_TMP_DIR}
-      find ${OPS_TMP_DIR} -type f -name "*.o" -exec rm -f {} \;
+    else
+      BUILDING_ARCS=${BUILDING_ARCS} CPU_USE_BF16=True ${python} setup_ops.py install --install-lib ${OPS_TMP_DIR}
+    fi
+    find ${OPS_TMP_DIR} -type f -name "*.o" -exec rm -f {} \;
   elif [ "$CPU_USE_BF16" == "false" ]; then
+    if [ "$BUILDING_ARCS" == "" ]; then
       ${python} setup_ops.py install --install-lib ${OPS_TMP_DIR}
-      find ${OPS_TMP_DIR} -type f -name "*.o" -exec rm -f {} \;
+    else
+      BUILDING_ARCS=${BUILDING_ARCS} ${python} setup_ops.py install --install-lib ${OPS_TMP_DIR}
+    fi
+    find ${OPS_TMP_DIR} -type f -name "*.o" -exec rm -f {} \;
   else
       echo "Error: Invalid parameter '$CPU_USE_BF16'. Please use true or false."
       exit 1
@@ -148,11 +156,7 @@ function build_and_install_ops() {
 
 function build_and_install() {
   echo -e "${BLUE}[build]${NONE} building fastdeploy wheel..."
-  if [ "$BUILDING_ARCS" == "" ]; then
-      ${python} setup.py bdist_wheel --python-tag=py3
-  else
-      BUILDING_ARCS=${BUILDING_ARCS} ${python} setup.py bdist_wheel --python-tag=py3
-  fi
+  ${python} setup.py bdist_wheel --python-tag=py3
 
   if [ $? -ne 0 ]; then
     echo -e "${RED}[FAIL]${NONE} build fastdeploy wheel failed"
