@@ -109,7 +109,7 @@ class EngineClient:
         if input_ids_len + min_tokens >= self.max_model_len:
             error_msg = (
                 f"Input text is too long, input_ids_len ({input_ids_len}) "
-                f"+ min_dec_len ({min_tokens}) >= max_model_len "
+                f"+ min_tokens({min_tokens}) >= max_model_len({self.max_model_len})"
             )
             api_server_logger.error(error_msg)
             raise EngineError(error_msg, error_code=400)

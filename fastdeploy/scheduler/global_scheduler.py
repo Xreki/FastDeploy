@@ -297,7 +297,6 @@ class GlobalScheduler(object):
                                 rem_amount=0, ttl=self.ttl)
             llm_logger.info(
                 f"Scheduler has enqueued some requests: {requests}")
-            main_process_metrics.num_requests_waiting.inc(len(requests))
 
         if duplicate:
             llm_logger.warning(

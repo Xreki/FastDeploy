@@ -87,6 +87,43 @@ class ModelRunner(ModelRunnerBase):
         #FLAGS_ffn2_use_hardamard
         # gqa .etc paddle Flags set
         pass
+    
+    def update_chunked_prefill(self, tasks):
+        """
+        更新chunked prefill相关参数
+        """
+        if not self.args.enable_chunked_prefill:
+            return
+
+        for task in tasks:
+            if task.chunk_idx > len(task.prefill_chunk_info):
+                continue
+
+            idx = task.idx
+            if task.chunk_idx == len(task.prefill_chunk_info):
+                self.share_inputs["seq_lens_this_time"][idx:idx + 1] = 1
+                self.share_inputs['seq_lens_encoder'][idx:idx + 1] = 0
+                self.share_inputs["seq_lens_decoder"][idx:idx + 1] = task.start_idx
+                self.share_inputs["step_idx"][idx:idx + 1] = 1
+            else:
+                inputs = self._preprocess(task.prefill_chunk_info[task.chunk_idx])
+                if inputs.get("images") is not None:
+                    self.share_inputs[
+                        "image_features"] = self.extract_vision_features(inputs)
+                else:
+                    # 兼容没有图片和视频的情况
+                    self.share_inputs["image_features"] = None 
+
+                token_chunk_size = inputs["input_ids"].shape[1]
+                self.share_inputs["input_ids"][idx:idx +
+                                        1, :token_chunk_size] = inputs["input_ids"]
+                self.share_inputs["seq_lens_this_time"][idx:idx + 1] = token_chunk_size
+                self.share_inputs['seq_lens_encoder'][idx:idx + 1] = token_chunk_size
+                self.share_inputs["seq_lens_decoder"][idx:idx + 1] = task.start_idx
+                self.share_inputs["step_idx"][idx:idx + 1] = 0
+
+                task.start_idx += token_chunk_size
+            task.chunk_idx += 1
 
     def _load_model(self, model_name, dynamic_load_weight):
 
@@ -107,6 +144,10 @@ class ModelRunner(ModelRunnerBase):
             moe_group="dummy",
         )
         config.is_mtp = False
+        config.moe_num_experts = sum(config.moe_num_experts) \
+            if config.multimodel_experts else config.moe_num_experts
+        config.use_offline_quant = False
+        config.set_prequant_weight = False
         self.model_cfg = config
         if self.is_safetensors_model:
             meta_json = os.path.join(self.args.model_name_or_path,
@@ -447,9 +488,8 @@ class ModelRunner(ModelRunnerBase):
         return image_features
 
     @paddle.no_grad()
-    def prepare_rope3d(self, inputs, **kwargs):
+    def prepare_rope3d(self, position_ids, **kwargs):
         """prepare_rope3d"""
-        position_ids = inputs["position_ids"]
 
         prefix_max_position_ids = paddle.max(position_ids) + 1
         dec_pos_ids = paddle.tile(
@@ -472,6 +512,13 @@ class ModelRunner(ModelRunnerBase):
         )
         return rope_emb
 
+    def prefill_finished(self):
+        """
+        判断是否已经完成了prefill操作
+        """
+        prefill_statue = (self.share_inputs["seq_lens_this_time"] != 0) & (self.share_inputs["seq_lens_this_time"] != 1)
+        return not paddle.any(prefill_statue).numpy()
+    
     def dy_input_preprocess(self, tasks):
         """
         dynamic insertion
@@ -492,21 +539,47 @@ class ModelRunner(ModelRunnerBase):
                 "pad_token_id": self.args.pad_token_id,
             }
 
-            inputs = self._preprocess(task)
-            if inputs.get("images") is not None:
-                self.share_inputs[
-                    "image_features"] = self.extract_vision_features(inputs)
+            if self.args.enable_chunked_prefill:
+                task.set("chunk_idx", 1)
+                inputs = self._preprocess(task.prefill_chunk_info[0])
+                if inputs.get("images") is not None:
+                    self.share_inputs[
+                        "image_features"] = self.extract_vision_features(inputs)
+                else:
+                    # 兼容没有图片和视频的情况
+                    self.share_inputs["image_features"] = None  
+                if task.multimodal_inputs["position_ids"] is not None:
+                    position_ids = paddle.to_tensor(task.multimodal_inputs["position_ids"],
+                                                    dtype="int64").unsqueeze([0])
+                else:
+                    position_ids = None
+                
+                token_chunk_size = inputs["input_ids"].shape[1]
+                task.set("start_idx", token_chunk_size)
+                self.share_inputs["input_ids"][idx:idx + 1, :token_chunk_size] = inputs["input_ids"]
+                self.share_inputs["seq_lens_this_time"][idx:idx + 1] = token_chunk_size
+                self.share_inputs["seq_lens_encoder"][idx:idx + 1] = token_chunk_size
+                self.share_inputs["step_seq_lens_encoder"][idx:idx + 1] = token_chunk_size
             else:
-                # 兼容没有图片和视频的情况
-                self.share_inputs["image_features"] = None
-            print("extract vision features done")
+                inputs = self._preprocess(task.multimodal_inputs)
+                if inputs.get("images") is not None:
+                    self.share_inputs[
+                        "image_features"] = self.extract_vision_features(inputs)
+                else:
+                    # 兼容没有图片和视频的情况
+                    self.share_inputs["image_features"] = None
+                position_ids = inputs["position_ids"] 
+
+                length = inputs["input_ids"].shape[1]
+                self.share_inputs["input_ids"][idx:idx + 1, :length] = inputs["input_ids"]
+                self.share_inputs["seq_lens_this_time"][idx:idx + 1] = length
+                self.share_inputs["seq_lens_encoder"][idx:idx + 1] = length
+                self.share_inputs["step_seq_lens_encoder"][idx:idx + 1] = length
+
             self.share_inputs["rope_emb"][idx:idx +
-                                          1, :] = self.prepare_rope3d(
-                                              inputs, **kwargs)
-            print("prepare rope3d done")
-            length = inputs["input_ids"].shape[1]
-            self.share_inputs["input_ids"][idx:idx +
-                                           1, :length] = inputs["input_ids"]
+                                        1, :] = self.prepare_rope3d(
+                                            position_ids, **kwargs)
+                
             self.share_inputs["top_p"][idx:idx + 1] = kwargs["top_p"]
             self.share_inputs["temperature"][idx:idx +
                                              1] = kwargs["temperature"]
@@ -518,8 +591,6 @@ class ModelRunner(ModelRunnerBase):
                                                  1] = kwargs["frequency_score"]
             self.share_inputs["presence_score"][idx:idx +
                                                 1] = kwargs["presence_score"]
-            self.share_inputs["seq_lens_this_time"][idx:idx + 1] = length
-            self.share_inputs["seq_lens_encoder"][idx:idx + 1] = length
             self.share_inputs["seq_lens_decoder"][idx:idx + 1] = 0
             self.share_inputs["step_idx"][idx:idx + 1] = 0
             self.share_inputs["min_dec_len"][idx:idx + 1] = 1
@@ -618,16 +689,14 @@ class ModelRunner(ModelRunnerBase):
             self.share_inputs["block_tables"][idx : idx + 1, :block_num] = np.arange(idx * block_num, \
                                                                                 (idx + 1) * block_num, 1)
 
-    def _preprocess(self, task):
+    def _preprocess(self, one):
         """process batch"""
-        one = task.multimodal_inputs
         print(one)
 
         input_ids = one["input_ids"][np.newaxis, :]
         input_ids = paddle.to_tensor(input_ids, dtype=paddle.int64)
         token_type_ids = one["token_type_ids"][np.newaxis, :]
         token_type_ids = paddle.to_tensor(token_type_ids, dtype=paddle.int64)
-        print(f"token_type_ids {token_type_ids.shape} {token_type_ids.dtype}")
 
         if one["images"] is not None:
             image_type_ids = one["image_type_ids"][np.newaxis, :]

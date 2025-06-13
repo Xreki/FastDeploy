@@ -21,6 +21,8 @@ from typing import Any, Dict, List, Optional
 from fastdeploy.engine.config import Config, ModelConfig, CacheConfig, TaskOption
 from fastdeploy.utils import FlexibleArgumentParser
 from fastdeploy.scheduler.config import SchedulerConfig
+from paddlenlp.trainer import strtobool
+
 
 
 def nullable_str(x: str) -> Optional[str]:
@@ -162,6 +164,11 @@ class EngineArgs:
     """
     For chunked prefill, a request is considered long if the prompt is longer than this number of tokens.
     """
+    static_decode_blocks: int = 2
+    """
+    additional decode block num 
+    """
+
     scheduler_name: str = "local"
     """
     Scheduler name to be used
@@ -351,6 +358,12 @@ class EngineArgs:
             help="port for cache queue"
         )
 
+        cache_group.add_argument(
+            "--static-decode-blocks",
+            type=int,
+            default=EngineArgs.static_decode_blocks,
+            help="Static decoding blocks num."
+        )
 
         # Cluster system parameters group
         system_group = parser.add_argument_group("System Configuration")
@@ -504,7 +517,8 @@ class EngineArgs:
             cpu_offload_gb=self.cpu_offload_gb,
             cache_queue_port=self.cache_queue_port,
             model_cfg=model_cfg,
-            enable_chunked_prefill=self.enable_chunked_prefill
+            enable_chunked_prefill=self.enable_chunked_prefill,
+            enc_dec_block_num=self.static_decode_blocks,
         )
 
     def create_scheduler_config(self) -> SchedulerConfig:

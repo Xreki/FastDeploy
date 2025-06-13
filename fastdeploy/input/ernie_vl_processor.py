@@ -22,7 +22,6 @@ from fastdeploy.input.mm_processor import DataProcessor, IDS_TYPE_FLAG
 from fastdeploy.input.ernie_processor import ErnieProcessor
 from fastdeploy.engine.request import Request
 from fastdeploy.entrypoints.chat_utils import parse_chat_messages
-from fastdeploy.input.ernie_processor import ErnieProcessor
 from fastdeploy.utils import api_server_logger
 
 
@@ -44,6 +43,8 @@ class ErnieMoEVLProcessor(ErnieProcessor):
             **processor_kwargs
         )
         self.ernie_processor.eval()
+        self.image_patch_id = self.ernie_processor.image_patch_id
+        self.spatial_conv_size = self.ernie_processor.spatial_conv_size
 
         self.decode_status = dict()
         self._load_tokenizer()

@@ -85,9 +85,11 @@ class InferenceArgs:
         scale_dir=None,
         enable_redundant_experts: bool = False,
         redundant_experts_num: int = 0,
-        use_offline_quant=False,
         max_batch_size: int = 128,
         head_dim=None,
+        is_quantized=False,
+        use_safetensors=False,
+        ernie_config=None,
     ):
         """
         Initialization function for quantization of the Transformer model
@@ -128,7 +130,6 @@ class InferenceArgs:
 
         self.weight_block_size = weight_block_size
         # self.weight_block_size = [-1, -1]
-        self.use_offline_quant = use_offline_quant
         self.use_avx512 = use_avx512
         self.ffn_hidden_size = ffn_hidden_size
         self.mp_rank = mp_rank
@@ -171,6 +172,35 @@ class InferenceArgs:
             self.act_dtype,
             self.cachekv_dtype,
         ) = self.parser_quant_type(self.quant_type)
+
+        # deal model laod
+        self.is_quantized = is_quantized
+        if "ErnieMoEVLForCausalLM" in ernie_config.architectures:
+            # Hack, to be changed.
+            load_weight_gpu = False
+        else:
+            load_weight_gpu = "gpu" in paddle.device.get_device()
+
+        if load_weight_gpu and use_safetensors:
+            if is_quantized:
+                self.use_offline_quant = False
+                self.set_prequant_weight = True
+            elif not is_quantized and not self.use_ep and not \
+                    self.weight_dtype in ["float32", "bfloat16", "float16"]:
+                self.use_offline_quant = True
+                self.set_prequant_weight = True
+            else:
+                self.use_offline_quant = False
+                self.set_prequant_weight = False
+        else:
+            # load cpu map
+            if is_quantized:
+                self.use_offline_quant = False
+                self.set_prequant_weight = True
+            else:
+                self.use_offline_quant = False
+                self.set_prequant_weight = False
+        
         logger.info(
             f"quant_type: weight[{self.weight_dtype}], act[{self.act_dtype}], cachekv[{self.cachekv_dtype}]"
         )

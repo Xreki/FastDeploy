@@ -228,13 +228,11 @@ class TokenProcessor(object):
 
             task = self.resource_manager.tasks_list[i]
 
-
             if task.get("prefill_chunk_info", None) is not None:
-                if task.get("prefill_chunk_idx", None) is None:
-                    task.set("prefill_chunk_idx", 0)
-
-                if task.prefill_chunk_idx < len(task.prefill_chunk_info):
-                    task.prefill_chunk_idx += 1
+                prefill_chunk_num = task.get("prefill_chunk_num", 0)
+                task.prefill_chunk_num = prefill_chunk_num + 1
+                
+                if task.prefill_chunk_num < len(task.prefill_chunk_info):
                     continue
 
             task_id = task.request_id

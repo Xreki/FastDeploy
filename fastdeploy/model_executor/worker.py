@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-
+from paddlenlp.trainer import strtobool
 import argparse
 import copy
 import json
@@ -355,7 +355,6 @@ class Worker:
             if self.exist_task_signal.value[0] == 2:
                 self.check_model_weights_status()
 
-
             self.insert_step = False
 
             self.worker_healthy_live_signal.value[self.rank] = int(time.time())
@@ -385,6 +384,7 @@ class Worker:
                 req_dicts = []
                 for req_dict, bsz in tasks:
                     num_running_requests = int(bsz)
+
                     req_dicts.extend(req_dict)
                 req_ids = [req.request_id for req in req_dicts ]
                 logger.info(f"Rank: {self.rank}, num_running_requests: {num_running_requests}, " \
