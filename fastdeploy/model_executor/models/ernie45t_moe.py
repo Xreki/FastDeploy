@@ -596,8 +596,9 @@ class ErnieForCausalLM(ModelForCasualLM):
         self.model.load_state_dict(state_dict)
         if self.tie_word_embeddings:
             self.lm_head.out_linear.weight.set_value(
-                self.model.embeddings.word_embeddings.weight.transpose([1, 0])
-                )
+                self.model.embeddings.word_embeddings.weight.transpose([1, 0]))
+        else:
+            self.lm_head.load_state_dict(state_dict)
 
     def compute_logits(self, hidden_states: paddle.Tensor):
         logits = self.lm_head(hidden_states)
