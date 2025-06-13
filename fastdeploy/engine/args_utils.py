@@ -18,7 +18,9 @@ import json
 from dataclasses import dataclass, asdict, fields as dataclass_fields
 from typing import Any, Dict, List, Optional
 
-from fastdeploy.engine.config import Config, ModelConfig, CacheConfig, TaskOption
+from fastdeploy.engine.config import (CacheConfig, Config, ModelConfig,
+                                     ParallelConfig, TaskOption)
+from fastdeploy.scheduler.config import SchedulerConfig
 from fastdeploy.utils import FlexibleArgumentParser
 from fastdeploy.scheduler.config import SchedulerConfig
 from paddlenlp.trainer import strtobool
@@ -142,10 +144,31 @@ class EngineArgs:
     """
     Splitwise role: prefill, decode or mixed
     """
-
-    innode_prefill_ports: Optional[List[int]] = None
+    data_parallel_size: int = 8
     """
-    Port for innode dispatch request.
+    Number of data parallelism.
+    """
+
+    enable_expert_parallel: bool = False
+    """
+    Enable expert parallelism.
+    """
+
+    local_data_parallel_id: int = 0
+
+    cache_transfer_protocol: str = "ipc"
+    """
+    Protocol to use for cache transfer.
+    """
+
+    pd_comm_port: int = 12330
+    """
+    Port for splitwise communication.
+    """
+
+    rdma_comm_ports: Optional[List[int]] = None
+    """
+    Ports for rdma communication.
     """
 
     enable_chunked_prefill: bool = False
@@ -173,38 +196,43 @@ class EngineArgs:
     """
     Scheduler name to be used
     """
-    scheduler_max_size: int = -1
+    scheduler_name: str = "local"
     """
     Size of scheduler
     """
-    scheduler_ttl: float = 900
+    scheduler_max_size: int = -1
     """
     TTL of request
     """
-    scheduler_host: str = "127.0.0.1"
+    scheduler_ttl: int = 900
+    """
+    Timeout for waiting for response
+    """
+    scheduler_wait_response_timeout: float = 0.001
     """
     Host of redis
     """
-    scheduler_port: int = 6379
+    scheduler_host: str = "127.0.0.1"
     """
     Port of redis
     """
-    scheduler_db: int = 0
+    scheduler_port: int = 6379
     """
     DB of redis
     """
-    scheduler_password: Optional[str] = None
+    scheduler_db: int = 0
     """
     Password of redis
     """
-    scheduler_topic: str = "default"
+    scheduler_password: Optional[str] = None
     """
     Topic of scheduler
     """
-    scheduler_min_load_score: float = 1
+    scheduler_topic: str = "default"
     """
-    Minimum load score for task assignment
+    Max write time of redis
     """
+    scheduler_remote_write_time: int = 3
 
     def __post_init__(self):
         """
@@ -334,6 +362,23 @@ class EngineArgs:
             help="Fraction of GPU memory to be utilized."
         )
 
+        parallel_group.add_argument(
+            "--data-parallel-size",
+            type=int,
+            default=EngineArgs.data_parallel_size,
+            help="Degree of data parallelism.")
+        parallel_group.add_argument(
+            "--enable-expert-parallel",
+            action='store_true',
+            default=EngineArgs.enable_expert_parallel,
+            help="Enable expert parallelism.")
+        
+        parallel_group.add_argument(
+            "--local_data_parallel_id",
+            type=int,
+            default=EngineArgs.local_data_parallel_id,
+            help="Local Data Parallel ID")
+
         # CacheConfig parameters group
         cache_group = parser.add_argument_group("Cache Configuration")
 
@@ -389,19 +434,6 @@ class EngineArgs:
             help="Flag to enable prefix caching."
         )
 
-        perf_group.add_argument(
-            "--splitwise-role",
-            type=str,
-            default=EngineArgs.splitwise_role,
-            help="Role of splitwise. Default is 'mixed'. (prefill, decode, mixed)"
-        )
-
-        perf_group.add_argument(
-            "--innode-prefill-ports",
-            type=lambda s: s.split(",") if s else None,
-            default=EngineArgs.innode_prefill_ports,
-            help="port for innode prefill"
-        )
 
         perf_group.add_argument(
             "--enable-chunked-prefill",
@@ -428,6 +460,35 @@ class EngineArgs:
             help="For chunked prefill, the threshold number of tokens for a prompt to be considered long."
         )
 
+        perf_group.add_argument(
+            "--splitwise-role",
+            type=str,
+            default=EngineArgs.splitwise_role,
+            help="Role of splitwise. Default is 'mixed'. (prefill, decode, mixed)"
+        )
+
+
+        perf_group.add_argument(
+            "--cache-transfer-protocol",
+            type=str,
+            default=EngineArgs.cache_transfer_protocol,
+            help="support protocol list, comma separated, default is ipc"
+        )
+
+        perf_group.add_argument(
+            "--pd-comm-port",
+            default=EngineArgs.pd_comm_port,
+            help="port for splitwise communication."
+        )
+
+        perf_group.add_argument(
+            "--rdma-comm-ports",
+            type=lambda s: s.split(",") if s else None,
+            default=EngineArgs.rdma_comm_ports,
+            help="ports for rdma communication."
+        )
+
+
         # Scheduler parameters group
         scheduler_group = parser.add_argument_group("Scheduler")
         scheduler_group.add_argument(
@@ -443,9 +504,16 @@ class EngineArgs:
         )
         scheduler_group.add_argument(
             "--scheduler-ttl",
-            type=float,
+            type=int,
             default=EngineArgs.scheduler_ttl,
             help=f"TTL of request. Default is {EngineArgs.scheduler_ttl} seconds. (local,global)"
+        )
+        scheduler_group.add_argument(
+            "--scheduler-wait-response-timeout",
+            type=float,
+            default=EngineArgs.scheduler_wait_response_timeout,
+            help=("Timeout for waiting for response. Default is "
+                  f"{EngineArgs.scheduler_wait_response_timeout} seconds. (local,global)")
         )
         scheduler_group.add_argument(
             "--scheduler-host",
@@ -475,10 +543,10 @@ class EngineArgs:
             help=f"Topic of scheduler. Defaule is {EngineArgs.scheduler_topic}. (global)"
         )
         scheduler_group.add_argument(
-            "--scheduler-min-load-score",
-            type=float,
-            default=EngineArgs.scheduler_min_load_score,
-            help=f"Minimum load score for task assignment. Default is {EngineArgs.scheduler_min_load_score} (global)"
+            "--scheduler-remote-write-time",
+            type=int,
+            default=EngineArgs.scheduler_remote_write_time,
+            help=f"Max write time of redis. Default is {EngineArgs.scheduler_remote_write_time} seconds (global)"
         )
 
         return parser
@@ -519,6 +587,9 @@ class EngineArgs:
             model_cfg=model_cfg,
             enable_chunked_prefill=self.enable_chunked_prefill,
             enc_dec_block_num=self.static_decode_blocks,
+            rdma_comm_ports=self.rdma_comm_ports,
+            cache_transfer_protocol=self.cache_transfer_protocol,
+            pd_comm_port=self.pd_comm_port,
         )
 
     def create_scheduler_config(self) -> SchedulerConfig:
@@ -539,6 +610,17 @@ class EngineArgs:
 
         return SchedulerConfig(**params)
 
+    def create_parallel_config(self) -> ParallelConfig:
+        """
+        Create and return a ParallelConfig object based on the current settings.
+        """
+        return ParallelConfig(
+            tensor_parallel_size=self.tensor_parallel_size,
+            enable_expert_parallel=self.enable_expert_parallel,
+            data_parallel_size=self.data_parallel_size,
+            local_data_parallel_id=self.local_data_parallel_id
+        )
+
     def create_engine_config(self) -> Config:
         """
         Create and return a Config object based on the current settings.
@@ -558,6 +640,7 @@ class EngineArgs:
             scheduler_config=scheduler_cfg,
             tokenizer=self.tokenizer,
             cache_config=self.create_cache_config(model_cfg),
+            parallel_config=self.create_parallel_config(),
             max_model_len=self.max_model_len,
             tensor_parallel_size=self.tensor_parallel_size,
             max_num_seqs=self.max_num_seqs,
@@ -571,7 +654,6 @@ class EngineArgs:
             mm_processor_kwargs=self.mm_processor_kwargs,
             enable_mm=self.enable_mm,
             splitwise_role=self.splitwise_role,
-            innode_prefill_ports=self.innode_prefill_ports,
             max_num_partial_prefills=self.max_num_partial_prefills,
             max_long_partial_prefills=self.max_long_partial_prefills,
             long_prefill_token_threshold=self.long_prefill_token_threshold

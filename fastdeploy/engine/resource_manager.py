@@ -264,7 +264,8 @@ class ResourceManager(object):
 
                         if task.disaggregate_info is not None:
                             if task.disaggregate_info['role'] == "prefill":
-                                self.cache_transfer_finished[task.request_id] = False
+                                self.req_dict[task.request_id] = allocated_position
+                                self.cache_transfer_finished[task.request_id] = 0
                                 task.disaggregate_info['block_tables'] = task.block_tables
                                 self._delete_cached_data(task, cached_len)
                             elif task.disaggregate_info['role'] == "decode":
@@ -286,6 +287,7 @@ class ResourceManager(object):
                         if task.disaggregate_info is not None:
                             task.disaggregate_info['block_tables'] = block_tables
                             if task.disaggregate_info['role'] == "prefill":
+                                self.req_dict[task.request_id] = allocated_position
                                 self.cache_transfer_finished[task.request_id] = False
                             elif task.disaggregate_info['role'] == "decode":
                                 self.req_dict[task.request_id] = allocated_position
