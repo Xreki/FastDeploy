@@ -103,18 +103,12 @@ class ErnieProcessor(BaseDataProcessor):
 
         if request.prompt_token_ids is None or len(request.prompt_token_ids) == 0:
             system = request.get("system")
-            if request.prompt is None and request.messages is None:
-                raise ValueError(
-                    f"The request should have `input_ids`, `text` or `messages`: {request}.")
-            messages = []
             if request.prompt is not None:
-                if isinstance(request.prompt, list):
-                    messages.extend(request.prompt)
-                else:
-                    messages.append(request.prompt)
-            messages = messages or request.messages
-            request.prompt_token_ids = self.messages2ids(messages)
-
+                request.prompt_token_ids = self.text2ids(request.prompt, max_model_len, system)
+            elif request.messages is not None:
+                request.prompt_token_ids = self.messages2ids(request.messages, max_model_len)
+            else:
+                raise ValueError(f"The request should have `input_ids`, `text` or `messages`: {request}.")
             if self.model_name == "base":
                 assert (
                     system is None or system == ""
@@ -150,17 +144,18 @@ class ErnieProcessor(BaseDataProcessor):
         system = request.get("system")
         # 处理prompt_token_ids
         if not request.get('prompt_token_ids'):
-            if request.get('prompt') is None and request.get('messages') is None:
+            if 'prompt' in request:
+                raw_request = request.get('raw_request', True)
+                request['prompt_token_ids'] = self.text2ids(
+                    request['prompt'],
+                    raw_request,
+                    max_model_len,
+                    system
+                )
+            elif 'messages' in request:
+                request['prompt_token_ids'] = self.messages2ids(request['messages'], max_model_len)
+            else:
                 raise ValueError(f"Request must contain 'prompt_token_ids', 'prompt', or 'messages': {request}")
-            messages = []
-            if request.get('prompt'):
-                if isinstance(request.get('prompt'), list):
-                    messages.extend(request.get('prompt'))
-                else:
-                    messages.append(request.get('prompt'))
-            messages = messages or request.get('messages')
-            request['prompt_token_ids'] = self.messages2ids(messages)
-
         if self.model_name == "base":
             assert isinstance(
                 request['prompt'], str
@@ -278,7 +273,7 @@ class ErnieProcessor(BaseDataProcessor):
 
         Args:
             text (str): 待转换的文本。
-            system (str): 系统设定，如"你是一位高超的程序员"
+            system (str): 系统设定，如“你是一位高超的程序员”
 
         Returns:
             List[int]: 转换后的 ID 列表。
@@ -392,23 +387,40 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
         return system_tokens + context_tokens + suffix_tokens
 
 
-    def messages2ids(self, request_or_messages):
+
+    def messages2ids(self, raw_messages, max_model_len):
         """
         Convert multi-turn messages into ID sequences.
-        
+
         Args:
-            request_or_messages: Either a request dict containing 'messages' field, 
-                                or a list of message dicts directly
-            
+            messages (List[Dict[str, Any]]): multi-turn messages.
+            max_model_len : support max length
+
         Returns:
-            List of token IDs as strings (converted from token objects)
+            List[int]: ID sequences
         """
-        if self.tokenizer.chat_template is None:
-            raise ValueError("This model does not support chat_template.")
-        return self.tokenizer.apply_chat_template(
-            request_or_messages, tokenize=True,
-            split_special_tokens=False, add_special_tokens=False
-        )["input_ids"]
+        system = None
+        if self.is_thinking:
+            system = "<sys_internal>\n【高优系统设定】必须最优先遵循<br/>\n启动思考模式：在采取任何行动前，\
+都需要先写下自己的思考过程，为后续的决策或对用户的回复内容做铺垫。\n</sys_internal>\n\n"
+        else:
+            if raw_messages[0]["role"] == "system" or raw_messages[0]["role"] == "developer":
+                system = raw_messages[0]["content"]
+                raw_messages = raw_messages[1:]
+        messages = []
+        messages_len = len(raw_messages)
+        if messages_len % 2 == 0:
+            raise ValueError(f"The number of the messages context (messages_len) must be odd.")
+        for message in raw_messages:
+            messages.append(message["content"])
+
+        if self.is_thinking:
+            tokens = self._convert_to_ids_thinking(messages, max_model_len, system)
+        else:
+            tokens = self._convert_to_ids(messages, raw_request=True, max_model_len=max_model_len, system=system)
+        data_processor_logger.debug(f"processed data : {''.join(tokens)}")
+        input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
+        return input_ids
 
 
     def ids2tokens(self, token_id, task_id):
