@@ -232,6 +232,9 @@ class PaddleDisWorkerProc():
         model_block_memory_used = self.worker.cal_theortical_kvcache()
         num_blocks_local = int(available_kv_cache_memory //
                                model_block_memory_used)
+        print(
+            f"------- model_block_memory_used:{model_block_memory_used} --------"
+        )
         print(f"------- num_blocks_local:{num_blocks_local} --------")
 
         # 3. Send IPCSignal

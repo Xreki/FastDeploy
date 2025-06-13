@@ -519,8 +519,11 @@ class GPUModelRunner(ModelRunnerBase):
                 msg_queue_id=self.parallel_config.msg_queue_id,
                 mp_rank=self.local_rank,
                 use_ep=self.parallel_config.use_ep)
-            post_process(sampled_token_ids=sampled_token_ids,
-                         model_output=model_output_data)
+
+            post_process(
+                sampled_token_ids=sampled_token_ids,
+                model_output=model_output_data,
+            )
 
             # 7. Updata 'infer_seed' and step_cuda()
             self.share_inputs["infer_seed"].add_(self.infer_seed_increment)
@@ -662,20 +665,24 @@ class GPUModelRunner(ModelRunnerBase):
         })
 
     def cal_theortical_kvcache(self):
-        """ Calculate the total block memory required at the model level """
+        """
+        Calculate the total block memory required at the model level
+        TODO(gongshaotian): Move to Attention Backend
+        """
         """
         Byte of dtype:
-        - bf16: 2
-        - c8:
-        - c4:
+        - default(bf16): 2
+        - cache_int8: 1
+        - cache_int4:
         """
-        byte_of_dtype = 2
-        if self.fd_config.kv_cache_config.cache_quant_dtype == "cache_int8":
+        cache_quant_dtype = self.kv_cache_config.cache_quant_dtype
+
+        if cache_quant_dtype == "cache_int8":
             byte_of_dtype = 1
+        else:  # default
+            byte_of_dtype = 2
 
-        head_dim = self.model_config.head_dim
-        hidden_dim = head_dim * self.model_config.kv_num_heads
-
+        hidden_dim = self.model_config.head_dim * self.model_config.kv_num_heads
         required_memory = (
             byte_of_dtype * 2 *  # k + v
             (self.parallel_config.block_size * hidden_dim) *
