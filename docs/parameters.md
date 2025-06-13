@@ -19,6 +19,7 @@
 |   mm_processor_kwargs   |   dict   |                  多模态输入参数                  |    否    |    None    |
 | gpu_memory_utilization |  float  |        最大显存利用率，用于计算block 数目        |    否    |     0.9     |
 | num_gpu_blocks_override |   int   |        设置分配的gpu的KV Cache的block 数目        |    否    |    None    |
+|  static_decode_blocks  |   int   |        固定分配给decode阶段KV Cache的block数量       |    否    |    2    |
 | max_num_batched_tokens |   int   |         单次支持的最大prefill的token 数目         |    否    |    None    |
 |     kv_cache_ratio     |  float  | 模型输入的长度 / 模型支持的最长的上下文长度的比例 |    否    |    0.75    |
 |          nnode          |   int   |                     节点数量                     |    否    |      1      |

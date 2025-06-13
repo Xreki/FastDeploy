@@ -191,15 +191,15 @@ class ModelRunner(ModelRunnerBase):
 
         if self.is_safetensors_model:
             vision_config = config.vision_config
-            vision_config.tensor_parallel_degree = 1
-            vision_config.tensor_parallel_rank = 0
+            vision_config.tensor_parallel_degree = self.tensor_parallel_degree
+            vision_config.tensor_parallel_rank = self.tensor_parallel_rank
             vision_config.attn_sep = False
             vision_config.dtype = "bfloat16"
         else:
             vision_config = DFNRopeVisionTransformerConfig.from_pretrained(
                 self.args.vision_model_name_or_path,
-                tensor_parallel_degree=1,
-                tensor_parallel_rank=0,
+                tensor_parallel_degree=self.tensor_parallel_degree,
+                tensor_parallel_rank=self.tensor_parallel_rank,
                 attn_sep=False,
                 dtype="bfloat16",
             )
@@ -414,6 +414,18 @@ class ModelRunner(ModelRunnerBase):
             self.model.set_state_dict(state_dict)
 
     @paddle.no_grad()
+    def vit_load(self, model_path, tensor_parallel_degree, tensor_parallel_rank):
+        """
+        vit_load tp参数
+        """
+        rank_model_path = os.path.join(model_path, f"model_state_tp0{tensor_parallel_rank}.pdparams")
+        if os.path.exists(rank_model_path):
+            print(f"Load from mp{tensor_parallel_rank}")
+            return paddle.load(rank_model_path, return_numpy=True)
+        else:
+            raise ValueError(f"No such a file {rank_model_path}")
+
+    @paddle.no_grad()
     def inject_pp_vision_model(self, args, cfg):
         """
         注入vision model参数
@@ -447,12 +459,8 @@ class ModelRunner(ModelRunnerBase):
                                 state_dict[new_k] = tensor
             model.set_state_dict(state_dict)
 
-        if not self.is_safetensors_model:
-            vision_model = DFNRopeVisionTransformerPretrainedModel.from_pretrained(
-                args.vision_model_name_or_path, config=cfg.vision_config)
-        else:
-            vision_model = DFNRopeVisionTransformerPretrainedModel(
-                cfg.vision_config)
+        vision_model = DFNRopeVisionTransformerPretrainedModel(
+            cfg.vision_config)
         vision_model = paddle.amp.decorate(models=vision_model,
                                            level="O2",
                                            dtype="bfloat16")
@@ -483,6 +491,13 @@ class ModelRunner(ModelRunnerBase):
                 tensor_parallel_rank=self.tensor_parallel_rank,
                 name="ernie.resampler_model.",
             )
+        if self.tensor_parallel_degree > 1:
+            vit_state_dict = self.vit_load(
+                args.vision_model_name_or_path,
+                self.tensor_parallel_degree,
+                self.tensor_parallel_rank
+            )
+            vision_model.set_state_dict(vit_state_dict)
 
         return vision_model, resampler_model
 

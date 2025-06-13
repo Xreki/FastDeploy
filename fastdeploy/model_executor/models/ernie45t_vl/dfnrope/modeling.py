@@ -27,6 +27,7 @@ from paddlenlp.transformers.model_utils import PretrainedModel
 
 from .activation import ACT2FN
 from .configuration import DFNRopeVisionTransformerConfig
+from paddle.distributed.fleet.meta_parallel import ColumnParallelLinear, RowParallelLinear
 
 
 def get_hcg():
@@ -168,11 +169,36 @@ class VisionFlashAttention2(nn.Layer):
         nn (_type_): _description_
     """
 
-    def __init__(self, dim: int, num_heads: int = 16) -> None:
+    def __init__(
+        self, dim: int,
+        num_heads: int = 16,
+        tensor_parallel_degree: int = 1
+    ) -> None:
         super().__init__()
         self.num_heads = num_heads
-        self.qkv = nn.Linear(dim, dim * 3, bias_attr=True)
-        self.proj = nn.Linear(dim, dim)
+        self.tensor_parallel_degree = tensor_parallel_degree
+
+        if tensor_parallel_degree > 1:
+            self.qkv = ColumnParallelLinear(
+                dim,
+                dim * 3,
+                mp_group=fleet.get_hybrid_communicate_group().get_model_parallel_group(),
+                weight_attr=None,
+                has_bias=True,
+                fuse_matmul_bias=True,
+                gather_output=False,
+            )
+            self.proj = RowParallelLinear(
+                dim,
+                dim,
+                mp_group=fleet.get_hybrid_communicate_group().get_model_parallel_group(),
+                input_is_parallel=True,
+                has_bias=True
+            )
+        else:
+            self.qkv = nn.Linear(dim, dim * 3, bias_attr=True)
+            self.proj = nn.Linear(dim, dim)
+
         self.head_dim = dim // num_heads  # must added
 
     def forward(
@@ -194,7 +220,8 @@ class VisionFlashAttention2(nn.Layer):
         """
         seq_length = hidden_states.shape[0]
         qkv = self.qkv(hidden_states).reshape(
-            [seq_length, 3, self.num_heads, -1]).transpose(perm=[1, 0, 2, 3])
+            [seq_length, 3, self.num_heads // self.tensor_parallel_degree, -1]
+        ).transpose(perm=[1, 0, 2, 3])
         q, k, v = qkv.unbind(axis=0)
 
         if attn_sep:
@@ -215,9 +242,9 @@ class VisionFlashAttention2(nn.Layer):
 
         attn_output = (
             flash_attn_varlen_func(  # flash_attn_unpadded
-                q.astype("bfloat16"),  # 不支持float32
-                k.astype("bfloat16"),
-                v.astype("bfloat16"),
+                q,  # 不支持float32
+                k,
+                v,
                 cu_seqlens,
                 cu_seqlens,
                 max_seqlen,
@@ -278,11 +305,35 @@ class VisionMlp(nn.Layer):
         nn (_type_): _description_
     """
 
-    def __init__(self, dim: int, hidden_dim: int, hidden_act: str) -> None:
+    def __init__(
+        self,
+        dim: int,
+        hidden_dim: int,
+        hidden_act: str,
+        tensor_parallel_degree: int = 1
+    ) -> None:
         super().__init__()
-        self.fc1 = nn.Linear(dim, hidden_dim)
+        self.tensor_parallel_degree = tensor_parallel_degree
+
+        if self.tensor_parallel_degree > 1:
+            self.fc1 = ColumnParallelLinear(
+                dim,
+                hidden_dim,
+                mp_group=fleet.get_hybrid_communicate_group().get_model_parallel_group(),
+                gather_output=False,
+                has_bias=True
+            )
+            self.fc2 = RowParallelLinear(
+                hidden_dim,
+                dim,
+                mp_group=fleet.get_hybrid_communicate_group().get_model_parallel_group(),
+                input_is_parallel=True,
+                has_bias=True
+            )
+        else:
+            self.fc1 = nn.Linear(dim, hidden_dim)
+            self.fc2 = nn.Linear(hidden_dim, dim)
         self.act = ACT2FN[hidden_act]
-        self.fc2 = nn.Linear(hidden_dim, dim)
 
     def forward(self, x) -> paddle.Tensor:
         """_summary_
@@ -347,11 +398,17 @@ class DFNRopeVisionBlock(nn.Layer):
         self.norm2 = nn.LayerNorm(config.embed_dim, epsilon=1e-6)
         mlp_hidden_dim = int(config.embed_dim * config.mlp_ratio)
 
-        self.attn = VisionFlashAttention2(config.embed_dim,
-                                          num_heads=config.num_heads)
-        self.mlp = VisionMlp(dim=config.embed_dim,
-                             hidden_dim=mlp_hidden_dim,
-                             hidden_act=config.hidden_act)
+        self.attn = VisionFlashAttention2(
+            config.embed_dim,
+            num_heads=config.num_heads,
+            tensor_parallel_degree=config.tensor_parallel_degree
+        )
+        self.mlp = VisionMlp(
+            dim=config.embed_dim,
+            hidden_dim=mlp_hidden_dim,
+            hidden_act=config.hidden_act,
+            tensor_parallel_degree=config.tensor_parallel_degree
+        )
         self.config = config
 
     def forward(self,
