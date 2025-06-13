@@ -3,7 +3,7 @@
 ## 环境变量
 |         环境变量        |                       说明                        |   默认值   |
 | :---------------------: | :-----------------------------------------------: | :---------: |
-|      USE_WORKER_V1      |        FastDeploy 是否使用 V1 版本的 worker         |      0     |
+|      USE_WORKER_V1      |        FastDeploy 是否使用 V1 版本的 worker         |      1     |
 
 ## 服务启动参数
 
@@ -34,8 +34,6 @@
 |  long_prefill_token_threshold  |   int   |        开启chunked_prefill后，token数大于该值的请求被认为是长请求       |    否    |    max_model_len的4%    |
 |  splitwise_role |   str   |           分离式部署角色可选值['prefill', 'decode', 'mixed']       |    否    |    'mixed'    |
 |  innode_prefill_ports  |   list[str]   |        prefill 实例内部引擎启动端口 （仅单机PD分离需要）       |    否    |    None    |
-
-
 
 ## 请求参数
 
