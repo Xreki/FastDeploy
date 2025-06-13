@@ -679,8 +679,6 @@ class GPUModelRunner(ModelRunnerBase):
 
         if cache_quant_dtype == "cache_int8":
             byte_of_dtype = 1
-        elif self.parallel_config.dtype == "wint4":
-            byte_of_dtype = 0.5
         else:  # default
             byte_of_dtype = 2
 

@@ -513,12 +513,7 @@ class ModelRunner(ModelRunnerBase):
         """
         num_layers = self.model_cfg.num_layers
 
-        if self.args.dtype == "wint8":
-            byte_of_cache = 1
-        elif self.args.dtype == "wint4":
-            byte_of_cache = 0.5
-        else:
-            byte_of_cache = 2
+        byte_of_cache = 2
 
         hidden_dim = self.model_cfg.head_dim * self.model_cfg.kv_num_head
         theoretical_kv_cache_memory = (2 * byte_of_cache *
