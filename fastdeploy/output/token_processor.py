@@ -117,8 +117,8 @@ class TokenProcessor(object):
         """
         from fastdeploy.model_executor.models import \
             inference_runner_supported_models
-        if self.cfg.model_config.architectures not in inference_runner_supported_models \
-            and "ErnieMoEVLForCausalLM" not in self.cfg.model_config.architectures \
+        if not any(self.cfg.model_config.architectures.startswith(model) for model in inference_runner_supported_models) \
+            and not self.cfg.model_config.architectures.startswith("ErnieMoEVLForCausalLM") \
             and "ErnieBotLMHeadModel" not in self.cfg.model_config.architectures:
             from paddlenlp_ops import get_output, speculate_get_output
         else:
@@ -359,8 +359,8 @@ class WarmUpTokenProcessor(TokenProcessor):
         """
         from fastdeploy.model_executor.models import \
             inference_runner_supported_models
-        if self.cfg.model_config.architectures not in inference_runner_supported_models \
-            and "ErnieMoEVLForCausalLM" not in self.cfg.model_config.architectures:
+        if not any(self.cfg.model_config.architectures.startswith(model) for model in inference_runner_supported_models) \
+            and not self.cfg.model_config.architectures.startswith("ErnieMoEVLForCausalLM"):
             from paddlenlp_ops import get_output, speculate_get_output
         else:
             os.environ["ELLM_LOG_LEVEL"] = "3"

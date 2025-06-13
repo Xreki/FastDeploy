@@ -71,7 +71,7 @@ class InputPreprocessor:
                 self.processor = ErnieProcessor(
                     model_name_or_path=self.model_name_or_path)
         else:
-            if "ErnieMoEVLForCausalLM" not in architectures:
+            if not architectures.startswith("ErnieMoEVLForCausalLM"):
                 raise ValueError(
                     f"Model {self.model_name_or_path} is not a valid ErnieMoEVL model."
                 )

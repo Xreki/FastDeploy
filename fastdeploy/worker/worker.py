@@ -112,10 +112,10 @@ class Worker:
         from fastdeploy.model_executor.models import \
             inference_runner_supported_models
 
-        if self.model_cfg.architectures in inference_runner_supported_models:
+        if any(self.model_cfg.architectures.startswith(model) for model in inference_runner_supported_models):
             from fastdeploy.worker.model_runner.model_runner_inference import \
                 ModelRunner
-        elif "ErnieMoEVLForCausalLM" in self.model_cfg.architectures:
+        elif self.model_cfg.architectures.startswith("ErnieMoEVLForCausalLM"):
             from fastdeploy.worker.model_runner.model_runner_vl_inference import \
                 ModelRunner
         else:
@@ -227,13 +227,13 @@ class Worker:
         from fastdeploy.model_executor.models import \
             inference_runner_supported_models
 
-        if self.model_cfg.architectures in inference_runner_supported_models:
+        if any(self.model_cfg.architectures.startswith(model) for model in inference_runner_supported_models):
             if os.getenv('USE_PIP_EFF_LLM'):
                 from efficientllm.gpu import step_paddle, step_system_cache
             else:
                 from fastdeploy.model_executor.ops.gpu import (
                     step_paddle, step_system_cache)
-        elif "ErnieMoEVLForCausalLM" in self.model_cfg.architectures:
+        elif self.model_cfg.architectures.startswith("ErnieMoEVLForCausalLM"):
             if os.getenv('USE_PIP_EFF_LLM'):
                 from efficientllm.ops.gpu import step_paddle
             else:

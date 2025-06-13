@@ -21,7 +21,10 @@ from pathlib import Path
 from .model_base import ModelForCasualLM, ModelRegistry
 
 inference_runner_supported_models = [
-    "ErnieForCausalLM", "Qwen2ForCausalLM", "ErnieBotLMHeadModel"
+    "ErnieForCausalLM",
+    "Qwen2ForCausalLM",
+    "ErnieBotLMHeadModel",
+    "ErnieMoEForCausalLM",
 ]
 
 
