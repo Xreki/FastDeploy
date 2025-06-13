@@ -839,10 +839,9 @@ class ModelRunner(ModelRunnerBase):
             self.share_inputs["block_tables"][idx : idx + 1, :block_num] = np.arange(idx * block_num, \
                                                                                 (idx + 1) * block_num, 1)
 
-    def _preprocess_task(self, task):
+    def _preprocess_task(self, one):
         """process batch"""
-        one = task.multimodal_inputs
-
+        
         input_ids = one["input_ids"][np.newaxis, :]
         input_ids = paddle.to_tensor(input_ids, dtype=paddle.int64)
         token_type_ids = one["token_type_ids"][np.newaxis, :]
