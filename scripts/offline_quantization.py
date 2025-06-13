@@ -15,9 +15,11 @@
 """
 
 import paddle
+import shutil
 import os
 from paddlenlp.trainer import strtobool
-from fastdeploy.model_executor.models.utils import load_checkpoint
+from fastdeploy.model_executor.models.utils import (load_ep_checkpoint,
+                                                    get_safetensor_file, fastsafetensors_weights_iterator)
 from fastdeploy.inference_args import InferenceArgs
 from paddlenlp.utils.log import logger
 from fastdeploy.model_executor.models.configuration import ErnieBotConfig
@@ -77,7 +79,8 @@ def parse_arguments():
         "--moe_quant_type",
         default="default",
         type=str,
-        choices=["weight_only_int4", "weight_only_int8", "w4a8", "fp8", "default"],
+        choices=["weight_only_int4", "weight_only_int8",
+                 "w4a8", "fp8", "default"],
         help="quant type for moe part",
     )
 
@@ -88,6 +91,7 @@ def parse_arguments():
         help="Whether merge the model into safetensors format.",
     )
     parser.add_argument("--dtype", type=str, default="bfloat16")
+    parser.add_argument("--load_safetensor", type=strtobool, default="False")
     return parser.parse_args()
 
 
@@ -102,7 +106,8 @@ def get_model_cls(config):
             cls = getattr(eb_lib, init_class)
             return cls
 
-    raise RuntimeError(f"Cannot find model architecture({init_class}) from eb_lib")
+    raise RuntimeError(
+        f"Cannot find model architecture({init_class}) from eb_lib")
 
 
 def save_safetensors(state_dict, args):
@@ -112,7 +117,10 @@ def save_safetensors(state_dict, args):
     logger.info("Move to numpy.")
     for k in list(state_dict.keys()):
         if isinstance(state_dict[k], paddle.Tensor):
-            state_dict[k] = state_dict.pop(k).cpu().numpy()
+            tensor = state_dict.pop(k)
+            tensor = tensor.cpu()
+            array = tensor.numpy()
+            state_dict[k] = array
 
     logger.info("Save safetensors files.")
     shards, index = shard_checkpoint(
@@ -132,39 +140,70 @@ def save_safetensors(state_dict, args):
         f.write(content)
 
 
-def quanted_tensor(cls, state_dict, config):
+def quanted_tensor(cls, config, args=None):
     """
     quanted_tensor
     """
     name_action_mappings = cls._get_tensor_quantization_mappings(config)
-    state_keys_map = cls._resolve_prefix_keys(
-        name_action_mappings.keys(), state_dict.keys()
-    )
-    for k, v in state_keys_map.items():
-        name_action_mappings[v] = name_action_mappings.pop(k)
     state_dict_to_save = {}
-    from fastdeploy.model_executor.layers.utils import get_tensor
-    from tqdm import tqdm
-
-    for key in tqdm(state_dict.keys(), desc="process quantized weights  "):
-        tensor_path = state_dict[key]
-        if key in name_action_mappings:
-            ret = state_dict[key]
-            action = name_action_mappings.pop(key)
-            quanted_weight_tensor, weight_scale_tensor = action(get_tensor(ret))
-            if quanted_weight_tensor is not None and weight_scale_tensor is not None:
-                state_dict_to_save[key + ".quant_weight"] = quanted_weight_tensor.cpu()
-                state_dict_to_save[key + ".quant_scale"] = weight_scale_tensor.cpu()
+    if not args.use_ep:
+        loaded_state_dict_keys, safetensor_list = get_safetensor_file(
+            args.model_name_or_path)
+        state_keys_map = cls._resolve_prefix_keys(
+            name_action_mappings.keys(), loaded_state_dict_keys
+        )
+        for k, v in state_keys_map.items():
+            name_action_mappings[v] = name_action_mappings.pop(k)
+        weights_iterator = fastsafetensors_weights_iterator(safetensor_list)
+        for key, weight in weights_iterator:
+            tensor = weight
+            if key in name_action_mappings:
+                action = name_action_mappings.pop(key)
+                quant_weight_tensor, weight_quanter_tensor = action(tensor)
+                if quant_weight_tensor is not None and weight_quanter_tensor is not None:
+                    state_dict_to_save[key +
+                                       ".quant_weight"] = quant_weight_tensor.cpu()
+                    state_dict_to_save[key +
+                                       ".weight_quanter"] = weight_quanter_tensor.cpu()
+                else:
+                    state_dict_to_save[key] = quant_weight_tensor.cpu()
             else:
-                state_dict_to_save[key] = quanted_weight_tensor
-        else:
-            state_dict_to_save[key] = get_tensor(tensor_path).cpu()
+                state_dict_to_save[key] = tensor.cpu()
+    else:
+        state_dict = load_ep_checkpoint(
+            args.model_name_or_path, config, return_numpy=True, return_key_name=True
+        )
+        state_keys_map = cls._resolve_prefix_keys(
+            name_action_mappings.keys(), state_dict.keys()
+        )
+        for k, v in state_keys_map.items():
+            name_action_mappings[v] = name_action_mappings.pop(k)
+        from fastdeploy.model_executor.layers.utils import get_tensor
+        from tqdm import tqdm
 
-    if len(name_action_mappings) > 0:
-        for x in name_action_mappings.keys():
-            logger.debug(
-                f"key <{x}> need to merge tensor parallel but we can't find in model state."
-            )
+        for key in tqdm(state_dict.keys(), desc="process quantized weights  "):
+            tensor_path = state_dict[key]
+            if key in name_action_mappings:
+                ret = state_dict[key]
+                action = name_action_mappings.pop(key)
+                quanted_weight_tensor, weight_scale_tensor = action(
+                    get_tensor(ret))
+                if quanted_weight_tensor is not None:
+                    state_dict_to_save[key +
+                                       ".quant_weight"] = quanted_weight_tensor.cpu()
+                if weight_scale_tensor._is_initialized():
+                    state_dict_to_save[key +
+                                       ".weight_quanter"] = weight_scale_tensor.cpu()
+                else:
+                    state_dict_to_save[key] = quanted_weight_tensor.cpu()
+            else:
+                state_dict_to_save[key] = get_tensor(tensor_path).cpu()
+
+        if len(name_action_mappings) > 0:
+            for x in name_action_mappings.keys():
+                logger.debug(
+                    f"key <{x}> need to merge tensor parallel but we can't find in model state."
+                )
     return state_dict_to_save
 
 
@@ -188,13 +227,11 @@ def get_quant_type(args):
         ffn_hidden_size=1,
         mp_rank=1,
         mp_size=1,
+        use_fake_parameter=True,
+        is_quantized=False,
     )
-    weight_dtype, act_dtype, cachekv_dtype = (
-        offline_args.weight_dtype,
-        offline_args.act_dtype,
-        offline_args.cachekv_dtype,
-    )
-    return weight_dtype, act_dtype, cachekv_dtype, quant_type, moe_quant_type
+
+    return offline_args, moe_quant_type
 
 
 def main():
@@ -204,24 +241,26 @@ def main():
     args = parse_arguments()
     tokenizer = ErnieBotTokenizer.from_pretrained(args.model_name_or_path)
     config = ErnieBotConfig.from_pretrained(args.model_name_or_path)
+    if config.is_quantized :
+        raise ValueError(
+            f"Model quantization is {config.is_quantized}, but to use this feature, \
+                the model must remain unquantized. ")
+    
     (
-        config.weight_dtype,
-        config.act_dtype,
-        config.cachekv_dtype,
-        config.quant_type,
-        config.moe_quant_type,
+        inference_args,
+        config.moe_quant_type
     ) = get_quant_type(args)
+    config.weight_dtype = inference_args.weight_dtype
+    config.act_dtype = inference_args.act_dtype
+    config.cachekv_dtype = inference_args.cachekv_dtype
     config.is_mtp = args.draft_type in ["eagle", "mtp"]
     config.use_ep = args.use_ep
     cls = get_model_cls(config)
-    # load
-    state_dict = load_checkpoint(
-        args.model_name_or_path, cls, config, return_numpy=True
-    )
+
     import time
 
     start = time.perf_counter()
-    state_dict_to_save = quanted_tensor(cls=cls, state_dict=state_dict, config=config)
+    state_dict_to_save = quanted_tensor(cls=cls, config=config, args=args)
     end = time.perf_counter()
     logger.info("Finish Quantize.")
     logger.info(f"load和量化耗时: {end - start:.6f} 秒")
@@ -229,6 +268,7 @@ def main():
     logger.info("Begin to save model")
     os.makedirs(args.output_dir, exist_ok=True)
     start = time.perf_counter()
+
     if not args.safe_serialization:
         paddle.save(
             state_dict_to_save,
@@ -239,6 +279,10 @@ def main():
 
     config.save_pretrained(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
+    if config.moe_quant_type == "w4a8":
+        # cp act_scales.json
+        shutil.copy(args.model_name_or_path + '/act_scales.json', args.output_dir)
+        shutil.copy(args.model_name_or_path + '/weight_scales.json', args.output_dir)
     end = time.perf_counter()
     logger.info(f"save耗时: {end - start:.6f} 秒")
     logger.info("Finish.")

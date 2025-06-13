@@ -71,8 +71,7 @@ class OpenAIServingChat:
             current_req_dict = request.to_dict_for_infer(request_id)
             current_req_dict["arrival_time"] = time.time()
             self.engine_client.format_and_add_data(current_req_dict)
-
-        except ValueError as e:
+        except Exception as e:
             return ErrorResponse(code=400, message=str(e))
 
         del current_req_dict
@@ -84,7 +83,7 @@ class OpenAIServingChat:
             try:
                 return await self.chat_completion_full_generator(
                     request, request_id, request.model)
-            except ValueError as e:
+            except Exception as e:
                 return ErrorResponse(code=400, message=str(e))
 
     def _create_streaming_error_response(self, message: str) -> str:

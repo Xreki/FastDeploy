@@ -13,10 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-
 import argparse
 import os
 import time
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import paddle
@@ -28,6 +29,64 @@ from fastdeploy.inter_communicator import EngineWorkerQueue, IPCSignal
 from fastdeploy.utils import get_logger
 
 logger = get_logger("worker", "worker.log")
+
+
+class PrefillTracker:
+    """
+    Record the prefill time of the request
+    """
+
+    def __init__(self, engine_pid):
+        self.start_times = defaultdict(float)
+        prefill_time_data = np.zeros([100], dtype=np.float32)
+        self.prefill_time_signal = IPCSignal(name="prefill_time_signal",
+                                             array=prefill_time_data,
+                                             dtype=np.float32,
+                                             suffix=engine_pid,
+                                             create=False)
+        self.current_index = 0
+        self.executor = ThreadPoolExecutor(max_workers=1)
+
+    def start_prefill(self, task_idx):
+        """
+        Record the start time of the prefill process for a given task index.
+
+        Args:
+            task_idx (int): The index of the task being prefetched.
+        """
+        self.start_times[task_idx] = time.time()
+
+    def end_prefill(self, task_idx):
+        """
+        Record the end time of the prefill process for a given task index and
+        asynchronously submit the duration for metric recording.
+
+        Args:
+            task_idx (int): The index of the task being prefetched.
+        """
+        if task_idx in self.start_times:
+            duration = time.time() - self.start_times[task_idx]
+            # Submit metric recording to the executor for asynchronous execution
+            self.executor.submit(self._record_metrics, duration)
+            del self.start_times[task_idx]
+
+    def _record_metrics(self, duration):
+        """
+        Internal method to record the prefill duration into the signal buffer.
+        Logs the duration and updates a circular buffer of timing metrics.
+
+        Args:
+            duration (float): Time taken for the prefill process in seconds.
+        """
+
+        self.prefill_time_signal.value[self.current_index] = duration
+        self.current_index = (self.current_index + 1) % len(
+            self.prefill_time_signal.value)
+
+    def __del__(self):
+        """Clean up resources"""
+        if hasattr(self, 'executor'):
+            self.executor.shutdown(wait=False)
 
 
 class Worker:
@@ -71,6 +130,7 @@ class Worker:
                                         args=self.args,
                                         nranks=self.nranks,
                                         rank=self.rank)
+        self.prefill_tracker = PrefillTracker(args.engine_pid)
 
         # TODO 多机
         address = ('0.0.0.0', self.args.engine_worker_queue_port)
@@ -330,12 +390,17 @@ class Worker:
                 req_dicts = []
                 for req_dict, bsz in tasks:
                     num_running_requests = int(bsz)
+
                     req_dicts.extend(req_dict)
                 req_ids = [req.request_id for req in req_dicts]
                 logger.info(f"Rank: {self.rank}, num_running_requests: {num_running_requests}, " \
                             f"num_insert_requests: {len(req_dicts)}. {req_ids}")
 
                 self.infer_engine.dy_input_preprocess(req_dicts)
+                for req_dict in req_dicts:
+                    if self.infer_engine.share_inputs["seq_lens_this_time"][
+                            req_dict.idx] > 1:
+                        self.prefill_tracker.start_prefill(req_dict.idx)
                 self.infer_engine.share_inputs["not_need_stop"][0] = True
 
             if not self.infer_engine.share_inputs["not_need_stop"]:
@@ -347,7 +412,11 @@ class Worker:
                 infer_seed_increment)
             self.infer_engine.share_inputs[
                 "infer_seed"][:] %= self.MAX_INFER_SEED
-
+            for req_dict in req_dicts:
+                if (self.infer_engine.share_inputs["seq_lens_this_time"][
+                        req_dict.idx] == 1
+                        and req_dict.idx in self.prefill_tracker.start_times):
+                    self.prefill_tracker.end_prefill(req_dict.idx)
             self.infer_engine.update_chunked_prefill(req_dicts)
             self.step_cuda()
 

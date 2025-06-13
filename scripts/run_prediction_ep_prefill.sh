@@ -16,7 +16,7 @@ rm -rf log
 rm -f core*
 
 export NVIDIA_TF32_OVERRIDE=0
-export NCCL_ALGO=Tree
+# export NCCL_ALGO=Tree
 export NCCL_NVLS_ENABLE=0
 export FLAGS_allocator_strategy=auto_growth
 export FLAGS_fraction_of_gpu_memory_to_use=0.98
@@ -31,15 +31,15 @@ export devices=0,1,2,3,4,5,6,7
 export CUDA_VISIBLE_DEVICES=${devices}
 export ENABLE_FASTDEPLOY_LOAD_MODEL_CONCURRENCY=0
 
-export PREDICT_MODEL_TYPE=${PREDICT_MODEL_TYPE:-"W8A16Cfp8"}
-export MOE_QUANT_TYPE=${MOE_QUANT_TYPE-"fp8"}
-export EP_SCALE_DIR=${EP_SCALE_DIR:-"/path/to/scale_dir"} # scale json文件所在的目录
+export PREDICT_MODEL_TYPE=${PREDICT_MODEL_TYPE:-"W8A16C16"}
+export MOE_QUANT_TYPE=${MOE_QUANT_TYPE-"w4a8"}
+export EP_SCALE_DIR=${EP_SCALE_DIR:-"/path/to/model"} # scale json文件所在的目录
 # export FLAGS_enable_blaslt_global_search=1
 # export FLAGS_cublaslt_device_best_config=/path/to/cublaslt_device_best_config.csv
 
 # export FLAGS_use_cutlass_device_best_config_path=/path/to/cutlass_device_best_config.json
 
-model_path=${1:-"/root/paddlejob/workspace/env_run/bh_test_quantized_fp8"}
+model_path=${1:-"/path/to/model"}
 # model_path=/root/paddlejob/workspace/env_run/EB45T0332kMODEL_0425_v1
 
 
@@ -69,5 +69,4 @@ python -m paddle.distributed.launch \
         --generation_phase 1 \
         --use_cache_kv_int8 "False" \
         --scale_dir ${EP_SCALE_DIR} \
-        --use_safetensors "False" \
-        --use_offline_quant "False"
+        --use_safetensors "True" \

@@ -511,13 +511,11 @@ class Config:
                 f"should be larger than or equal to max_model_len: {self.max_model_len}"
 
         if self.max_num_partial_prefills > 1:
-            assert (
-                self.enable_chunked_prefill is True
-            ), "Chunked prefill must be enabled to set max_num_partial_prefills > 1"
-            assert (
-                self.long_prefill_token_threshold < self.max_model_len
-            ), f"long_prefill_token_threshold: {self.long_prefill_token_threshold} " \
-            f"should be less than max_model_len: {self.max_model_len}"
+            assert (self.cache_config.enable_chunked_prefill is True), \
+            "Chunked prefill must be enabled to set max_num_partial_prefills > 1"
+            assert (self.long_prefill_token_threshold < self.max_model_len), \
+            f"long_prefill_token_threshold: {self.long_prefill_token_threshold} should be less than"\
+            f" max_model_len: {self.max_model_len}"
 
         self.scheduler_config.check()
 

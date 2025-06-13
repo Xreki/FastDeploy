@@ -314,7 +314,7 @@ class MoeEPLayer(MoELayer):
                     up_gate = (
                         state_dict.get(self.ffn1_expert_weight_key.format(j))
                         if self.moe_quant_type == "default"
-                        or not self.use_offline_quant
+                        or not self.set_prequant_weight
                         else state_dict.get(
                             (self.ffn1_expert_weight_key + ".quant_weight").format(j)
                         )
@@ -322,17 +322,17 @@ class MoeEPLayer(MoELayer):
                     down = (
                         state_dict.get(self.ffn2_expert_weight_key.format(j))
                         if self.moe_quant_type == "default"
-                        or not self.use_offline_quant
+                        or not self.set_prequant_weight
                         else state_dict.get(
                             (self.ffn2_expert_weight_key + ".quant_weight").format(j)
                         )
                     )
-                    if self.use_offline_quant:
+                    if self.set_prequant_weight:
                         up_gate_scale = state_dict.get(
-                            (self.ffn1_expert_weight_key + ".quant_scale").format(j)
+                            (self.ffn1_expert_weight_key + ".weight_quanter").format(j)
                         )
                         down_scale = state_dict.get(
-                            (self.ffn2_expert_weight_key + ".quant_scale").format(j)
+                            (self.ffn2_expert_weight_key + ".weight_quanter").format(j)
                         )
                         up_gate_proj_weight_scale.append(get_tensor(up_gate_scale))
                         down_proj_weight_scale.append(get_tensor(down_scale))
@@ -340,7 +340,7 @@ class MoeEPLayer(MoELayer):
                     up_gate = (
                         state_dict.pop(self.ffn1_expert_weight_key.format(j))
                         if self.moe_quant_type == "default"
-                        or not self.use_offline_quant
+                        or not self.set_prequant_weight
                         else state_dict.pop(
                             (self.ffn1_expert_weight_key + ".quant_weight").format(j)
                         )
@@ -348,18 +348,18 @@ class MoeEPLayer(MoELayer):
                     down = (
                         state_dict.pop(self.ffn2_expert_weight_key.format(j))
                         if self.moe_quant_type == "default"
-                        or not self.use_offline_quant
+                        or not self.set_prequant_weight
                         else state_dict.pop(
                             (self.ffn2_expert_weight_key + ".quant_weight").format(j)
                         )
                     )
 
-                    if self.use_offline_quant:
+                    if self.set_prequant_weight:
                         up_gate_scale = state_dict.pop(
-                            (self.ffn1_expert_weight_key + ".quant_scale").format(j)
+                            (self.ffn1_expert_weight_key + ".weight_quanter").format(j)
                         )
                         down_scale = state_dict.pop(
-                            (self.ffn2_expert_weight_key + ".quant_scale").format(j)
+                            (self.ffn2_expert_weight_key + ".weight_quanter").format(j)
                         )
                         up_gate_proj_weight_scale.append(get_tensor(up_gate_scale))
                         down_proj_weight_scale.append(get_tensor(down_scale))
@@ -371,7 +371,7 @@ class MoeEPLayer(MoELayer):
             for j in logical_expert_ids:
                 up_gate_proj_weight.append(
                     get_tensor(state_dict.pop(self.ffn1_expert_weight_key.format(j)))
-                    if self.moe_quant_type == "default" or not self.use_offline_quant
+                    if self.moe_quant_type == "default" or not self.set_prequant_weight
                     else get_tensor(
                         state_dict.pop(
                             (self.ffn1_expert_weight_key + ".quant_weight").format(j)
@@ -380,25 +380,25 @@ class MoeEPLayer(MoELayer):
                 )
                 down_proj_weight.append(
                     get_tensor(state_dict.pop(self.ffn2_expert_weight_key.format(j)))
-                    if self.moe_quant_type == "default" or not self.use_offline_quant
+                    if self.moe_quant_type == "default" or not self.set_prequant_weight
                     else get_tensor(
                         state_dict.pop(
                             (self.ffn2_expert_weight_key + ".quant_weight").format(j)
                         )
                     )
                 )
-                if self.use_offline_quant:
+                if self.set_prequant_weight and self.moe_quant_type != "w4a8":
                     up_gate_proj_weight_scale.append(
                         get_tensor(
                             state_dict.pop(
-                                (self.ffn1_expert_weight_key + ".quant_scale").format(j)
+                                (self.ffn1_expert_weight_key + ".weight_quanter").format(j)
                             )
                         )
                     )
                     down_proj_weight_scale.append(
                         get_tensor(
                             state_dict.pop(
-                                (self.ffn2_expert_weight_key + ".quant_scale").format(j)
+                                (self.ffn2_expert_weight_key + ".weight_quanter").format(j)
                             )
                         )
                     )

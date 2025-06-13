@@ -19,7 +19,7 @@ export devices=0
 export CUDA_VISIBLE_DEVICES=${devices}
 #*/merged_tp1_state_split/safetensors
 model_path=${1:-"/path/to/model"}
-output_path=${2:-"/path/to/quanted"}
+output_path=${2:-"/path/to/output"}
 for name in `env | grep -E 'PADDLE|ENDPOINT' | awk -F'=' '{print $1}'`; do
 unset ${name}
 done
@@ -31,8 +31,19 @@ self_ip=`hostname -i`
 
 python offline_quantization.py \
        --model_name_or_path ${model_path} \
-       --predict_model_type "weight_only_int8" \
-       --moe_quant_type "fp8" \
+       --predict_model_type "W8A16C16" \
+       --moe_quant_type "weight_only_int4" \
        --output_dir ${output_path} \
        --safe_serialization "True" \
-       --dtype "bfloat16"
+       --use_ep "False" \
+       --dtype "bfloat16" 
+
+#ep
+# python offline_quantization.py \
+       # --model_name_or_path ${model_path} \
+       # --predict_model_type "W8A16C16" \
+       # --moe_quant_type "w4a8" \
+       # --output_dir ${output_path} \
+       # --safe_serialization "True" \
+       # --use_ep "True" \
+       # --dtype "bfloat16" 

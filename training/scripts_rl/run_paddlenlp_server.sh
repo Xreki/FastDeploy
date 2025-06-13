@@ -23,4 +23,4 @@ export RUN_MODE="test"
 
 rm -rf ./log*
 
-python fastdeploy/entrypoints/openai/api_server.py --config training/agent_work.yaml --port 9809 --engine-worker-queue-port 9094 --tensor-parallel-size 2
+python -m fastdeploy.entrypoints.openai.api_server --config agent_work.yaml --port 9809 --engine-worker-queue-port 9094 --tensor-parallel-size 2
