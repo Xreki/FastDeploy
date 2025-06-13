@@ -58,9 +58,9 @@ ERNIEBOT_PRETRAINED_INIT_CONFIGURATION = {
 }
 
 
-class GenerationPhase(Enum):
+class MoEPhase(Enum):
     """
-    The generation phase of the model.
+    The generation phase of the moe.
     """
 
     PREFILL = 1
@@ -135,7 +135,6 @@ class ModelConfig(PretrainedConfig):
         return_all_hidden_states: bool = False,
         start_layer_index: int = 0,
         output_via_mq: bool = True,
-        generation_phase: GenerationPhase = GenerationPhase.PREFILL,
         tie_word_embeddings: bool = False,
         **kwargs,
     ):
@@ -281,8 +280,10 @@ class MoEConfig:
     moe_layer_start_index = 0
     moe_use_ffn_shared_weight_and_bias = (False, )
     moe_group = (False, )
-    moe_quant_type = "weight_only_int4"
+    moe_quant_type = "weight_only_int8"
     num_max_dispatch_tokens_per_rank = 256
+    enable_redundant_experts = False
+    redundant_experts_num = 0
 
     has_multimodality: bool = False
     im_patch_id = (
@@ -296,13 +297,14 @@ class ParallelConfig:
     block_size = 16  # The block size for processing.
     sequence_parallel = False  # Whether to enable sequence parallelism.
     use_ep = False  # Whether to enable Expert Parallelism
+    moe_phase = MoEPhase.PREFILL  # Generation phase
     moe_group = False  # Whether to enable moe group
     msg_queue_id = 1  # mesage queue id
     use_micro_batch = False  # Whether to enable micro batch
     tensor_parallel_rank = None  # TP rank ID
     tensor_parallel_degree = None  # TP degree
-    mp_size = 1  # mp size
-    ep_size = 1  # ep size
+    expert_parallel_rank = None  # EP rank ID
+    expert_parallel_degree = None  # EP degree
     column_cut = False  # (bool, optional): The embedding weight distributed on your gpu cards is divided by row or column. Defaults to False means divide by row. When vocab_size can not be divided by world_size but hidden_size can, we can consider split embedding weight by column.
     lm_head_column_cut = False
     """

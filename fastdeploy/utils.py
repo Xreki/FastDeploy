@@ -453,6 +453,20 @@ def is_port_available(host, port):
             return True
 
 
+def singleton(cls):
+    """
+    Singleton decorator for a class.
+    """
+    instances = {}
+
+    def get_instance(*args, **kwargs):
+        if cls not in instances:
+            instances[cls] = cls(*args, **kwargs)
+        return instances[cls]
+
+    return get_instance
+
+
 def print_gpu_memory_use(gpu_id: int, title: str) -> None:
     """ Print memory usage """
     import pynvml
@@ -467,6 +481,20 @@ def print_gpu_memory_use(gpu_id: int, title: str) -> None:
         f"\n\tDevice Used memory: {meminfo.used}",
         f"\n\tDevice Free memory: {meminfo.free}",
     )
+
+
+def ceil_div(x: int, y: int) -> int:
+    """
+    Perform ceiling division of two integers.
+
+    Args:
+        x: the dividend.
+        y: the divisor.
+
+    Returns:
+        The result of the ceiling division.
+    """
+    return (x + y - 1) // y
 
 
 llm_logger = get_logger("fastdeploy", "fastdeploy.log")

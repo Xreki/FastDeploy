@@ -18,16 +18,10 @@ import paddle
 from paddle import nn
 
 from fastdeploy.model_executor.ops.gpu import tritonmoe_preprocess
+from fastdeploy.utils import ceil_div
 
 from .fused_moe_method_base import FusedMoEMethodBase
 from .triton_moe_kernels import fused_moe_kernel_paddle
-
-
-def ceil_div(a, b):
-    """
-    ceil(a / b)
-    """
-    return (a + b - 1) // b
 
 
 class TritonFusedMoeMethod(FusedMoEMethodBase):
@@ -35,47 +29,24 @@ class TritonFusedMoeMethod(FusedMoEMethodBase):
     Use Triton Group Gemm to compute Fused MoE.
     """
 
-    def __init__(self, moe_compute_params):
-        """
-        Triton Group Gemm to compute Fused MoE.
-        """
-
-        self.num_local_experts = moe_compute_params.num_local_experts
-        self.moe_quant_type = moe_compute_params.moe_quant_type
-        self.hidden_size = moe_compute_params.hidden_size
-        self.moe_intermediate_size = moe_compute_params.moe_intermediate_size
-        self.top_k = moe_compute_params.top_k
-        self.tp_size = moe_compute_params.tp_size
-
-    def create_weights(
-            self,
-            layer: nn.Layer,
-            ffn1_tensor,
-            ffn2_tensor,
-            ffn1_bias=None,
-            ffn2_bias=None,
-            # belows only used in w4a8.
-            moe_ffn1_weight_scale=None,
-            moe_ffn2_weight_scale=None,
-            moe_ffn1_in_scale=None,
-            moe_ffn2_in_scale=None):
+    def create_weights(self, layer: nn.Layer, weight_key_map: dict,
+                       state_dict: dict):
         """
         Triton MoE create weight process.
         """
-
-        assert len(ffn1_tensor) == self.num_local_experts
-        assert len(ffn2_tensor) == self.num_local_experts
+        ffn1_weights, ffn2_weights = self.extract_moe_ffn_weights(
+            weight_key_map, state_dict)
         assert self.moe_quant_type == "weight_only_int8"
-        assert len(ffn2_tensor) == self.num_local_experts
-        assert ffn1_tensor[0].shape == [
+        assert len(ffn2_weights) == self.num_local_experts
+        assert ffn1_weights[0].shape == [
             self.hidden_size, self.moe_intermediate_size * 2
         ]
-        assert ffn2_tensor[0].shape == [
+        assert ffn2_weights[0].shape == [
             self.moe_intermediate_size, self.hidden_size
         ]
 
-        ffn1_tensor = paddle.stack(ffn1_tensor, axis=0)
-        ffn2_tensor = paddle.stack(ffn2_tensor, axis=0)
+        ffn1_weights = paddle.stack(ffn1_weights, axis=0)
+        ffn2_weights = paddle.stack(ffn2_weights, axis=0)
 
         if self.moe_quant_type == "weight_only_int8":
             max_bound = 127
@@ -85,7 +56,7 @@ class TritonFusedMoeMethod(FusedMoEMethodBase):
         added_weight_attrs = ["moe_ffn1_weight", "moe_ffn2_weight"]
         added_scale_attrs = ["moe_ffn1_weight_scale", "moe_ffn2_weight_scale"]
 
-        for idx, weight_tensor in enumerate([ffn1_tensor, ffn2_tensor]):
+        for idx, weight_tensor in enumerate([ffn1_weights, ffn2_weights]):
             weight_name = added_weight_attrs[idx]
             scale_name = added_scale_attrs[idx]
 
@@ -116,6 +87,7 @@ class TritonFusedMoeMethod(FusedMoEMethodBase):
         self,
         layer: nn.Layer,
         x: paddle.Tensor,
+        gate_out: paddle.Tensor,
     ) -> paddle.Tensor:
         """
         Triton compute Fused MoE.
@@ -126,8 +98,6 @@ class TritonFusedMoeMethod(FusedMoEMethodBase):
         top_k = self.top_k
         moe_intermediate_size = self.moe_intermediate_size
         hidden_size = self.hidden_size
-
-        gate_out = paddle.matmul(x.cast("float32"), layer.gate_weight)
         scores = paddle.nn.functional.softmax(gate_out, axis=-1)
 
         topk_weights, topk_ids = paddle.topk(scores,

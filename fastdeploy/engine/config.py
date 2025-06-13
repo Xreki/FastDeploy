@@ -20,7 +20,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
 from fastdeploy.scheduler import SchedulerConfig
-from fastdeploy.utils import (check_unified_ckpt, get_host_ip,
+from fastdeploy.utils import (ceil_div, check_unified_ckpt, get_host_ip,
                               is_port_available, llm_logger)
 
 TaskOption = Literal["generate"]
@@ -327,6 +327,7 @@ class Config:
         tokenizer (Optional[str]): Default is the model.
         max_num_batched_tokens (Optional[int]): Maximum number of batched tokens.
         tensor_parallel_size (int): Tensor parallel size.
+        expert_parallel_size (int): Expert parallel size.
         nnode (int): Number of nodes.
         max_model_len (int): Maximum model length. Default is 8192.
         max_num_seqs (int): Maximum number of sequences. Default is 8.
@@ -348,6 +349,7 @@ class Config:
         model_name_or_path: str = None,
         tokenizer: str = None,
         tensor_parallel_size: int = 8,
+        expert_parallel_size: int = 1,
         nnode: int = 1,
         max_model_len: int = 8192,
         max_num_seqs: int = 8,
@@ -375,6 +377,7 @@ class Config:
             model_name_or_path (str): Model directory path or model name.
             tokenizer (str): Default is the model.
             tensor_parallel_size (int): Tensor parallel size. Default is 8.
+            expert_parallel_size (int): Expert parallel size. Default is 1.
             nnode (int): Number of nodes. Default is 1.
             max_model_len (int): Maximum model length. Default is 8192.
             max_num_seqs (int): Maximum number of sequences. Default is 8.
@@ -395,6 +398,7 @@ class Config:
         self.tokenizer = tokenizer
         self.max_num_batched_tokens = max_num_batched_tokens
         self.tensor_parallel_size = tensor_parallel_size
+        self.expert_parallel_size = expert_parallel_size
         self.nnode = nnode
         self.pod_ips = pod_ips
         self.max_model_len = max_model_len
@@ -421,9 +425,21 @@ class Config:
         if enable_mm:
             self.max_prefill_batch = 1  # TODO:当前多模prefill阶段只支持并行度为1,待优化
 
+        # TODO(@wufeisheng): TP and EP need to be supported simultaneously.
+        assert (self.tensor_parallel_size == 1 and self.expert_parallel_size
+                >= 1) or (self.tensor_parallel_size >= 1
+                          and self.expert_parallel_size
+                          == 1), "TP and EP cannot be enabled at the same time"
+
+        num_ranks = self.tensor_parallel_size * self.expert_parallel_size
+        if num_ranks > 8:
+            local_num_ranks = 8
+            self.nnode = ceil_div(num_ranks, local_num_ranks)
+        else:
+            local_num_ranks = num_ranks
+
         self.engine_worker_queue_port = engine_worker_queue_port
-        self.device_ids = ",".join(
-            [str(i) for i in range(self.tensor_parallel_size)])
+        self.device_ids = ",".join([str(i) for i in range(local_num_ranks)])
         self.device_ids = os.getenv("CUDA_VISIBLE_DEVICES", self.device_ids)
 
         self.read_from_config()
@@ -435,16 +451,9 @@ class Config:
         """
         calculate some parameters
         """
-        if len(self.device_ids.split(',')) > self.tensor_parallel_size:
-            self.device_ids = ",".join(
-                self.device_ids.split(',')[:self.tensor_parallel_size:])
-        assert len(
-            self.device_ids.split(',')
-        ) == self.tensor_parallel_size, f"The number of available GPUs is {len(self.device_ids.split(','))}, " \
-            f"which is less than the tensor parallel required {self.tensor_parallel_size}."
-
-        assert self.tensor_parallel_size % self.nnode == 0, f"tensor_parallel_size: {self.tensor_parallel_size} " \
-            f"should be divisible by nnode: {self.nnode}"
+        assert self.tensor_parallel_size % self.nnode == 0, (
+            f"tensor_parallel_size: {self.tensor_parallel_size} should be divisible by nnode: {self.nnode}"
+        )
         self.tp_num_per_node = self.tensor_parallel_size // self.nnode
         self.host_ip = get_host_ip()
 

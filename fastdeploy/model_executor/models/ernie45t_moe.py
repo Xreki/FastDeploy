@@ -277,7 +277,7 @@ class Ernie45TMLP(nn.Layer):
         ffn_hidden_size: int = None,
     ) -> None:
         super().__init__()
-        self.nranks = fd_config.parallel_config.mp_size
+        self.nranks = fd_config.parallel_config.tensor_parallel_degree
         self.gate_up_proj = MergedColumnParallelLinear(
             fd_config=fd_config,
             prefix=f"{prefix}.up_gate_proj",
@@ -320,6 +320,16 @@ class Ernie45TMoE(nn.Layer):
                  prefix: str) -> None:
         super().__init__()
 
+        weight_key_map = {
+            "gate_weight_key": f"{prefix}.gate.weight",
+            "gate_correction_bias_key":
+            f"{prefix}.moe_statics.e_score_correction_bias",
+            "ffn1_expert_weight_key":
+            f"{prefix}.experts.{{}}.up_gate_proj.weight",
+            "ffn2_expert_weight_key":
+            f"{prefix}.experts.{{}}.down_proj.weight",
+        }
+
         self.fused_moe = FusedMoE(
             fd_config=fd_config,
             moe_intermediate_size=fd_config.moe_config.moe_intermediate_size,
@@ -329,11 +339,7 @@ class Ernie45TMoE(nn.Layer):
             moe_use_gate_correction_bias,
             moe_quant_type=fd_config.moe_config.moe_quant_type,
             layer_idx=layer_id,
-            gate_weight_key=f"{prefix}.gate.weight",
-            gate_correction_bias_key=
-            f"{prefix}.moe_statics.e_score_correction_bias",
-            ffn1_expert_weight_key=f"{prefix}.experts.{{}}.up_gate_proj.weight",
-            ffn2_expert_weight_key=f"{prefix}.experts.{{}}.down_proj.weight",
+            weight_key_map=weight_key_map,
         )
 
         self.num_shared_experts = fd_config.moe_config.moe_num_shared_experts
@@ -363,7 +369,7 @@ class Ernie45TAttention(nn.Layer):
                  prefix: str) -> None:
         super().__init__()
 
-        nranks = fd_config.parallel_config.mp_size
+        nranks = fd_config.parallel_config.tensor_parallel_degree
 
         self.qkv_proj = QKVParallelLinear(
             fd_config=fd_config,
@@ -566,6 +572,7 @@ class ErnieForCausalLM(ModelForCasualLM):
             fd_config (FDConfig): Configurations for the LLM model.
         """
         super(ErnieForCausalLM, self).__init__(fd_config)
+        self.fd_config = fd_config
         self.model = Ernie45TModel(fd_config=fd_config)
 
         self.ori_vocab_size = fd_config.model_config.ori_vocab_size
@@ -606,6 +613,18 @@ class ErnieForCausalLM(ModelForCasualLM):
         logits[:, self.ori_vocab_size:] = -float("inf")
 
         return logits
+
+    def empty_input_forward(self):
+        """
+        empty_input_forward
+        """
+        fake_hidden_states = paddle.empty(
+            shape=[0, self.fd_config.model_config.hidden_size],
+            dtype=paddle.get_default_dtype(),
+        )
+        for i in range(self.fd_config.moe_config.moe_layer_start_index,
+                       self.fd_config.model_config.num_layers):
+            self.model.hidden_layers[i].mlp.fused_moe(fake_hidden_states)
 
     def forward(
         self,

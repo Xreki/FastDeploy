@@ -158,10 +158,11 @@ class ModelRunner(ModelRunnerBase):
             self.model = model
             attn_backend_cls = get_attention_backend(
                 self.args.attention_backend)
-            num_heads = self.fd_config.model_config.num_attention_heads // self.fd_config.parallel_config.mp_size
+            num_heads = self.fd_config.model_config.num_attention_heads \
+                // self.fd_config.parallel_config.tensor_parallel_degree
             self.fd_config.model_config.kv_num_heads = int(
                 self.fd_config.model_config.num_key_value_heads
-            ) // self.fd_config.parallel_config.mp_size
+            ) // self.fd_config.parallel_config.tensor_parallel_degree
             head_dim = self.fd_config.model_config.hidden_size // self.fd_config.model_config.num_attention_heads
             self.attn_backend = attn_backend_cls(
                 self.fd_config,
@@ -446,6 +447,9 @@ class ModelRunner(ModelRunnerBase):
 
         # sampler & save_output
         next_tokens = self.sampler(logits, self.sampling_metadata)
+
+        if self.fd_config.parallel_config.tensor_parallel_degree > 1:
+            paddle.distributed.broadcast(next_tokens, 0)
         self.post_process(next_tokens)
 
     def post_process(self, next_tokens):

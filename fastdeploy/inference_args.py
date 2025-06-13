@@ -25,7 +25,7 @@ import paddle
 from paddlenlp.utils.log import logger
 
 
-class GenerationPhase(Enum):
+class MoEPhase(Enum):
     """
     The generation phase of the model.
     """
@@ -74,7 +74,7 @@ class InferenceArgs:
         moe_group=False,
         moe_quant_type="default",
         use_ep=False,
-        generation_phase=GenerationPhase.PREFILL,
+        moe_phase=MoEPhase.PREFILL,
         use_micro_batch=False,
         weight_block_size=[-1, -1],
         start_layer_index=0,
@@ -124,7 +124,7 @@ class InferenceArgs:
 
         self.weight_block_size = weight_block_size
         # self.weight_block_size = [-1, -1]
-        self.use_offline_quant = use_offline_quant
+        # self.use_offline_quant = use_offline_quant
         self.ffn_hidden_size = ffn_hidden_size
         self.mp_rank = mp_rank
         if use_ep:
@@ -134,16 +134,15 @@ class InferenceArgs:
             self.mp_size = mp_size
             self.nranks = mp_size
         self.use_ep = use_ep
-        self.generation_phase = generation_phase
+        self.moe_phase = moe_phase
         self.use_micro_batch = use_micro_batch
 
         self.num_layers = num_layers
         self.start_layer_index = start_layer_index
         self.hidden_size = hidden_size
         self.head_dim = hidden_size // num_attention_heads
-        self.head_dim = (
-            head_dim if head_dim is not None else hidden_size // num_attention_heads
-        )
+        self.head_dim = (head_dim if head_dim is not None else hidden_size //
+                         num_attention_heads)
         self.num_attention_heads = num_attention_heads
         self.num_key_value_heads = (num_key_value_heads if num_key_value_heads
                                     >= 0 else self.num_attention_heads)
@@ -170,8 +169,9 @@ class InferenceArgs:
             if is_quantized:
                 self.use_offline_quant = False
                 self.set_prequant_weight = True
-            elif not is_quantized and not self.use_ep and not \
-                    self.weight_dtype in ["float32", "bfloat16", "float16"]:
+            elif not is_quantized and not self.use_ep and self.weight_dtype not in [
+                    "float32", "bfloat16", "float16"
+            ]:
                 self.use_offline_quant = True
                 self.set_prequant_weight = True
             else:
@@ -185,7 +185,7 @@ class InferenceArgs:
             else:
                 self.use_offline_quant = False
                 self.set_prequant_weight = False
-        
+
         logger.info(
             f"quant_type: weight[{self.weight_dtype}], act[{self.act_dtype}], cachekv[{self.cachekv_dtype}]"
         )
@@ -238,8 +238,8 @@ class InferenceArgs:
             else:
                 self.moe_config.num_experts = moe_num_experts
             self.moe_config.num_experts_per_rank = (
-                self.moe_config.num_experts + redundant_experts_num
-            ) // self.nranks
+                self.moe_config.num_experts +
+                redundant_experts_num) // self.nranks
             self.moe_config.num_experts_start_offset = (
                 self.moe_config.num_experts_per_rank * self.mp_rank)
             if isinstance(moe_intermediate_size, list):

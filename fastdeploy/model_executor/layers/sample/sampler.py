@@ -18,8 +18,6 @@ import paddle
 import paddle.nn as nn
 import paddle.nn.functional as F
 
-from fastdeploy.distributed.parallel_state import \
-    get_tensor_model_parallel_world_size
 from fastdeploy.model_executor.layers.sample.meta_data import SamplingMetadata
 from fastdeploy.model_executor.layers.sample.ops import (
     apply_penalty_multi_scores, top_p_sampling)
@@ -35,7 +33,6 @@ class Sampler(nn.Layer):
         """
         super().__init__()
         if current_platform.is_cuda():
-            self.nranks = get_tensor_model_parallel_world_size()
             self.forward = self.forward_cuda
         else:
             raise NotImplementedError()
@@ -64,8 +61,5 @@ class Sampler(nn.Layer):
         probs = F.softmax(logits)
 
         _, next_tokens = top_p_sampling(probs, sampling_metadata.top_p)
-
-        if self.nranks > 1:
-            paddle.distributed.broadcast(next_tokens, 0)
 
         return next_tokens

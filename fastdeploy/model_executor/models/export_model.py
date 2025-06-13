@@ -37,7 +37,7 @@ from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
                                FDConfig, KVCacheConfig, LoadConfig,
                                ModelConfig, MoEConfig, ParallelConfig,
                                SpeculativeConfig, TmpConfig)
-from fastdeploy.inference_args import GenerationPhase
+from fastdeploy.inference_args import MoEPhase
 from fastdeploy.model_executor.models.utils import (_vocab_size_with_padding,
                                                     convert_ndarray_dtype,
                                                     load_checkpoint,
@@ -140,7 +140,7 @@ def build_stream_line_model(
     moe_quant_type: str = "default",
     use_ep: bool = False,
     ep_just_for_test: bool = False,
-    generation_phase: GenerationPhase = GenerationPhase.PREFILL,
+    moe_phase: MoEPhase = MoEPhase.PREFILL,
     use_micro_batch: bool = False,
     fake_server_p: bool = False,
     scale_dir: str = "None",
@@ -223,8 +223,8 @@ def build_stream_line_model(
     tensor_parallel_rank, tensor_parallel_degree = llm_utils.init_dist_env()
     parallel_config.tensor_parallel_rank = tensor_parallel_rank
     parallel_config.tensor_parallel_degree = tensor_parallel_degree
-    parallel_config.mp_size = tensor_parallel_degree
-    parallel_config.ep_size = 1
+    parallel_config.tensor_parallel_degree = tensor_parallel_degree
+    parallel_config.expert_parallel_degree = 1
     parallel_config.column_cut = False
 
     speculative_config.is_mtp = draft_type in ["eagle", "mtp"]
@@ -548,7 +548,7 @@ def build_stream_line_model(
         moe_config.moe_quant_type = moe_quant_type
     parallel_config.use_ep = use_ep
     additional_config.ep_just_for_test = ep_just_for_test
-    model_config.generation_phase = generation_phase
+    model_config.moe_phase = moe_phase
     parallel_config.use_micro_batch = use_micro_batch
     tmp_config.weight_block_size = config.get("weight_block_size", [-1, -1])
     load_config.scale_dir = scale_dir
@@ -672,7 +672,7 @@ def build_stream_line_model(
     paddle.device.cuda.empty_cache()
     assert state_dict is not None
     model.set_state_dict(state_dict)
-    if use_ep and generation_phase == GenerationPhase.DECODER:
+    if use_ep and moe_phase == MoEPhase.DECODER:
         logger.info("Reloading model...")
         reconstruct_memory(model)
     logger.info(f"{runtime_timer.log()}")

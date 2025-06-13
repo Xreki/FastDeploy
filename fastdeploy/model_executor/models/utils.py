@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import collections
-import glob
 import hashlib
 import json
 import multiprocessing as mp
@@ -44,6 +43,7 @@ from paddlenlp.utils.log import logger
 from safetensors import safe_open
 from tqdm import tqdm
 
+from fastdeploy.config import FDConfig
 from fastdeploy.platforms import current_platform
 
 from .configuration import ErnieBotConfig, QuantizationConfig
@@ -1172,86 +1172,63 @@ def quantization_func(
     return quanted_weight_tensor, weight_scale_tensor
 
 
-def load_ep_checkpoint(model_path,
-                       config,
-                       return_numpy=False,
-                       return_key_name=True):
+def load_ep_checkpoint(model_path: str,
+                       config: FDConfig,
+                       return_numpy: bool = False,
+                       return_key_name: bool = True):
     """
     load ep checkpoint
     """
-    if return_key_name:
-        merge_path = os.path.join(model_path, "merged_tp1_state_split")
-        if os.path.isdir(merge_path):
-            # load keyname
+    # return_numpy=True cpu
+    # return_numpy=False gpu
+    with open(os.path.join(model_path, "model.safetensors.index.json"),
+              "r") as f:
+        weight_list = json.load(f)["weight_map"]
+    filtered_map = {k: v for k, v in weight_list.items() if "experts" not in k}
+    num_local_ffn_keys = []
+    quant_suffix = (".quant_weight" if config.tmp_config.use_offline_quant
+                    and config.moe_config.moe_quant_type != "default" else "")
+    scale_suffix = (".quant_scale" if config.tmp_config.use_offline_quant
+                    and config.moe_config.moe_quant_type != "default" else "")
 
-            state_dicts = []
-            files = glob.glob(model_path + "/merged_tp1_state_split/*")
-            for file_name in files:
-                try:
-                    state_dicts += [{
-                        file_name.split("/")[-1]: file_name
-                    }]  # save {layer_name: weight_file_name}
-                except Exception:
-                    pass
-            new_state_dict = {}
-            for state_dict in state_dicts:
-                for key, value in state_dict.items():
-                    new_state_dict[key] = value
-            state_dict = new_state_dict
-        else:
-            with open(os.path.join(model_path, "model.safetensors.index.json"),
-                      "r") as f:
-                weight_map = json.load(f)["weight_map"]
-                state_dict = {
-                    k: "[" + k + "]" + os.path.join(model_path, v)
-                    for k, v in weight_map.items()
-                }
-            return state_dict
-    else:
-        # return_numpy=True cpu
-        # return_numpy=False gpu
-        with open(os.path.join(model_path, "model.safetensors.index.json"),
-                  "r") as f:
-            weight_list = json.load(f)["weight_map"]
-        filtered_map = {
-            k: v
-            for k, v in weight_list.items() if "experts" not in k
-        }
-        num_local_ffn_keys = []
-        quant_suffix = ("quant_weight" if config.use_offline_quant
-                        and config.moe_quant_type != "default" else "")
-        scale_suffix = ("quant_scale" if config.use_offline_quant
-                        and config.moe_quant_type != "default" else "")
+    for i in range(config.model_config.moe_layer_start_index,
+                   config.model_config.num_layers):
+        for j in range(
+                config.moe_config.num_experts_start_offset,
+                config.moe_config.num_experts_start_offset +
+                config.moe_config.num_experts_per_rank,
+        ):
+            ffn1_quant_key = f"ernie.layers.{i}.mlp.experts.{j}.up_gate_proj.weight{quant_suffix}"
+            ffn2_quant_key = (
+                f"ernie.layers.{i}.mlp.experts.{j}.down_proj.weight{quant_suffix}"
+            )
+            ffn1_scale_key = f"ernie.layers.{i}.mlp.experts.{j}.up_gate_proj.weight{scale_suffix}"
+            ffn2_scale_key = (
+                f"ernie.layers.{i}.mlp.experts.{j}.down_proj.weight{scale_suffix}"
+            )
+            num_local_ffn_keys.append(ffn1_quant_key)
+            num_local_ffn_keys.append(ffn2_quant_key)
+            num_local_ffn_keys.append(ffn1_scale_key)
+            num_local_ffn_keys.append(ffn2_scale_key)
 
-        for i in range(config.moe_layer_start_index, config.num_layers):
-            for j in range(
-                    config.num_experts_start_offset,
-                    config.num_experts_start_offset +
-                    config.num_experts_per_rank,
-            ):
-                ffn1_quant_key = f"ernie.layers.{i}.mlp.experts.{j}.up_gate_proj.weight.{quant_suffix}"
-                ffn2_quant_key = (
-                    f"ernie.layers.{i}.mlp.experts.{j}.down_proj.weight.{quant_suffix}"
-                )
-                ffn1_scale_key = f"ernie.layers.{i}.mlp.experts.{j}.up_gate_proj.weight.{scale_suffix}"
-                ffn2_scale_key = (
-                    f"ernie.layers.{i}.mlp.experts.{j}.down_proj.weight.{scale_suffix}"
-                )
-                num_local_ffn_keys.append(ffn1_quant_key)
-                num_local_ffn_keys.append(ffn2_quant_key)
-                num_local_ffn_keys.append(ffn1_scale_key)
-                num_local_ffn_keys.append(ffn2_scale_key)
+    for k in num_local_ffn_keys:
+        if k in weight_list:
+            filtered_map[k] = weight_list[k]
 
-        for k in num_local_ffn_keys:
-            if k in weight_list:
-                filtered_map[k] = weight_list[k]
+    state_dict = {}
+    # Get all safetensor file paths that need to be opened
+    safetensor_paths = set(filtered_map.values())
 
-        state_dict = {}
-        for k, safetensor_path in filtered_map.items():
-            with safe_open(os.path.join(model_path, safetensor_path),
-                           framework="np",
-                           device="cpu") as f:
-                if k in f.keys():
+    # Open each safetensor file sequentially with progress bar
+    for safetensor_path in tqdm(safetensor_paths,
+                                desc="Loading safetensor files",
+                                unit="file"):
+        with safe_open(os.path.join(model_path, safetensor_path),
+                       framework="np",
+                       device="cpu") as f:
+            # Check if this file contains keys from filtered_map
+            for k in filtered_map:
+                if filtered_map[k] == safetensor_path and k in f.keys():
                     weight = f.get_tensor(k)
                     if not return_numpy:
                         weight = paddle.Tensor(weight, zero_copy=True)
@@ -1410,7 +1387,7 @@ def load_checkpoint(model_path, cls, config, return_numpy=True, load_gpu=True):
     """
     load checkpoint
     """
-    if config.use_ep:
+    if config.parallel_config.use_ep:
         state_dict = load_ep_checkpoint(model_path,
                                         config,
                                         return_numpy=True,
@@ -1421,7 +1398,7 @@ def load_checkpoint(model_path, cls, config, return_numpy=True, load_gpu=True):
             and os.path.isdir(os.path.join(model_path, f))
         ]
         if len(rank_dirs) > 1:
-            if config.tensor_parallel_degree != len(rank_dirs):
+            if config.parallel_config.tensor_parallel_degree != len(rank_dirs):
                 raise ValueError(
                     f"Your model only supports loading with tp{len(rank_dirs)}"
                 )
@@ -1429,8 +1406,14 @@ def load_checkpoint(model_path, cls, config, return_numpy=True, load_gpu=True):
         else:
             state_dict = load_tp_checkpoint(model_path,
                                             cls,
-                                            config,
+                                            config.model_config,
                                             return_numpy=return_numpy)
+            import re
+            for k, v in state_dict.items():
+                match = re.search(r'layers\.(\d+)', k)
+                if match and int(match.group(1)) > 0:
+                    continue
+                print(f"dict key {k} value shape {v.shape}")
     return state_dict
 
 
