@@ -2,6 +2,6 @@
 
 | Github account | Name |
 | :------------- | :--- |
-| [Gong-Shao-Tian](https://github.com/gongshaotian) | Gong Shaotian |
+| [gongshaotian](https://github.com/gongshaotian) | Gong Shaotian |
 | [Jiang-Jia-Jun](https://github.com/Jiang-Jia-Jun) | Jiang Jiajun |
-| [Liu-Yuan-Le](https://github.com/yuanlehome) |  Liu Yuanle |
+| [yuanlehome](https://github.com/yuanlehome) |  Liu Yuanle |
