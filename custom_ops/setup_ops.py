@@ -86,10 +86,6 @@ def get_sm_version(archs):
     """
     arch_set = set(archs)
     try:
-        arch_set.update(set(paddle.version.cuda_archs()))
-    except AttributeError:
-        pass
-    try:
         prop = paddle.device.cuda.get_device_properties()
         cc = prop.major * 10 + prop.minor
         arch_set.add(cc)

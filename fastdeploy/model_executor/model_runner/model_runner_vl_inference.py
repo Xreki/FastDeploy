@@ -144,6 +144,10 @@ class ModelRunner(ModelRunnerBase):
             moe_group="dummy",
         )
         config.is_mtp = False
+        config.moe_num_experts = sum(config.moe_num_experts) \
+            if config.multimodel_experts else config.moe_num_experts
+        config.use_offline_quant = False
+        config.set_prequant_weight = False
         self.model_cfg = config
         if self.is_safetensors_model:
             meta_json = os.path.join(self.args.model_name_or_path,

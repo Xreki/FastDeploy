@@ -89,6 +89,7 @@ class InferenceArgs:
         head_dim=None,
         is_quantized=False,
         use_safetensors=False,
+        ernie_config=None,
     ):
         """
         Initialization function for quantization of the Transformer model
@@ -174,8 +175,12 @@ class InferenceArgs:
 
         # deal model laod
         self.is_quantized = is_quantized
-        load_weight_gpu = "gpu" in paddle.device.get_device()
-        self.load_weight_gpu = load_weight_gpu
+        if "ErnieMoEVLForCausalLM" in ernie_config.architectures:
+            # Hack, to be changed.
+            load_weight_gpu = False
+        else:
+            load_weight_gpu = "gpu" in paddle.device.get_device()
+
         if load_weight_gpu and use_safetensors:
             if is_quantized:
                 self.use_offline_quant = False
