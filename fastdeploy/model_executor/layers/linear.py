@@ -679,7 +679,7 @@ class RowParallelLinear(LinearBase):
         self.act_dtype = fd_config.model_config.act_dtype
         self.nranks = fd_config.parallel_config.mp_size
         self.embed_dim = fd_config.model_config.hidden_size
-        self.head_dim = fd_config.model_config.hidden_size // fd_config.model_config.num_attention_heads
+        self.head_dim = fd_config.model_config.head_dim
         self.num_heads = fd_config.model_config.num_attention_heads // self.nranks
         self.ffn_hidden_size = ffn_hidden_size if ffn_hidden_size is not None else fd_config.model_config.ffn_hidden_size // self.nranks
 

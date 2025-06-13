@@ -52,6 +52,7 @@ from .tokenizer import ErnieBotTokenizer
 model_classes_mapping = {
     "ErnieForCausalLM": ErniePretrainedModel,
     "Qwen2ForCausalLM": Qwen2PretrainedModel,
+    "ErnieBotLMHeadModel": ErniePretrainedModel,
 }
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -148,7 +149,7 @@ def build_stream_line_model(
     enable_redundant_experts: bool = False,
     redundant_experts_num: int = 0,
     max_batch_size: int = 128,
-    use_offline_quant: bool = False,
+    is_quantized: bool = False,
     return_state_dicts: bool = False,
     sharing_model=None,
     sharing_state_dicts=None,
@@ -194,7 +195,7 @@ def build_stream_line_model(
         config = json.load(fin)
     architectures = config.get("architectures")
     if tokenizer is None:
-        if "ErnieForCausalLM" in architectures:
+        if "ErnieForCausalLM" in architectures or "ErnieBotLMHeadModel" in architectures:
             tokenizer = ErnieBotTokenizer.from_pretrained(model_path)
         else:
             tokenizer = AutoTokenizer.from_pretrained(
@@ -234,11 +235,11 @@ def build_stream_line_model(
     model_config.tensor_parallel_degree = parallel_config.tensor_parallel_degree
     model_config.use_ep = use_ep
     model_config.is_mtp = speculative_config.is_mtp
-
+    moe_config.num_experts = None
+    model_config.use_offline_quant = False
     additional_config.use_fake_parameter = use_fake_parameter
     additional_config.ep_just_for_test = ep_just_for_test
 
-    tmp_config.use_offline_quant = use_offline_quant
     if use_ep:
         if isinstance(model_config.moe_num_experts, list):
             #TODO(YuanRisheng) We need abandon old config(eg.ErnieBotMoEConfig) and
@@ -345,7 +346,6 @@ def build_stream_line_model(
                     for i in range(pp_num)
                 ]
 
-            context = paddle.LazyGuard()
             if not use_ep:
                 logger.info(f"start to loading weight: {rank_model_paths}")
                 state_dicts = [None for _ in rank_model_paths]
@@ -486,7 +486,7 @@ def build_stream_line_model(
         state_dict = sharing_state_dicts
         context = paddle.LazyGuard()
 
-    if "ErnieForCausalLM" in architectures:
+    if "ErnieForCausalLM" in architectures or "ErnieBotLMHeadModel" in architectures:
         use_rmsnorm = config.get("use_rmsnorm", False)
     else:
         use_rmsnorm = config.get("use_rmsnorm", True)

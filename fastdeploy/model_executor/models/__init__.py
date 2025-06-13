@@ -20,7 +20,12 @@ from pathlib import Path
 
 from .model_base import ModelForCasualLM, ModelRegistry
 
-inference_runner_supported_models = ["ErnieForCausalLM", "Qwen2ForCausalLM", "ErnieMoEForCausalLM"]
+inference_runner_supported_models = [
+    "ErnieForCausalLM",
+    "Qwen2ForCausalLM",
+    "ErnieBotLMHeadModel",
+    "ErnieMoEForCausalLM",
+]
 
 
 def _find_py_files(root_dir):

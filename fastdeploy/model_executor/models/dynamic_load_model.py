@@ -245,25 +245,17 @@ class DynamicLoadModel(nn.Layer):
 
     def get_model_static_info(self) -> None:
         """get static info."""
-        for k, v in self.model.state_dict().items():
+        for k, v in self.state_dict().items():
             logger.info(
                 f"efficientl model key name is :{k}, shape : {v.shape}, dtype : {v.dtype}"
             )
-            # print(v)
-
-        if self.resampler_model:
-            for k, v in self.resampler_model.state_dict().items():
-                logger.info(
-                    f"resampler model key name is :{k}, shape : {v.shape}, dtype : {v.dtype}"
-                )
-                # print(v)
-
-        if self.vision_model:
-            for k, v in self.vision_model.state_dict().items():
-                logger.info(
-                    f"vision model key name is :{k}, shape : {v.shape}, dtype : {v.dtype}"
-                )
-                # print(v)
+    
+    def get_name_mappings_to_training(self):
+        """Get name mappings to training parameters for all models."""
+        all_name_mappings = {}
+        for model in self.models:
+            all_name_mappings.update(model.get_name_mappings_to_training())
+        return all_name_mappings
 
     def forward(self, **kwargs):
         """generate."""
@@ -283,7 +275,7 @@ class DynamicLoadModel(nn.Layer):
         """Update model parameters from IPC state dictionary."""
         self.log_memory_usage("start update parameters")
 
-        if self.vision_model and self.vision_model:
+        if self.vision_model and self.resampler_model:
             for model in [self.resampler_model, self.vision_model]:
                 for name, param in model.state_dict().items():
                     logger.info(f"Clearing model parameter: {name}")
@@ -303,30 +295,22 @@ class DynamicLoadModel(nn.Layer):
             set_start = time.perf_counter()
             print("使用shared_buf_to_local_test")
             state_dict = paddle.load(model_path)
-            model_state_dicts = [self.model.state_dict()]
-            if self.resampler_model and self.vision_model:
-                model_state_dicts.append(self.resampler_model.state_dict())
-                model_state_dicts.append(self.vision_model.state_dict())
-
+            model_state_dict = self.state_dict()
             for name, param in state_dict.items():
-                replace_name = name.replace("gpt.", "ernie.")
-                for model_state_dict in model_state_dicts:
-                    if replace_name in model_state_dict:
-                        logger.info(
-                            f"Updating model parameter: {name}, shape : {param.shape}"
+                if name in model_state_dict:
+                    logger.info(f"Updating model parameter: {name}, shape : {param.shape}")
+                    update_param = model_state_dict[name]
+
+                    if update_param.dtype != param.dtype:
+                        raise TypeError(
+                            f"Type mismatch for {name}: {param.dtype} vs {update_param.dtype}"
                         )
-                        update_param = model_state_dict[replace_name]
+                    if update_param.shape != param.shape:
+                        raise ValueError(
+                            f"Shape mismatch for {name}: {param.shape} vs {update_param.shape}"
+                        )
 
-                        if update_param.dtype != param.dtype:
-                            raise TypeError(
-                                f"Type mismatch for {name}: {param.dtype} vs {update_param.dtype}"
-                            )
-                        if update_param.shape != param.shape:
-                            raise ValueError(
-                                f"Shape mismatch for {name}: {param.shape} vs {update_param.shape}"
-                            )
-
-                        param._share_buffer_to(update_param)
+                    param._share_buffer_to(update_param)
 
             logger.info(
                 f"set_state_dict completed in {time.perf_counter()  - set_start:.2f} seconds"
@@ -360,27 +344,24 @@ class DynamicLoadModel(nn.Layer):
         logger.info("Updating parameters via shared_buffer_to...")
         share_start = time.perf_counter()
 
-        for model in self.models:
-            infer_model_state_dict = model.state_dict()
-            for name, param in infer_model_state_dict.items():  # 遍历当前模型的参数
-                if name in state_dict:  # 在全局 state_dict 中查找匹配项
-                    logger.info(f"Updating model parameter: {name}")
-                    update_param = state_dict[name]
+        infer_model_state_dict = self.state_dict()
+        for name, param in state_dict.items():
+            # name = name.replace("ernie.", "gpt.")
+            if name in infer_model_state_dict:  # 在全局 state_dict 中查找匹配项
+                logger.info(f"Updating model parameter: train-{name}")
+                update_param = infer_model_state_dict[name]
 
-                    if update_param.dtype != param.dtype:
-                        raise TypeError(
-                            f"Type mismatch for {name}: {param.dtype} vs {update_param.dtype}"
-                        )
-                    if update_param.shape != param.shape:
-                        raise ValueError(
-                            f"Shape mismatch for {name}: {param.shape} vs {update_param.shape}"
-                        )
-
-                    update_param._share_buffer_to(param)
-                else:
-                    logger.error(
-                        f"No matching parameter found for {name} in global state_dict"
+                if update_param.dtype != param.dtype:
+                    raise TypeError(
+                        f"Type mismatch for {name}: train-{param.dtype} vs infer-{update_param.dtype}"
                     )
+                if update_param.shape != param.shape:
+                    raise ValueError(
+                        f"Shape mismatch for {name}: train-{param.shape} vs infer-{update_param.shape}"
+                    )
+                param._share_buffer_to(update_param)
+            else:
+                logger.error(f"No matching parameter found for train-{name} in global state_dict")
 
         logger.info(
             f"Parameter sharing completed in {time.perf_counter() - share_start:.2f} seconds"

@@ -173,8 +173,7 @@ class ModelRunner(ModelRunnerBase):
     def init_rotary_position_embedding(self, max_model_len):
         tmp_position_ids = paddle.arange(max_model_len).reshape((1, -1))
         self.share_inputs["rope_emb"] = get_rope(
-            rotary_dim=self.model_cfg.hidden_size //
-            self.model_cfg.num_attention_heads,
+            rotary_dim=self.model_cfg.head_dim,
             position_ids=tmp_position_ids,
             base=self.rope_theta,
             model_config=self.config)
@@ -416,8 +415,6 @@ class ModelRunner(ModelRunnerBase):
 
         self.attn_backend.init_attention_metadata(self.forward_meta)
 
-        self.share_inputs["forward_meta"] = self.forward_meta
-
         self.sampling_metadata = SamplingMetadata(
             temperature=self.share_inputs["temperature"],
             top_p=self.share_inputs["top_p"],
@@ -442,7 +439,7 @@ class ModelRunner(ModelRunnerBase):
             self.share_inputs["seq_lens_this_time"],
             self.share_inputs["seq_lens_decoder"],
             self.share_inputs["seq_lens_encoder"],
-            None,  #self.share_inputs["padding_offset"],
+            None,  # speculative decoding requires
             self.args.max_model_len,
         )
         logits = self.model.compute_logits(hiddden_states)

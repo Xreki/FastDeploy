@@ -23,7 +23,6 @@ from datetime import datetime
 import random
 import uuid
 from redis import ConnectionPool
-from fastdeploy.metrics.metrics import main_process_metrics
 from fastdeploy.scheduler.storage import AdaptedRedis
 from fastdeploy.engine.request import Request, RequestOutput
 from fastdeploy.scheduler.data import ScheduledRequest, ScheduledResponse
@@ -298,7 +297,6 @@ class GlobalScheduler(object):
                                 rem_amount=0, ttl=self.ttl)
             llm_logger.info(
                 f"Scheduler has enqueued some requests: {requests}")
-            main_process_metrics.num_requests_waiting.inc(len(requests))
 
         if duplicate:
             llm_logger.warning(
@@ -509,8 +507,6 @@ class GlobalScheduler(object):
         if len(requests) > 0:
             llm_logger.info(
                 f"Scheduler has pulled some request: {[request.request_id for request in requests]}")
-            main_process_metrics.num_requests_running.inc(len(requests))
-            main_process_metrics.num_requests_waiting.dec(len(requests))
         return requests
 
     def _put_results_worker(self, tasks: List[Task]):

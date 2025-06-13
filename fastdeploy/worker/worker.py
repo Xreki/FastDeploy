@@ -13,10 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-
-import os
 import argparse
+import os
 import time
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import paddle
@@ -28,6 +29,64 @@ from fastdeploy.inter_communicator import EngineWorkerQueue, IPCSignal
 from fastdeploy.utils import get_logger
 
 logger = get_logger("worker", "worker.log")
+
+
+class PrefillTracker:
+    """
+    Record the prefill time of the request
+    """
+
+    def __init__(self, engine_pid):
+        self.start_times = defaultdict(float)
+        prefill_time_data = np.zeros([100], dtype=np.float32)
+        self.prefill_time_signal = IPCSignal(name="prefill_time_signal",
+                                             array=prefill_time_data,
+                                             dtype=np.float32,
+                                             suffix=engine_pid,
+                                             create=False)
+        self.current_index = 0
+        self.executor = ThreadPoolExecutor(max_workers=1)
+
+    def start_prefill(self, task_idx):
+        """
+        Record the start time of the prefill process for a given task index.
+
+        Args:
+            task_idx (int): The index of the task being prefetched.
+        """
+        self.start_times[task_idx] = time.time()
+
+    def end_prefill(self, task_idx):
+        """
+        Record the end time of the prefill process for a given task index and
+        asynchronously submit the duration for metric recording.
+
+        Args:
+            task_idx (int): The index of the task being prefetched.
+        """
+        if task_idx in self.start_times:
+            duration = time.time() - self.start_times[task_idx]
+            # Submit metric recording to the executor for asynchronous execution
+            self.executor.submit(self._record_metrics, duration)
+            del self.start_times[task_idx]
+
+    def _record_metrics(self, duration):
+        """
+        Internal method to record the prefill duration into the signal buffer.
+        Logs the duration and updates a circular buffer of timing metrics.
+
+        Args:
+            duration (float): Time taken for the prefill process in seconds.
+        """
+
+        self.prefill_time_signal.value[self.current_index] = duration
+        self.current_index = (self.current_index + 1) % len(
+            self.prefill_time_signal.value)
+
+    def __del__(self):
+        """Clean up resources"""
+        if hasattr(self, 'executor'):
+            self.executor.shutdown(wait=False)
 
 
 class Worker:
@@ -71,6 +130,7 @@ class Worker:
                                         args=self.args,
                                         nranks=self.nranks,
                                         rank=self.rank)
+        self.prefill_tracker = PrefillTracker(args.engine_pid)
 
         # TODO 多机
         address = ('0.0.0.0', self.args.engine_worker_queue_port)
@@ -171,17 +231,15 @@ class Worker:
             if os.getenv('USE_PIP_EFF_LLM'):
                 from efficientllm.gpu import step_paddle, step_system_cache
             else:
-                from fastdeploy.model_executor.ops.gpu import step_paddle, step_system_cache
-            from fastdeploy.worker.model_runner.model_runner_inference import ModelRunner
+                from fastdeploy.model_executor.ops.gpu import (
+                    step_paddle, step_system_cache)
         elif self.model_cfg.architectures.startswith("ErnieMoEVLForCausalLM"):
             if os.getenv('USE_PIP_EFF_LLM'):
                 from efficientllm.ops.gpu import step_paddle
             else:
                 from fastdeploy.model_executor.ops.gpu import step_paddle
-            from fastdeploy.worker.model_runner.model_runner_vl_inference import ModelRunner
         else:
             from paddlenlp_ops import step_paddle
-
 
         if self.args.enable_prefix_caching:
             step_system_cache(
@@ -208,9 +266,8 @@ class Worker:
                 self.infer_engine.share_inputs["step_idx"],
                 self.infer_engine.share_inputs["next_tokens"],
                 self.infer_engine.share_inputs["first_token_ids"],
-                self.args.block_size,
-                self.args.enc_dec_block_num)
-        
+                self.args.block_size, self.args.enc_dec_block_num)
+
         else:
             step_paddle(
                 self.infer_engine.share_inputs["stop_flags"],
@@ -238,6 +295,7 @@ class Worker:
                 self.args.block_size,
                 self.args.enc_dec_block_num,
             )
+
     def check_model_weights_status(self):
         """
         check model weights status
@@ -308,7 +366,8 @@ class Worker:
             mp_num_per_node = self.nranks
 
             if self.rank % mp_num_per_node == 0:
-                if self.engine_worker_queue.num_tasks() > 0 and self.infer_engine.prefill_finished():
+                if self.engine_worker_queue.num_tasks(
+                ) > 0 and self.infer_engine.prefill_finished():
                     if self.nnode > 1:
                         self.engine_worker_queue.read_finish_flag.set(1)
                     else:
@@ -331,12 +390,17 @@ class Worker:
                 req_dicts = []
                 for req_dict, bsz in tasks:
                     num_running_requests = int(bsz)
+
                     req_dicts.extend(req_dict)
-                req_ids = [req.request_id for req in req_dicts ]
+                req_ids = [req.request_id for req in req_dicts]
                 logger.info(f"Rank: {self.rank}, num_running_requests: {num_running_requests}, " \
                             f"num_insert_requests: {len(req_dicts)}. {req_ids}")
 
                 self.infer_engine.dy_input_preprocess(req_dicts)
+                for req_dict in req_dicts:
+                    if self.infer_engine.share_inputs["seq_lens_this_time"][
+                            req_dict.idx] > 1:
+                        self.prefill_tracker.start_prefill(req_dict.idx)
                 self.infer_engine.share_inputs["not_need_stop"][0] = True
 
             if not self.infer_engine.share_inputs["not_need_stop"]:
@@ -348,10 +412,13 @@ class Worker:
                 infer_seed_increment)
             self.infer_engine.share_inputs[
                 "infer_seed"][:] %= self.MAX_INFER_SEED
-
+            for req_dict in req_dicts:
+                if (self.infer_engine.share_inputs["seq_lens_this_time"][
+                        req_dict.idx] == 1
+                        and req_dict.idx in self.prefill_tracker.start_times):
+                    self.prefill_tracker.end_prefill(req_dict.idx)
             self.infer_engine.update_chunked_prefill(req_dicts)
             self.step_cuda()
-
 
     def determine_num_available_blocks(self):
         """Profiles the peak memory usage of the model to determine how many
@@ -406,8 +473,9 @@ class Worker:
         available_kv_cache_memory = memory_for_current_instance - used_gpu_memory - \
                                     paddle_peak_increase + used_cache_gpu_memory
 
-
-        num_gpu_blocks = max(int(available_kv_cache_memory // per_block_memory_used ), self.args.total_block_num)
+        num_gpu_blocks = max(
+            int(available_kv_cache_memory // per_block_memory_used),
+            self.args.total_block_num)
         profile_time = time.time() - start_time
 
         msg = (f"Memory profiling takes {profile_time:.2f} seconds\n"
@@ -425,7 +493,7 @@ class Worker:
                f"{(available_kv_cache_memory):.2f}GiB.")
 
         self.infer_engine.record_profile_msg = {
-            "per_block_memory_used":per_block_memory_used,
+            "per_block_memory_used": per_block_memory_used,
             "paddle_peak_increase": paddle_peak_increase,
         }
 
@@ -463,8 +531,8 @@ class Worker:
                                            fill_value=4,
                                            dtype="int64")
 
-
-        self.infer_engine.dummy_input(self.args.max_num_batched_tokens, self.args.max_num_seqs)
+        self.infer_engine.dummy_input(self.args.max_num_batched_tokens,
+                                      self.args.max_num_seqs)
         while True:
             if self.nranks > 1:
                 paddle.distributed.barrier()
@@ -484,8 +552,16 @@ def parse_args():
     parse args from command line
     """
     parser = argparse.ArgumentParser("FastDeploy LLM Inference")
-    parser.add_argument("-m", "--model_name_or_path", type=str, default="./output", help="model dir")
-    parser.add_argument("-mbs", "--max_num_seqs", type=int, default=34, help="max batch size")
+    parser.add_argument("-m",
+                        "--model_name_or_path",
+                        type=str,
+                        default="./output",
+                        help="model dir")
+    parser.add_argument("-mbs",
+                        "--max_num_seqs",
+                        type=int,
+                        default=34,
+                        help="max batch size")
     parser.add_argument("--total_block_num", type=int, default=2000)
     parser.add_argument("--block_size", type=int, default=64)
     parser.add_argument("--engine_worker_queue_port", type=int, default=9923)
@@ -521,8 +597,12 @@ def parse_args():
                         type=int,
                         default=None,
                         help="Process ID of engine")
-    parser.add_argument("--do_profile", action='store_true', help="do profile or not")
-    parser.add_argument("--dynamic_load_weight", action='store_true', help="dynamic load weight or not")
+    parser.add_argument("--do_profile",
+                        action='store_true',
+                        help="do profile or not")
+    parser.add_argument("--dynamic_load_weight",
+                        action='store_true',
+                        help="dynamic load weight or not")
     parser.add_argument("--pad_token_id",
                         type=int,
                         default=-1,
@@ -556,9 +636,18 @@ def parse_args():
     )
     parser.add_argument("--speculate_max_draft_tokens", type=int, default=1)
 
-    parser.add_argument("--max_num_batched_tokens", type=int, default=2048, help="max num batched tokens")
-    parser.add_argument("--enable_prefix_caching", action='store_true', help="enable prefix cache")
-    parser.add_argument("--splitwise_role", type=str, default="mixed", help="splitwise role")
+    parser.add_argument("--max_num_batched_tokens",
+                        type=int,
+                        default=2048,
+                        help="max num batched tokens")
+    parser.add_argument("--enable_prefix_caching",
+                        action='store_true',
+                        help="enable prefix cache")
+    parser.add_argument("--splitwise_role",
+                        type=str,
+                        default="mixed",
+                        help="splitwise role")
+    parser.add_argument("--ori_vocab_size", type=int, default=None)
     args = parser.parse_args()
     return args
 

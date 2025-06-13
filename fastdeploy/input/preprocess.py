@@ -13,8 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 from fastdeploy.engine.config import ModelConfig
+
 
 class InputPreprocessor:
     """
@@ -32,6 +34,7 @@ class InputPreprocessor:
                 If the model name is not found in the Hugging Face Transformers' model registry and the path does not
                 exist.
     """
+
     def __init__(
         self,
         model_name_or_path: str,
@@ -61,16 +64,22 @@ class InputPreprocessor:
             if "ErnieForCausalLM" not in architectures \
                 and "ErnieBotLMHeadModel" not in architectures:
                 from fastdeploy.input.text_processor import DataProcessor
-                self.processor = DataProcessor(model_name_or_path=self.model_name_or_path)
+                self.processor = DataProcessor(
+                    model_name_or_path=self.model_name_or_path)
             else:
                 from fastdeploy.input.ernie_processor import ErnieProcessor
-                self.processor = ErnieProcessor(model_name_or_path=self.model_name_or_path)
+                self.processor = ErnieProcessor(
+                    model_name_or_path=self.model_name_or_path)
         else:
             if not architectures.startswith("ErnieMoEVLForCausalLM"):
-                raise ValueError(f"Model {self.model_name_or_path} is not a valid ErnieMoEVL model.")
+                raise ValueError(
+                    f"Model {self.model_name_or_path} is not a valid ErnieMoEVL model."
+                )
             else:
-                from fastdeploy.input.ernie_vl_processor import ErnieMoEVLProcessor
-                self.processor = ErnieMoEVLProcessor(model_name_or_path=self.model_name_or_path,
-                                                     limit_mm_per_prompt=self.limit_mm_per_prompt,
-                                                     mm_processor_kwargs=self.mm_processor_kwargs)
+                from fastdeploy.input.ernie_vl_processor import \
+                    ErnieMoEVLProcessor
+                self.processor = ErnieMoEVLProcessor(
+                    model_name_or_path=self.model_name_or_path,
+                    limit_mm_per_prompt=self.limit_mm_per_prompt,
+                    mm_processor_kwargs=self.mm_processor_kwargs)
         return self.processor

@@ -152,8 +152,7 @@ class LocalScheduler(object):
             self.requests_not_empty.notify_all()
 
         llm_logger.info(
-            f"Scheduler has put some requests: {valid_ids}")
-        main_process_metrics.num_requests_waiting.inc(len(valid_ids))
+                f"Scheduler has put some requests: {valid_ids}")
 
         if len(duplicated_ids) > 0:
             llm_logger.warning(
@@ -237,9 +236,8 @@ class LocalScheduler(object):
 
         if len(requests) > 0:
             llm_logger.info(
-                f"Scheduler has pulled some request: {[request.request_id for request in requests]}")
-        main_process_metrics.num_requests_waiting.dec(len(requests))
-        main_process_metrics.num_requests_running.inc(len(requests))
+                    f"Scheduler has pulled some request: {[request.request_id for request in requests]}")
+
         return requests
 
     def put_results(self, results: List[RequestOutput]):

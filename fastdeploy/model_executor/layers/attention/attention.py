@@ -66,7 +66,7 @@ class Attention(nn.Layer):
         """
         super().__init__()
         self.num_heads = fd_config.model_config.num_attention_heads // fd_config.parallel_config.mp_size
-        self.head_dim = fd_config.model_config.hidden_size // fd_config.model_config.num_attention_heads
+        self.head_dim = fd_config.model_config.head_dim
         self.kv_num_heads = fd_config.model_config.num_key_value_heads // fd_config.parallel_config.mp_size
         self.layer_id = layer_id
         self.logit_cap = logit_cap
