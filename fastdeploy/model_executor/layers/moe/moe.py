@@ -193,23 +193,19 @@ class FusedMoE(nn.Layer):
                 weight1_scale.append(
                     get_tensor(
                         state_dict.pop(
-                            self.ffn1_expert_weight_scale_key.format(
-                                self.layer_idx, j))))
+                            self.ffn1_expert_weight_scale_key.format(j))))
                 weight2_scale.append(
                     get_tensor(
                         state_dict.pop(
-                            self.ffn2_expert_weight_scale_key.format(
-                                self.layer_idx, j))))
+                            self.ffn2_expert_weight_scale_key.format(j))))
                 ffn1_in_scale.append(
                     get_tensor(
                         state_dict.pop(
-                            self.ffn1_expert_in_scale_key.format(
-                                self.layer_idx, j))))
+                            self.ffn1_expert_in_scale_key.format(j))))
                 ffn2_in_scale.append(
                     get_tensor(
                         state_dict.pop(
-                            self.ffn2_expert_in_scale_key.format(
-                                self.layer_idx, j))))
+                            self.ffn2_expert_in_scale_key.format(j))))
 
         # other weight is with compute_method
         # different method may have different way to create weights

@@ -320,20 +320,21 @@ class Ernie45TMoE(nn.Layer):
                  prefix: str) -> None:
         super().__init__()
 
-        ffn1_expert_weight_key = f"{prefix}.experts.{{}}.up_gate_proj.quant_weight" \
-            if fd_config.moe_config.moe_quant_type == "w4a8" \
-                else f"{prefix}.experts.{{}}.up_gate_proj.weight"
-        ffn2_expert_weight_key = f"{prefix}.experts.{{}}.down_proj.quant_weight" \
-            if fd_config.moe_config.moe_quant_type == "w4a8" \
-                else f"{prefix}.experts.{{}}.up_gate_proj.weight"
-        moe_ffn1_weight_scale_keys = "ernie.layers.{}.mlp.experts.{}.up_gate_proj.weight_quanter" \
-            if fd_config.moe_config.moe_quant_type == "w4a8" else None
-        moe_ffn2_weight_scale_keys = "ernie.layers.{}.mlp.experts.{}.down_proj.weight_quanter" \
-            if fd_config.moe_config.moe_quant_type == "w4a8" else None
-        moe_ffn1_in_scale_keys = "ernie.layers.{}.mlp.experts.{}.up_gate_proj.activation_quanter" \
-            if fd_config.moe_config.moe_quant_type == "w4a8" else None
-        moe_ffn2_in_scale_keys = "ernie.layers.{}.mlp.experts.{}.down_proj.activation_quanter" \
-            if fd_config.moe_config.moe_quant_type == "w4a8" else None
+        if fd_config.moe_config.moe_quant_type == "w4a8":
+            ffn1_expert_weight_key = f"{prefix}.experts.{{}}.up_gate_proj.quant_weight"
+            ffn2_expert_weight_key = f"{prefix}.experts.{{}}.down_proj.quant_weight"
+            moe_ffn1_weight_scale_keys = f"{prefix}.experts.{{}}.up_gate_proj.weight_quanter"
+            moe_ffn2_weight_scale_keys = f"{prefix}.experts.{{}}.down_proj.weight_quanter"
+            moe_ffn1_in_scale_keys = f"{prefix}.experts.{{}}.up_gate_proj.activation_quanter"
+            moe_ffn2_in_scale_keys = f"{prefix}.experts.{{}}.down_proj.activation_quanter"
+        else:
+            ffn1_expert_weight_key = f"{prefix}.experts.{{}}.up_gate_proj.weight"
+            ffn2_expert_weight_key = f"{prefix}.experts.{{}}.down_proj.weight"
+            moe_ffn1_weight_scale_keys = None
+            moe_ffn2_weight_scale_keys = None
+            moe_ffn1_in_scale_keys = None
+            moe_ffn2_in_scale_keys = None
+
         self.fused_moe = FusedMoE(
             fd_config=fd_config,
             moe_intermediate_size=fd_config.moe_config.moe_intermediate_size,
@@ -622,7 +623,6 @@ class ErnieForCausalLM(ModelForCasualLM):
                 self.model.embeddings.word_embeddings.weight.transpose([1, 0]))
         else:
             self.lm_head.load_state_dict(state_dict)
-
 
     def compute_logits(self, hidden_states: paddle.Tensor):
         logits = self.lm_head(hidden_states)
