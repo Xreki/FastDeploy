@@ -38,7 +38,7 @@ class LocalScheduler(object):
 
     def __init__(self,
                  max_size: int,
-                 ttl: float,
+                 ttl: int,
                  enable_chunked_prefill: bool,
                  max_num_partial_prefills: int,
                  max_long_partial_prefills: int,
@@ -47,18 +47,23 @@ class LocalScheduler(object):
         Initializes a local in-memory scheduler for managing inference requests.
 
         Args:
-            max_size (int): Maximum number of concurrent requests the scheduler can handle
-            ttl (float): Time-to-live (in seconds) for requests before timeout
-            enable_chunked_prefill (bool): Whether to enable chunked prefill processing
-            max_num_partial_prefills (int): Maximum number of partial prefill operations
-            max_long_partial_prefills (int): Maximum number of long-running partial prefill ops
-            long_prefill_token_threshold (int): Token count threshold to classify as long prefill
+            max_size: Maximum number of concurrent requests the scheduler can handle (0 for unlimited)
+            ttl: Time-to-live in seconds for requests before automatic timeout
+            enable_chunked_prefill: Whether to enable chunked prefill processing
+            max_num_partial_prefills: Maximum number of partial prefill operations allowed
+            max_long_partial_prefills: Maximum number of long-running partial prefill operations
+            long_prefill_token_threshold: Token count threshold to classify as long prefill
 
-        The scheduler manages:
-        - Request queueing and prioritization
-        - Timeout handling via TTL
-        - Chunked prefill processing when enabled
-        - Thread-safe operations for concurrent access
+        Initializes:
+            - Thread synchronization primitives (mutex, condition variables)
+            - Request and response tracking structures
+            - Chunked prefill configuration parameters
+            - Request queue management system
+
+        Note:
+            - Uses thread-safe operations for concurrent access
+            - Automatically recycles expired requests based on TTL
+            - Supports both batched and individual request processing
         """
         self.max_size = max_size
         self.ttl = ttl

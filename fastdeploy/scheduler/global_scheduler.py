@@ -22,6 +22,7 @@ import time
 from datetime import datetime
 import random
 import uuid
+import crcmod
 from redis import ConnectionPool
 from fastdeploy.scheduler.storage import AdaptedRedis
 from fastdeploy.engine.request import Request, RequestOutput
@@ -48,15 +49,16 @@ class GlobalScheduler(object):
                  db: int,
                  password: Optional[str],
                  topic: str,
-                 ttl: float,
+                 ttl: int,
                  min_load_score: float,
+                 load_shrads_num: int,
                  enable_chunked_prefill: bool,
                  max_num_partial_prefills: int,
                  max_long_partial_prefills: int,
                  long_prefill_token_threshold: int,
                  ):
         """
-        Initialize the GlobalScheduler with Redis connection parameters.
+        Initialize the GlobalScheduler with Redis connection and scheduling parameters.
 
         Args:
             host: Redis server hostname
@@ -66,19 +68,37 @@ class GlobalScheduler(object):
             topic: Base topic name for queue namespacing
             ttl: Time-to-live in seconds for Redis keys
             min_load_score: Minimum load score for task assignment
+            load_shrads_num: Number of shards for load balancing table
+            enable_chunked_prefill: Whether to enable chunked prefill processing
+            max_num_partial_prefills: Maximum number of partial prefills allowed
+            max_long_partial_prefills: Maximum number of long partial prefills allowed
+            long_prefill_token_threshold: Token count threshold for long prefills
+
+        Initializes:
+            - Redis connection pool and client
+            - Worker threads for request/response handling
+            - Load balancing and request stealing mechanisms
+            - Response tracking structures
         """
 
         self.topic = topic
         self.ttl = ttl
         self.min_load_score = min_load_score
+        self.load_shrads_num = load_shrads_num
 
         self.enable_chunked_prefill = enable_chunked_prefill
         self.max_num_partial_prefills = max_num_partial_prefills
         self.max_long_partial_prefills = max_long_partial_prefills
         self.long_prefill_token_threshold = long_prefill_token_threshold
 
-        self.blpop_request_timeout = 5
+        self.blpop_request_timeout = 2
         self.blpop_response_timeout = 10
+
+        self.crc16_mutex = threading.Lock()
+        self.crc16 = crcmod.predefined.Crc('ccitt-false')
+        self.load_slot_for_getting_request = 0
+        self.load_start = 0   # const
+        self.load_num = 50    # const
 
         connection_pool = ConnectionPool(
             host=host, port=port, db=db, password=password, max_connections=10)
@@ -109,6 +129,14 @@ class GlobalScheduler(object):
 
         llm_logger.info(
             f"Scheduler: name={self.name} redis_version={self.client.version}")
+
+    def _get_hash_slot(self, data: str) -> int:
+        data = data.encode("utf-8")
+        with self.crc16_mutex:
+            self.crc16.update(data)
+            crc_value = self.crc16.crcValue
+            self.crc16.crcValue = self.crc16.initCrc
+        return crc_value
 
     def _instance_name(self, scheduler_name: str) -> str:
         """
@@ -216,14 +244,22 @@ class GlobalScheduler(object):
             return f"{self.topic}.resp.{self.name}"
         return f"{self.topic}.resp.{scheduler_name}"
 
-    def _load_score_name(self) -> str:
+    def _load_table_name(self, request_queue_name: Optional[str] = None, slot: Optional[int] = None) -> str:
         """
         Get the Redis sorted set name used for load balancing.
 
         Returns:
             The load score key name
         """
-        return f"{self.topic}.score"
+        if request_queue_name is None:
+            request_queue_name = self._request_queue_name()
+
+        if slot is None:
+            slot = self._get_hash_slot(
+                request_queue_name) % self.load_shrads_num
+        else:
+            slot %= self.load_shrads_num
+        return f"{self.topic}.load.{slot}"
 
     @staticmethod
     def calc_required_blocks(token_num, block_size):
@@ -292,7 +328,7 @@ class GlobalScheduler(object):
             serialized_requests = [request.serialize() for request in requests]
             self.client.rpush(self._request_queue_name(), *
                               serialized_requests, ttl=self.ttl)
-            self.client.zincrby(self._load_score_name(),
+            self.client.zincrby(self._load_table_name(),
                                 len(serialized_requests), self.name,
                                 rem_amount=0, ttl=self.ttl)
             llm_logger.info(
@@ -365,15 +401,25 @@ class GlobalScheduler(object):
                 local_request_queue_name, bs, ttl=self.ttl)
             if elements is None:
                 break
-            self.client.zincrby(self._load_score_name(), -
+            self.client.zincrby(self._load_table_name(), -
                                 len(elements), self.name, rem_amount=0, ttl=self.ttl)
             serialized_requests += [(local_request_queue_name, element)
                                     for element in elements]
 
         extend_scheduler_names = []
         if len(serialized_requests) == 0 and len(batches) > 0:
-            serialized_members = self.client.zrangebyscore(
-                self._load_score_name(), self.min_load_score, float("+inf"))
+            for _ in range(min(5, self.load_shrads_num)):
+                serialized_members = self.client.zrangebyscore(
+                    self._load_table_name(
+                        slot=self.load_slot_for_getting_request),
+                    self.min_load_score,
+                    float("+inf"),
+                    start=self.load_start,
+                    num=self.load_num)
+                self.load_slot_for_getting_request += 1
+                if len(serialized_members) > 0:
+                    break
+
             members = [member.decode("utf-8") for member in serialized_members]
             if len(members) > 0:
                 extend_scheduler_names = random.sample(
@@ -385,10 +431,13 @@ class GlobalScheduler(object):
         if len(extend_scheduler_names) > 0:
             lucky = random.choice(extend_scheduler_names)
             lucky_request_queue_name = self._request_queue_name(lucky)
+
             elements = self.client.lpop(lucky_request_queue_name, batches[0])
             if elements is not None and len(elements) > 0:
-                self.client.zincrby(self._load_score_name(), -
-                                    len(elements), lucky, rem_amount=0, ttl=self.ttl)
+                self.client.zincrby(
+                    self._load_table_name(
+                        request_queue_name=lucky_request_queue_name),
+                    -len(elements), lucky, rem_amount=0, ttl=self.ttl)
                 serialized_requests += [(lucky_request_queue_name, element)
                                         for element in elements]
                 llm_logger.info(
@@ -397,7 +446,10 @@ class GlobalScheduler(object):
             else:
                 exist_num = self.client.exists(self._instance_name(lucky))
                 if exist_num == 0:
-                    if self.client.zrem(self._load_score_name(), lucky):
+                    if self.client.zrem(
+                            self._load_table_name(
+                                request_queue_name=lucky_request_queue_name),
+                            lucky):
                         llm_logger.info(
                             f"Scheduler {lucky} has been removed")
 
@@ -414,8 +466,9 @@ class GlobalScheduler(object):
             request_queue_name = element[0].decode("utf-8")
             scheduler_name = self._scheduler_name_from_request_queue(
                 request_queue_name)
-            self.client.zincrby(self._load_score_name(), -1,
-                                scheduler_name, rem_amount=0, ttl=self.ttl)
+            self.client.zincrby(
+                self._load_table_name(request_queue_name=request_queue_name),
+                -1, scheduler_name, rem_amount=0, ttl=self.ttl)
             serialized_requests.append((request_queue_name, element[1]))
             if scheduler_name != self.name:
                 llm_logger.info(
@@ -496,8 +549,11 @@ class GlobalScheduler(object):
                                   serialized_requests)
                 scheduler_name = self._scheduler_name_from_request_queue(
                     request_queue_name)
-                self.client.zincrby(self._load_score_name(),
-                                    len(serialized_requests), scheduler_name, ttl=self.ttl)
+                self.client.zincrby(
+                    self._load_table_name(
+                        request_queue_name=request_queue_name),
+                    len(serialized_requests), scheduler_name, ttl=self.ttl)
+
             llm_logger.info(
                 f"Scheduler has put remaining request into the queue: {len(remaining_request)}")
             if len(requests) == 0:
@@ -516,6 +572,7 @@ class GlobalScheduler(object):
         Args:
             tasks: List of completed tasks with results
         """
+        # count = 0  # for test
 
         with self.mutex:
             local_request_ids = set(self.local_responses.keys())
@@ -558,6 +615,7 @@ class GlobalScheduler(object):
         with self.mutex:
             for request_id, responses in local_responses.items():
                 self.local_responses[request_id] += responses
+                # count += len(responses)  # for test
 
             for request_id in finished_request_ids:
                 if request_id in self.stolen_requests:
@@ -572,6 +630,8 @@ class GlobalScheduler(object):
 
         for response_queue_name, responses in stolen_responses.items():
             self.client.rpush(response_queue_name, *responses, ttl=self.ttl)
+            # count += len(responses)  # for test
+        # return [Task("", count)]  # for test
 
     def put_results(self, results: List[RequestOutput]):
         """
@@ -583,6 +643,14 @@ class GlobalScheduler(object):
         tasks: List[Task] = [Task(result.request_id, result)
                              for result in results]
         self.put_results_workers.add_tasks(tasks)
+
+        # ---- for test ----
+        # task_results = self.put_results_workers.get_results(10, 0.001)
+        # amount = 0
+        # for task_result in task_results:
+        #     amount += task_result.raw
+        # return amount
+        # ---- for test ----
 
     def _get_results_worker(self):
         """
@@ -622,7 +690,7 @@ class GlobalScheduler(object):
                     self.local_response_not_empty.notify_all()
             except Exception as e:
                 llm_logger.error(f"Scheduler get_results_worker exception: {e} "
-                                 f"traceback: {traceback.format_exc()}")
+                                   f"traceback: {traceback.format_exc()}")
 
     def get_results(self, request_ids: List[str]) -> Dict[str, List[RequestOutput]]:
         """

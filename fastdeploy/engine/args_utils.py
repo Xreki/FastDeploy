@@ -22,8 +22,6 @@ from fastdeploy.engine.config import (CacheConfig, Config, ModelConfig,
                                       TaskOption)
 from fastdeploy.scheduler.config import SchedulerConfig
 from fastdeploy.utils import FlexibleArgumentParser
-from paddlenlp.trainer import strtobool
-
 
 
 def nullable_str(x: str) -> Optional[str]:
@@ -178,7 +176,7 @@ class EngineArgs:
     """
     Size of scheduler
     """
-    scheduler_ttl: float = 900
+    scheduler_ttl: int = 900
     """
     TTL of request
     """
@@ -205,6 +203,10 @@ class EngineArgs:
     scheduler_min_load_score: float = 1
     """
     Minimum load score for task assignment
+    """
+    scheduler_load_shards_num: int = 1
+    """
+    Number of shards for load balancing table
     """
 
     def __post_init__(self):
@@ -233,8 +235,7 @@ class EngineArgs:
             "--tokenizer",
             type=nullable_str,
             default=EngineArgs.tokenizer,
-            help=
-            "Tokenizer name or path (defaults to model path if not specified)."
+            help="Tokenizer name or path (defaults to model path if not specified)."
         )
         model_group.add_argument(
             "--max-model-len",
@@ -354,8 +355,7 @@ class EngineArgs:
             "--pod-ips",
             type=lambda s: s.split(",") if s else None,
             default=EngineArgs.pod_ips,
-            help=
-            "List of IP addresses for nodes in the cluster (comma-separated).")
+            help="List of IP addresses for nodes in the cluster (comma-separated).")
         system_group.add_argument("--nnode",
                                   type=int,
                                   default=EngineArgs.nnode,
@@ -400,8 +400,8 @@ class EngineArgs:
             "--max-long-partial-prefills",
             type=int,
             default=EngineArgs.max_long_partial_prefills,
-            help=("For chunked prefill, the maximum number of prompts longer than long-prefill-token-threshold" 
-                    "that will be prefilled concurrently.")
+            help=("For chunked prefill, the maximum number of prompts longer than long-prefill-token-threshold"
+                  "that will be prefilled concurrently.")
         )
         perf_group.add_argument(
             "--long-prefill-token-threshold",
@@ -415,35 +415,30 @@ class EngineArgs:
         scheduler_group.add_argument(
             "--scheduler-name",
             default=EngineArgs.scheduler_name,
-            help=
-            f"Scheduler name to be used. Default is {EngineArgs.scheduler_name}. (local,global)"
+            help=f"Scheduler name to be used. Default is {EngineArgs.scheduler_name}. (local,global)"
         )
         scheduler_group.add_argument(
             "--scheduler-max-size",
             type=int,
             default=EngineArgs.scheduler_max_size,
-            help=
-            f"Size of scheduler. Default is {EngineArgs.scheduler_max_size}. (Local)"
+            help=f"Size of scheduler. Default is {EngineArgs.scheduler_max_size}. (Local)"
         )
         scheduler_group.add_argument(
             "--scheduler-ttl",
-            type=float,
+            type=int,
             default=EngineArgs.scheduler_ttl,
-            help=
-            f"TTL of request. Default is {EngineArgs.scheduler_ttl} seconds. (local,global)"
+            help=f"TTL of request. Default is {EngineArgs.scheduler_ttl} seconds. (local,global)"
         )
         scheduler_group.add_argument(
             "--scheduler-host",
             default=EngineArgs.scheduler_host,
-            help=
-            f"Host address of redis. Default is {EngineArgs.scheduler_host}. (global)"
+            help=f"Host address of redis. Default is {EngineArgs.scheduler_host}. (global)"
         )
         scheduler_group.add_argument(
             "--scheduler-port",
             type=int,
             default=EngineArgs.scheduler_port,
-            help=
-            f"Port of redis. Default is {EngineArgs.scheduler_port}. (global)")
+            help=f"Port of redis. Default is {EngineArgs.scheduler_port}. (global)")
         scheduler_group.add_argument(
             "--scheduler-db",
             type=int,
@@ -453,20 +448,25 @@ class EngineArgs:
         scheduler_group.add_argument(
             "--scheduler-password",
             default=EngineArgs.scheduler_password,
-            help=
-            f"Password of redis. Default is {EngineArgs.scheduler_password}. (global)"
+            help=f"Password of redis. Default is {EngineArgs.scheduler_password}. (global)"
         )
         scheduler_group.add_argument(
             "--scheduler-topic",
             default=EngineArgs.scheduler_topic,
-            help=
-            f"Topic of scheduler. Defaule is {EngineArgs.scheduler_topic}. (global)"
+            help=f"Topic of scheduler. Defaule is {EngineArgs.scheduler_topic}. (global)"
         )
         scheduler_group.add_argument(
             "--scheduler-min-load-score",
             type=float,
             default=EngineArgs.scheduler_min_load_score,
             help=f"Minimum load score for task assignment. Default is {EngineArgs.scheduler_min_load_score} (global)"
+        )
+        scheduler_group.add_argument(
+            "--scheduler-load-shards-num",
+            type=int,
+            default=EngineArgs.scheduler_load_shards_num,
+            help=("Number of shards for load balancing table. Default is "
+                  f"{EngineArgs.scheduler_load_shards_num} (global)")
         )
 
         return parser
@@ -514,8 +514,8 @@ class EngineArgs:
         """
         prefix = "scheduler_"
         prefix_len = len(prefix)
-        extra_params = ["max_model_len", "enable_chunked_prefill", 
-                        "max_num_partial_prefills", "max_long_partial_prefills", 
+        extra_params = ["max_model_len", "enable_chunked_prefill",
+                        "max_num_partial_prefills", "max_long_partial_prefills",
                         "long_prefill_token_threshold"]
 
         all = asdict(self)
