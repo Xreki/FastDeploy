@@ -126,6 +126,7 @@ class ModelRunner(ModelRunnerBase):
             moe_group="dummy",
         )
         config.is_mtp = False
+        config.use_ep = False
         self.model_cfg = config
         if self.is_safetensors_model:
             meta_json = os.path.join(self.args.model_name_or_path,
