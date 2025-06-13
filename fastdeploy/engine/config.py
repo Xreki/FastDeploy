@@ -21,7 +21,11 @@ from typing import Literal, Optional, Dict, List, Any
 
 from fastdeploy.utils import llm_logger, check_unified_ckpt, get_host_ip, is_port_available
 from fastdeploy.download_model import download_from_txt
-from fastdeploy.scheduler import SchedulerConfig                                 
+from fastdeploy.scheduler import SchedulerConfig
+
+from pathlib import Path
+from aistudio_sdk.snapshot_download import snapshot_download
+
 
 TaskOption = Literal["generate"]
 
@@ -47,6 +51,16 @@ class ModelConfig:
             config_json_file (str): Path to the configuration JSON file. Default is 'config.json'.
             download_dir (Optional[str]): Directory to download model files. Default is None.
         """
+        if model_name_or_path:
+            path = Path(model_name_or_path)
+            if not path.exists():
+                try:
+                    local_path = os.getenv("FD_MODEL_CACHE", default=f'{os.getenv("HOME")}/{model_name_or_path}')
+                    snapshot_download(repo_id=model_name_or_path, revision="master",
+                                      local_dir=local_path)
+                    model_name_or_path = local_path
+                except Exception as e:
+                    llm_logger.error(f"{model_name_or_path} not exist:{e}")
         self.model_dir = model_name_or_path
         self.is_unified_ckpt = check_unified_ckpt(self.model_dir)
         self.dynamic_load_weight = dynamic_load_weight
