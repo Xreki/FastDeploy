@@ -45,7 +45,7 @@ from safetensors import safe_open
 from tqdm import tqdm
 
 from fastdeploy.platforms import current_platform
-from fastsafetensors import SafeTensorsFileLoader, SingleGroup
+
 from .configuration import ErnieBotConfig, QuantizationConfig
 from .tokenizer import ErnieBotTokenizer
 
@@ -1292,12 +1292,11 @@ def safetensors_weights_iterator(safe_tensor_list: list[str], ):
                 yield name, param
 
 
-def fastsafetensors_weights_iterator(
-    safetensor_list: list[str]
-):
+def fastsafetensors_weights_iterator(safetensor_list: list[str]):
     """
     fastsafetensors_weights_iterator
     """
+    from fastsafetensors import SafeTensorsFileLoader, SingleGroup
     world_size = dist.get_world_size()
     if world_size > 1:
         dist.init_parallel_env()
@@ -1305,18 +1304,22 @@ def fastsafetensors_weights_iterator(
         device = f"gpu:{pg.rank}" if paddle.is_compiled_with_cuda() else "cpu"
     else:
         pg = SingleGroup()
-        device = f"gpu:{pg.rank()}" if paddle.is_compiled_with_cuda() else "cpu"
+        device = f"gpu:{pg.rank()}" if paddle.is_compiled_with_cuda(
+        ) else "cpu"
 
     safetensor_files_sub_lists = [
         safetensor_list[i:i + world_size]
         for i in range(0, len(safetensor_list), world_size)
     ]
     for st_file in tqdm(
-        safetensor_files_sub_lists,
-        desc="Loading fastsafetensors checkpoint shards",
+            safetensor_files_sub_lists,
+            desc="Loading fastsafetensors checkpoint shards",
     ):
-        loader = SafeTensorsFileLoader(
-            pg, device, nogds=True, debug_log=False, framework="paddle")
+        loader = SafeTensorsFileLoader(pg,
+                                       device,
+                                       nogds=True,
+                                       debug_log=False,
+                                       framework="paddle")
         rank_file_map = {i: [f] for i, f in enumerate(st_file)}
         loader.add_filenames(rank_file_map)
         try:
@@ -1332,14 +1335,13 @@ def fastsafetensors_weights_iterator(
             loader.close()
 
 
-def get_state_dict(model_path, config, use_fastsafetensor=True):
+def get_state_dict(model_path, config, use_fastsafetensor=False):
     """
     get_state_dict
     """
     state_dict = {}
     _, safetensor_list = get_safetensor_file(
-        os.path.join(model_path, f"rank{config.tensor_parallel_rank}")
-    )
+        os.path.join(model_path, f"rank{config.tensor_parallel_rank}"))
     if use_fastsafetensor:
         weights_iterator = fastsafetensors_weights_iterator(safetensor_list)
     else:
@@ -1372,10 +1374,10 @@ def get_tp_state_dict(model_path, cls, config, use_fastsafetensor=True):
     """
     loaded_state_dict_keys, safetensor_list = get_safetensor_file(model_path)
 
-    name_action_mappings = cls._get_tensor_parallel_mappings(
-        config, is_split=True)
-    state_keys_map = cls._resolve_prefix_keys(
-        name_action_mappings.keys(), loaded_state_dict_keys)
+    name_action_mappings = cls._get_tensor_parallel_mappings(config,
+                                                             is_split=True)
+    state_keys_map = cls._resolve_prefix_keys(name_action_mappings.keys(),
+                                              loaded_state_dict_keys)
     for k, v in state_keys_map.items():
         name_action_mappings[v] = name_action_mappings.pop(k)
 
@@ -1388,8 +1390,7 @@ def get_tp_state_dict(model_path, cls, config, use_fastsafetensor=True):
         name_action_quant_mappings = cls._get_tensor_quantization_mappings(
             config)
         quant_state_keys_map = cls._resolve_prefix_keys(
-            name_action_quant_mappings.keys(), loaded_state_dict_keys
-        )
+            name_action_quant_mappings.keys(), loaded_state_dict_keys)
         for k, v in quant_state_keys_map.items():
             name_action_quant_mappings[v] = name_action_quant_mappings.pop(k)
     state_dict = {}
@@ -1410,14 +1411,14 @@ def load_checkpoint(model_path, cls, config, return_numpy=True, load_gpu=True):
     load checkpoint
     """
     if config.use_ep:
-        state_dict = load_ep_checkpoint(
-            model_path, config, return_numpy=True, return_key_name=True
-        )
+        state_dict = load_ep_checkpoint(model_path,
+                                        config,
+                                        return_numpy=True,
+                                        return_key_name=True)
     else:
         rank_dirs = [
-            f
-            for f in os.listdir(model_path)
-            if f.startswith("rank") and os.path.isdir(os.path.join(model_path, f))
+            f for f in os.listdir(model_path) if f.startswith("rank")
+            and os.path.isdir(os.path.join(model_path, f))
         ]
         if len(rank_dirs) > 1:
             if config.tensor_parallel_degree != len(rank_dirs):
@@ -1426,9 +1427,10 @@ def load_checkpoint(model_path, cls, config, return_numpy=True, load_gpu=True):
                 )
             state_dict = get_state_dict(model_path, config)
         else:
-            state_dict = load_tp_checkpoint(
-                model_path, cls, config, return_numpy=return_numpy
-            )
+            state_dict = load_tp_checkpoint(model_path,
+                                            cls,
+                                            config,
+                                            return_numpy=return_numpy)
     return state_dict
 
 

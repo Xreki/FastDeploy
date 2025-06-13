@@ -415,8 +415,6 @@ class ModelRunner(ModelRunnerBase):
 
         self.attn_backend.init_attention_metadata(self.forward_meta)
 
-        self.share_inputs["forward_meta"] = self.forward_meta
-
         self.sampling_metadata = SamplingMetadata(
             temperature=self.share_inputs["temperature"],
             top_p=self.share_inputs["top_p"],
@@ -441,7 +439,7 @@ class ModelRunner(ModelRunnerBase):
             self.share_inputs["seq_lens_this_time"],
             self.share_inputs["seq_lens_decoder"],
             self.share_inputs["seq_lens_encoder"],
-            None,  #self.share_inputs["padding_offset"],
+            None,  # speculative decoding requires
             self.args.max_model_len,
         )
         logits = self.model.compute_logits(hiddden_states)

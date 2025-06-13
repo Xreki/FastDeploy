@@ -694,8 +694,6 @@ class ModelRunner(ModelRunnerBase):
 
         self.attn_backend.init_attention_metadata(self.forward_meta)
 
-        self.share_inputs["forward_meta"] = self.forward_meta
-
         self.sampling_metadata = SamplingMetadata(
             temperature=self.share_inputs["temperature"],
             top_p=self.share_inputs["top_p"],
