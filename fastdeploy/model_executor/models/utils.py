@@ -1410,7 +1410,7 @@ def load_checkpoint(model_path, cls, config, return_numpy=True, load_gpu=True):
     """
     load checkpoint
     """
-    if config.use_ep:
+    if getattr(config, "use_ep", False):
         state_dict = load_ep_checkpoint(model_path,
                                         config,
                                         return_numpy=True,
