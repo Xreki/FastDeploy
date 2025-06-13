@@ -260,40 +260,50 @@ struct UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt2, TileRows,
 
     int tid = threadIdx.x;
 
+#pragma unroll
     for (int col = tid; col < TileColumns; col += NumThreads) {
-      for (int row = 0; row < TileRows; ++row) {
-        int zipped_row = row / kPackNum;
-        int zipped_offset = zipped_row * in_stride + col;
-        ScaleComputeT zipped_value =
-            static_cast<ScaleComputeT>(in_ptr[zipped_offset]);
-        ScaleComputeT code_scale =
-            static_cast<ScaleComputeT>(code_scale_ptr[col]);
-        ScaleComputeT code_zp = static_cast<ScaleComputeT>(code_zp_ptr[col]);
+      ScaleComputeT super_scale =
+          super_scale_ptr ? static_cast<ScaleComputeT>(super_scale_ptr[col])
+                          : static_cast<ScaleComputeT>(1);
 
-        int32_t decode_value =
-            static_cast<int32_t>(floor(zipped_value * code_scale + code_zp +
-                                       static_cast<ScaleComputeT>(0.5)));
-        int32_t shift_bit = shift_bits[row % kPackNum];
-        int32_t shifted_value = (decode_value >> shift_bit) & kWeightMask;
-
-        int local_scale_row = row / (kGroupSize * 2);
-        int local_scale_offset = local_scale_row * in_stride + col;
+#pragma unroll
+      for (int group_id = 0; group_id < TileRows / 64; ++group_id) {
+        int local_scale_offset = (group_id / 2) * in_stride + col;
         int local_scale_shift =
-            (((block_start_row + row) / kGroupSize) % 2) * 4;
+            ((block_start_row / kGroupSize + group_id) % 2) * 4;
         int32_t local_scale =
             static_cast<int32_t>(local_scale_ptr[local_scale_offset]);
         int32_t shifted_local_scale =
             (local_scale >> local_scale_shift) & kLocalScaleMask;
-        ScaleComputeT scale = static_cast<ScaleComputeT>(shifted_local_scale);
+        ScaleComputeT scale =
+            static_cast<ScaleComputeT>(shifted_local_scale) * super_scale;
 
-        if (super_scale_ptr) {
-          ScaleComputeT super_scale =
-              static_cast<ScaleComputeT>(super_scale_ptr[col]);
-          scale = scale * super_scale;
+        ScaleComputeT code_scale =
+            static_cast<ScaleComputeT>(code_scale_ptr[col]);
+        ScaleComputeT code_zp = static_cast<ScaleComputeT>(code_zp_ptr[col]);
+
+#pragma unroll
+        for (int zipped_row = 0; zipped_row < 16; ++zipped_row) {
+          int zipped_offset = zipped_row * in_stride + col;
+          ScaleComputeT zipped_value =
+              static_cast<ScaleComputeT>(in_ptr[zipped_offset]);
+          int32_t decode_value =
+              static_cast<int32_t>(floor(zipped_value * code_scale + code_zp +
+                                         static_cast<ScaleComputeT>(0.5)));
+
+          int row = group_id * 64 + zipped_row * 4;
+
+#pragma unroll
+          for (int shift_bit_id = 0; shift_bit_id < 4; ++shift_bit_id) {
+            int32_t shift_bit = shift_bits[shift_bit_id];
+            int32_t shifted_value = (decode_value >> shift_bit) & kWeightMask;
+
+            ScaleComputeT value =
+                static_cast<ScaleComputeT>(shifted_value - kBZP);
+            out_ptr[(row + shift_bit_id) * TileColumns + col] =
+                static_cast<T>(scale * value);
+          }
         }
-
-        ScaleComputeT value = static_cast<ScaleComputeT>(shifted_value - kBZP);
-        out_ptr[row * TileColumns + col] = static_cast<T>(scale * value);
       }
     }
     __syncthreads();
