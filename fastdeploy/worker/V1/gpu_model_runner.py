@@ -676,9 +676,6 @@ class GPUModelRunner(ModelRunnerBase):
         - cache_int4:
         """
         cache_quant_dtype = self.kv_cache_config.cache_quant_dtype
-        print(
-            f"parallel_config.dtype: {self.kv_cache_config.cache_quant_dtype}")
-        print(f"cache_quant_dtype: {cache_quant_dtype}")
 
         if cache_quant_dtype == "cache_int8":
             byte_of_dtype = 1
