@@ -25,5 +25,4 @@ setuptools-scm>=8
 prometheus-client
 decord
 moviepy
-aistudio-sdk>0.2.6
 fastsafetensors @ https://paddlenlp.bj.bcebos.com/whl/fastsafetensors-0.1.13-cp310-cp310-linux_x86_64.whl

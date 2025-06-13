@@ -24,7 +24,6 @@ from fastdeploy.download_model import download_from_txt
 from fastdeploy.scheduler import SchedulerConfig
 
 from pathlib import Path
-from aistudio_sdk.snapshot_download import snapshot_download
 
 
 TaskOption = Literal["generate"]
@@ -54,6 +53,7 @@ class ModelConfig:
         if model_name_or_path:
             path = Path(model_name_or_path)
             if not path.exists():
+                from aistudio_sdk.snapshot_download import snapshot_download
                 try:
                     local_path = os.getenv("FD_MODEL_CACHE", default=f'{os.getenv("HOME")}/{model_name_or_path}')
                     snapshot_download(repo_id=model_name_or_path, revision="master",
