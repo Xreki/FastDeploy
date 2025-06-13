@@ -594,10 +594,10 @@ class ErnieForCausalLM(ModelForCasualLM):
                 and values are NumPy arrays or PaddlePaddle tensors.
         """
         self.model.load_state_dict(state_dict)
-        self.lm_head.load_state_dict(state_dict)
         if self.tie_word_embeddings:
-            self.model.embeddings.word_embeddings.weight.set_value(
-                self.lm_head.out_linear.weight.transpose([1, 0]))
+            self.lm_head.out_linear.weight.set_value(
+                self.model.embeddings.word_embeddings.weight.transpose([1, 0])
+                )
 
     def compute_logits(self, hidden_states: paddle.Tensor):
         logits = self.lm_head(hidden_states)
