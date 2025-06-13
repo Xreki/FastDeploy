@@ -68,6 +68,7 @@ void generic_moe_gemm_kernelLauncher(const T* A,
                                      int64_t gemm_n,
                                      int64_t gemm_k,
                                      int num_experts,
+                                     const typename WeightQuantTraits::Arguments& quant_args_B,
                                      CutlassGemmConfig gemm_config,
                                      const int multi_processor_count,
                                      cudaStream_t stream,
@@ -103,7 +104,7 @@ void generic_moe_gemm_kernelLauncher(const T* A,
   using CutlassMmaWeightType = typename WeightQuantTraits::MmaWeightType;
 
   CUTLASS_TRACE_HOST("A: " << A << ", ElementType: " << GetCutlassDataTypeString<ElementType>());
-  CUTLASS_TRACE_HOST("B: " << B << ", CutlassWeightType: " << GetCutlassDataTypeString<CutlassWeightType>());
+  CUTLASS_TRACE_HOST("B: " << reinterpret_cast<const void*>(B) << ", CutlassWeightType: " << GetCutlassDataTypeString<CutlassWeightType>());
   CUTLASS_TRACE_HOST("CutlassMmaWeightType: " << GetCutlassDataTypeString<CutlassMmaWeightType>());
 
   // We need separate config for each architecture since we will target
@@ -170,6 +171,15 @@ void generic_moe_gemm_kernelLauncher(const T* A,
   typename EpilogueOp::Params epilogue_op(ElementAccumulator(1.f),
                                           ElementAccumulator(0.f));
 
+  const uint8_t* local_scale_B = nullptr;
+  const float* code_scale_B = nullptr;
+  const float* code_zp_B = nullptr;
+  if constexpr (WeightQuantTraits::kQuantMethod == WintQuantMethod::kWeightOnlyInt2) {
+    local_scale_B = quant_args_B.local_scale_ptr;
+    code_scale_B = quant_args_B.code_scale_ptr;
+    code_zp_B = quant_args_B.code_zp_ptr;
+  }
+
   typename GemmGrouped::Arguments args(
       num_experts,
       threadblock_count,
@@ -183,7 +193,10 @@ void generic_moe_gemm_kernelLauncher(const T* A,
       total_rows,
       gemm_n,
       gemm_k,
-      WeightQuantTraits::kQuantMethod);
+      WeightQuantTraits::kQuantMethod,
+      local_scale_B,
+      code_scale_B,
+      code_zp_B);
 
   GemmGrouped gemm;
 
@@ -230,6 +243,7 @@ struct dispatch_stages {
                        int64_t gemm_n,
                        int64_t gemm_k,
                        int num_experts,
+                       const typename WeightQuantTraits::Arguments& quant_args_B,
                        CutlassGemmConfig gemm_config,
                        int multi_processor_count,
                        cudaStream_t stream,
@@ -265,6 +279,7 @@ struct dispatch_stages<T,
                        int64_t gemm_n,
                        int64_t gemm_k,
                        int num_experts,
+                       const typename WeightQuantTraits::Arguments& quant_args_B,
                        CutlassGemmConfig gemm_config,
                        int multi_processor_count,
                        cudaStream_t stream,
@@ -285,6 +300,7 @@ struct dispatch_stages<T,
                                        gemm_n,
                                        gemm_k,
                                        num_experts,
+                                       quant_args_B,
                                        gemm_config,
                                        multi_processor_count,
                                        stream,
@@ -316,6 +332,7 @@ struct dispatch_stages<T,
                        int64_t gemm_n,
                        int64_t gemm_k,
                        int num_experts,
+                       const typename WeightQuantTraits::Arguments& quant_args_B,
                        CutlassGemmConfig gemm_config,
                        int multi_processor_count,
                        cudaStream_t stream,
@@ -336,6 +353,7 @@ struct dispatch_stages<T,
                                             gemm_n,
                                             gemm_k,
                                             num_experts,
+                                            quant_args_B,
                                             gemm_config,
                                             multi_processor_count,
                                             stream,
@@ -359,6 +377,7 @@ void dispatch_gemm_config(const T* A,
                           int64_t gemm_n,
                           int64_t gemm_k,
                           int num_experts,
+                          const typename WeightQuantTraits::Arguments& quant_args_B,
                           CutlassGemmConfig gemm_config,
                           int multi_processor_count,
                           cudaStream_t stream,
@@ -381,6 +400,7 @@ void dispatch_gemm_config(const T* A,
                                      gemm_n,                   \
                                      gemm_k,                   \
                                      num_experts,              \
+                                     quant_args_B,             \
                                      gemm_config,              \
                                      multi_processor_count,    \
                                      stream,                   \
@@ -420,6 +440,7 @@ void dispatch_gemm_config(const T* A,
         gemm_n,                                                 \
         gemm_k,                                                 \
         num_experts,                                            \
+        quant_args_B,                                           \
         gemm_config,                                            \
         multi_processor_count,                                  \
         stream,                                                 \
@@ -445,15 +466,16 @@ void dispatch_moe_gemm_to_cutlass(const T* A,
                                   int64_t gemm_n,
                                   int64_t gemm_k,
                                   int num_experts,
+                                  const typename WeightQuantTraits::Arguments& quant_args_B,
                                   CutlassGemmConfig gemm_config,
                                   int sm_version,
                                   int multi_processor_count,
                                   cudaStream_t stream,
                                   int* occupancy = nullptr) {
   switch (gemm_config.tile_config) {
-    dispatch_gemm_config_macro(32, 128, 64, 32, 32, 64);
-    dispatch_gemm_config_macro(64, 128, 64, 32, 64, 64);
-    dispatch_gemm_config_macro(128, 128, 64, 64, 32, 64);
+    //dispatch_gemm_config_macro(32, 128, 64, 32, 32, 64);
+    //dispatch_gemm_config_macro(64, 128, 64, 32, 64, 64);
+    //dispatch_gemm_config_macro(128, 128, 64, 64, 32, 64);
     case CutlassTileConfig::Undefined:
       throw std::runtime_error("[dispatch_moe_gemm_to_cutlass] gemm config undefined.");
       break;
@@ -490,6 +512,7 @@ void dispatch_moe_gemm_to_cutlass(const T* A,
                                   int64_t gemm_n,
                                   int64_t gemm_k,
                                   int num_experts,
+                                  const typename WeightQuantTraits::Arguments& quant_args_B,
                                   CutlassGemmConfig gemm_config,
                                   int sm_version,
                                   int multi_processor_count,
@@ -497,8 +520,8 @@ void dispatch_moe_gemm_to_cutlass(const T* A,
                                   int* occupancy = nullptr) {
   if constexpr (std::is_same<arch, cutlass::arch::Sm70>::value) {
     switch (gemm_config.tile_config) {
-      dispatch_gemm_config_macro(32, 128, 64, 32, 32, 64);
-      dispatch_gemm_config_macro(64, 128, 64, 64, 64, 64);
+      //dispatch_gemm_config_macro(32, 128, 64, 32, 32, 64);
+      //dispatch_gemm_config_macro(64, 128, 64, 64, 64, 64);
       case CutlassTileConfig::Undefined:
         throw std::runtime_error("[dispatch_moe_gemm_to_cutlass] gemm config undefined.");
         break;
@@ -516,16 +539,16 @@ void dispatch_moe_gemm_to_cutlass(const T* A,
   } else {
     switch (gemm_config.tile_config) {
       dispatch_gemm_config_macro(16, 128, 64, 16, 32, 64);
-      dispatch_gemm_config_macro(16, 256, 64, 16, 64, 64);
-      dispatch_gemm_config_macro(64, 64, 64, 32, 32, 64);
-      dispatch_gemm_config_macro(32, 128, 64, 32, 32, 64);
-      dispatch_gemm_config_macro(128, 64, 64, 64, 32, 64);
-      dispatch_gemm_config_macro(64, 128, 64, 64, 64, 64);
-      dispatch_gemm_config_macro(128, 128, 64, 64, 64, 64);
-      dispatch_gemm_config_macro(128, 128, 64, 128, 32, 64);
-      dispatch_gemm_config_macro(128, 256, 64, 64, 64, 64);
-      dispatch_gemm_config_macro(64, 128, 64, 64, 32, 64);
-      dispatch_gemm_config_macro(256, 128, 64, 64, 64, 64);
+      //dispatch_gemm_config_macro(16, 256, 64, 16, 64, 64);
+      //dispatch_gemm_config_macro(64, 64, 64, 32, 32, 64);
+      //dispatch_gemm_config_macro(32, 128, 64, 32, 32, 64);
+      //dispatch_gemm_config_macro(128, 64, 64, 64, 32, 64);
+      //dispatch_gemm_config_macro(64, 128, 64, 64, 64, 64);
+      //dispatch_gemm_config_macro(128, 128, 64, 64, 64, 64);
+      //dispatch_gemm_config_macro(128, 128, 64, 128, 32, 64);
+      //dispatch_gemm_config_macro(128, 256, 64, 64, 64, 64);
+      //dispatch_gemm_config_macro(64, 128, 64, 64, 32, 64);
+      //dispatch_gemm_config_macro(256, 128, 64, 64, 64, 64);
       case CutlassTileConfig::Undefined:
         throw std::runtime_error("[dispatch_moe_gemm_to_cutlass] gemm config undefined.");
         break;
@@ -560,13 +583,14 @@ void dispatch_moe_gemm_to_cutlass(const T* A,
                                   int64_t gemm_n,
                                   int64_t gemm_k,
                                   int num_experts,
+                                  const typename WeightQuantTraits::Arguments& quant_args_B,
                                   CutlassGemmConfig gemm_config,
                                   int sm_version,
                                   int multi_processor_count,
                                   cudaStream_t stream,
                                   int* occupancy = nullptr) {
   switch (gemm_config.tile_config) {
-    dispatch_gemm_config_macro(128, 128, 8, 64, 64, 8);
+    //dispatch_gemm_config_macro(128, 128, 8, 64, 64, 8);
     case CutlassTileConfig::Undefined:
       throw std::runtime_error(
           "[dispatch_moe_gemm_to_cutlass][SIMT] gemm config "
@@ -607,6 +631,7 @@ void MoeGemmRunner<T, WeightQuantTraits>::dispatch_to_arch<EpilogueTag>(
     int64_t gemm_n,
     int64_t gemm_k,
     int num_experts,
+    const typename WeightQuantTraits::Arguments& quant_args_B,
     CutlassGemmConfig gemm_config,
     cudaStream_t stream,
     int* occupancy) {
@@ -622,6 +647,7 @@ void MoeGemmRunner<T, WeightQuantTraits>::dispatch_to_arch<EpilogueTag>(
       gemm_n,                                                     \
       gemm_k,                                                     \
       num_experts,                                                \
+      quant_args_B,                                               \
       gemm_config,                                                \
       sm_,                                                        \
       multi_processor_count_,                                     \
@@ -629,10 +655,10 @@ void MoeGemmRunner<T, WeightQuantTraits>::dispatch_to_arch<EpilogueTag>(
       occupancy);
 
   if (sm_ >= 70 && sm_ < 75) {
-    dispatch_moe_gemm_to_cutlass_macro(cutlass::arch::Sm70);
+    // dispatch_moe_gemm_to_cutlass_macro(cutlass::arch::Sm70);
   } else if (sm_ >= 75 && sm_ < 80) {
     CUTLASS_TRACE_HOST("Call dispatch_moe_gemm_to_cutlass with cutlass::arch::Sm80.")
-    dispatch_moe_gemm_to_cutlass_macro(cutlass::arch::Sm75);
+    // dispatch_moe_gemm_to_cutlass_macro(cutlass::arch::Sm75);
   } else if (sm_ >= 80 && sm_ < 91) {
     CUTLASS_TRACE_HOST("Call dispatch_moe_gemm_to_cutlass with cutlass::arch::Sm80.")
     dispatch_moe_gemm_to_cutlass_macro(cutlass::arch::Sm80);
@@ -655,12 +681,13 @@ void MoeGemmRunner<T, WeightQuantTraits>::run_gemm<EpilogueTag>(
     int64_t gemm_n,
     int64_t gemm_k,
     int num_experts,
+    const typename WeightQuantTraits::Arguments& quant_args_B,
     cudaStream_t stream) {
   static constexpr bool is_weight_only = !std::is_same<T, typename WeightQuantTraits::WeightType>::value;
   static constexpr bool only_simt_configs = std::is_same<T, float>::value;
   CUTLASS_TRACE_HOST("total_rows: " << total_rows << ", actual_total_rows: " << actual_total_rows << ", gemm_n: " << gemm_n << ", gemm_k: " << gemm_k << ", num_experts: " << num_experts << ", stream: " << stream);
   CUTLASS_TRACE_HOST("sm: " << sm_ << ", is_weight_only: " << is_weight_only << ", only_simt_configs: " << only_simt_configs);
-
+  
   std::vector<CutlassGemmConfig> candidate_configs =
       get_candidate_configs(sm_, -1, is_weight_only, only_simt_configs, true);
   CUTLASS_TRACE_HOST("get_candidate_configs(): number of candidate_configs: " << candidate_configs.size());
@@ -686,7 +713,9 @@ void MoeGemmRunner<T, WeightQuantTraits>::run_gemm<EpilogueTag>(
         std::min(gemmConfigManager.nextPowerOfTwo(actual_total_rows),
                  gemmConfigManager.getMaxProfileM());
     bool find_one = false;
-    for (size_t ii = 0; ii < candidate_configs.size(); ++ii) {
+    // for (size_t ii = 0; ii < candidate_configs.size(); ++ii) 
+    {
+      size_t ii = 2;
       try {
         for (int i = 0; i < warm_time; i++) {
           dispatch_to_arch<EpilogueTag>(A,
@@ -699,6 +728,7 @@ void MoeGemmRunner<T, WeightQuantTraits>::run_gemm<EpilogueTag>(
                                         gemm_n,
                                         gemm_k,
                                         num_experts,
+                                        quant_args_B,
                                         candidate_configs[ii],
                                         stream);
         }
@@ -719,6 +749,7 @@ void MoeGemmRunner<T, WeightQuantTraits>::run_gemm<EpilogueTag>(
                                         gemm_n,
                                         gemm_k,
                                         num_experts,
+                                        quant_args_B,
                                         candidate_configs[ii],
                                         stream);
         }
@@ -759,6 +790,7 @@ void MoeGemmRunner<T, WeightQuantTraits>::run_gemm<EpilogueTag>(
                                 gemm_n,
                                 gemm_k,
                                 num_experts,
+                                quant_args_B,
                                 chosen_config,
                                 stream);
 }
@@ -776,6 +808,7 @@ void MoeGemmRunner<T, WeightQuantTraits>::moe_gemm_bias_act(
     int64_t gemm_n,
     int64_t gemm_k,
     int num_experts,
+    const typename WeightQuantTraits::Arguments& quant_args_B,
     std::string activation_type,
     cudaStream_t stream) {
   if (activation_type == "none") {
@@ -791,6 +824,7 @@ void MoeGemmRunner<T, WeightQuantTraits>::moe_gemm_bias_act(
                                gemm_n,
                                gemm_k,
                                num_experts,
+                               quant_args_B,
                                stream);
     } else {
       run_gemm<EpilogueOpNoBias>(A,
@@ -804,23 +838,26 @@ void MoeGemmRunner<T, WeightQuantTraits>::moe_gemm_bias_act(
                                  gemm_n,
                                  gemm_k,
                                  num_experts,
+                                 quant_args_B,
                                  stream);
     }
   }
 }
 
 template <typename T, typename WeightQuantTraits>
-void MoeGemmRunner<T, WeightQuantTraits>::moe_gemm(const T* A,
-                                            const typename WeightQuantTraits::WeightType* B,
-                                            const T* weight_scales,
-                                            T* C,
-                                            int64_t* total_rows_before_expert,
-                                            int64_t total_rows,
-                                            int64_t actual_total_rows,
-                                            int64_t gemm_n,
-                                            int64_t gemm_k,
-                                            int num_experts,
-                                            cudaStream_t stream) {
+void MoeGemmRunner<T, WeightQuantTraits>::moe_gemm(
+    const T* A,
+    const typename WeightQuantTraits::WeightType* B,
+    const T* weight_scales,
+    T* C,
+    int64_t* total_rows_before_expert,
+    int64_t total_rows,
+    int64_t actual_total_rows,
+    int64_t gemm_n,
+    int64_t gemm_k,
+    int num_experts,
+    const typename WeightQuantTraits::Arguments& quant_args_B,
+    cudaStream_t stream) {
   run_gemm<EpilogueOpNoBias>(A,
                              B,
                              weight_scales,
@@ -832,6 +869,7 @@ void MoeGemmRunner<T, WeightQuantTraits>::moe_gemm(const T* A,
                              gemm_n,
                              gemm_k,
                              num_experts,
+                             quant_args_B,
                              stream);
 }
 

@@ -54,16 +54,15 @@ void moe_token_type_ids_kernelLauncher(T *gating_output,
 
 template <typename T, typename NvType> class MoeHelper {
 public:
+  using Fp16Traits = WintQuantTraits<NvType, WintQuantMethod::kNone>;
+  using Int8Traits = WintQuantTraits<NvType, WintQuantMethod::kWeightOnlyInt8>;
+  using Int4Traits = WintQuantTraits<NvType, WintQuantMethod::kWeightOnlyInt4>;
+
   MoeHelper(
       const std::string gemm_method,
-      MoeGemmRunner<NvType, WintQuantTraits<NvType, WintQuantMethod::kNone>>
-          *fp16_moe_gemm_runner,
-      MoeGemmRunner<NvType,
-                    WintQuantTraits<NvType, WintQuantMethod::kWeightOnlyInt8>>
-          *int8_moe_gemm_runner,
-      MoeGemmRunner<NvType,
-                    WintQuantTraits<NvType, WintQuantMethod::kWeightOnlyInt4>>
-          *int4_moe_gemm_runner,
+      MoeGemmRunner<NvType, Fp16Traits> *fp16_moe_gemm_runner,
+      MoeGemmRunner<NvType, Int8Traits> *int8_moe_gemm_runner,
+      MoeGemmRunner<NvType, Int4Traits> *int4_moe_gemm_runner,
       int layernum = 0)
       : gemm_method_(gemm_method), fp16_moe_gemm_runner_(fp16_moe_gemm_runner),
         int8_moe_gemm_runner_(int8_moe_gemm_runner),
@@ -261,6 +260,7 @@ public:
                                      total_rows_before_expert_, stream);
 
     if (gemm_method_ == "weight_only_int8") {
+      typename Int8Traits::Arguments ffn1_quant_args;
       int8_moe_gemm_runner_->moe_gemm_bias_act(
           reinterpret_cast<NvType *>(permuted_data_),
           reinterpret_cast<const uint8_t *>(ffn1_weight->data<int8_t>()),
@@ -269,8 +269,9 @@ public:
           reinterpret_cast<NvType *>(fc1_out), total_rows_before_expert_,
           -1, // useless
           expanded_active_expert_rows, inter_size, hidden_size, num_experts,
-          "none", stream);
+          ffn1_quant_args, "none", stream);
     } else if (gemm_method_ == "weight_only_int4") {
+      typename Int4Traits::Arguments ffn1_quant_args;
       int4_moe_gemm_runner_->moe_gemm_bias_act(
           reinterpret_cast<NvType *>(permuted_data_),
           reinterpret_cast<const cutlass::uint4b_t *>(
@@ -280,8 +281,9 @@ public:
           reinterpret_cast<NvType *>(fc1_out), total_rows_before_expert_,
           -1, // useless
           expanded_active_expert_rows, inter_size, hidden_size, num_experts,
-          "none", stream);
+          ffn1_quant_args, "none", stream);
     } else {
+      typename Fp16Traits::Arguments ffn1_quant_args;
       fp16_moe_gemm_runner_->moe_gemm_bias_act(
           reinterpret_cast<NvType *>(permuted_data_),
           reinterpret_cast<const NvType *>(ffn1_weight->data<T>()), nullptr,
@@ -289,7 +291,7 @@ public:
           reinterpret_cast<NvType *>(fc1_out), total_rows_before_expert_,
           -1, // useless
           expanded_active_expert_rows, inter_size, hidden_size, num_experts,
-          "none", stream);
+          ffn1_quant_args, "none", stream);
     }
 
     if (moe_type == "ffn") {
@@ -302,6 +304,7 @@ public:
       T *fc2_result = fc2_output_tensor.data<T>();
 
       if (gemm_method_ == "weight_only_int8") {
+        typename Int8Traits::Arguments ffn2_quant_args;
         int8_moe_gemm_runner_->moe_gemm(
             reinterpret_cast<NvType *>(act_out),
             reinterpret_cast<const uint8_t *>(ffn2_weight->data<int8_t>()),
@@ -309,8 +312,9 @@ public:
             reinterpret_cast<NvType *>(fc2_result), total_rows_before_expert_,
             -1, // useless
             expanded_active_expert_rows, hidden_size, inter_size / 2,
-            num_experts, stream);
+            num_experts, ffn2_quant_args, stream);
       } else if (gemm_method_ == "weight_only_int4") {
+        typename Int4Traits::Arguments ffn2_quant_args;
         int4_moe_gemm_runner_->moe_gemm(
             reinterpret_cast<NvType *>(act_out),
             reinterpret_cast<const cutlass::uint4b_t *>(
@@ -319,15 +323,16 @@ public:
             reinterpret_cast<NvType *>(fc2_result), total_rows_before_expert_,
             -1, // useless
             expanded_active_expert_rows, hidden_size, inter_size / 2,
-            num_experts, stream);
+            num_experts, ffn2_quant_args, stream);
       } else {
+        typename Fp16Traits::Arguments ffn2_quant_args;
         fp16_moe_gemm_runner_->moe_gemm(
             reinterpret_cast<NvType *>(act_out),
             reinterpret_cast<const NvType *>(ffn2_weight->data<T>()), nullptr,
             reinterpret_cast<NvType *>(fc2_result), total_rows_before_expert_,
             -1, // useless
             expanded_active_expert_rows, hidden_size, inter_size / 2,
-            num_experts, stream);
+            num_experts, ffn2_quant_args, stream);
       }
 
       finalize_moe_routing_kernelLauncher<T>::run(
@@ -350,14 +355,9 @@ public:
 
 private:
   std::string gemm_method_;
-  MoeGemmRunner<NvType, WintQuantTraits<NvType, WintQuantMethod::kNone>>
-      *fp16_moe_gemm_runner_;
-  MoeGemmRunner<NvType,
-                WintQuantTraits<NvType, WintQuantMethod::kWeightOnlyInt8>>
-      *int8_moe_gemm_runner_;
-  MoeGemmRunner<NvType,
-                WintQuantTraits<NvType, WintQuantMethod::kWeightOnlyInt4>>
-      *int4_moe_gemm_runner_;
+  MoeGemmRunner<NvType, Fp16Traits> *fp16_moe_gemm_runner_;
+  MoeGemmRunner<NvType, Int8Traits> *int8_moe_gemm_runner_;
+  MoeGemmRunner<NvType, Int4Traits> *int4_moe_gemm_runner_;
   int layernum_;
   CubKeyValueSorter sorter_;
 };

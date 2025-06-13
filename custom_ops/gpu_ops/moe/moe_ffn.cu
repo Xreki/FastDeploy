@@ -27,8 +27,14 @@ void WeightOnlyMoeFFNKernel(const paddle::Tensor& permute_input,
                   const paddle::Tensor& ffn1_weight,
                   const paddle::Tensor& ffn2_weight,
                   const paddle::Tensor* ffn1_bias,
-                  const paddle::Tensor* ffn1_scale,
-                  const paddle::Tensor* ffn2_scale,
+                  const paddle::Tensor* ffn1_super_scale,
+                  const paddle::Tensor* ffn2_super_scale,
+                  const paddle::Tensor* ffn1_local_scale,
+                  const paddle::Tensor* ffn1_code_scale,
+                  const paddle::Tensor* ffn1_code_zp,
+                  const paddle::Tensor* ffn2_local_scale,
+                  const paddle::Tensor* ffn2_code_scale,
+                  const paddle::Tensor* ffn2_code_zp,
                   paddle::Tensor fc1_out,
                   paddle::Tensor ffn_out,
                   const int64_t total_rows_in_ll_else_minus1,
@@ -41,13 +47,24 @@ void WeightOnlyMoeFFNKernel(const paddle::Tensor& permute_input,
     using WeightOnlyTraits = WintQuantTraits<NvType, QuantMethod>;
     using WeightType = typename WeightOnlyTraits::WeightType;
 
+    typename WeightOnlyTraits::Arguments ffn1_quant_args;
+    typename WeightOnlyTraits::Arguments ffn2_quant_args;
+    if constexpr (QuantMethod == WintQuantMethod::kWeightOnlyInt2) {
+        ffn1_quant_args.local_scale_ptr = ffn1_local_scale->data<uint8_t>();
+        ffn1_quant_args.code_scale_ptr = ffn1_code_scale->data<float>();
+        ffn1_quant_args.code_zp_ptr = ffn1_code_zp->data<float>();
+        ffn2_quant_args.local_scale_ptr = ffn2_local_scale->data<uint8_t>();
+        ffn2_quant_args.code_scale_ptr = ffn2_code_scale->data<float>();
+        ffn2_quant_args.code_zp_ptr = ffn2_code_zp->data<float>();
+    }
+
     auto moe_gemm_runner = MoeGemmRunner<NvType, WeightOnlyTraits>();
     auto stream = permute_input.stream();
 
     moe_gemm_runner.moe_gemm_bias_act(
         reinterpret_cast<const NvType*>(permute_input.data<DataT>()),
         reinterpret_cast<const WeightType*>(ffn1_weight.data<WeightSavedT>()),
-        reinterpret_cast<const NvType*>(ffn1_scale ? ffn1_scale->data<DataT>() : nullptr),
+        reinterpret_cast<const NvType*>(ffn1_super_scale ? ffn1_super_scale->data<DataT>() : nullptr),
         reinterpret_cast<const NvType*>(ffn1_bias ? ffn1_bias->data<DataT>() : nullptr),
         reinterpret_cast<NvType*>(fc1_out.data<DataT>()),
         const_cast<int64_t*>(tokens_expert_prefix_sum.data<int64_t>()),
@@ -56,8 +73,10 @@ void WeightOnlyMoeFFNKernel(const paddle::Tensor& permute_input,
         inter_size,
         hidden_size,
         num_experts,
+        ffn1_quant_args,
         "none",
         stream);
+    // cudaDeviceSynchronize();
 
     paddle::Tensor act_out;
     if (used_in_ep_low_latency) {
@@ -70,7 +89,7 @@ void WeightOnlyMoeFFNKernel(const paddle::Tensor& permute_input,
     moe_gemm_runner.moe_gemm(
         reinterpret_cast<const NvType*>(act_out.data<DataT>()),
         reinterpret_cast<const WeightType*>(ffn2_weight.data<WeightSavedT>()),
-        reinterpret_cast<const NvType*>(ffn2_scale ? ffn2_scale->data<DataT>() : nullptr),
+        reinterpret_cast<const NvType*>(ffn2_super_scale ? ffn2_super_scale->data<DataT>() : nullptr),
         reinterpret_cast<NvType*>(ffn_out.data<DataT>()),
         const_cast<int64_t*>(tokens_expert_prefix_sum.data<int64_t>()),
         total_rows_in_ll_else_minus1,
@@ -78,6 +97,7 @@ void WeightOnlyMoeFFNKernel(const paddle::Tensor& permute_input,
         hidden_size,
         inter_size / 2,
         num_experts,
+        ffn2_quant_args,
         stream);
 }
 
@@ -99,6 +119,7 @@ void W4A8MoeFFNKernel(const paddle::Tensor& permute_input,
                   const int num_experts,
                   const int expanded_active_expert_rows,
                   bool used_in_ep_low_latency) {
+#if 0
     using namespace phi;
     auto w4a8_moe_gemm_runner = W4A8MoeGemmRunner<NvType, int8_t, cutlass::uint4b_t>();
     auto quant_mode = cutlass::epilogue::QuantMode::PerChannelQuant;
@@ -172,6 +193,7 @@ void W4A8MoeFFNKernel(const paddle::Tensor& permute_input,
         workspace_size,
         num_experts,
         stream);
+#endif
 }
 
 template <paddle::DataType T>
@@ -184,6 +206,12 @@ void MoeFFNKernel(const paddle::Tensor& permute_input,
                   const paddle::optional<paddle::Tensor>& ffn2_scale,
                   const paddle::optional<paddle::Tensor>& ffn2_in_scale,
                   const paddle::optional<paddle::Tensor>& expert_idx_per_token,
+                  const paddle::optional<paddle::Tensor>& ffn1_local_scale,
+                  const paddle::optional<paddle::Tensor>& ffn1_code_scale,
+                  const paddle::optional<paddle::Tensor>& ffn1_code_zp,
+                  const paddle::optional<paddle::Tensor>& ffn2_local_scale,
+                  const paddle::optional<paddle::Tensor>& ffn2_code_scale,
+                  const paddle::optional<paddle::Tensor>& ffn2_code_zp,
                   const std::string& quant_method,
                   paddle::Tensor ffn_out,
                   bool used_in_ep_low_latency) {
@@ -204,6 +232,8 @@ void MoeFFNKernel(const paddle::Tensor& permute_input,
         inter_dim = inter_dim * 2;
     } else if (quant_method == "weight_only_int2.5") {
         inter_dim = inter_dim * 64 / 10;
+    } else if (quant_method == "weight_only_int2") {
+        inter_dim = inter_dim * 4;
     }
     const int64_t inter_size = inter_dim;
 
@@ -243,6 +273,12 @@ void MoeFFNKernel(const paddle::Tensor& permute_input,
             const_cast<paddle::Tensor*>(ffn1_bias.get_ptr()),
             const_cast<paddle::Tensor*>(ffn1_scale.get_ptr()),
             const_cast<paddle::Tensor*>(ffn2_scale.get_ptr()),
+            nullptr, // ffn1_local_scale
+            nullptr, // ffn1_code_scale
+            nullptr, // ffn1_code_zp
+            nullptr, // ffn2_local_scale
+            nullptr, // ffn2_code_scale
+            nullptr, // ffn2_code_zp
             fc1_out_tensor,
             ffn_out,
             total_rows_in_ll_else_minus1,
@@ -260,6 +296,12 @@ void MoeFFNKernel(const paddle::Tensor& permute_input,
             const_cast<paddle::Tensor*>(ffn1_bias.get_ptr()),
             const_cast<paddle::Tensor*>(ffn1_scale.get_ptr()),
             const_cast<paddle::Tensor*>(ffn2_scale.get_ptr()),
+            nullptr, // ffn1_local_scale
+            nullptr, // ffn1_code_scale
+            nullptr, // ffn1_code_zp
+            nullptr, // ffn2_local_scale
+            nullptr, // ffn2_code_scale
+            nullptr, // ffn2_code_zp
             fc1_out_tensor,
             ffn_out,
             total_rows_in_ll_else_minus1,
@@ -277,6 +319,12 @@ void MoeFFNKernel(const paddle::Tensor& permute_input,
             const_cast<paddle::Tensor*>(ffn1_bias.get_ptr()),
             const_cast<paddle::Tensor*>(ffn1_scale.get_ptr()),
             const_cast<paddle::Tensor*>(ffn2_scale.get_ptr()),
+            nullptr, // ffn1_local_scale
+            nullptr, // ffn1_code_scale
+            nullptr, // ffn1_code_zp
+            nullptr, // ffn2_local_scale
+            nullptr, // ffn2_code_scale
+            nullptr, // ffn2_code_zp
             fc1_out_tensor,
             ffn_out,
             total_rows_in_ll_else_minus1,
@@ -285,17 +333,39 @@ void MoeFFNKernel(const paddle::Tensor& permute_input,
             hidden_size,
             num_experts,
             used_in_ep_low_latency);
-/*
+    } else if (quant_method == "weight_only_int2") {
+        WeightOnlyMoeFFNKernel<data_t, NvType, uint8_t, WintQuantMethod::kWeightOnlyInt2>(
+            permute_input,
+            tokens_expert_prefix_sum,
+            ffn1_weight,
+            ffn2_weight,
+            const_cast<paddle::Tensor*>(ffn1_bias.get_ptr()),
+            const_cast<paddle::Tensor*>(ffn1_scale.get_ptr()),
+            const_cast<paddle::Tensor*>(ffn2_scale.get_ptr()),
+            const_cast<paddle::Tensor*>(ffn1_local_scale.get_ptr()),
+            const_cast<paddle::Tensor*>(ffn1_code_scale.get_ptr()),
+            const_cast<paddle::Tensor*>(ffn1_code_zp.get_ptr()),
+            const_cast<paddle::Tensor*>(ffn2_local_scale.get_ptr()),
+            const_cast<paddle::Tensor*>(ffn2_code_scale.get_ptr()),
+            const_cast<paddle::Tensor*>(ffn2_code_zp.get_ptr()),
+            fc1_out_tensor,
+            ffn_out,
+            total_rows_in_ll_else_minus1,
+            actual_total_rows,
+            inter_size,
+            hidden_size,
+            num_experts,
+            used_in_ep_low_latency);
     } else if (quant_method == "w4a8") {
         W4A8MoeFFNKernel<data_t, NvType>(
             permute_input,
             tokens_expert_prefix_sum,
             ffn1_weight,
             ffn2_weight,
-            const_cast<paddle::Tensor*>((ffn1_scale.get_ptr()),
-            const_cast<paddle::Tensor*>((ffn2_scale.get_ptr()),
-            const_cast<paddle::Tensor*>((ffn2_in_scale.get_ptr()),
-            const_cast<paddle::Tensor*>((expert_idx_per_token.get_ptr()),
+            const_cast<paddle::Tensor*>(ffn1_scale.get_ptr()),
+            const_cast<paddle::Tensor*>(ffn2_scale.get_ptr()),
+            const_cast<paddle::Tensor*>(ffn2_in_scale.get_ptr()),
+            const_cast<paddle::Tensor*>(expert_idx_per_token.get_ptr()),
             fc1_out_tensor,
             ffn_out,
             total_rows_in_ll_else_minus1,
@@ -305,7 +375,6 @@ void MoeFFNKernel(const paddle::Tensor& permute_input,
             num_experts,
             expanded_active_expert_rows,
             used_in_ep_low_latency);
-*/
     } else {
         WeightOnlyMoeFFNKernel<data_t, NvType, data_t, WintQuantMethod::kNone>(
             permute_input,
@@ -313,8 +382,14 @@ void MoeFFNKernel(const paddle::Tensor& permute_input,
             ffn1_weight,
             ffn2_weight,
             const_cast<paddle::Tensor*>(ffn1_bias.get_ptr()),
-            nullptr,
-            nullptr,
+            nullptr, // ffn1_super_scale
+            nullptr, // ffn2_super_scale
+            nullptr, // ffn1_local_scale
+            nullptr, // ffn1_code_scale
+            nullptr, // ffn1_code_zp
+            nullptr, // ffn2_local_scale
+            nullptr, // ffn2_code_scale
+            nullptr, // ffn2_code_zp
             fc1_out_tensor,
             ffn_out,
             total_rows_in_ll_else_minus1,
@@ -324,7 +399,6 @@ void MoeFFNKernel(const paddle::Tensor& permute_input,
             num_experts,
             used_in_ep_low_latency);
     }
-    //cudaDeviceSynchronize();
 }
 
 paddle::Tensor MoeExpertFFNFunc(
@@ -337,6 +411,12 @@ paddle::Tensor MoeExpertFFNFunc(
     const paddle::optional<paddle::Tensor>& ffn2_scale,
     const paddle::optional<paddle::Tensor>& ffn2_in_scale,
     const paddle::optional<paddle::Tensor>& expert_idx_per_token,
+    const paddle::optional<paddle::Tensor>& ffn1_local_scale,
+    const paddle::optional<paddle::Tensor>& ffn1_code_scale,
+    const paddle::optional<paddle::Tensor>& ffn1_code_zp,
+    const paddle::optional<paddle::Tensor>& ffn2_local_scale,
+    const paddle::optional<paddle::Tensor>& ffn2_code_scale,
+    const paddle::optional<paddle::Tensor>& ffn2_code_zp,
     const std::string& quant_method, const bool used_in_ep_low_latency) {
     const auto t_type = quant_method == "w4a8" ? ffn1_scale.get().dtype() : permute_input.dtype();
     auto ffn_out = paddle::empty_like(permute_input, t_type);
@@ -352,6 +432,12 @@ paddle::Tensor MoeExpertFFNFunc(
                                                      ffn2_scale,
                                                      ffn2_in_scale,
                                                      expert_idx_per_token,
+                                                     ffn1_local_scale,
+                                                     ffn1_code_scale,
+                                                     ffn1_code_zp,
+                                                     ffn2_local_scale,
+                                                     ffn2_code_scale,
+                                                     ffn2_code_zp,
                                                      quant_method,
                                                      ffn_out, used_in_ep_low_latency);
             break;
@@ -366,6 +452,12 @@ paddle::Tensor MoeExpertFFNFunc(
                                                     ffn2_scale,
                                                     ffn2_in_scale,
                                                     expert_idx_per_token,
+                                                    ffn1_local_scale,
+                                                    ffn1_code_scale,
+                                                    ffn1_code_zp,
+                                                    ffn2_local_scale,
+                                                    ffn2_code_scale,
+                                                    ffn2_code_zp,
                                                     quant_method,
                                                     ffn_out, used_in_ep_low_latency);
             break;
@@ -386,6 +478,12 @@ std::vector<paddle::Tensor> MoeExpertFFN(
     const paddle::optional<paddle::Tensor>& ffn2_scale,
     const paddle::optional<paddle::Tensor>& ffn2_in_scale,
     const paddle::optional<paddle::Tensor>& expert_idx_per_token,
+    const paddle::optional<paddle::Tensor>& ffn1_local_scale,
+    const paddle::optional<paddle::Tensor>& ffn1_code_scale,
+    const paddle::optional<paddle::Tensor>& ffn1_code_zp,
+    const paddle::optional<paddle::Tensor>& ffn2_local_scale,
+    const paddle::optional<paddle::Tensor>& ffn2_code_scale,
+    const paddle::optional<paddle::Tensor>& ffn2_code_zp,
     const std::string& quant_method, const bool used_in_ep_low_latency) {
     return {MoeExpertFFNFunc(permute_input,
                              tokens_expert_prefix_sum,
@@ -396,6 +494,12 @@ std::vector<paddle::Tensor> MoeExpertFFN(
                              ffn2_scale,
                              ffn2_in_scale,
                              expert_idx_per_token,
+                             ffn1_local_scale,
+                             ffn1_code_scale,
+                             ffn1_code_zp,
+                             ffn2_local_scale,
+                             ffn2_code_scale,
+                             ffn2_code_zp,
                              quant_method, used_in_ep_low_latency)};
 }
 
@@ -409,6 +513,12 @@ std::vector<std::vector<int64_t>> MoeExpertFFNInferShape(
     const paddle::optional<std::vector<int64_t>>& ffn2_scale_shape,
     const paddle::optional<std::vector<int64_t>>& ffn2_in_scale_shape,
     const paddle::optional<std::vector<int64_t>>& expert_idx_per_token_shape,
+    const paddle::optional<std::vector<int64_t>>& ffn1_local_scale_shape,
+    const paddle::optional<std::vector<int64_t>>& ffn1_code_scale_shape,
+    const paddle::optional<std::vector<int64_t>>& ffn1_code_zp_shape,
+    const paddle::optional<std::vector<int64_t>>& ffn2_local_scale_shape,
+    const paddle::optional<std::vector<int64_t>>& ffn2_code_scale_shape,
+    const paddle::optional<std::vector<int64_t>>& ffn2_code_zp_shape,
     const std::string& quant_method,
     const bool used_in_ep_low_latency) {
     return {permute_input_shape};
@@ -423,6 +533,13 @@ std::vector<paddle::DataType> MoeExpertFFNInferDtype(
     const paddle::optional<paddle::DataType> &ffn1_scale_dtype,
     const paddle::optional<paddle::DataType> &ffn2_scale_dtype,
     const paddle::optional<paddle::DataType> &ffn2_in_scale_dtype,
+    const paddle::optional<paddle::DataType> &expert_idx_per_token_dtype,
+    const paddle::optional<paddle::DataType> &ffn1_local_scale_dtype,
+    const paddle::optional<paddle::DataType> &ffn1_code_scale_dtype,
+    const paddle::optional<paddle::DataType> &ffn1_code_zp_dtype,
+    const paddle::optional<paddle::DataType> &ffn2_local_scale_dtype,
+    const paddle::optional<paddle::DataType> &ffn2_code_scale_dtype,
+    const paddle::optional<paddle::DataType> &ffn2_code_zp_dtype,
     const std::string &quant_method, const bool used_in_ep_low_latency) {
   if (quant_method == "w4a8") {
     return {ffn1_scale_dtype.get()};
@@ -484,7 +601,7 @@ std::vector<paddle::DataType> MoeExpertFFNInferDtype(
  * - w4a8 mode requires additional workspace memory allocation
  * - Low latency mode uses specialized grouped SwiGLU implementation
  */
-PD_BUILD_STATIC_OP(moe_expert_ffn)
+PD_BUILD_OP(moe_expert_ffn)
     .Inputs({"permute_input",
              "tokens_expert_prefix_sum",
              "ffn1_weight",
@@ -493,7 +610,13 @@ PD_BUILD_STATIC_OP(moe_expert_ffn)
              paddle::Optional("ffn1_scale"),
              paddle::Optional("ffn2_scale"),
              paddle::Optional("ffn2_in_scale"),
-             paddle::Optional("expert_idx_per_token")})
+             paddle::Optional("expert_idx_per_token"),
+             paddle::Optional("ffn1_local_scale"),
+             paddle::Optional("ffn1_code_scale"),
+             paddle::Optional("ffn1_code_zp"),
+             paddle::Optional("ffn2_local_scale"),
+             paddle::Optional("ffn2_code_scale"),
+             paddle::Optional("ffn2_code_zp")})
     .Outputs({"output_tensor"})
     .Attrs({"quant_method:std::string", "used_in_ep_low_latency:bool"})
     .SetKernelFn(PD_KERNEL(MoeExpertFFN))

@@ -242,6 +242,11 @@ struct MoeFCGemm {
 
     WintQuantMethod quant_method;
 
+    // Extra arguments for wint2.0
+    uint8_t* local_scale;
+    float* code_scale;
+    float* code_zp;
+
     // Only used by device-level operator
     GemmCoord* host_problem_sizes;
 
@@ -264,6 +269,9 @@ struct MoeFCGemm {
           gemm_n(0),
           gemm_k(0),
           quant_method(WintQuantMethod::kNone),
+          local_scale(nullptr),
+          code_scale(nullptr),
+          code_zp(nullptr),
           host_problem_sizes(nullptr) {}
 
     /// Ctor
@@ -281,6 +289,9 @@ struct MoeFCGemm {
               int64_t gemm_n,
               int64_t gemm_k,
               WintQuantMethod quant_method,
+              const uint8_t* local_scale,
+              const float* code_scale,
+              const float* code_zp,
               GemmCoord* host_problem_sizes = nullptr)
         : problem_count(problem_count),
           threadblock_count(threadblock_count),
@@ -295,12 +306,15 @@ struct MoeFCGemm {
           gemm_n(gemm_n),
           gemm_k(gemm_k),
           quant_method(quant_method),
+          local_scale(const_cast<uint8_t*>(local_scale)),
+          code_scale(const_cast<float*>(code_scale)),
+          code_zp(const_cast<float*>(code_zp)),
           host_problem_sizes(nullptr) {
-      if (platform::is_same<uint8_t, ElementB>::value ||
+      if (quant_method != WintQuantMethod::kNone || platform::is_same<uint8_t, ElementB>::value ||
           platform::is_same<uint4b_t, ElementB>::value) {
         assert(weight_scales);
       }
-    
+
       CUTLASS_TRACE_HOST("[Arguments] problem_count: " << problem_count << ", threadblock_count: " << threadblock_count << ", gemm_n: " << gemm_n << ", gemm_k: " << gemm_k);
       CUTLASS_TRACE_HOST("[Arguments] ptr_A: " << static_cast<void const*>(ptr_A));
       CUTLASS_TRACE_HOST("[Arguments] ptr_B: " << static_cast<void const*>(ptr_B));
@@ -308,6 +322,9 @@ struct MoeFCGemm {
       CUTLASS_TRACE_HOST("[Arguments] ptr_D: " << static_cast<void*>(ptr_D));
       CUTLASS_TRACE_HOST("[Arguments] weight_scales: " << static_cast<void const*>(weight_scales));
       CUTLASS_TRACE_HOST("[Arguments] total_rows_before_expert: " << static_cast<void*>(total_rows_before_expert));
+      CUTLASS_TRACE_HOST("[Arguments] local_scale: " << static_cast<void const*>(local_scale));
+      CUTLASS_TRACE_HOST("[Arguments] code_scale: " << static_cast<void const*>(code_scale));
+      CUTLASS_TRACE_HOST("[Arguments] code_zp: " << static_cast<void const*>(code_zp));
       CUTLASS_TRACE_HOST("[Arguments] quant_method: " << static_cast<int>(quant_method));
       CUTLASS_TRACE_HOST("[Arguments] LayoutA: " << GetCutlassLayoutString<LayoutA>());
       CUTLASS_TRACE_HOST("[Arguments] LayoutB: " << GetCutlassLayoutString<LayoutB>());
@@ -340,6 +357,11 @@ struct MoeFCGemm {
 
     WintQuantMethod quant_method;
 
+    // Extra arguments for wint2.0
+    uint8_t* local_scale;
+    float* code_scale;
+    float* code_zp;
+
     //
     // Methods
     //
@@ -351,7 +373,10 @@ struct MoeFCGemm {
           weight_scales(nullptr),
           ptr_C(nullptr),
           ptr_D(nullptr),
-          quant_method(WintQuantMethod::kNone) {}
+          quant_method(WintQuantMethod::kNone),
+          local_scale(nullptr),
+          code_scale(nullptr),
+          code_zp(nullptr) {}
 
     CUTLASS_HOST_DEVICE
     Params(Arguments const& args,
@@ -371,7 +396,10 @@ struct MoeFCGemm {
           weight_scales(args.weight_scales),
           ptr_C(args.ptr_C),
           ptr_D(args.ptr_D),
-          quant_method(args.quant_method) {}
+          quant_method(args.quant_method),
+          local_scale(args.local_scale),
+          code_scale(args.code_scale),
+          code_zp(args.code_zp) {}
 
     CUTLASS_HOST_DEVICE
     void update(Arguments const& args,
@@ -453,6 +481,20 @@ struct MoeFCGemm {
 
   template <WintQuantMethod QuantMethod, typename dummy>
   struct KernelRunner<QuantMethod, true, dummy> {
+    using WeightQuantTraits = WintQuantTraits<ElementA, QuantMethod>;
+    using QuantArguments = typename WeightQuantTraits::Arguments;
+
+    CUTLASS_DEVICE
+    static QuantArguments get_quant_args(Params const& params, int32_t problem_idx, const int64_t gemm_k, const int64_t gemm_n) {
+      QuantArguments quant_args;
+      if constexpr (QuantMethod == WintQuantMethod::kWeightOnlyInt2) {
+        quant_args.local_scale_ptr = params.local_scale + problem_idx * gemm_k * gemm_n / 128;
+        quant_args.code_scale_ptr = params.code_scale + problem_idx * gemm_n;
+        quant_args.code_zp_ptr = params.code_zp + problem_idx * gemm_n;
+      }
+      return quant_args;
+    }
+
     CUTLASS_DEVICE
     static void run_kernel(Params const& params,
                            SharedStorage& shared_storage) {  // NOLINT
@@ -468,7 +510,7 @@ struct MoeFCGemm {
       using LayoutB = typename Mma::IteratorB::Layout;
       using ElementC = typename Epilogue::OutputTileIterator::Element;
       using LayoutC = typename Epilogue::OutputTileIterator::Layout;
-      using PackedElementB = typename WintQuantTraits<ElementA, QuantMethod>::WeightType;
+      using QuantElementB = typename WeightQuantTraits::WeightType;
 
       static constexpr int kInterleave =
           Mma::IteratorB::Shape::kRow / Mma::Shape::kK;
@@ -480,7 +522,7 @@ struct MoeFCGemm {
           "B must be row major/col major OR col major interleaved.");
 
       // LayoutB should be RowMajor
-      using TileDequanterB = TileDequanter<ElementB, ElementScale, ThreadblockShape::kK, ThreadblockShape::kN, kThreadCount, QuantMethod>;
+      using TileDequanterB = TileDequanter<ElementA, ElementScale, ThreadblockShape::kK, ThreadblockShape::kN, kThreadCount, QuantMethod>;
       __shared__ typename TileDequanterB::SharedStorage dequant_storage_B;
 
       //
@@ -491,21 +533,21 @@ struct MoeFCGemm {
 
       const int64_t gemm_k = params.problem_visitor.gemm_k;
       const int64_t gemm_n = params.problem_visitor.gemm_n;
-      // kWeightOnlyInt25 is quantized and packed along k dimension with group_size 64.
-      const int64_t packed_gemm_k = WintQuantTraits<ElementA, QuantMethod>::CaclPackedDim(gemm_k);
-      int64_t bytes_per_expert_matrix = (packed_gemm_k * gemm_n / 8) * cutlass::sizeof_bits<PackedElementB>::value;
+      // wint2.5 and wint2.0 is quantized and packed along k dimension with group_size 64.
+      const int64_t quant_gemm_k = WintQuantTraits<ElementA, QuantMethod>::CaclPackedDim(gemm_k);
+      int64_t bytes_per_expert_matrix = (quant_gemm_k * gemm_n / 8) * cutlass::sizeof_bits<QuantElementB>::value;
 
-      //CUTLASS_TRACE_DEVICE(" gemm_k: %ld, gemm_n: %ld, bytes_per_expert_matrix: %ld, kInterleave: %d", gemm_k, gemm_n, bytes_per_expert_matrix, kInterleave);
+      CUTLASS_TRACE_DEVICE(" gemm_k: %ld, quant_gemm_k: %ld, gemm_n: %ld, bytes_per_expert_matrix: %ld, kInterleave: %d", gemm_k, quant_gemm_k, gemm_n, bytes_per_expert_matrix, kInterleave);
 
       // Outer 'persistent' loop to iterate over tiles
       while (problem_visitor.next_tile()) {
         GemmCoord problem_size = problem_visitor.problem_size();
         int32_t problem_idx = problem_visitor.problem_index();
         int32_t cta_idx = int32_t(problem_visitor.threadblock_idx());
-        //CUTLASS_TRACE_DEVICE_TID(" problem_idx: %d, cta_idx: %d, problem_size: {%d, %d, %d}",
+        //CUTLASS_TRACE_DEVICE(" problem_idx: %d, cta_idx: %d, problem_size: {%d, %d, %d}",
         //    problem_idx, cta_idx, static_cast<int>(problem_size.m()), static_cast<int>(problem_size.n()), static_cast<int>(problem_size.k()));
 
-        //if (problem_idx > 128) {
+        //if (problem_idx > 5) {
         //  break;
         //}
 
@@ -562,7 +604,15 @@ struct MoeFCGemm {
         cutlass::MatrixCoord extent_B{problem_size.k() * kInterleave, problem_size.n() / kInterleave};
         cutlass::MatrixCoord extent_B_shared{TileDequanterB::kRows, TileDequanterB::kColumns};
 
-        TileDequanterB tile_dequanter_B(dequant_storage_B, byte_ptr_B, ldm_B, extent_B, tb_offset_B, weight_scale_ptr, {1, problem_size.n()}, tb_offset_scale);
+        QuantArguments quant_args = get_quant_args(params, problem_idx, gemm_k, gemm_n);
+        TileDequanterB tile_dequanter_B(dequant_storage_B,
+                                        byte_ptr_B,
+                                        ldm_B,
+                                        extent_B,
+                                        tb_offset_B,
+                                        weight_scale_ptr,
+                                        tb_offset_scale,
+                                        quant_args);
         ElementB* ptr_B = tile_dequanter_B.GetOutPtr();
 
         // Compute position within threadblock
@@ -594,6 +644,7 @@ struct MoeFCGemm {
 
         int lane_idx = threadIdx.x % 32;
 
+#if 1
         //
         // Matrix multiply phase
         //
@@ -671,6 +722,7 @@ struct MoeFCGemm {
 
         // Execute the epilogue operator to update the destination tensor.
         epilogue(output_op, iterator_D, accumulators, iterator_C);
+#endif
 
         // Next tile
         problem_visitor.advance(gridDim.x);
@@ -690,6 +742,8 @@ struct MoeFCGemm {
     if constexpr (std::is_same<ElementB, cutlass::bfloat16_t>::value || std::is_same<ElementB, cutlass::half_t>::value) {
       if (params.quant_method == WintQuantMethod::kWeightOnlyInt25) {
         KernelRunner<WintQuantMethod::kWeightOnlyInt25, kCompileNeeded>::run_kernel(params, shared_storage);
+      } else if (params.quant_method == WintQuantMethod::kWeightOnlyInt2) {
+        KernelRunner<WintQuantMethod::kWeightOnlyInt2, kCompileNeeded>::run_kernel(params, shared_storage);
       } else {
         KernelRunner<WintQuantMethod::kNone, kCompileNeeded>::run_kernel(params, shared_storage);
       }
