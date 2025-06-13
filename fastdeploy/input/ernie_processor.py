@@ -106,14 +106,18 @@ class ErnieProcessor(BaseDataProcessor):
             if request.prompt is None and request.messages is None:
                 raise ValueError(
                     f"The request should have `input_ids`, `text` or `messages`: {request}.")
-            messages = []
             if request.prompt is not None:
-                if isinstance(request.prompt, list):
-                    messages.extend(request.prompt)
+                prompt = request.prompt
+                prompt = prompt[0] if isinstance(prompt, list) else prompt
+                if self.model_name == "base":
+                    request.prompt_token_ids = self.tokenizer.convert_tokens_to_ids(
+                        self.tokenizer.tokenize(prompt, tokenize=True))
                 else:
-                    messages.append(request.prompt)
-            messages = messages or request.messages
-            request.prompt_token_ids = self.messages2ids(messages)
+                    messages = [{"role": "user", "content": prompt}]
+                    request.prompt_token_ids = self.messages2ids(messages)
+            else:
+                request.prompt_token_ids = self.messages2ids(
+                    request.messages)
 
             if self.model_name == "base":
                 assert (
@@ -151,15 +155,20 @@ class ErnieProcessor(BaseDataProcessor):
         # 处理prompt_token_ids
         if not request.get('prompt_token_ids'):
             if request.get('prompt') is None and request.get('messages') is None:
-                raise ValueError(f"Request must contain 'prompt_token_ids', 'prompt', or 'messages': {request}")
-            messages = []
+                raise ValueError(
+                    f"Request must contain 'prompt_token_ids', 'prompt', or 'messages': {request}")
             if request.get('prompt'):
-                if isinstance(request.get('prompt'), list):
-                    messages.extend(request.get('prompt'))
+                prompt = request.get('prompt')
+                prompt = prompt[0] if isinstance(prompt, list) else prompt
+                if self.model_name == "base":
+                    request['prompt_token_ids'] = self.tokenizer.convert_tokens_to_ids(
+                        self.tokenizer.tokenize(prompt, tokenize=True))
                 else:
-                    messages.append(request.get('prompt'))
-            messages = messages or request.get('messages')
-            request['prompt_token_ids'] = self.messages2ids(messages)
+                    messages = [{"role": "user", "content": prompt}]
+                    request['prompt_token_ids'] = self.messages2ids(messages)
+            else:
+                request['prompt_token_ids'] = self.messages2ids(
+                    request.get('messages'))
 
         if self.model_name == "base":
             assert isinstance(
