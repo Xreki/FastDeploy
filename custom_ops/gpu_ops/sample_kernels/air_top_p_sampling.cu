@@ -1459,7 +1459,7 @@ GetTopPSamplingDtype(const paddle::DataType &x_dytpe,
   return {x_dytpe, paddle::DataType::INT64};
 }
 
-PD_BUILD_STATIC_OP(air_topp_sampling)
+PD_BUILD_STATIC_OP(air_top_p_sampling)
     .Inputs({"x", "ps", paddle::Optional("threshold"),
              paddle::Optional("topp_seed")})
     .Outputs({"out", "ids"})

@@ -107,6 +107,49 @@ class ModelRunner(ModelRunnerBase):
         # gqa .etc paddle Flags set
         pass
 
+    def update_chunked_prefill(self, tasks):
+        """
+        更新chunked prefill相关参数
+        """
+        if not self.args.enable_chunked_prefill:
+            return
+
+        for task in tasks:
+            if task.chunk_idx > len(task.prefill_chunk_info):
+                continue
+
+            idx = task.idx
+            if task.chunk_idx == len(task.prefill_chunk_info):
+                self.share_inputs["seq_lens_this_time"][idx:idx + 1] = 1
+                self.share_inputs['seq_lens_encoder'][idx:idx + 1] = 0
+                self.share_inputs["seq_lens_decoder"][idx:idx +
+                                                      1] = task.start_idx
+                self.share_inputs["step_idx"][idx:idx + 1] = 1
+            else:
+                inputs = self._preprocess_task(
+                    task.prefill_chunk_info[task.chunk_idx])
+                if inputs.get("images") is not None:
+                    self.share_inputs[
+                        "image_features"] = self.extract_vision_features(
+                            inputs)
+                else:
+                    # 兼容没有图片和视频的情况
+                    self.share_inputs["image_features"] = None
+
+                token_chunk_size = inputs["input_ids"].shape[1]
+                self.share_inputs["input_ids"][
+                    idx:idx + 1, :token_chunk_size] = inputs["input_ids"]
+                self.share_inputs["seq_lens_this_time"][idx:idx +
+                                                        1] = token_chunk_size
+                self.share_inputs['seq_lens_encoder'][idx:idx +
+                                                      1] = token_chunk_size
+                self.share_inputs["seq_lens_decoder"][idx:idx +
+                                                      1] = task.start_idx
+                self.share_inputs["step_idx"][idx:idx + 1] = 0
+
+                task.start_idx += token_chunk_size
+            task.chunk_idx += 1
+
     def _load_model(self, model_name, dynamic_load_weight):
 
         tokenizer = ErnieVLTokenizer.from_pretrained(
@@ -251,7 +294,7 @@ class ModelRunner(ModelRunnerBase):
             self.fd_config.model_config.kv_num_heads = int(
                 self.fd_config.model_config.num_key_value_heads
             ) // self.fd_config.parallel_config.mp_size
-            head_dim = self.fd_config.model_config.hidden_size // self.fd_config.model_config.num_attention_heads
+            head_dim = self.fd_config.model_config.head_dim
             self.attn_backend = attn_backend_cls(
                 self.fd_config,
                 kv_num_heads=self.fd_config.model_config.kv_num_heads,
@@ -485,9 +528,8 @@ class ModelRunner(ModelRunnerBase):
         return image_features
 
     @paddle.no_grad()
-    def prepare_rope3d(self, inputs, **kwargs):
+    def prepare_rope3d(self, position_ids, **kwargs):
         """prepare_rope3d"""
-        position_ids = inputs["position_ids"]
 
         prefix_max_position_ids = paddle.max(position_ids) + 1
         dec_pos_ids = paddle.tile(
@@ -506,6 +548,14 @@ class ModelRunner(ModelRunnerBase):
             freq_allocation=self.model_cfg.freq_allocation,
         )
         return rope_emb
+
+    def prefill_finished(self):
+        """
+        判断是否已经完成了prefill操作
+        """
+        prefill_statue = (self.share_inputs["seq_lens_this_time"] != 0) & (
+            self.share_inputs["seq_lens_this_time"] != 1)
+        return not paddle.any(prefill_statue).numpy()
 
     def dy_input_preprocess(self, tasks):
         """
@@ -527,19 +577,56 @@ class ModelRunner(ModelRunnerBase):
                 "pad_token_id": self.args.pad_token_id,
             }
 
-            inputs = self._preprocess_task(task)
-            if inputs.get("images") is not None:
-                self.share_inputs[
-                    "image_features"] = self.extract_vision_features(inputs)
+            if self.args.enable_chunked_prefill:
+                task.set("chunk_idx", 1)
+                inputs = self._preprocess_task(task.prefill_chunk_info[0])
+                if inputs.get("images") is not None:
+                    self.share_inputs[
+                        "image_features"] = self.extract_vision_features(
+                            inputs)
+                else:
+                    # 兼容没有图片和视频的情况
+                    self.share_inputs["image_features"] = None
+                if task.multimodal_inputs["position_ids"] is not None:
+                    position_ids = paddle.to_tensor(
+                        task.multimodal_inputs["position_ids"],
+                        dtype="int64").unsqueeze([0])
+                else:
+                    position_ids = None
+
+                token_chunk_size = inputs["input_ids"].shape[1]
+                task.set("start_idx", token_chunk_size)
+                self.share_inputs["input_ids"][
+                    idx:idx + 1, :token_chunk_size] = inputs["input_ids"]
+                self.share_inputs["seq_lens_this_time"][idx:idx +
+                                                        1] = token_chunk_size
+                self.share_inputs["seq_lens_encoder"][idx:idx +
+                                                      1] = token_chunk_size
+                self.share_inputs["step_seq_lens_encoder"][
+                    idx:idx + 1] = token_chunk_size
             else:
-                # 兼容没有图片和视频的情况
-                self.share_inputs["image_features"] = None
+                inputs = self._preprocess_task(task.multimodal_inputs)
+                if inputs.get("images") is not None:
+                    self.share_inputs[
+                        "image_features"] = self.extract_vision_features(
+                            inputs)
+                else:
+                    # 兼容没有图片和视频的情况
+                    self.share_inputs["image_features"] = None
+                position_ids = inputs["position_ids"]
+
+                length = inputs["input_ids"].shape[1]
+                self.share_inputs["input_ids"][
+                    idx:idx + 1, :length] = inputs["input_ids"]
+                self.share_inputs["seq_lens_this_time"][idx:idx + 1] = length
+                self.share_inputs["seq_lens_encoder"][idx:idx + 1] = length
+                self.share_inputs["step_seq_lens_encoder"][idx:idx +
+                                                           1] = length
+
             self.share_inputs["rope_emb"][idx:idx +
                                           1, :] = self.prepare_rope3d(
-                                              inputs, **kwargs)
-            length = inputs["input_ids"].shape[1]
-            self.share_inputs["input_ids"][idx:idx +
-                                           1, :length] = inputs["input_ids"]
+                                              position_ids, **kwargs)
+
             self.share_inputs["top_p"][idx:idx + 1] = kwargs["top_p"]
             self.share_inputs["temperature"][idx:idx +
                                              1] = kwargs["temperature"]
@@ -551,8 +638,6 @@ class ModelRunner(ModelRunnerBase):
                                                  1] = kwargs["frequency_score"]
             self.share_inputs["presence_score"][idx:idx +
                                                 1] = kwargs["presence_score"]
-            self.share_inputs["seq_lens_this_time"][idx:idx + 1] = length
-            self.share_inputs["seq_lens_encoder"][idx:idx + 1] = length
             self.share_inputs["seq_lens_decoder"][idx:idx + 1] = 0
             self.share_inputs["step_idx"][idx:idx + 1] = 0
             self.share_inputs["min_dec_len"][idx:idx + 1] = 1
@@ -608,8 +693,6 @@ class ModelRunner(ModelRunnerBase):
             self.share_inputs, self.attn_backend)
 
         self.attn_backend.init_attention_metadata(self.forward_meta)
-
-        self.share_inputs["forward_meta"] = self.forward_meta
 
         self.sampling_metadata = SamplingMetadata(
             temperature=self.share_inputs["temperature"],
@@ -690,9 +773,7 @@ class ModelRunner(ModelRunnerBase):
         #TODO
         # 支持c8 c4
 
-        hidden_size = self.model_cfg.hidden_size
-        attention_heads = self.model_cfg.num_attention_heads
-        hidden_dim = hidden_size / attention_heads * self.model_cfg.kv_num_head
+        hidden_dim = self.model_cfg.head_dim * self.model_cfg.kv_num_head
         theoretical_kv_cache_memory = (2 * byte_of_cache *
                                        self.args.block_size * num_layers *
                                        hidden_dim)

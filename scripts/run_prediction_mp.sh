@@ -52,7 +52,7 @@ python -m paddle.distributed.launch \
         --model_name_or_path ${model_path} \
         --input_file "./data/query-answers-list.jsonl" \
         --output_file ./predict_out.json \
-        --predict_model_type "WINT8" \
+        --predict_model_type "weight_only_int8" \
         --dtype bfloat16 \
         --data_format "pt" \
         --append_bos_token "False" \

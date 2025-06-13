@@ -14,10 +14,19 @@
 # limitations under the License.
 """
 
-from .apply_penalty_multi_scores import apply_penalty_multi_scores
-from .top_p_sampling import top_p_sampling
+from __future__ import annotations
 
-__all__ = [
-    "apply_penalty_multi_scores",
-    "top_p_sampling",
-]
+from .ernie45t_moe import ErnieForCausalLM
+
+
+class ErnieBotLMHeadModel(ErnieForCausalLM):
+    """
+    ErnieBotLMHeadModel
+    """
+
+    @classmethod
+    def name(self):
+        """
+        Model Architecture Name
+        """
+        return "ErnieBotLMHeadModel"

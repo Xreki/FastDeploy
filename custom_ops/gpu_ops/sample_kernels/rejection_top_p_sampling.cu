@@ -60,7 +60,7 @@ TopPSamplingRejectInferDtype(const paddle::DataType &probs_dtype,
   return {paddle::DataType::INT64};
 }
 
-PD_BUILD_STATIC_OP(top_p_sampling_reject)
+PD_BUILD_STATIC_OP(rejection_top_p_sampling)
     .Inputs({"probs", "top_p"})
     .Outputs({"samples"})
     .Attrs({"seed: int"})

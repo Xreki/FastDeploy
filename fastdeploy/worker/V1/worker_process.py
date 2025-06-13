@@ -371,6 +371,8 @@ def parse_args():
                         type=str,
                         default="mixed",
                         help="splitwise role")
+    parser.add_argument("--ori_vocab_size", type=int, default=None)
+
     args = parser.parse_args()
     return args
 
@@ -463,8 +465,10 @@ def initialize_fd_config(args) -> FDConfig:
     moe_config.moe_quant_type = config.get("moe_quant_type",
                                            "weight_only_int4")
     tmp_config.weight_block_size = config.get("weight_block_size", [-1, -1])
-
     model_config.ori_vocab_size = config.get("vocab_size", -1)
+    if "ErnieBotLMHeadModel" in config.get("architectures"):
+        model_config.ori_vocab_size = args.ori_vocab_size
+
     weight_dtype, act_dtype, cachekv_dtype = parser_quant_type(
         model_config.export_model_type)
     model_config.weight_dtype = weight_dtype

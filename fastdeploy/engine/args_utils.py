@@ -22,6 +22,8 @@ from fastdeploy.engine.config import (CacheConfig, Config, ModelConfig,
                                       TaskOption)
 from fastdeploy.scheduler.config import SchedulerConfig
 from fastdeploy.utils import FlexibleArgumentParser
+from paddlenlp.trainer import strtobool
+
 
 
 def nullable_str(x: str) -> Optional[str]:
