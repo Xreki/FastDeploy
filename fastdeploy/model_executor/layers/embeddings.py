@@ -137,13 +137,9 @@ class VocabParallelEmbedding(nn.Layer):
         Args:
             state_dict (dict): A dictionary containing the checkpoint weights and biases.
         """
-        if self.tie_word_embeddings:
-            # load after lm_head finished
-            pass
-        else:
-            self.word_embeddings.weight.set_value(
-                get_tensor(state_dict.pop(self.prefix + ".weight")).astype(
-                    paddle.get_default_dtype()))
+        self.word_embeddings.weight.set_value(
+            get_tensor(state_dict.pop(self.prefix + ".weight")).astype(
+                paddle.get_default_dtype()))
 
     def forward(self, ids_remove_padding=None):
         """
