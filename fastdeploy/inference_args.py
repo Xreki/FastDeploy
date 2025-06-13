@@ -180,7 +180,7 @@ class InferenceArgs:
             load_weight_gpu = False
         else:
             load_weight_gpu = "gpu" in paddle.device.get_device()
-
+        self.load_weight_gpu = load_weight_gpu
         if load_weight_gpu and use_safetensors:
             if is_quantized:
                 self.use_offline_quant = False
