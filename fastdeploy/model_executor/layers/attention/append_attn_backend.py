@@ -73,8 +73,8 @@ class AppendAttentionBackend(AttentionBackend):
     AppendAttentionBackend backend implementation.
     """
 
-    def __init__(self, fd_config: FDConfig, kv_num_heads: int,
-                 num_heads: int, head_dim: int):
+    def __init__(self, fd_config: FDConfig, kv_num_heads: int, num_heads: int,
+                 head_dim: int):
         """
         AppendAttentionBackend __init__
         """
@@ -83,8 +83,8 @@ class AppendAttentionBackend(AttentionBackend):
         # TODO(gongshaotian): Use fd_config parameters in the correct location
         self.block_size = fd_config.parallel_config.block_size
         self.max_seq_len = fd_config.parallel_config.max_model_len
-        self.rope_theta = (10000.0 if fd_config.model_config.rope_theta
-                           is None else fd_config.model_config.rope_theta)
+        self.rope_theta = (10000.0 if fd_config.model_config.rope_theta is None
+                           else fd_config.model_config.rope_theta)
         self.rope_3d = getattr(fd_config.model_config, "rope_3d", False)
         self.causal = getattr(fd_config.model_config, "causal", True)
         self.speculate_method = fd_config.parallel_config.speculate_method
@@ -102,6 +102,11 @@ class AppendAttentionBackend(AttentionBackend):
         self.use_pd_disaggregation = int(
             os.getenv("FLAGS_use_pd_disaggregation", 0))
         self.start_layer_index = fd_config.model_config.start_layer_index
+        self.device_id = os.getenv("CUDA_VISIBLE_DEVICES", None)
+        if self.device_id is None:
+            self.device_id = self.rank
+        else:
+            self.device_id = self.device_id.split(",")[self.rank]
 
     def init_attention_metadata(self, forward_meta: ForwardMeta):
         """Initialize attntion metadata hence all layers in the forward pass can reuse it."""
@@ -147,10 +152,9 @@ class AppendAttentionBackend(AttentionBackend):
 
         # pd_disaggregation
         metadata.kv_signal_data_list = [None] * self.num_layers
-        # TODO (luotingdan): use device ids
         if self.use_pd_disaggregation:
             metadata.kv_signal_metadata = open_shm_and_get_meta_signal(
-                self.rank, self.rank, self.keep_pd_step_flag)
+                self.rank, int(self.device_id), self.keep_pd_step_flag)
         self.attention_metadata = metadata
 
     def get_attntion_meta(self):
