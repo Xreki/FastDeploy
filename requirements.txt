@@ -10,7 +10,7 @@ tqdm
 pynvml
 uvicorn
 fastapi
-paddlenlp @ https://paddle-qa.bj.bcebos.com/paddlenlp/wheel/7f5d7195556a03fdfab7159514c3d15d638e45c3/paddlenlp-3.0.0b4.post20250612-py3-none-any.whl
+paddlenlp @ https://paddle-qa.bj.bcebos.com/paddlenlp/wheel/9f9c1d3e83a1738d8e092b229c6f03e39a04afd4/paddlenlp-3.0.0b4.post20250613-py3-none-any.whl
 redis
 etcd3
 httpx
