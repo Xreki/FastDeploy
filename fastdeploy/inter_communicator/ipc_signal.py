@@ -91,6 +91,6 @@ class IPCSignal:
 
     def clear(self) -> None:
         """Release system resources and unlink the shared memory block."""
-        self.shm.close()
-        self.shm.unlink()
-
+        if shared_memory_exists(self.shm.name):
+            self.shm.close()
+            self.shm.unlink()

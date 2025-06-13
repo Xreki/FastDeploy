@@ -37,6 +37,7 @@ class ZmqClient:
         self.req_dict = dict()
         self.router = None
         self.poller = None
+        self.running = True
 
     def connect(self):
         """
@@ -90,7 +91,7 @@ class ZmqClient:
         if self.router is None:
             raise RuntimeError("Router socket not created. Call create_router() first.")
 
-        while True:
+        while self.running:
             with self.mutex:
                 if req_id not in self.req_dict:
                     try:
@@ -119,7 +120,7 @@ class ZmqClient:
         if self.router is None:
             raise RuntimeError("Router socket not created. Call create_router() first.")
         
-        while True:
+        while self.running:
             with self.mutex:
                 try:
                     flags = 0 if len(self.req_dict) == 0 else zmq.NOBLOCK
@@ -201,17 +202,26 @@ class ZmqClient:
         """
         Close the socket and context, and remove the IPC files.
         """
-        if hasattr(self, 'socket') and not self.socket.closed:
-            self.socket.close()
+        if not self.running:
+            return
 
-        if self.router is not None and not self.router.closed:
-            self.router.close()
+        self.running = False
+        llm_logger.info(f"Closing ZMQ connection...")
+        try:
+            if hasattr(self, 'socket') and not self.socket.closed:
+                self.socket.close()
 
-        if not self.context.closed:
-            self.context.term()
+            if self.router is not None and not self.router.closed:
+                self.router.close()
 
-        self._clear_ipc(self.file_name)
-        self._clear_ipc(self.router_path)
+            if not self.context.closed:
+                self.context.term()
+
+            self._clear_ipc(self.file_name)
+            self._clear_ipc(self.router_path)
+        except Exception as e:
+            llm_logger.warning(f"Failed to close ZMQ connection - {e}")
+            return
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()

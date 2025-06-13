@@ -85,6 +85,7 @@ class LLMEngine(object):
             cfg (Config): Config object containing all the configuration parameters.
         """
         self.cfg = cfg
+        self.running = True
         self.scheduler = cfg.scheduler_config.scheduler()
 
         self.input_processor = InputPreprocessor(cfg.tokenizer,
@@ -216,7 +217,7 @@ class LLMEngine(object):
         Recieve output for zmq
         """
         assert self.api_server_pid is not None
-        while True:
+        while self.running:
             try:
 
                 def get_results_handler(request_ids):
@@ -243,7 +244,7 @@ class LLMEngine(object):
         """
         try:
             acc = None
-            while True:
+            while self.running:
                 results = self.scheduler.get_results([request_id])
                 for _, contents in results.items():
                     for result in contents:
@@ -267,7 +268,7 @@ class LLMEngine(object):
         Insert task to engine thread, monitor scheduler request queue.
         if the engine has resource, insert task to engine
         """
-        while True:
+        while self.running:
             try:
                 if self.resource_manager.available_batch() == 0:
                     time.sleep(0.001)
@@ -310,7 +311,7 @@ class LLMEngine(object):
             return
 
         added_requests: Dict[str, int] = dict()
-        while True:
+        while self.running:
             try:
                 block = True if len(added_requests) == 0 else False
                 if not self.cfg.enable_mm:
@@ -417,7 +418,7 @@ class LLMEngine(object):
         """
 
         def receiver_loop():
-            while True:
+            while self.running:
                 try:
                     if not self.engine_worker_queue.disaggregate_queue_empty():
                         items = self.engine_worker_queue.get_disaggregated_tasks(
@@ -757,6 +758,7 @@ class LLMEngine(object):
         """
         exit sub services
         """
+        self.running = False
 
         if hasattr(self, "cache_manager_processes"):
             self.resource_manager.cache_manager.shm_cache_task_flag_broadcast.clear(
@@ -781,6 +783,7 @@ class LLMEngine(object):
             except Exception as e:
                 print(f"Error extracting sub services: {e}")
 
+        self.engine_worker_queue.cleanup()
         if hasattr(self, "zmq_server") and self.zmq_server is not None:
             self.zmq_server.close()
 
