@@ -28,20 +28,19 @@ import weakref
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+import paddle
 import zmq
 from tqdm import tqdm
-import paddle
 
 from fastdeploy.engine.args_utils import EngineArgs
 from fastdeploy.engine.request import Request, RequestOutput
 from fastdeploy.engine.resource_manager import ResourceManager
 from fastdeploy.input.preprocess import InputPreprocessor
-from fastdeploy.inter_communicator import EngineWorkerQueue
-from fastdeploy.inter_communicator import IPCSignal
-from fastdeploy.inter_communicator import ZmqClient
+from fastdeploy.inter_communicator import (EngineWorkerQueue, IPCSignal,
+                                           ZmqClient)
 from fastdeploy.metrics.metrics import main_process_metrics
-from fastdeploy.output.token_processor import TokenProcessor
-from fastdeploy.output.token_processor import WarmUpTokenProcessor
+from fastdeploy.output.token_processor import (TokenProcessor,
+                                               WarmUpTokenProcessor)
 from fastdeploy.splitwise.splitwise_connector import SplitwiseConnector
 from fastdeploy.utils import EngineError, console_logger, llm_logger
 
@@ -509,15 +508,19 @@ class LLMEngine(object):
         """
         update each multimodal request's chunk size info
         """
-        if not self.cfg.cache_config.enable_chunked_prefill or len(requests) == 0:
+        if not self.cfg.cache_config.enable_chunked_prefill or len(
+                requests) == 0:
             return
-        
+
         for request in requests:
             inputs = request.multimodal_inputs
             input_ids = paddle.to_tensor(inputs["input_ids"], dtype="int64")
-            image_type_ids = paddle.to_tensor(inputs["image_type_ids"], dtype="int32")
+            image_type_ids = paddle.to_tensor(inputs["image_type_ids"],
+                                              dtype="int32")
             image_mask = input_ids == self.data_processor.image_patch_id
-            image_token_sum = paddle.full(shape=[len(input_ids) + 1], fill_value=0, dtype="int32")
+            image_token_sum = paddle.full(shape=[len(input_ids) + 1],
+                                          fill_value=0,
+                                          dtype="int32")
             image_token_sum[1:] = paddle.cumsum(image_mask.cast("int32"))
             grid_thw = []
             for one in inputs["grid_thw"]:
@@ -526,50 +529,54 @@ class LLMEngine(object):
                 else:
                     grid_thw.extend([[2, one[1], one[2]]] * (one[0] // 2))
             grid_thw = paddle.to_tensor(grid_thw, dtype="int64")
-            
+
             from fastdeploy.model_executor.ops.gpu import get_mm_split_fuse
             chunk_image_num, chunk_seq_len = get_mm_split_fuse(
-                input_ids,
-                image_type_ids,
-                image_token_sum,
-                grid_thw,
-                self.data_processor.image_patch_id,
-                len(grid_thw),
-                0,
-                len(input_ids),
-                0,
-                self.partial_chunked_tokens[1],
-                2048
-            )
+                input_ids, image_type_ids, image_token_sum, grid_thw,
+                self.data_processor.image_patch_id, len(grid_thw), 0,
+                len(input_ids), 0, self.partial_chunked_tokens[1], 2048)
 
             num_chunks = len(chunk_image_num)
             chunks_info = []
             input_ids_st, image_type_ids_st, grid_thw_st, patch_st = 0, 0, 0, 0
             for idx in range(num_chunks):
-                chunk_input_ids = inputs["input_ids"][input_ids_st:input_ids_st + chunk_seq_len[idx]]
-                chunk_token_type_ids = inputs["token_type_ids"][input_ids_st:input_ids_st + chunk_seq_len[idx]]
-                actual_image_num = paddle.sum(grid_thw[grid_thw_st:grid_thw_st + chunk_image_num[idx], 0])
-                chunk_image_type_ids = inputs["image_type_ids"][image_type_ids_st:image_type_ids_st + actual_image_num]
-                chunk_grid_thw = grid_thw[grid_thw_st:grid_thw_st + chunk_image_num[idx]].numpy()
+                chunk_input_ids = inputs["input_ids"][
+                    input_ids_st:input_ids_st + chunk_seq_len[idx]]
+                chunk_token_type_ids = inputs["token_type_ids"][
+                    input_ids_st:input_ids_st + chunk_seq_len[idx]]
+                actual_image_num = paddle.sum(
+                    grid_thw[grid_thw_st:grid_thw_st + chunk_image_num[idx],
+                             0])
+                chunk_image_type_ids = inputs["image_type_ids"][
+                    image_type_ids_st:image_type_ids_st + actual_image_num]
+                chunk_grid_thw = grid_thw[grid_thw_st:grid_thw_st +
+                                          chunk_image_num[idx]].numpy()
                 chunk_patch_num = np.sum(np.prod(chunk_grid_thw, axis=1))
-                chunk_images = inputs["images"][patch_st:patch_st + chunk_patch_num]
-                
+                chunk_images = inputs["images"][patch_st:patch_st +
+                                                chunk_patch_num]
+
                 chunks_info.append({
-                    "input_ids": chunk_input_ids,
-                    "token_type_ids": chunk_token_type_ids,
-                    "image_type_ids": chunk_image_type_ids if chunk_image_type_ids.shape[0] else None,
-                    "grid_thw": chunk_grid_thw if chunk_grid_thw.shape[0] else None,
-                    "images": chunk_images if chunk_images.shape[0] else None,
-                    "position_ids": None
+                    "input_ids":
+                    chunk_input_ids,
+                    "token_type_ids":
+                    chunk_token_type_ids,
+                    "image_type_ids":
+                    chunk_image_type_ids
+                    if chunk_image_type_ids.shape[0] else None,
+                    "grid_thw":
+                    chunk_grid_thw if chunk_grid_thw.shape[0] else None,
+                    "images":
+                    chunk_images if chunk_images.shape[0] else None,
+                    "position_ids":
+                    None
                 })
 
                 input_ids_st += chunk_seq_len[idx]
                 image_type_ids_st += actual_image_num
                 grid_thw_st += chunk_image_num[idx]
                 patch_st += chunk_patch_num
-            request.set("prefill_chunk_info", chunks_info)             
-                
-    
+            request.set("prefill_chunk_info", chunks_info)
+
     def insert_tasks(self, tasks, allocated=False):
         """
         Insert tasks to engine.
@@ -759,7 +766,7 @@ class LLMEngine(object):
                 llm_logger.info(f"Killing cache manager process {p.pid}")
                 try:
                     os.killpg(p.pid, signal.SIGTERM)
-                except:
+                except:  # noqa: E722
                     pass
         self.worker_ready_signal.clear()
         self.exist_task_signal.clear()
@@ -839,7 +846,7 @@ class LLMEngine(object):
             f" --max_num_batched_tokens {self.cfg.max_num_batched_tokens}"
             f" --splitwise_role {self.cfg.splitwise_role}"
             f" --kv_cache_ratio {self.cfg.cache_config.kv_cache_ratio} --dtype {self.cfg.cache_config.cache_dtype}"
-        )
+            f" --ori_vocab_size {len(self.data_processor.tokenizer)}")
 
         worker_append_flag = {
             "enable_chunked_prefill":

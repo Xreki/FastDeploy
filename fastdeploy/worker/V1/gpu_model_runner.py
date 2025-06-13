@@ -295,8 +295,7 @@ class GPUModelRunner(ModelRunnerBase):
             self.parallel_config.max_model_len).reshape((1, -1))
         # TODO(gongshaotian): move to models
         self.share_inputs["rope_emb"] = get_rope(
-            rotary_dim=self.model_config.hidden_size //
-            self.model_config.num_attention_heads,
+            rotary_dim=self.model_config.head_dim,
             position_ids=tmp_position_ids,
             base=self.model_config.rope_theta,
             model_config=self.model_config)
@@ -449,7 +448,7 @@ class GPUModelRunner(ModelRunnerBase):
         self.model_config.kv_num_heads = int(
             self.model_config.num_key_value_heads
         ) // self.parallel_config.mp_size
-        head_dim = self.model_config.hidden_size // self.model_config.num_attention_heads
+        head_dim = self.model_config.head_dim
 
         # Get the attention backend
         attn_cls = get_attention_backend(
@@ -674,7 +673,7 @@ class GPUModelRunner(ModelRunnerBase):
         if self.fd_config.kv_cache_config.cache_quant_dtype == "cache_int8":
             byte_of_dtype = 1
 
-        head_dim = self.model_config.hidden_size // self.model_config.num_attention_heads
+        head_dim = self.model_config.head_dim
         hidden_dim = head_dim * self.model_config.kv_num_heads
 
         required_memory = (

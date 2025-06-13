@@ -52,6 +52,7 @@ from .tokenizer import ErnieBotTokenizer
 model_classes_mapping = {
     "ErnieForCausalLM": ErniePretrainedModel,
     "Qwen2ForCausalLM": Qwen2PretrainedModel,
+    "ErnieBotLMHeadModel": ErniePretrainedModel,
 }
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -194,7 +195,7 @@ def build_stream_line_model(
         config = json.load(fin)
     architectures = config.get("architectures")
     if tokenizer is None:
-        if "ErnieForCausalLM" in architectures:
+        if "ErnieForCausalLM" in architectures or "ErnieBotLMHeadModel" in architectures:
             tokenizer = ErnieBotTokenizer.from_pretrained(model_path)
         else:
             tokenizer = AutoTokenizer.from_pretrained(
@@ -234,6 +235,7 @@ def build_stream_line_model(
     model_config.tensor_parallel_degree = parallel_config.tensor_parallel_degree
     model_config.use_ep = use_ep
     model_config.is_mtp = speculative_config.is_mtp
+    moe_config.num_experts = None
     model_config.use_offline_quant = False
     additional_config.use_fake_parameter = use_fake_parameter
     additional_config.ep_just_for_test = ep_just_for_test
@@ -484,7 +486,7 @@ def build_stream_line_model(
         state_dict = sharing_state_dicts
         context = paddle.LazyGuard()
 
-    if "ErnieForCausalLM" in architectures:
+    if "ErnieForCausalLM" in architectures or "ErnieBotLMHeadModel" in architectures:
         use_rmsnorm = config.get("use_rmsnorm", False)
     else:
         use_rmsnorm = config.get("use_rmsnorm", True)
