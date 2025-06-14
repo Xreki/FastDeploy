@@ -47,11 +47,13 @@ from ..layers.quantization import get_quantization_config
 from .ernie45t_moe import ErniePretrainedModel
 from .model_base import ModelRegistry
 from .qwen2 import Qwen2PretrainedModel
+from .qwen3moe import Qwen3PretrainedModel
 from .tokenizer import ErnieBotTokenizer
 
 model_classes_mapping = {
     "ErnieForCausalLM": ErniePretrainedModel,
     "Qwen2ForCausalLM": Qwen2PretrainedModel,
+    "Qwen3MoeForCausalLM": Qwen3PretrainedModel,
     "ErnieBotLMHeadModel": ErniePretrainedModel,
 }
 
@@ -207,7 +209,11 @@ def build_stream_line_model(
     config, _ = PretrainedConfig.get_config_dict(model_path)
     config["head_dim"] = config.get(
         "head_dim", config["hidden_size"] // config["num_attention_heads"])
+
     model_config = ModelConfig.from_dict(config)
+    # TODO very circuitous to set `head_dim` again. 
+    # Because `ModelConfig` class doesn't support feeding head_dim at all!
+    model_config.head_dim = config["head_dim"] 
 
     parallel_config = ParallelConfig()
     speculative_config = SpeculativeConfig()
@@ -310,9 +316,10 @@ def build_stream_line_model(
     elif isinstance(remove_tail_layer, int):
         num_layers -= remove_tail_layer
 
-    use_moe = config.get(
-        "moe_layer_start_index",
-        num_layers) < num_layers or draft_type in ["mtp", "eagle"]
+    # use_moe = config.get(
+    #     "moe_layer_start_index",
+    #     num_layers) < num_layers or draft_type in ["mtp", "eagle"]
+    use_moe = config.get("moe_num_experts", 0) > 0 or draft_type in ["mtp", "eagle"]
 
     if not sharing_state_dicts:
         if use_empty_parameter:
@@ -534,7 +541,7 @@ def build_stream_line_model(
         moe_config.moe_intermediate_size = config.get("moe_intermediate_size",
                                                       None)
         moe_config.moe_use_gate_correction_bias = config.get(
-            "moe_use_gate_correction_bias", True)
+            "moe_use_gate_correction_bias", False)
         moe_config.moe_every2 = config.get("moe_every2", False)
         moe_config.top_k = config.get("moe_topk", 8)
         moe_config.moe_num_shared_experts = config.get(

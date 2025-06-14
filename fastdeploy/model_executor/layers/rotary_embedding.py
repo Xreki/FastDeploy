@@ -110,11 +110,13 @@ def get_rope(
     rotary_dim: int,
     base: 10000.0,
     position_ids,
-    model_config: ModelConfig,
+    model_config: Optional[ModelConfig] = None,
     partial_rotary_factor=1,
 ):
     rope_scaling = model_config
-    if "Qwen2ForCausalLM" in model_config.architectures:
+    if model_config is None or \
+        "Qwen2ForCausalLM" in model_config.architectures or \
+        "Qwen3MoEForCausalLM" in model_config.architectures:
         rotary_emb_layer = QwenRotaryEmbedding(rotary_dim, base,
                                                partial_rotary_factor,
                                                rope_scaling)
@@ -125,6 +127,120 @@ def get_rope(
                                                 rope_scaling)
         rotary_emb = rotary_emb_layer(position_ids)
     return rotary_emb
+
+
+class RopeEmbedding:
+    """
+    This is a temporary class used by Qwen3 series model, will be refactored in the future.
+    """
+    @staticmethod
+    def get_neox_style_position_embedding(position_ids, head_dim, base):
+        """
+        neox_style position_embedding, used by Qwen、Llama and other opensourced models.
+        """
+        bsz, max_seq_len = position_ids.shape[:2]
+        rot_emb = paddle.zeros((2, bsz, max_seq_len, 1, head_dim),
+                               dtype="float32")
+        inv_freq = base**(-paddle.arange(0, head_dim, 2,
+                          dtype="float32") / head_dim)
+
+        # shape: [B, S, D/2]
+        freqs = paddle.einsum("ij,k->ijk", position_ids.cast("float32"),
+                              inv_freq)
+        # shape: [B, S, 1, D]
+        emb = paddle.concat([freqs, freqs], axis=-1).reshape(
+            (bsz, max_seq_len, 1, head_dim))
+
+        rot_emb[0] = paddle.cos(emb)
+        rot_emb[1] = paddle.sin(emb)
+        return rot_emb
+
+    @staticmethod
+    def get_rotary_position_embedding(self, position_ids, head_dim, base):
+        """
+        The normal position_embedding, used by Ernie models, the only difference is the emb shape.
+        TODO: these two functions will be merged in the future.
+        """
+        bsz, max_seq_len = position_ids.shape[:2]
+        rot_emb = paddle.zeros(
+            (2, bsz, max_seq_len, 1, head_dim // 2), dtype="float32"
+        )
+        inv_freq = base ** (
+            -paddle.arange(0, head_dim, 2, dtype="float32") / head_dim
+        )
+
+        # shape: [B, S, D/2]
+        freqs = paddle.einsum(
+            "ij,k->ijk", position_ids.cast("float32"), inv_freq
+        )
+        # shape: [B, S, D/2]
+        emb = paddle.stack([freqs], axis=-1).reshape(
+            (bsz, max_seq_len, head_dim // 2)
+        )
+        # shape: [B, S, 1, D]
+        emb = paddle.unsqueeze(emb, 2)
+
+        rot_emb[0] = paddle.cos(emb)
+        rot_emb[1] = paddle.sin(emb)
+        return rot_emb
+
+    @staticmethod
+    def _apply_rope(use_neox_rotary_style, rotary_emb, q, k, v=None, causal=False):
+        """
+        Only used by unit tests.
+        """
+        # sin [sequence_length, embed_size_per_head//2]
+        # cos [sequence_length, embed_size_per_head//2]
+        # sin, cos = paddle.chunk(rp, 2, axis=-1)
+        seq, head_dim = q.shape[2], q.shape[3]
+        cos, sin = paddle.chunk(rotary_emb, 2, axis=0)
+        cos = paddle.squeeze(cos, axis=0).transpose(
+            [0, 2, 1, 3])[:, :, :seq, :]
+        sin = paddle.squeeze(sin, axis=0).transpose(
+            [0, 2, 1, 3])[:, :, :seq, :]
+        # sin [θ0,θ1,θ2......θd/2-1] -> sin_pos [θ0,θ0,θ1,θ1,θ2,θ2......θd/2-1,θd/2-1]
+
+        if use_neox_rotary_style:
+            sin_pos = sin
+            cos_pos = cos
+            # NeoX Stype：前后半部分分块旋转
+            rotate_half_q = paddle.reshape(
+                paddle.stack([-q[:, :, :, q.shape[-1] // 2:],
+                             q[:, :, :, :q.shape[-1] // 2]], axis=-1),
+                paddle.shape(q),
+            )
+            rotate_half_k = paddle.reshape(
+                paddle.stack([-k[:, :, :, k.shape[-1] // 2:],
+                             k[:, :, :, :k.shape[-1] // 2]], axis=-1),
+                paddle.shape(k),
+            )
+        else:
+            sin_pos = paddle.reshape(paddle.stack(
+                [sin, sin], axis=-1), [1, 1, seq, head_dim])
+            # cos [θ0,θ1,θ2......θd/2-1] -> cos_pos [θ0,θ0,θ1,θ1,θ2,θ2......θd/2-1,θd/2-1]
+            cos_pos = paddle.reshape(paddle.stack(
+                [cos, cos], axis=-1), [1, 1, seq, head_dim])
+            # GPT Stype：奇偶位置分块旋转
+            rotate_half_q = paddle.reshape(
+                paddle.stack([-q[:, :, :, 1::2], q[:, :, :, 0::2]], axis=-1),
+                paddle.shape(q),
+            )
+            rotate_half_k = paddle.reshape(
+                paddle.stack([-k[:, :, :, 1::2], k[:, :, :, 0::2]], axis=-1),
+                paddle.shape(k),
+            )
+
+        query = paddle.add(
+            paddle.multiply(q, cos_pos), paddle.multiply(
+                rotate_half_q, sin_pos)
+        )
+
+        key = paddle.add(
+            paddle.multiply(k, cos_pos), paddle.multiply(
+                rotate_half_k, sin_pos)
+        )
+
+        return paddle.cast(query, q.dtype), paddle.cast(key, k.dtype)
 
 
 class ErnieVlRotaryEmbedding3D:

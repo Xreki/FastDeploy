@@ -156,6 +156,7 @@ class AppendAttentionBackend(AttentionBackend):
             metadata.kv_signal_metadata = open_shm_and_get_meta_signal(
                 self.rank, int(self.device_id), self.keep_pd_step_flag)
         self.attention_metadata = metadata
+        
 
     def get_attntion_meta(self):
         """get_attntion_meta"""
@@ -242,3 +243,67 @@ class AppendAttentionBackend(AttentionBackend):
             self.speculate_method is not None,
         )[0]
         return res
+
+    def native_attention_impl(
+        self,
+        query,
+        key,
+        value,
+        cache_k=None,
+        cache_v=None,
+        mask=None,
+        scale=1.0
+    ):
+        """
+        """
+        
+        batch = query.shape[0]
+        heads = query.shape[1]
+        seq_len = query.shape[2]
+        head_dim = query.shape[3]
+        kv_head = key.shape[1]
+
+        key = key.reshape([batch, kv_head, 1, seq_len, head_dim])
+        key = paddle.tile(key, [1, 1, heads // kv_head, 1, 1])
+        key = key.reshape([batch, heads, seq_len, head_dim])
+
+        if cache_k is not None:
+            cache_k = cache_k.reshape([batch, kv_head, 1, -1, head_dim])
+            cache_k = paddle.tile(cache_k, [1, 1, heads // kv_head, 1, 1])
+            cache_k = cache_k.reshape([batch, heads, -1, head_dim])
+            key = paddle.concat([cache_k, key], axis=2)
+
+        value = value.reshape([batch, kv_head, 1, seq_len, head_dim])
+        value = paddle.tile(value, [1, 1, heads // kv_head, 1, 1])
+        value = value.reshape([batch, heads, seq_len, head_dim])
+
+        if cache_v is not None:
+            cache_v = cache_v.reshape([batch, kv_head, 1, -1, head_dim])
+            cache_v = paddle.tile(cache_v, [1, 1, heads // kv_head, 1, 1])
+            cache_v = cache_v.reshape([batch, heads, -1, head_dim])
+            value = paddle.concat([cache_v, value], axis=2)
+
+        qk_res = paddle.matmul(query, key, transpose_y=True)
+        attention = qk_res * scale
+        if mask is not None:
+            attention = attention + mask
+        softmax_result = paddle.nn.functional.softmax(attention, -1)
+        result = paddle.matmul(paddle.cast(
+            softmax_result, dtype=value.dtype), value)
+        return result
+    
+    def forward_native_backend(
+        self,
+        q,
+        k,
+        v,
+        qkv,
+        layer: Attention,
+        forward_meta: ForwardMeta,
+    ):
+        """
+        forward_mixed 
+        TODO(vivienfanghuagood) WIP
+        """
+        raise NotImplementedError("this function not supported now")
+        
