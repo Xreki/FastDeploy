@@ -149,7 +149,7 @@ class ModelRunner(ModelRunnerBase):
                 speculate_max_draft_tokens,
                 return_all_hidden_states=False,
                 moe_quant_type=getattr(self.model_cfg, "moe_quant_type",
-                                       "weight_only_int4"),
+                                       "weight_only_int8"),
                 use_safetensors=self.model_cfg.is_unified_ckpt,
                 return_fd_config=True)
             model.eval()
@@ -170,16 +170,20 @@ class ModelRunner(ModelRunnerBase):
             self._init_kvcache()
 
     def init_rotary_position_embedding(self, max_model_len):
-        from fastdeploy.model_executor.layers.rotary_embedding import RopeEmbedding
+        use_ernie_rotray = (os.getenv("USE_ERNIE_ROTRAY", default="1") == "1")
         tmp_position_ids = paddle.arange(max_model_len).reshape((1, -1))
-        # self.share_inputs["rope_emb"] = rotary_emb
-        # rotary = RopeEmbedding(use_neox_rotary_style=True)
-        self.share_inputs["rope_emb"] = RopeEmbedding.get_neox_style_position_embedding(tmp_position_ids, head_dim=128, base=1e6)
-        # self.share_inputs["rope_emb"] = get_rope(
-        #     rotary_dim=self.model_cfg.head_dim,
-        #     position_ids=tmp_position_ids,
-        #     base=self.rope_theta,
-        #     model_config=self.config)
+        # TODO(lizexu) to refactor the rotray embedding in the next PR!
+        if use_ernie_rotray:
+            self.share_inputs["rope_emb"] = get_rope(
+                rotary_dim=self.model_cfg.head_dim,
+                position_ids=tmp_position_ids,
+                base=self.rope_theta,
+                model_config=self.config)
+        else:
+            # it's the only choise to run Qwen3-MoE!
+            from fastdeploy.model_executor.layers.rotary_embedding import RopeEmbedding
+            self.share_inputs["rope_emb"] = \
+                RopeEmbedding.get_neox_style_position_embedding(tmp_position_ids, head_dim=self.model_cfg.head_dim, base=1e6)
 
     def _init_kvcache(self):
         """
@@ -592,9 +596,7 @@ class ModelRunner(ModelRunnerBase):
         """
         fake input to profile
         """
-        fake_input_ids = [68990 , 35727 , 50285 , 64689 , 105930]
-        input_length = len(fake_input_ids)
-        # input_length = num_total_tokens // number_of_tasks
+        input_length = num_total_tokens // number_of_tasks
 
         block_num = (input_length + self.args.block_size - 1 +
                      self.args.enc_dec_block_num) // self.args.block_size
@@ -603,7 +605,7 @@ class ModelRunner(ModelRunnerBase):
             idx = i
             self.share_inputs["input_ids"][idx:idx +
                                            1, :input_length] = np.array(
-                                               fake_input_ids)
+                                               [5] * input_length)
             self.share_inputs["eos_token_id"][:] = np.array(
                 [2], dtype="int64").reshape(-1, 1)
             self.share_inputs["seq_lens_this_time"][idx:idx + 1] = input_length

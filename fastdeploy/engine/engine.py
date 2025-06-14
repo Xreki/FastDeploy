@@ -398,13 +398,6 @@ class LLMEngine(object):
             )
             llm_logger.error(error_msg)
             raise EngineError(error_msg, error_code=400)
-
-        def print_members(obj):
-            for k, v in vars(obj).items():
-                console_logger.info(f"{k}: {v}")
-        console_logger.info("!!!add_requests")
-        print_members(request)
-        # import sys;sys.exit()
         
         request.preprocess_end_time = time.time()
         self.scheduler.put_requests([request])
@@ -838,7 +831,7 @@ class LLMEngine(object):
         pd_cmd = pd_cmd + f" --log_dir {log_dir}"
 
         # TODO(liuyuanle): vl model use v1 worker
-        use_worker_v1 = (os.getenv("USE_WORKER_V1", default="0") == "1")
+        use_worker_v1 = (os.getenv("USE_WORKER_V1", default="1") == "1")
         worker_path = "../worker/V1/worker_process.py"
         if self.cfg.enable_mm or not use_worker_v1:
             worker_path = "../worker/worker.py"

@@ -211,7 +211,9 @@ def build_stream_line_model(
         "head_dim", config["hidden_size"] // config["num_attention_heads"])
 
     model_config = ModelConfig.from_dict(config)
-    model_config.head_dim = config["head_dim"] # TODO very circuitous to set `head_dim` again. Because `ModelConfig` class doesn't support feeding head_dim at all!
+    # TODO very circuitous to set `head_dim` again. 
+    # Because `ModelConfig` class doesn't support feeding head_dim at all!
+    model_config.head_dim = config["head_dim"] 
 
     parallel_config = ParallelConfig()
     speculative_config = SpeculativeConfig()

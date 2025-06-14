@@ -23,7 +23,7 @@ from paddle import nn
 from paddlenlp.transformers import PretrainedModel
 from paddlenlp.utils.log import logger
 
-from fastdeploy.config import LLMConfig, ModelConfig
+from fastdeploy.config import FDConfig, ModelConfig
 from fastdeploy.model_executor.layers.activation import SiluAndMul
 from fastdeploy.model_executor.layers.attention import Attention
 from fastdeploy.model_executor.layers.embeddings import VocabParallelEmbedding
@@ -42,13 +42,13 @@ class Qwen3MLP(nn.Layer):
 
     def __init__(
         self,
-        llm_config: LLMConfig,
+        llm_config: FDConfig,
         prefix: str = "",
     ) -> None:
         super().__init__()
         self.nranks = llm_config.parallel_config.mp_size
         self.gate_up_proj = MergedColumnParallelLinear(
-            llm_config=llm_config,
+            llm_config,
             prefix=f"{prefix}.up_gate_proj",
             with_bias=False,
             activation=llm_config.model_config.hidden_act,
@@ -56,7 +56,7 @@ class Qwen3MLP(nn.Layer):
         )
 
         self.down_proj = RowParallelLinear(
-            llm_config=llm_config,
+            llm_config,
             prefix=f"{prefix}.down_proj",
             input_size=(llm_config.model_config.ffn_hidden_size //
                         self.nranks),
@@ -65,7 +65,7 @@ class Qwen3MLP(nn.Layer):
         )
 
         self.act_fn = SiluAndMul(
-            llm_config=llm_config,
+            llm_config,
             bias=getattr(self.gate_up_proj, "linear_bias", None),
             act_method=llm_config.model_config.hidden_act,
         )
@@ -90,26 +90,26 @@ class Qwen3Attention(nn.Layer):
     """
 
     def __init__(self,
-                 llm_config: LLMConfig,
+                 llm_config: FDConfig,
                  layer_id: int,
                  prefix: str = "") -> None:
         super().__init__()
 
         nranks = llm_config.parallel_config.mp_size
 
-        self.qkv_proj = QKVParallelLinear(llm_config=llm_config,
+        self.qkv_proj = QKVParallelLinear(llm_config,
                                           prefix=f"{prefix}.qkv_proj",
                                           with_bias=False)
 
         self.o_proj = RowParallelLinear(
-            llm_config=llm_config,
+            llm_config,
             prefix=f"{prefix}.o_proj",
             input_size=llm_config.model_config.head_dim * llm_config.model_config.num_attention_heads,
             output_size=llm_config.model_config.hidden_size,
         )
         
 
-        self.attn = Attention(llm_config=llm_config,
+        self.attn = Attention(llm_config,
                               layer_id=layer_id,
                               prefix=prefix,
                               use_neox_rotary_style=True)
@@ -177,7 +177,7 @@ class Qwen3DecoderLayer(nn.Layer):
 
     def __init__(
         self,
-        llm_config: LLMConfig,
+        llm_config: FDConfig,
         prefix: str = "",
     ) -> None:
         super().__init__()
@@ -189,28 +189,27 @@ class Qwen3DecoderLayer(nn.Layer):
             prefix=f"{prefix}.self_attn",
         )
         llm_config.moe_config.use_moe = True
+        assert llm_config.moe_config.moe_quant_type in ["weight_only_int8", "weight_only_int4"]
 
         if (llm_config.moe_config.num_experts is not None
                 and layer_id >= llm_config.moe_config.moe_layer_start_index):
             self.mlp = FusedMoE(
-                llm_config=llm_config,
+                llm_config,
                 moe_intermediate_size=llm_config.moe_config.
                 moe_intermediate_size,
                 num_experts=llm_config.moe_config.num_experts,
                 top_k=llm_config.moe_config.top_k,
                 moe_use_gate_correction_bias=llm_config.moe_config.
                 moe_use_gate_correction_bias,
-                moe_quant_type="weight_only_int8", # only support weight_only_int8, otherwise the precision is incorrect!
+                moe_quant_type=llm_config.moe_config.moe_quant_type,
                 layer_idx=layer_id,
                 gate_weight_key=f"{prefix}.mlp.gate.weight",
-                ffn1_expert_weight_key=
-                f"{prefix}.mlp.experts.{{}}.up_gate_proj.weight",
-                ffn2_expert_weight_key=
-                f"{prefix}.mlp.experts.{{}}.down_proj.weight",
+                ffn1_expert_weight_key=f"{prefix}.mlp.experts.{{}}.up_gate_proj.weight",
+                ffn2_expert_weight_key=f"{prefix}.mlp.experts.{{}}.down_proj.weight",
             )
         else:
             self.mlp = Qwen3MLP(
-                llm_config=llm_config,
+                llm_config,
                 prefix=f"{prefix}.mlp",
             )
 
@@ -272,7 +271,7 @@ class Qwen3MoeModel(nn.Layer):
 
     def __init__(
         self,
-        llm_config: LLMConfig = None,
+        llm_config: FDConfig = None,
     ):
         """
         Initializer for the Qwen2Model class.
@@ -286,7 +285,7 @@ class Qwen3MoeModel(nn.Layer):
         llm_config.model_config.prefix_name = "model"
 
         self.embeddings = VocabParallelEmbedding(
-            llm_config=llm_config,
+            llm_config,
             num_embeddings=llm_config.model_config.vocab_size,
             embedding_dim=llm_config.model_config.hidden_size,
             params_dtype=paddle.get_default_dtype,
@@ -295,7 +294,7 @@ class Qwen3MoeModel(nn.Layer):
 
         self.layers = nn.LayerList([
             Qwen3DecoderLayer(
-                llm_config=llm_config,
+                llm_config,
                 prefix=f"{llm_config.model_config.prefix_name}.layers.{i}")
             for i in range(self.num_layers)
         ])
@@ -346,22 +345,22 @@ class Qwen3MoeModel(nn.Layer):
 
 class Qwen3MoeForCausalLM(ModelForCasualLM):
     """
-    Qwen2ForCausalLM
+    Qwen3MoeForCausalLM
     """
 
-    def __init__(self, llm_config: LLMConfig):
+    def __init__(self, llm_config: FDConfig):
         """
         Args:
-            llm_config (LLMConfig): Configurations for the LLM model.
+            llm_config (FDConfig): Configurations for the LLM model.
         """
         super(Qwen3MoeForCausalLM, self).__init__(llm_config)
 
-        self.model = Qwen3MoeModel(llm_config=llm_config)
+        self.model = Qwen3MoeModel(llm_config)
 
         self.ori_vocab_size = llm_config.model_config.ori_vocab_size
 
         self.lm_head = ParallelLMHead(
-            llm_config=llm_config,
+            llm_config,
             embedding_dim=llm_config.model_config.hidden_size,
             num_embeddings=llm_config.model_config.vocab_size,
             prefix="lm_head",
@@ -412,7 +411,7 @@ class Qwen3PretrainedModel(PretrainedModel):
     Qwen3PretrainedModel
     """
 
-    config_class = LLMConfig
+    config_class = FDConfig
 
     def _init_weight(self, layer):
         """

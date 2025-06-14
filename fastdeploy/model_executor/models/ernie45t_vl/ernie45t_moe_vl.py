@@ -32,9 +32,7 @@ from fastdeploy.model_executor.layers.normalization import RMSNorm
 from fastdeploy.model_executor.layers.utils import get_tensor
 from fastdeploy.model_executor.models.ernie45t_moe import (Ernie45TAttention,
                                                            Ernie45TMLP)
-from fastdeploy.model_executor.ops.gpu import (extract_text_token_output,
-                                               text_image_gather_scatter,
-                                               text_image_index_out)
+
 from fastdeploy.worker.model_runner import ForwardMeta
 
 from ..model_base import ModelForCasualLM
@@ -62,6 +60,9 @@ class Ernie45TVLMoE(nn.Layer):
     def __init__(self, fd_config: FDConfig, layer_id: int,
                  prefix: str) -> None:
         super().__init__()
+        from fastdeploy.model_executor.ops.gpu import (extract_text_token_output,
+                                               text_image_gather_scatter,
+                                               text_image_index_out)
 
         # TODO: Fix 传参
         self.fused_moe_text = FusedMoE(
