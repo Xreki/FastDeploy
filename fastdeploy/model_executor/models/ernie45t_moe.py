@@ -34,9 +34,8 @@ from fastdeploy.model_executor.layers.linear import (
 from fastdeploy.model_executor.layers.lm_head import ParallelLMHead
 from fastdeploy.model_executor.layers.moe.moe import FusedMoE
 from fastdeploy.model_executor.layers.normalization import RMSNorm
+from fastdeploy.model_executor.models.model_base import ModelForCasualLM
 from fastdeploy.worker.model_runner import ForwardMeta
-
-from .model_base import ModelForCasualLM
 
 
 class ErniePretrainedModel(PretrainedModel):
@@ -273,29 +272,28 @@ class Ernie45TMLP(nn.Layer):
     def __init__(
         self,
         fd_config: FDConfig,
+        intermediate_size: int,
         prefix: str = "",
-        ffn_hidden_size: int = None,
     ) -> None:
         super().__init__()
         self.nranks = fd_config.parallel_config.mp_size
         self.gate_up_proj = MergedColumnParallelLinear(
             fd_config=fd_config,
             prefix=f"{prefix}.up_gate_proj",
+            input_size=fd_config.model_config.hidden_size,
+            output_size=intermediate_size * 2,
             with_bias=False,
             activation=fd_config.model_config.hidden_act,
             use_fast_ffn=True,
-            ffn_hidden_size=ffn_hidden_size,
         )
 
         self.down_proj = RowParallelLinear(
             fd_config=fd_config,
             prefix=f"{prefix}.down_proj",
-            input_size=(fd_config.model_config.ffn_hidden_size //
-                        self.nranks) if ffn_hidden_size is None else
-            (ffn_hidden_size // self.nranks),
+            input_size=(intermediate_size // self.nranks),
             output_size=fd_config.model_config.hidden_size,
             with_bias=False,
-            ffn_hidden_size=ffn_hidden_size)
+        )
 
         self.act_fn = SiluAndMul(
             fd_config=fd_config,
@@ -358,10 +356,11 @@ class Ernie45TMoE(nn.Layer):
         self.num_shared_experts = fd_config.moe_config.moe_num_shared_experts
         if self.num_shared_experts > 0:
             shared_experts_hidden_dim = self.num_shared_experts * fd_config.moe_config.moe_intermediate_size
-            self.shared_experts = Ernie45TMLP(
+            self.share_experts = Ernie45TMLP(
                 fd_config=fd_config,
-                prefix=f"{prefix}.shared_experts",
-                ffn_hidden_size=shared_experts_hidden_dim)
+                intermediate_size=shared_experts_hidden_dim,
+                prefix=f"{prefix}.mlp.shared_experts",
+            )
 
     def load_state_dict(self, state_dict):
         self.fused_moe.load_state_dict(state_dict)
@@ -457,6 +456,7 @@ class Ernie45TDecoderLayer(nn.Layer):
         else:
             self.mlp = Ernie45TMLP(
                 fd_config=fd_config,
+                intermediate_size=fd_config.model_config.ffn_hidden_size,
                 prefix=f"{prefix}.mlp",
             )
 

@@ -32,10 +32,11 @@ from fastdeploy.model_executor.layers.normalization import RMSNorm
 from fastdeploy.model_executor.layers.utils import get_tensor
 from fastdeploy.model_executor.models.ernie45t_moe import (Ernie45TAttention,
                                                            Ernie45TMLP)
-
+from fastdeploy.model_executor.ops.gpu import (extract_text_token_output,
+                                               text_image_gather_scatter,
+                                               text_image_index_out)
+from fastdeploy.model_executor.models.model_base import ModelForCasualLM
 from fastdeploy.worker.model_runner import ForwardMeta
-
-from ..model_base import ModelForCasualLM
 
 
 class Ernie45TVLMLP(Ernie45TMLP):
@@ -60,71 +61,108 @@ class Ernie45TVLMoE(nn.Layer):
     def __init__(self, fd_config: FDConfig, layer_id: int,
                  prefix: str) -> None:
         super().__init__()
-        from fastdeploy.model_executor.ops.gpu import (extract_text_token_output,
-                                               text_image_gather_scatter,
-                                               text_image_index_out)
 
-        # TODO: Fix 传参
-        self.fused_moe_text = FusedMoE(
-            fd_config=fd_config,
-            moe_intermediate_size=fd_config.moe_config.
-            moe_intermediate_size[0],
-            num_experts=fd_config.moe_config.num_experts[0],
-            top_k=fd_config.moe_config.top_k,
-            moe_use_gate_correction_bias=fd_config.moe_config.
-            moe_use_gate_correction_bias,
-            moe_quant_type=fd_config.moe_config.moe_quant_type,
-            layer_idx=layer_id,
-            moe_tag="Text",
-            gate_weight_key=f"{prefix}.gate.weight",
-            gate_correction_bias_key=
-            f"{prefix}.moe_statics.e_score_correction_bias",
-            ffn1_expert_weight_key=f"{prefix}.experts.{{}}.up_gate_proj.weight",
-            ffn2_expert_weight_key=f"{prefix}.experts.{{}}.down_proj.weight",
-        )
-        self.fused_moe_text.load_gate_state_dict = self.load_gate_state_dict_text
+        moe_layer_start_index = fd_config.moe_config.moe_layer_start_index
+        if isinstance(moe_layer_start_index, int):
+            text_moe_layer_start_index = moe_layer_start_index
+            image_moe_layer_start_index = moe_layer_start_index
+        else:
+            text_moe_layer_start_index = moe_layer_start_index[0]
+            image_moe_layer_start_index = moe_layer_start_index[1]
 
-        self.fused_moe_image = FusedMoE(
-            fd_config=fd_config,
-            moe_intermediate_size=fd_config.moe_config.
-            moe_intermediate_size[1],
-            num_experts=fd_config.moe_config.num_experts[1],
-            top_k=fd_config.moe_config.top_k,
-            moe_use_gate_correction_bias=fd_config.moe_config.
-            moe_use_gate_correction_bias,
-            moe_quant_type="weight_only_int8",  # not set weight_only_int4
-            layer_idx=layer_id,
-            moe_tag="Image",
-            gate_weight_key=f"{prefix}.gate.weight_1",
-            gate_correction_bias_key=
-            f"{prefix}.moe_statics.e_score_correction_bias",
-            ffn1_expert_weight_key=f"{prefix}.experts.{{}}.up_gate_proj.weight",
-            ffn2_expert_weight_key=f"{prefix}.experts.{{}}.down_proj.weight",
-        )
-        self.fused_moe_image.load_gate_state_dict = self.load_gate_state_dict_image
+        moe_layer_end_index = fd_config.moe_config.moe_layer_end_index
+        if moe_layer_end_index is None:
+            text_moe_layer_end_index = fd_config.model_config.num_layers
+            image_moe_layer_end_index = fd_config.model_config.num_layers
+        elif isinstance(moe_layer_end_index, int):
+            text_moe_layer_end_index = moe_layer_end_index
+            image_moe_layer_end_index = moe_layer_end_index
+        else:
+            text_moe_layer_end_index = moe_layer_end_index[0]
+            image_moe_layer_end_index = moe_layer_end_index[1]
+
+        if layer_id >= text_moe_layer_start_index and layer_id <= text_moe_layer_end_index:
+            # TODO: Fix 传参
+            self.mlp_text = FusedMoE(
+                fd_config=fd_config,
+                moe_intermediate_size=fd_config.moe_config.
+                moe_intermediate_size[0],
+                num_experts=fd_config.moe_config.num_experts[0],
+                top_k=fd_config.moe_config.top_k,
+                moe_use_gate_correction_bias=fd_config.moe_config.
+                moe_use_gate_correction_bias,
+                moe_quant_type=fd_config.moe_config.moe_quant_type,
+                layer_idx=layer_id,
+                moe_tag="Text",
+                gate_weight_key=f"{prefix}.gate.weight",
+                gate_correction_bias_key=f"{prefix}.moe_statics.e_score_correction_bias",
+                ffn1_expert_weight_key=f"{prefix}.experts.{{}}.up_gate_proj.weight",
+                ffn2_expert_weight_key=f"{prefix}.experts.{{}}.down_proj.weight",
+            )
+            self.mlp_text.load_gate_state_dict = self.load_gate_state_dict_text
+        else:
+            self.mlp_text = Ernie45TVLMLP(
+                fd_config=fd_config,
+                intermediate_size=fd_config.model_config.ffn_hidden_size,
+                prefix=f"{prefix}",
+            )
+
+        if layer_id >= image_moe_layer_start_index and layer_id <= image_moe_layer_end_index:
+            self.mlp_image = FusedMoE(
+                fd_config=fd_config,
+                moe_intermediate_size=fd_config.moe_config.
+                moe_intermediate_size[1],
+                num_experts=fd_config.moe_config.num_experts[1],
+                top_k=fd_config.moe_config.top_k,
+                moe_use_gate_correction_bias=fd_config.moe_config.
+                moe_use_gate_correction_bias,
+                moe_quant_type="weight_only_int8",  # not set weight_only_int4
+                layer_idx=layer_id,
+                moe_tag="Image",
+                gate_weight_key=f"{prefix}.gate.weight_1",
+                gate_correction_bias_key=f"{prefix}.moe_statics.e_score_correction_bias",
+                ffn1_expert_weight_key=f"{prefix}.experts.{{}}.up_gate_proj.weight",
+                ffn2_expert_weight_key=f"{prefix}.experts.{{}}.down_proj.weight",
+            )
+            self.mlp_image.load_gate_state_dict = self.load_gate_state_dict_image
+        else:
+            self.mlp_image = Ernie45TVLMLP(
+                fd_config=fd_config,
+                intermediate_size=fd_config.model_config.ffn_hidden_size,
+                prefix=f"{prefix}",
+            )
+
+        self.num_shared_experts = fd_config.moe_config.moe_num_shared_experts
+        if self.num_shared_experts > 0:
+            self.share_experts = Ernie45TVLMLP(
+                fd_config=fd_config,
+                intermediate_size=self.num_shared_experts *
+                fd_config.moe_config.moe_intermediate_size[0],
+                prefix=f"{prefix}.shared_experts",
+            )
 
     def load_gate_state_dict_text(self, state_dict):
         """
         load_gate_state_dict function for text
         """
         # gate_correction_bias
-        if self.fused_moe_text.moe_use_gate_correction_bias:
+        if self.mlp_text.moe_use_gate_correction_bias:
             gate_correction_bias_tensor = get_tensor(
-                state_dict[self.fused_moe_text.gate_correction_bias_key])
-            self.fused_moe_text.gate_correction_bias.set_value(
+                state_dict[self.mlp_text.gate_correction_bias_key])
+            self.mlp_text.gate_correction_bias.set_value(
                 gate_correction_bias_tensor[0].unsqueeze(0))
 
         up_gate_proj_weight = []
         down_proj_weight = []
-        for j in range(0, self.fused_moe_text.num_experts):
+        for j in range(0, self.mlp_text.num_experts):
             up_gate_proj_weight.append(
                 get_tensor(
                     state_dict.pop(
-                        self.fused_moe_text.ffn1_expert_weight_key.format(j))))
+                        self.mlp_text.ffn1_expert_weight_key.format(j))))
             down_proj_weight.append(
                 get_tensor(
                     state_dict.pop(
-                        self.fused_moe_text.ffn2_expert_weight_key.format(j))))
+                        self.mlp_text.ffn2_expert_weight_key.format(j))))
         return up_gate_proj_weight, down_proj_weight
 
     def load_gate_state_dict_image(self, state_dict):
@@ -132,36 +170,36 @@ class Ernie45TVLMoE(nn.Layer):
         load_gate_state_dict function for image
         """
         # gate_correction_bias
-        if self.fused_moe_image.moe_use_gate_correction_bias:
+        if self.mlp_image.moe_use_gate_correction_bias:
             gate_correction_bias_tensor = get_tensor(
-                state_dict[self.fused_moe_image.gate_correction_bias_key])
-            self.fused_moe_image.gate_correction_bias.set_value(
+                state_dict[self.mlp_image.gate_correction_bias_key])
+            self.mlp_image.gate_correction_bias.set_value(
                 gate_correction_bias_tensor[1].unsqueeze(0))
 
         up_gate_proj_weight = []
         down_proj_weight = []
-        for j in range(
-                self.fused_moe_text.num_experts,
-                self.fused_moe_text.num_experts +
-                self.fused_moe_image.num_experts):
+        for j in range(self.mlp_text.num_experts,
+                       self.mlp_text.num_experts + self.mlp_image.num_experts):
             up_gate_proj_weight.append(
                 get_tensor(
                     state_dict.pop(
-                        self.fused_moe_image.ffn1_expert_weight_key.format(
-                            j))))
+                        self.mlp_image.ffn1_expert_weight_key.format(j))))
             down_proj_weight.append(
                 get_tensor(
                     state_dict.pop(
-                        self.fused_moe_image.ffn2_expert_weight_key.format(
-                            j))))
+                        self.mlp_image.ffn2_expert_weight_key.format(j))))
         return up_gate_proj_weight, down_proj_weight
 
     def load_state_dict(self, state_dict):
-        self.fused_moe_text.load_state_dict(state_dict)
-        self.fused_moe_image.load_state_dict(state_dict)
-        state_dict.pop(self.fused_moe_text.gate_correction_bias_key)
+        self.mlp_text.load_state_dict(state_dict)
+        self.mlp_image.load_state_dict(state_dict)
+        state_dict.pop(self.mlp_text.gate_correction_bias_key)
+        if self.num_shared_experts > 0:
+            self.share_experts.load_state_dict(state_dict)
 
     def forward(self, hidden_states: paddle.Tensor, vl_moe_meta: VLMoEMeta):
+        if self.num_shared_experts > 0:
+            share_experts_out = self.share_experts(hidden_states)
         if vl_moe_meta.image_input is not None:
             text_image_gather_scatter(
                 hidden_states,
@@ -172,8 +210,8 @@ class Ernie45TVLMoE(nn.Layer):
                 vl_moe_meta.image_index,
                 True,
             )
-            text_out = self.fused_moe_text(vl_moe_meta.text_input)
-            image_out = self.fused_moe_image(vl_moe_meta.image_input)
+            text_out = self.mlp_text(vl_moe_meta.text_input)
+            image_out = self.mlp_image(vl_moe_meta.image_input)
             text_image_gather_scatter(
                 hidden_states,
                 text_out,
@@ -184,7 +222,9 @@ class Ernie45TVLMoE(nn.Layer):
                 False,
             )
         else:
-            hidden_states = self.fused_moe_text(hidden_states)
+            hidden_states = self.mlp_text(hidden_states)
+        if self.num_shared_experts > 0:
+            hidden_states += share_experts_out
         return hidden_states
 
 
@@ -198,6 +238,20 @@ class Ernie45TVLDecoderLayer(nn.Layer):
         super().__init__()
         layer_id = int(prefix.split(sep='.')[-1])
 
+        moe_layer_start_index = fd_config.moe_config.moe_layer_start_index
+        if isinstance(moe_layer_start_index, list):
+            min_moe_layer_start_index = min(moe_layer_start_index)
+        else:
+            min_moe_layer_start_index = moe_layer_start_index
+
+        max_moe_layer_end_index = fd_config.model_config.num_layers
+        if fd_config.moe_config.moe_layer_end_index is not None:
+            moe_layer_end_index = fd_config.moe_config.moe_layer_end_index
+            if isinstance(moe_layer_start_index, list):
+                max_moe_layer_end_index = max(moe_layer_end_index)
+            else:
+                max_moe_layer_end_index = moe_layer_end_index
+
         self.self_attn = Ernie45TVLAttention(
             fd_config=fd_config,
             layer_id=layer_id,
@@ -205,7 +259,8 @@ class Ernie45TVLDecoderLayer(nn.Layer):
         )
 
         if (fd_config.moe_config.num_experts is not None
-                and layer_id >= fd_config.moe_config.moe_layer_start_index):
+                and layer_id >= min_moe_layer_start_index
+                and layer_id <= max_moe_layer_end_index):
             self.mlp = Ernie45TVLMoE(
                 fd_config=fd_config,
                 layer_id=layer_id,
@@ -214,6 +269,7 @@ class Ernie45TVLDecoderLayer(nn.Layer):
         else:
             self.mlp = Ernie45TVLMLP(
                 fd_config=fd_config,
+                intermediate_size=fd_config.model_config.ffn_hidden_size,
                 prefix=f"{prefix}.mlp",
             )
 
