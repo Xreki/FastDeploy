@@ -191,23 +191,7 @@ class AppendAttentionBackend(AttentionBackend):
                 layer.layer_id] = init_signal_layerwise(
                     metadata.kv_signal_metadata,
                     layer.layer_id + self.start_layer_index)
-        # import pdb;pdb.set_trace()
-        # print("qkv", qkv)
-        # if layer.layer_id < 1:
-        #     print("@@ seq_lens_encoder", forward_meta.seq_lens_encoder)
-        #     print("@@ seq_lens_decoder", forward_meta.seq_lens_decoder)
-        #     print("@@ seq_lens_this_time", forward_meta.seq_lens_this_time)
-        #     print("@@ padding_offset", forward_meta.padding_offset)
-        #     print("@@ cum_offsets", forward_meta.cum_offsets)
-        #     print("@@ encoder_batch_ids", metadata.encoder_batch_ids)
-        #     print("@@ kv_batch_ids", metadata.kv_batch_ids)
-        #     print("@@ decoder_batch_ids", metadata.decoder_batch_ids)
-        #     print("@@ max_len_kv", metadata.max_len_kv)
-        #     print("@@ set_max_lengths", metadata.set_max_lengths)
-        # print(qkv)
-        # import sys;sys.exit()
-        # print("qkv shape: ", qkv.shape)
-        # print("cache shape: ", forward_meta.caches[2 * layer.layer_id].shape)
+
         res = append_attention(
             qkv,
             forward_meta.caches[2 * layer.layer_id],
@@ -270,6 +254,9 @@ class AppendAttentionBackend(AttentionBackend):
         mask=None,
         scale=1.0
     ):
+        """
+        """
+        
         batch = query.shape[0]
         heads = query.shape[1]
         seq_len = query.shape[2]

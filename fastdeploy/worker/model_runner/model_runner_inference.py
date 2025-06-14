@@ -182,8 +182,10 @@ class ModelRunner(ModelRunnerBase):
         else:
             # it's the only choise to run Qwen3-MoE!
             from fastdeploy.model_executor.layers.rotary_embedding import RopeEmbedding
-            self.share_inputs["rope_emb"] = \
-                RopeEmbedding.get_neox_style_position_embedding(tmp_position_ids, head_dim=self.model_cfg.head_dim, base=1e6)
+
+            self.share_inputs["rope_emb"] = RopeEmbedding.get_neox_style_position_embedding(
+                tmp_position_ids, head_dim=self.model_cfg.head_dim, base=1e6
+            )
 
     def _init_kvcache(self):
         """

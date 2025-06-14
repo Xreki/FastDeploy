@@ -384,7 +384,8 @@ def initialize_fd_config(args) -> FDConfig:
     # NOTE(gongshaotian): From build stream line model
     config, _ = ModelConfig.get_config_dict(args.model_name_or_path)
     model_config = ModelConfig.from_dict(config)
-    model_config.head_dim = config["head_dim"] # TODO very circuitous to set `head_dim` again. Because `ModelConfig` class doesn't support feeding head_dim at all!
+    # TODO Set `head_dim` again. Because `ModelConfig` class doesn't support feeding head_dim at all!
+    model_config.head_dim = config["head_dim"] 
     paddle.set_default_dtype(args.dtype)
 
     device_config = DeviceConfig()
