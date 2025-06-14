@@ -428,6 +428,7 @@ def is_port_available(host, port):
                 return False
             return True
 llm_logger = get_logger("fastdeploy", "fastdeploy.log")
+scheduler_logger = get_logger("scheduler", "scheduler.log")
 data_processor_logger = get_logger("data_processor", "data_processor.log")
 api_server_logger = get_logger("api_server", "api_server.log")
 console_logger = get_logger("console", "console.log", print_to_console=True)

@@ -149,6 +149,18 @@ class CompletionOutput:
     text: Optional[str] = None
     reasoning_content: Optional[str] = None
 
+    def to_dict(self):
+        """
+            convert CompletionOutput to a serialized dict
+        """
+        return {
+            "index": self.index,
+            "send_idx": self.send_idx,
+            "token_ids": self.token_ids,
+            "text": self.text,
+            "reasoning_content": self.reasoning_content
+        }
+
     @classmethod
     def from_dict(cls, req_dict: dict[str, Any]) -> 'CompletionOutput':
         """Create instance from dict arguments"""
@@ -314,9 +326,9 @@ class RequestOutput:
             "request_id": self.request_id,
             "prompt": self.prompt,
             "prompt_token_ids": self.prompt_token_ids,
-            "outputs": None if self.outputs is None else asdict(self.outputs),
+            "outputs": None if self.outputs is None else self.outputs.to_dict(),
+            "metrics": None if self.metrics is None else self.metrics.to_dict(),
             "finished": self.finished,
-            "metrics": None if self.metrics is None else asdict(self.metrics),
             "num_cached_tokens": self.num_cached_tokens,
             "error_code": self.error_code,
             "error_msg": self.error_msg,

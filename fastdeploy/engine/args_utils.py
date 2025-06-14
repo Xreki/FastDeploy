@@ -232,6 +232,34 @@ class EngineArgs:
     """
     Max write time of redis
     """
+    scheduler_sync_period: int = 5
+    """
+    SplitWise Use, node load sync period
+    """
+    scheduler_expire_period: int = 3000
+    """
+    SplitWise Use, node will not be scheduled after expire_period ms not sync load
+    """
+    scheduler_release_load_expire_period: int = 600
+    """
+    SplitWise Use, scheduler will release req load after expire period(s)
+    """
+    scheduler_reader_parallel: int = 4
+    """
+    SplitWise Use, Results Reader Sync Parallel
+    """
+    scheduler_writer_parallel: int = 4
+    """
+    SplitWise Use, Results Writer Sync Parallel
+    """
+    scheduler_reader_batch_size: int = 200
+    """
+    SplitWise Use, Results Reader Batch Size
+    """
+    scheduler_writer_batch_size: int = 200
+    """
+    SplitWise Use, Results Writer Batch Size
+    """
     scheduler_remote_write_time: int = 3
 
     def __post_init__(self):
@@ -547,6 +575,54 @@ class EngineArgs:
             type=int,
             default=EngineArgs.scheduler_remote_write_time,
             help=f"Max write time of redis. Default is {EngineArgs.scheduler_remote_write_time} seconds (global)"
+        )
+        scheduler_group.add_argument(
+            "--scheduler-sync-period",
+            type=int,
+            default=EngineArgs.scheduler_sync_period,
+            help=f"SplitWise Use, node load sync period, Default is {EngineArgs.scheduler_sync_period}ms. (global)"
+        )
+        scheduler_group.add_argument(
+            "--scheduler-expire-period",
+            type=int,
+            default=EngineArgs.scheduler_expire_period,
+            help=f"SplitWise Use, node will not be scheduled after expire-period ms not sync load,"
+                 f" Default is {EngineArgs.scheduler_expire_period}ms. (global)"
+        )
+        scheduler_group.add_argument(
+            "--scheduler-release-load-expire-period",
+            type=int,
+            default=EngineArgs.scheduler_release_load_expire_period,
+            help=f"SplitWise Use, scheduler will release req load after expire period(s). "
+                 f"Default is {EngineArgs.scheduler_release_load_expire_period}. (global)"
+        )
+        scheduler_group.add_argument(
+            "--scheduler-reader-parallel",
+            type=int,
+            default=EngineArgs.scheduler_reader_parallel,
+            help=f"SplitWise Use, Results Reader Sync Parallel, "
+                 f"Default is {EngineArgs.scheduler_reader_parallel}. (global)"
+        )
+        scheduler_group.add_argument(
+            "--scheduler-writer-parallel",
+            type=int,
+            default=EngineArgs.scheduler_writer_parallel,
+            help=f"SplitWise Use, Results Writer Sync Parallel, "
+                 f"Default is {EngineArgs.scheduler_writer_parallel}. (global)"
+        )
+        scheduler_group.add_argument(
+            "--scheduler-reader-batch-size",
+            type=int,
+            default=EngineArgs.scheduler_reader_batch_size,
+            help=f"SplitWise Use, Results Reader Batch Size, "
+                 f"Default is {EngineArgs.scheduler_reader_batch_size}. (global)"
+        )
+        scheduler_group.add_argument(
+            "--scheduler-writer-batch-size",
+            type=int,
+            default=EngineArgs.scheduler_writer_batch_size,
+            help=f"SplitWise Use, Results Writer Batch Size, "
+                 f"Default is {EngineArgs.scheduler_writer_batch_size}. (global)"
         )
 
         return parser
