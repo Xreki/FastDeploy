@@ -445,7 +445,7 @@ class DataProcessor(BaseDataProcessor):
         else:
             from paddlenlp.transformers import AutoTokenizer
             return AutoTokenizer.from_pretrained(self.model_name_or_path,
-                                                #  padding_side="left",
+                                                 padding_side="left",
                                                  use_fast=True)
 
     def clear_request_status(self, task_id):
