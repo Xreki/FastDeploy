@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-
+import os
 import random
 import time
 from typing import List, Optional
@@ -31,7 +31,8 @@ from fastdeploy.model_executor.layers.rotary_embedding import get_rope
 from fastdeploy.model_executor.layers.sample.meta_data import SamplingMetadata
 from fastdeploy.model_executor.layers.sample.sampler import Sampler
 from fastdeploy.model_executor.model_loader import get_model_from_loader
-from fastdeploy.model_executor.ops.gpu import rebuild_padding
+from fastdeploy.model_executor.ops.gpu import (rebuild_padding,
+                                               share_external_data)
 from fastdeploy.model_executor.pre_and_post_process import (post_process,
                                                             pre_process,
                                                             step_cuda)
@@ -81,21 +82,81 @@ class GPUModelRunner(ModelRunnerBase):
         # Forward meta store the global meta information of the forward
         self.forward_meta: ForwardMeta = None
 
-    def process_prefill_inputs(self, req_dicts: List[Request]):
-        """ Process inputs for prefill tasks and update share_inputs buffer """
+    def insert_prefill_inputs(self, req_dicts: List[Request]):
+        """
+        Process inputs for prefill tasks and insert it to share_inputs buffer
+        TODO(gongshaotian): Refactor this func
+        """
+        # ?
+        if "caches" not in self.share_inputs:
+            self._init_kvcache()
+
+        # NOTE(luotingdan): Set environment variable of prefill node
+        if req_dicts[-1].disaggregate_info is not None and req_dicts[
+                -1].disaggregate_info["role"] == "prefill":
+            os.environ['PREFILL_NODE_ONE_STEP_STOP'] = "1"
+
         req_len = len(req_dicts)
         for i in range(req_len):
             request = req_dicts[i]
             idx = request.idx
             length = request.prompt_token_ids_len
-            self.share_inputs["input_ids"][idx:idx + 1, :length] = np.array(
-                request.prompt_token_ids)
+
+            # Is Decode Node
+            if req_dicts[i].disaggregate_info is not None and req_dicts[
+                    i].disaggregate_info["role"] == "decode":
+                self.share_inputs["pre_ids"][idx:idx +
+                                             1] = request.prompt_token_ids[-1]
+                self.share_inputs["input_ids"][idx:idx + 1,
+                                               0] = request.prompt_token_ids[0]
+                self.share_inputs['seq_lens_encoder'][idx:idx + 1] = 0
+                self.share_inputs['seq_lens_decoder'][idx:idx + 1] = length
+                self.share_inputs['seq_lens_this_time'][idx:idx + 1] = 1
+                self.share_inputs['step_seq_lens_encoder'][idx:idx + 1] = 0
+                self.share_inputs['step_seq_lens_decoder'][idx:idx +
+                                                           1] = length
+                self.share_inputs['step_idx'][idx:idx + 1] = 1
+            else:
+                self.share_inputs["pre_ids"][idx:idx + 1] = -1
+                self.share_inputs["step_idx"][idx:idx + 1] = 0
+                self.share_inputs["input_ids"][idx:idx +
+                                               1, :length] = np.array(
+                                                   request.prompt_token_ids)
+
+                # Use chunked prefill
+                if self.parallel_config.enable_chunked_prefill:
+                    request.set("chunk_idx", 1)
+                    token_chunk_size = request.prefill_chunk_info[0]
+                    self.share_inputs["seq_lens_this_time"][
+                        idx:idx + 1] = token_chunk_size
+                    self.share_inputs['input_ids'][
+                        idx, :token_chunk_size] = np.array(
+                            request.prompt_token_ids[:token_chunk_size])
+                    self.share_inputs['step_seq_lens_encoder'][
+                        idx:idx + 1] = token_chunk_size
+                    self.share_inputs['seq_lens_encoder'][idx:idx +
+                                                          1] = token_chunk_size
+                    self.share_inputs['seq_lens_decoder'][
+                        idx:idx + 1] = request.get("seq_lens_decoder", 0)
+                    self.share_inputs['step_seq_lens_decoder'][
+                        idx:idx + 1] = request.get("seq_lens_decoder", 0)
+                else:
+                    self.share_inputs['seq_lens_decoder'][
+                        idx:idx + 1] = request.get("seq_lens_decoder", 0)
+                    self.share_inputs['step_seq_lens_decoder'][
+                        idx:idx + 1] = request.get("seq_lens_decoder", 0)
+                    self.share_inputs['seq_lens_this_time'][idx:idx +
+                                                            1] = length
+                    self.share_inputs['step_seq_lens_encoder'][idx:idx +
+                                                               1] = length
+                    self.share_inputs['seq_lens_encoder'][idx:idx + 1] = length
+
             if len(request.eos_token_ids
                    ) < self.parallel_config.eos_tokens_lens:
                 request.eos_token_ids.append(request.eos_token_ids[0])
             self.share_inputs["eos_token_id"][:] = np.array(
                 request.eos_token_ids, dtype="int64").reshape(-1, 1)
-            self.share_inputs["pre_ids"][idx:idx + 1] = -1
+
             self.share_inputs["top_p"][idx:idx + 1] = request.get("top_p", 0.7)
             self.share_inputs["temperature"][idx:idx + 1] = request.get(
                 "temperature", 0.95)
@@ -105,14 +166,9 @@ class GPUModelRunner(ModelRunnerBase):
                 "frequency_penalty", 0.0)
             self.share_inputs["presence_score"][idx:idx + 1] = request.get(
                 "presence_penalty", 0.0)
-            self.share_inputs["seq_lens_this_time"][idx:idx + 1] = length
-            self.share_inputs["step_seq_lens_encoder"][idx:idx + 1] = length
-            self.share_inputs["seq_lens_encoder"][idx:idx + 1] = length
-            self.share_inputs["seq_lens_decoder"][idx:idx + 1] = 0
-            self.share_inputs["step_idx"][idx:idx + 1] = 0
+
             self.share_inputs["min_dec_len"][idx:idx + 1] = request.get(
                 "min_tokens", 1)
-
             self.share_inputs["max_dec_len"][idx:idx + 1] = request.get(
                 "max_tokens", self.model_config.max_length)
             self.share_inputs["stop_flags"][idx:idx + 1] = False
@@ -409,28 +465,46 @@ class GPUModelRunner(ModelRunnerBase):
         cache_kvs = {}
         max_block_num = self.num_gpu_blocks
 
+        # Get kv cache dtype
+        cache_type = self.parallel_config.dtype
+        if self.fd_config.kv_cache_config.cache_quant_dtype == "cache_int8":
+            cache_type = 'uint8'
+        # Get kv cache shape
         kv_cache_shape = self.attn_backends[0].get_kv_cache_shape(
             max_num_blocks=max_block_num)
 
-        for i in range(self.model_config.num_layers):
-            cache_type = self.parallel_config.dtype
+        if self.parallel_config.enable_prefix_caching or self.parallel_config.splitwise_role != "mixed":
+            cache_kvs_list = []
+            for i in range(self.model_config.num_layers):
+                key_cache = paddle.empty(shape=[], dtype=cache_type)
+                key_cache_name = f"key_caches_{i}_rank{self.rank}.device{self.device_ids_list[self.rank]}"
+                val_cache_name = f"value_caches_{i}_rank{self.rank}.device{self.device_ids_list[self.rank]}"
+                key_cache = share_external_data(key_cache, key_cache_name,
+                                                kv_cache_shape)
+                cache_kvs_list.append(key_cache)
+                value_cache = paddle.empty(shape=[], dtype=cache_type)
+                value_cache = share_external_data(value_cache, val_cache_name,
+                                                  kv_cache_shape)
+                cache_kvs_list.append(value_cache)
 
-            if self.fd_config.kv_cache_config.cache_quant_dtype == "cache_int8":
-                cache_type = 'uint8'
+            self.share_inputs["caches"] = cache_kvs_list
 
-            cache_kvs["key_caches_{}".format(i)] = paddle.full(
-                shape=kv_cache_shape,
-                fill_value=0,
-                dtype=cache_type,
-            )
-            cache_kvs["value_caches_{}".format(i)] = paddle.full(
-                shape=kv_cache_shape,
-                fill_value=0,
-                dtype=cache_type,
-            )
-        self.share_inputs["caches"] = list(cache_kvs.values())
-        for value in cache_kvs.values():
-            del value
+        else:
+            for i in range(self.model_config.num_layers):
+
+                cache_kvs["key_caches_{}".format(i)] = paddle.full(
+                    shape=kv_cache_shape,
+                    fill_value=0,
+                    dtype=cache_type,
+                )
+                cache_kvs["value_caches_{}".format(i)] = paddle.full(
+                    shape=kv_cache_shape,
+                    fill_value=0,
+                    dtype=cache_type,
+                )
+            self.share_inputs["caches"] = list(cache_kvs.values())
+            for value in cache_kvs.values():
+                del value
         paddle.device.cuda.empty_cache()
 
     def initialize_attn_backend(self,

@@ -360,6 +360,10 @@ class ParallelConfig:
     # speculate_max_draft_tokens
     speculate_max_draft_tokens: int = 1
     max_num_batched_tokens: int = 2048
+    # enable prefix cache
+    enable_prefix_caching = None
+    # splitwise role
+    splitwise_role: str = "mixed"
 
 
 @dataclass

@@ -342,7 +342,6 @@ class ModelRunner(ModelRunnerBase):
 
             self.share_inputs["min_dec_len"][idx:idx + 1] = task.get(
                 "min_tokens", 1)
-
             self.share_inputs["max_dec_len"][idx:idx + 1] = task.get(
                 "max_tokens", self.max_length)
             self.share_inputs["stop_flags"][idx:idx + 1] = False
