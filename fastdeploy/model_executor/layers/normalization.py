@@ -34,6 +34,7 @@ class RMSNorm(nn.Layer):
         prefix="",
         linear_bias=None,
         quant_scale=None,
+        begin_norm_axis=1,
     ):
         """
         Initializes the normalization layer.
@@ -66,6 +67,7 @@ class RMSNorm(nn.Layer):
         self.quant_scale = quant_scale
         self._dtype = self._helper.get_default_dtype()
         self._norm_weight_dtype = self._dtype
+        self.begin_norm_axis = begin_norm_axis
 
         self.init_weight()
 
@@ -118,7 +120,7 @@ class RMSNorm(nn.Layer):
             norm_weight=self.ln_weight,
             norm_bias=None,
             epsilon=self.eps,
-            begin_norm_axis=1,
+            begin_norm_axis=self.begin_norm_axis,
             bias=self.linear_bias,
             residual=residual_input,
             quant_scale=-1 if self.quant_scale is None else self.quant_scale,
@@ -240,6 +242,7 @@ class LayerNorm(nn.Layer):
                   The `residual_output` is the result of applying the normalization and possibly other
                   operations (like linear transformation) on the `residual_input`.
         """
+        
         norm_out = self.norm_func(
             x,
             norm_weight=self.ln_weight,

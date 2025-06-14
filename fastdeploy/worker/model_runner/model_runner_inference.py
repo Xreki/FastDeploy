@@ -193,14 +193,17 @@ class ModelRunner(ModelRunnerBase):
             self._init_kvcache()
 
     def init_rotary_position_embedding(self, max_model_len):
+        from fastdeploy.model_executor.layers.rotary_embedding import RopeEmbedding
         tmp_position_ids = paddle.arange(max_model_len).reshape((1, -1))
-        self.share_inputs["rope_emb"] = get_rope(
-            # rotary_dim=self.model_cfg.hidden_size //
-            # self.model_cfg.num_attention_heads,
-            rotary_dim=128,
-            position_ids=tmp_position_ids,
-            base=self.rope_theta,
-            model_config=self.config)
+        # self.share_inputs["rope_emb"] = rotary_emb
+        # rotary = RopeEmbedding(use_neox_rotary_style=True)
+        self.share_inputs["rope_emb"] = RopeEmbedding.get_neox_style_position_embedding(tmp_position_ids, head_dim=128, base=1e6)
+        # self.share_inputs["rope_emb"] = RopeEmbedding.get_rotary_position_embedding(tmp_position_ids, head_dim=self.llm_config.head_dim, base=1e-6)
+        # self.share_inputs["rope_emb"] = get_rope(
+        #     rotary_dim=128,
+        #     position_ids=tmp_position_ids,
+        #     base=1e-6,
+        #     model_config=self.config)
 
     def _init_kvcache(self):
         """
@@ -389,6 +392,13 @@ class ModelRunner(ModelRunnerBase):
                     max_len=self.args.max_model_len,
                     input_ids=self.share_inputs["input_ids"],
                     seq_lens_this_time=self.share_inputs["seq_lens_this_time"])
+        print("input_ids: ", self.share_inputs["input_ids"])
+        print("seq_lens_this_time: ", self.share_inputs["seq_lens_this_time"])
+        print("ids_remove_padding: ", ids_remove_padding)
+        print("padding_offset: ", padding_offset)
+        print("cu_seqlens_q: ", cu_seqlens_q)
+        print("cu_seqlens_k: ", cu_seqlens_k)
+        # import sys;sys.exit()
         self.share_inputs["ids_remove_padding"] = ids_remove_padding
         self.share_inputs["padding_offset"] = padding_offset
         self.share_inputs["cum_offsets"] = cum_offsets
@@ -540,7 +550,9 @@ class ModelRunner(ModelRunnerBase):
         """
         fake input to profile
         """
-        input_length = num_total_tokens // number_of_tasks
+        fake_input_ids = [68990 , 35727 , 50285 , 64689 , 105930]
+        input_length = len(fake_input_ids)
+        # input_length = num_total_tokens // number_of_tasks
 
         block_num = (input_length + self.args.block_size - 1 +
                      self.args.enc_dec_block_num) // self.args.block_size
@@ -551,7 +563,7 @@ class ModelRunner(ModelRunnerBase):
             idx = i
             self.share_inputs["input_ids"][idx:idx +
                                            1, :input_length] = np.array(
-                                               [5] * input_length)
+                                               fake_input_ids)
             self.share_inputs["eos_token_id"][:] = np.array(
                 [2], dtype="int64").reshape(-1, 1)
             self.share_inputs["seq_lens_this_time"][idx:idx + 1] = input_length

@@ -113,12 +113,32 @@ class Qwen3Attention(nn.Layer):
                               layer_id=layer_id,
                               prefix=prefix,
                               use_neox_rotary_style=True)
+        self.head_dim = 128
+        self.q_norm = RMSNorm(
+            llm_config,
+            hidden_size=self.head_dim,
+            eps=1e-6,
+            prefix=f"{prefix}.q_norm",
+            begin_norm_axis=2
+        )
+        self.k_norm = RMSNorm(
+            llm_config,
+            hidden_size=self.head_dim,
+            eps=1e-6,
+            prefix=f"{prefix}.k_norm",
+            begin_norm_axis=2
+        )
+        
+        self.q_size = llm_config.model_config.num_attention_heads * self.head_dim
+        self.kv_size = llm_config.model_config.num_key_value_heads * self.head_dim
 
     def load_state_dict(self, state_dict):
         """
         """
         self.qkv_proj.load_state_dict(state_dict)
         self.o_proj.load_state_dict(state_dict)
+        self.q_norm.load_state_dict(state_dict)
+        self.k_norm.load_state_dict(state_dict)
 
     def forward(
         self,
@@ -127,16 +147,25 @@ class Qwen3Attention(nn.Layer):
     ):
         """
         """
-        # print("hidden_states shape", hidden_states.shape)
         qkv_out = self.qkv_proj(hidden_states)
+        # origin_qkv_out = qkv_out
+        q, k, v = qkv_out.split([self.q_size, self.kv_size, self.kv_size], axis=-1)
         
-        # print("qkv_out shape", qkv_out.shape)
+        q_by_head = q.view([*q.shape[:-1], q.shape[-1] // self.head_dim, self.head_dim])
+        q_by_head = self.q_norm(q_by_head)
+        q = q_by_head.view(q.shape)
+        
+
+        k_by_head = k.view([*k.shape[:-1], k.shape[-1] // self.head_dim, self.head_dim])
+        k_by_head = self.k_norm(k_by_head)
+        k = k_by_head.view(k.shape)
+        
+        qkv_out = paddle.concat([q, k, v], axis=-1)
 
         atten_out = self.attn(
             qkv=qkv_out,
             forward_meta=forward_meta,
         )
-        # print("atten_out shape", atten_out.shape)
         
         output = self.o_proj(atten_out)
         return output
@@ -160,11 +189,6 @@ class Qwen3DecoderLayer(nn.Layer):
             prefix=f"{prefix}.self_attn",
         )
         llm_config.moe_config.use_moe = True
-        # def print_members(obj):
-        #     for k, v in vars(obj).items():
-        #         print(f"{k}: {v}")
-        # print_members(llm_config.moe_config)
-        # import sys;sys.exit()
 
         if (llm_config.moe_config.num_experts is not None
                 and layer_id >= llm_config.moe_config.moe_layer_start_index):
@@ -176,11 +200,9 @@ class Qwen3DecoderLayer(nn.Layer):
                 top_k=llm_config.moe_config.top_k,
                 moe_use_gate_correction_bias=llm_config.moe_config.
                 moe_use_gate_correction_bias,
-                moe_quant_type=llm_config.moe_config.moe_quant_type,
+                moe_quant_type="weight_only_int8", # only support weight_only_int8, otherwise the precision is incorrect!
                 layer_idx=layer_id,
                 gate_weight_key=f"{prefix}.mlp.gate.weight",
-                # gate_correction_bias_key=
-                # f"{prefix}.mlp.moe_statics.e_score_correction_bias",
                 ffn1_expert_weight_key=
                 f"{prefix}.mlp.experts.{{}}.up_gate_proj.weight",
                 ffn2_expert_weight_key=
@@ -213,6 +235,7 @@ class Qwen3DecoderLayer(nn.Layer):
         self.mlp.load_state_dict(state_dict)
         self.input_layernorm.load_state_dict(state_dict)
         self.post_attention_layernorm.load_state_dict(state_dict)
+        
 
     def forward(
         self,
@@ -222,7 +245,6 @@ class Qwen3DecoderLayer(nn.Layer):
     ):
         """
         """
-        # Self Attention
         if residual is None:
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)
@@ -307,7 +329,6 @@ class Qwen3MoeModel(nn.Layer):
     ):
         """
         """
-
         hidden_states = self.embeddings(ids_remove_padding=ids_remove_padding)
 
         residual = None
@@ -315,7 +336,7 @@ class Qwen3MoeModel(nn.Layer):
         for i in range(self.num_layers):
             hidden_states, residual = self.layers[i](forward_meta,
                                                      hidden_states, residual)
-
+            
         hidden_states = hidden_states + residual
 
         out = self.norm(hidden_states)
@@ -362,9 +383,6 @@ class Qwen3MoeForCausalLM(ModelForCasualLM):
                 A dictionary containing model parameters, where keys are parameter names
                 and values are NumPy arrays or PaddlePaddle tensors.
         """
-        for k in state_dict:
-            print(k, state_dict[k].shape)
-        # import sys;sys.exit()
         self.model.load_state_dict(state_dict)
         self.lm_head.load_state_dict(state_dict)
 
@@ -404,6 +422,7 @@ class Qwen3PretrainedModel(PretrainedModel):
 
     @classmethod
     def _get_tensor_parallel_mappings(cls, config: ModelConfig, is_split=True):
+        # TODO not support TP split now, next PR will support TP.
 
         from paddlenlp.transformers.conversion_utils import split_or_merge_func
 
