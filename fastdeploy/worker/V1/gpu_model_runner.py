@@ -722,7 +722,8 @@ class GPUModelRunner(ModelRunnerBase):
         self.num_gpu_blocks = num_gpu_blocks
 
         # Reset block table and kv cache with global block num
-        self.initialize_kv_cache()
+        if not (self.parallel_config.enable_prefix_caching or self.parallel_config.splitwise_role != "mixed"):
+            self.initialize_kv_cache()
 
         self.share_inputs["block_tables"] = paddle.full(
             [self.parallel_config.max_num_seqs, self.num_gpu_blocks],
@@ -742,6 +743,8 @@ class GPUModelRunner(ModelRunnerBase):
             "free_list_len":
             paddle.full([1], self.free_list_len, dtype="int32"),
         })
+
+        self.parallel_config.do_profile = False
 
     def cal_theortical_kvcache(self):
         """
