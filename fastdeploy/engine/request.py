@@ -87,7 +87,8 @@ class Request:
             preprocess_start_time=d.get("preprocess_start_time"),
             preprocess_end_time=d.get("preprocess_end_time"),
             multimodal_inputs=d.get("multimodal_inputs"),
-            raw_request=d.get("raw_request", True)
+            raw_request=d.get("raw_request", True),
+            disaggregate_info=d.get("disaggregate_info")
         )
 
     def to_dict(self) -> dict:
@@ -105,7 +106,8 @@ class Request:
             "preprocess_start_time": self.preprocess_start_time,
             "preprocess_end_time": self.preprocess_end_time,
             "multimodal_inputs": self.multimodal_inputs,
-            "raw_request": self.raw_request
+            "raw_request": self.raw_request,
+            "disaggregate_info": self.disaggregate_info
         }
         data.update(asdict(self.sampling_params))
         return data
@@ -142,6 +144,7 @@ class CompletionOutput:
     """
 
     index: int
+    send_idx: int
     token_ids: list[int]
     text: Optional[str] = None
     reasoning_content: Optional[str] = None
@@ -154,8 +157,21 @@ class CompletionOutput:
             for field in fields(cls)
         })
 
+    def to_dict(self):
+        """
+        Convert the CompletionOutput object to a dictionary.
+        """
+        return {
+            "index": self.index,
+            "send_idx": self.send_idx,
+            "token_ids": self.token_ids,
+            "text": self.text,
+            "reasoning_content": self.reasoning_content
+        }
+
     def __repr__(self) -> str:
         return (f"CompletionOutput(index={self.index}, "
+                f"send_idx={self.send_idx}, "
                 f"text={self.text!r}, "
                 f"token_ids={self.token_ids}, "
                 f"reasoning_content={self.reasoning_content!r}")
@@ -186,6 +202,21 @@ class RequestMetrics:
     model_forward_time: Optional[float] = None
     model_execute_time: Optional[float] = None
     request_start_time: Optional[float] = None
+
+    def to_dict(self):
+        """
+        Convert the RequestMetrics object to a dictionary.
+        """
+        return {
+            "arrival_time": self.arrival_time,
+            "inference_start_time": self.inference_start_time,
+            "first_token_time": self.first_token_time,
+            "time_in_queue": self.time_in_queue,
+            "preprocess_cost_time": self.preprocess_cost_time,
+            "model_forward_time": self.model_forward_time,
+            "model_execute_time": self.model_execute_time,
+            "request_start_time": self.request_start_time
+        }
 
     @classmethod
     def from_dict(cls, req_dict: dict[str, Any]) -> 'RequestMetrics':

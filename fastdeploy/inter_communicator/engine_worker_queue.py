@@ -66,7 +66,6 @@ class EngineWorkerQueue:
             self.lock_init: threading.Lock = threading.Lock()
             self.read_finish_flag_init: Value = Value("i", 0)
             self.connected_client_counter_init: Value = Value("i", 0)
-            self.finish_request_barrier = threading.Barrier(self.num_client)
             self.finished_req_queue = Queue()
             self.cache_infos_init: List[Any] = list()
             self.client_read_info_flag_init: List[int] = [1] * self.num_client
@@ -90,7 +89,6 @@ class EngineWorkerQueue:
                 callable=lambda: self.connected_client_counter_init,
                 proxytype=ValueProxy)
 
-            QueueManager.register('get_finish_request_barrier', callable=lambda: self.finish_request_barrier)
             QueueManager.register('get_finish_request_queue', callable=lambda: self.finished_req_queue)
 
             QueueManager.register("get_cache_infos",
@@ -125,7 +123,6 @@ class EngineWorkerQueue:
             QueueManager.register("get_lock")
             QueueManager.register("get_read_finish_flag")
             QueueManager.register("get_connected_client_counter")
-            QueueManager.register("get_finish_request_barrier")
             QueueManager.register("get_finish_request_queue")
             QueueManager.register("get_cache_infos")
             QueueManager.register("get_client_read_info_flag")
@@ -150,8 +147,6 @@ class EngineWorkerQueue:
         self.disaggregate_requests = self.manager.get_disaggregate_requests()
         self.available_prefill_instances = self.manager.get_available_prefill_instances()
 
-
-        self.finish_request_barrier = self.manager.get_finish_request_barrier()
         self.finished_req_queue = self.manager.get_finish_request_queue()
         assert self.num_client == len(self.client_read_flag)
 

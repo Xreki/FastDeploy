@@ -191,6 +191,9 @@ class CacheConfig:
         model_cfg=None,
         cache_queue_port=None,
         enable_chunked_prefill=False,
+        rdma_comm_ports=None,
+        cache_transfer_protocol=None,
+        pd_comm_port=None,
     ):
         """
         Initialize the CacheConfig class.
@@ -215,7 +218,11 @@ class CacheConfig:
             self.cache_dtype = self.model_cfg.kvcache_quant_type
 
         self.enable_chunked_prefill = enable_chunked_prefill
-
+        self.rdma_comm_ports = rdma_comm_ports
+        self.cache_transfer_protocol = cache_transfer_protocol
+        if pd_comm_port is not None:
+            self.pd_comm_port = pd_comm_port
+        
         self.enable_prefix_caching = enable_prefix_caching
         if cpu_offload_gb is None:
             self.enable_hierarchical_cache = False
@@ -272,6 +279,29 @@ class CacheConfig:
         """Convert cache_config to dict(key: str, value: str) for prometheus metrics info."""
         return {key: str(value) for key, value in self.__dict__.items()}
 
+    
+    def get_rdma_ip(self, device_ids):
+        """
+        get rdma ip
+        """
+        if self.cache_transfer_protocol is None:
+            return ""
+        if self.pd_comm_port is None:
+            return ""
+
+        self.rdma_ips = []
+        # llm_logger.info(f"{device_ids}")
+        device_ids = device_ids.split(",")
+        for device_id in device_ids:
+            with open(f'/dev/tmp/rdma_ips_{device_id}.txt', 'r') as f:
+                rdma_ips = f.readline().strip()
+                # break
+            self.rdma_ips.append(rdma_ips)
+        llm_logger.info(f"{self.rdma_ips}")
+        return self.rdma_ips
+
+
+
     def _verify_args(self):
         if self.gpu_memory_utilization > 1.0:
             raise ValueError(
@@ -319,6 +349,38 @@ class CacheConfig:
         llm_logger.info("=============================================================")
 
 
+class ParallelConfig:
+    """
+    Configuration for parallelism.
+
+    Attributes:
+        tensor_parallel_size (int): Size of tensor parallelism.
+        data_parallel_size (int): Size of data parallelism.
+        local_data_parallel_id (int): ID of local data parallel.
+        enable_expert_parallel (bool): Whether to enable expert parallel.
+    """
+    def __init__(
+        self,
+        tensor_parallel_size: int = 1,
+        data_parallel_size: int = 1,
+        local_data_parallel_id: int = 0,
+        enable_expert_parallel: bool = False,
+    ):
+        """
+        Initialize the ParallelConfig class.
+
+        Args:
+            tensor_parallel_size (int): Size of tensor parallelism.
+            data_parallel_size (int): Size of data parallelism.
+            local_data_parallel_id (int): ID of local data parallel.
+            enable_expert_parallel (bool): Whether to enable expert parallel.
+        """
+        self.tensor_parallel_size = tensor_parallel_size
+        self.data_parallel_size = data_parallel_size
+        self.local_data_parallel_id = local_data_parallel_id
+        self.enable_expert_parallel = enable_expert_parallel
+
+
 class Config:
     """
     Initial configuration class.
@@ -347,6 +409,7 @@ class Config:
         model_config: ModelConfig,
         cache_config: CacheConfig,
         scheduler_config: SchedulerConfig,
+        parallel_config: ParallelConfig,
         model_name_or_path: str = None,
         tokenizer: str = None,
         tensor_parallel_size: int = 8,
@@ -373,6 +436,7 @@ class Config:
         Args:
             model_config (ModelConfig): Model configuration object.
             cache_config (CacheConfig): Cache configuration object.
+            parallel_config (ParallelConfig): Parallel configuration object.
             scheduler_config (SchedulerConfig): Scheduler configuration object.
             model_name_or_path (str): Model directory path or model name.
             tokenizer (str): Default is the model.
@@ -393,6 +457,7 @@ class Config:
         self.model_config = model_config
         self.cache_config = cache_config
         self.scheduler_config = scheduler_config
+        self.parallel_config = parallel_config
         self.model_name_or_path = model_name_or_path
         self.tokenizer = tokenizer
         self.max_num_batched_tokens = max_num_batched_tokens
@@ -414,10 +479,6 @@ class Config:
 
         assert self.splitwise_role in ["mixed", "prefill", "decode"]
 
-        # TODO: Temporary configuration, will be removed in the future.
-        if innode_prefill_ports is None:
-            assert self.splitwise_role in ["mixed", "prefill"], \
-                " `innode_prefill_ports` can only support in decode mode"
         # TODO
         self.max_prefill_batch = 3
         if enable_mm:
@@ -521,6 +582,34 @@ class Config:
             for k, v in self.__dict__.items():
                 f.write("{:<20}:{:<6}{}\n".format(k, "", v))
             f.close()
+
+    def init_cache_info(self):
+        """
+        initialize cache info
+        """
+        disaggregate_info = {}
+        if self.splitwise_role != "mixed":
+            disaggregate_info["role"] = self.splitwise_role
+            disaggregate_info["cache_info"] = dict()
+            current_protocol = self.cache_config.cache_transfer_protocol.split(",")
+            disaggregate_info["transfer_protocol"] = current_protocol
+            for protocol in current_protocol:
+                if protocol == "ipc":
+                    disaggregate_info["cache_info"][protocol] = {
+                        "ip": self.host_ip,
+                        "port": self.engine_worker_queue_port,
+                        "device_ids": self.device_ids
+                    }
+                elif protocol == "rdma":
+                    disaggregate_info["cache_info"][protocol] = {
+                        "ip": self.host_ip,
+                        "port": self.cache_config.pd_comm_port,
+                        "rdma_ip": self.cache_config.get_rdma_ip(self.device_ids),
+                        # "rdma_ip":[],
+                        "rdma_port": self.cache_config.rdma_comm_ports,
+                    }
+        self.disaggregate_info = disaggregate_info
+        llm_logger.info(f"disaggregate_info: {self.disaggregate_info}")
 
 
     def read_from_config(self):

@@ -204,9 +204,14 @@ class LLMEngine(object):
 
 
         if self.cfg.splitwise_role != "mixed":
-            self.engine_worker_queue.available_prefill_instances.put(1)
             self.split_mode_get_tasks()
 
+            self.cfg.init_cache_info()
+
+            role = self.cfg.splitwise_role
+            host_ip = self.cfg.host_ip
+            disaggregate = self.cfg.disaggregate_info
+            self.scheduler.start(role, host_ip, disaggregate)
 
         console_logger.info(
             "Worker processes are launched with {} seconds.".format(
@@ -267,12 +272,16 @@ class LLMEngine(object):
         Insert task to engine thread, monitor scheduler request queue.
         if the engine has resource, insert task to engine
         """
+        current_id = -1
         while True:
             try:
                 if self.resource_manager.available_batch() == 0:
                     time.sleep(0.001)
                     continue
                 if self.engine_worker_queue.num_tasks() > 0:
+                    time.sleep(0.001)
+                    continue
+                if len(self.split_connector.current_request_ids) > 0:
                     time.sleep(0.001)
                     continue
 
@@ -294,10 +303,14 @@ class LLMEngine(object):
                     time.sleep(0.001)
                     continue
 
-                if self.cfg.splitwise_role == "decode":
-                    self.split_connector.send_splitwise_tasks(tasks)
+                if self.cfg.splitwise_role != "mixed":
+                    llm_logger.info("Inserting splitwise tasks")
+                    self.split_connector.send_splitwise_tasks(tasks, current_id)
 
-                self.insert_tasks(tasks)
+                current_id = (current_id + 1) % 100003
+
+                self.insert_tasks(tasks, current_id)
+
                 main_process_metrics.num_requests_waiting.dec(len(tasks))
                 main_process_metrics.num_requests_running.inc(len(tasks))
             except Exception as e:
@@ -414,9 +427,18 @@ class LLMEngine(object):
         """
         Split mode get tasks
         """
+        waiting_requests = []
         def receiver_loop():
             while True:
                 try:
+                    if len(waiting_requests) > 0:
+                        for task in waiting_requests:
+                            if self.resource_manager.is_resource_sufficient(
+                                    task.prompt_token_ids_len):
+                                self.insert_tasks([task])
+                                waiting_requests.remove(task)
+                            else:
+                                break
                     if not self.engine_worker_queue.disaggregate_queue_empty():
                         items = self.engine_worker_queue.get_disaggregated_tasks()
                         for item in items:
@@ -429,15 +451,26 @@ class LLMEngine(object):
                                 self.insert_tasks(tasks)
                             elif role == "decode":
                                 llm_logger.info(f"get decode tasks")
-                                if tasks[0].finished:
+                                if hasattr(tasks[0], 'finished'): 
                                     if not isinstance(tasks, list):
                                         tasks = [tasks]
                                     for task in tasks:
                                         task.finished = False
-                                    self.scheduler.put_results(tasks)
+                                    # self.scheduler.put_results(tasks)
+
                                     self.insert_tasks(tasks, allocated=True)
                                 else:
-                                    self.insert_tasks(tasks)
+                                    if len(waiting_requests):
+                                        for task in tasks:
+                                            waiting_requests.append(task)
+                                    else:
+                                        for task in tasks:
+                                            if not self.resource_manager.is_resource_sufficient(
+                                                    task.prompt_token_ids_len):
+                                                waiting_requests.append(task)
+                                            else:
+                                                self.insert_tasks([task])
+                                        
                     else:
                         time.sleep(0.001)
                         continue
@@ -551,10 +584,9 @@ class LLMEngine(object):
                 image_type_ids_st += actual_image_num
                 grid_thw_st += chunk_image_num[idx]
                 patch_st += chunk_patch_num
-            request.set("prefill_chunk_info", chunks_info)             
-                
-    
-    def insert_tasks(self, tasks, allocated=False):
+            request.set("prefill_chunk_info", chunks_info)
+
+    def insert_tasks(self, tasks, current_id=-1, allocated=False):
         """
         Insert tasks to engine.
         """
@@ -563,9 +595,18 @@ class LLMEngine(object):
             current_tasks = []
             for task in tasks:
                 cur_task_idx = self.resource_manager.req_dict[task.request_id]
-                llm_logger.info(f"{cur_task_idx} {task.request_id}")
                 del self.resource_manager.req_dict[task.request_id]
                 cur_task = self.resource_manager.tasks_list[cur_task_idx]
+                if task.error_code != 200:
+                    self.resource_manager.stop_flags[cur_task_idx] = True
+                    self.resource_manager.tasks_list[cur_task_idx] = None
+                    self.resource_manager._recycle_block_tables(cur_task)
+                    if task.request_id in self.token_processor.tokens_counter:
+                        del self.token_processor.tokens_counter[task.request_id]
+                    self.scheduler.put_results([task])
+                    llm_logger.warning(f"{task.request_id} prefill failed with msg:{task.error_msg}, recycle resource.")
+                    continue
+                llm_logger.info(f"{cur_task_idx} {task.request_id}")
                 cur_task.prompt_token_ids[0] = task.outputs.token_ids[0]
                 self.token_processor.tokens_counter[task.request_id] = 1
                 current_tasks.append(cur_task)
@@ -596,6 +637,7 @@ class LLMEngine(object):
             error_msg = f"The request required resources is exceed the limit, request id={req_ids}."
             llm_logger.error(error_msg)
             raise EngineError(error_msg, error_code=500)
+            return False
 
         self.token_processor.number_of_tasks += len(tasks)
 
@@ -609,7 +651,7 @@ class LLMEngine(object):
                     is_prefill = True
             self.token_processor.number_of_input_tokens += tasks[i].prompt_token_ids_len
 
-        self.split_connector.send_cache_infos(tasks)
+        self.split_connector.send_cache_infos(tasks, current_id)
         if not is_decode:
             llm_logger.info(f"Tasks are sent to engine, req_ids={req_ids}")
             if not is_prefill:
@@ -619,8 +661,6 @@ class LLMEngine(object):
                     self.update_mm_requests_chunk_size(tasks)
             self.engine_worker_queue.put_tasks(
                 (tasks, self.resource_manager.real_bsz))
-            if is_prefill:
-                self.engine_worker_queue.available_prefill_instances.put(1)
         return True
 
     def task_is_finished(self, index):
@@ -809,6 +849,8 @@ class LLMEngine(object):
             f" --gpu_memory_utilization {self.cfg.cache_config.gpu_memory_utilization}"
             f" --model_name_or_path {str(self.cfg.model_name_or_path)}"
             f" --device_ids {self.cfg.device_ids}"
+            # f" --tensor_parallel_size {self.cfg.tensor_parallel_size}"
+            # f" --data_parallel_size {self.cfg.parallel_config.data_parallel_size}"
             f" --engine_worker_queue_port {str(self.cfg.engine_worker_queue_port)}"
             f" --total_block_num {self.cfg.cache_config.total_block_num}"
             f" --block_size {self.cfg.cache_config.block_size}"
@@ -822,7 +864,12 @@ class LLMEngine(object):
         )
 
         worker_append_flag = {
-            "enable_chunked_prefill": self.cfg.cache_config.enable_chunked_prefill,
+            "enable_chunked_prefill":
+            self.cfg.cache_config.enable_chunked_prefill,
+            "enable_prefix_caching":
+            self.cfg.cache_config.enable_prefix_caching,
+            # "enable_expert_parallel":
+            # self.cfg.parallel_config.enable_expert_parallel,
             "do_profile": self.do_profile,
             "dynamic_load_weight": self.cfg.model_config.dynamic_load_weight,
         }

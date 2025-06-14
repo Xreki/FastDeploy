@@ -13,3 +13,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
+from .ipc_cache_transfer import IPCCommManager
+from .rdma_cache_transfer import RDMACommManager
