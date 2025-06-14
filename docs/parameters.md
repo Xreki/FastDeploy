@@ -3,7 +3,7 @@
 ## 环境变量
 |         环境变量        |                       说明                        |   默认值   |
 | :---------------------: | :-----------------------------------------------: | :---------: |
-|      USE_WORKER_V1      |        FastDeploy 是否使用 V1 版本的 worker         |      0     |
+|      USE_WORKER_V1      |        FastDeploy 是否使用 V1 版本的 worker         |      1     |
 
 ## 服务启动参数
 
@@ -19,6 +19,7 @@
 |   mm_processor_kwargs   |   dict   |                  多模态输入参数                  |    否    |    None    |
 | gpu_memory_utilization |  float  |        最大显存利用率，用于计算block 数目        |    否    |     0.9     |
 | num_gpu_blocks_override |   int   |        设置分配的gpu的KV Cache的block 数目        |    否    |    None    |
+|  static_decode_blocks  |   int   |        固定分配给decode阶段KV Cache的block数量       |    否    |    2    |
 | max_num_batched_tokens |   int   |         单次支持的最大prefill的token 数目         |    否    |    None    |
 |     kv_cache_ratio     |  float  | 模型输入的长度 / 模型支持的最长的上下文长度的比例 |    否    |    0.75    |
 |          nnode          |   int   |                     节点数量                     |    否    |      1      |
@@ -26,6 +27,14 @@
 |       use_warmup       |   bool   |                   是否进行预热                   |    否    |    False    |
 |  enable_prefix_caching  |   bool   |                 是否开启前缀缓存                 |    否    |    False    |
 |       enabe_mm          |   bool   |                 是否开启多模态                 |    否    |    False    |
+|  cpu_offload_gb  |   float   |                 cpu cache 空间大小                 |    否    |    0    |
+|  cache_queue_port  |   int   |                 cache 传输同步队列端口号                 |    否    |    None    |
+|  enable_chunked_prefill  |   bool   |            是否开启chunked_prefill       |    否    |    False    |
+|  max_num_partial_prefills  |   int   |        开启chunked_prefill后，prefill阶段最大请求条数       |    否    |    1    |
+|  max_long_partial_prefills  |   int   |        开启chunked_prefill后，prefill阶段长请求的最大数量       |    否    |    1    |
+|  long_prefill_token_threshold  |   int   |        开启chunked_prefill后，token数大于该值的请求被认为是长请求       |    否    |    max_model_len的4%    |
+|  splitwise_role |   str   |           分离式部署角色可选值['prefill', 'decode', 'mixed']       |    否    |    'mixed'    |
+|  innode_prefill_ports  |   list[str]   |        prefill 实例内部引擎启动端口 （仅单机PD分离需要）       |    否    |    None    |
 
 ## 请求参数
 

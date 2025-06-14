@@ -18,6 +18,7 @@ import uvicorn
 import zmq
 import os
 import sys
+import time
 import ctypes
 import signal
 from fastapi import FastAPI, APIRouter, Request
@@ -81,7 +82,8 @@ async def lifespan(app: FastAPI):
     else:
         pid = os.getpid()
     api_server_logger.info(f"{pid}")
-    engine_client = EngineClient(args.tokenizer, args.max_model_len, args.tensor_parallel_size, pid, args.enable_mm)
+    engine_client = EngineClient(args.tokenizer, args.max_model_len, args.tensor_parallel_size, pid,
+                                 args.limit_mm_per_prompt, args.mm_processor_kwargs, args.enable_mm)
     app.state.dynamic_load_weight = args.dynamic_load_weight
     chat_handler = OpenAIServingChat(engine_client, pid)
     completion_handler = OpenAIServingCompletion(engine_client, pid)
@@ -236,10 +238,6 @@ def launch_api_server(args) -> None:
     api_server_logger.info(f"args: {args.__dict__}")
 
     try:
-        prom_dir = cleanup_prometheus_files(True)
-        os.environ["PROMETHEUS_MULTIPROC_DIR"] = prom_dir
-        metrics_server_thread = threading.Thread(target=run_main_metrics_server, daemon=True)
-        metrics_server_thread.start()
         uvicorn.run(app="fastdeploy.entrypoints.openai.api_server:app",
                     host=args.host,
                     port=args.port,
@@ -275,6 +273,15 @@ def run_main_metrics_server():
     )
 
 
+def launch_metrics_server():
+    """Metrics server running the sub thread"""
+    prom_dir = cleanup_prometheus_files(True)
+    os.environ["PROMETHEUS_MULTIPROC_DIR"] = prom_dir
+    metrics_server_thread = threading.Thread(target=run_main_metrics_server, daemon=True)
+    metrics_server_thread.start()
+    time.sleep(1)
+
+
 def main():
     """main函数"""
     if not is_port_available(args.host, args.port):
@@ -282,6 +289,7 @@ def main():
     if not is_port_available(args.host, args.metrics_port):
         raise Exception(f"The parameter `metrics_port`:{args.metrics_port} is already in use.")
     load_engine()
+    launch_metrics_server()
     launch_api_server(args)
 
 

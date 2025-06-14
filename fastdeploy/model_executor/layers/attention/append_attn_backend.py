@@ -29,7 +29,7 @@ from fastdeploy.model_executor.layers.attention.ops import (
 if TYPE_CHECKING:
     from paddle._typing.dtype_like import _DTypeLiteral
 
-from fastdeploy.config import LLMConfig
+from fastdeploy.config import FDConfig
 from fastdeploy.model_executor.layers.attention import Attention
 from fastdeploy.model_executor.layers.attention.base_attention_backend import (
     AttentionBackend, AttentionMetadata)
@@ -73,42 +73,40 @@ class AppendAttentionBackend(AttentionBackend):
     AppendAttentionBackend backend implementation.
     """
 
-    def __init__(self, llm_config: LLMConfig, kv_num_heads: int,
-                 num_heads: int, head_dim: int):
+    def __init__(self, fd_config: FDConfig, kv_num_heads: int, num_heads: int,
+                 head_dim: int):
         """
         AppendAttentionBackend __init__
         """
         super().__init__()
         self.attention_metadata: AppendAttentionMetadata = None
-        # TODO(gongshaotian): Use llm_config parameters in the correct location
-        self.block_size = llm_config.parallel_config.block_size
-        self.max_seq_len = llm_config.parallel_config.max_model_len
-        self.rope_theta = (10000.0 if llm_config.model_config.rope_theta
-                           is None else llm_config.model_config.rope_theta)
-        self.rope_3d = getattr(llm_config.model_config, "rope_3d", False)
-        self.causal = getattr(llm_config.model_config, "causal", True)
-        self.speculate_method = llm_config.parallel_config.speculate_method
+        # TODO(gongshaotian): Use fd_config parameters in the correct location
+        self.block_size = fd_config.parallel_config.block_size
+        self.max_seq_len = fd_config.parallel_config.max_model_len
+        self.rope_theta = (10000.0 if fd_config.model_config.rope_theta is None
+                           else fd_config.model_config.rope_theta)
+        self.rope_3d = getattr(fd_config.model_config, "rope_3d", False)
+        self.causal = getattr(fd_config.model_config, "causal", True)
+        self.speculate_method = fd_config.parallel_config.speculate_method
         self.use_speculate = self.speculate_method is not None
-        self.speculate_max_draft_token_num = llm_config.parallel_config.speculate_max_draft_tokens
-        self.keep_pd_step_flag = llm_config.speculative_config.is_mtp
-        self.rank = llm_config.parallel_config.tensor_parallel_rank
+        self.speculate_max_draft_token_num = fd_config.parallel_config.speculate_max_draft_tokens
+        self.keep_pd_step_flag = fd_config.speculative_config.is_mtp
+        self.rank = fd_config.parallel_config.tensor_parallel_rank
 
         self.kv_num_heads = kv_num_heads
         self.num_heads = num_heads
-        # self.head_dim = head_dim
-        self.head_dim = 128
-        self.num_layers = llm_config.model_config.num_layers
+        self.head_dim = head_dim
+        self.num_layers = fd_config.model_config.num_layers
 
         # pd_disaggregation
         self.use_pd_disaggregation = int(
             os.getenv("FLAGS_use_pd_disaggregation", 0))
-        self.start_layer_index = llm_config.model_config.start_layer_index
-        
-        # def print_members(obj):
-        #     for k, v in vars(obj).items():
-        #         print(f"{k}: {v}")
-        # print("!!!AttentionBackend")
-        # print_members(self)
+        self.start_layer_index = fd_config.model_config.start_layer_index
+        self.device_id = os.getenv("CUDA_VISIBLE_DEVICES", None)
+        if self.device_id is None:
+            self.device_id = self.rank
+        else:
+            self.device_id = self.device_id.split(",")[self.rank]
 
     def init_attention_metadata(self, forward_meta: ForwardMeta):
         """Initialize attntion metadata hence all layers in the forward pass can reuse it."""
@@ -156,7 +154,7 @@ class AppendAttentionBackend(AttentionBackend):
         metadata.kv_signal_data_list = [None] * self.num_layers
         if self.use_pd_disaggregation:
             metadata.kv_signal_metadata = open_shm_and_get_meta_signal(
-                self.rank, self.keep_pd_step_flag)
+                self.rank, int(self.device_id), self.keep_pd_step_flag)
         self.attention_metadata = metadata
         
 

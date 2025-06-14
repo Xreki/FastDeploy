@@ -20,6 +20,7 @@ export python=$PYTHON_VERSION
 CPU_USE_BF16=${3:-"false"}
 BUILDING_ARCS=${4:-""}
 
+
 # paddle distributed use to set archs
 unset PADDLE_CUDA_ARCH_LIST
 
@@ -49,8 +50,8 @@ function python_version_check() {
   PY_MAIN_VERSION=`${python} -V 2>&1 | awk '{print $2}' | awk -F '.' '{print $1}'`
   PY_SUB_VERSION=`${python} -V 2>&1 | awk '{print $2}' | awk -F '.' '{print $2}'`
   echo -e "find python version ${PY_MAIN_VERSION}.${PY_SUB_VERSION}"
-  if [ $PY_MAIN_VERSION -ne "3" -o $PY_SUB_VERSION -lt "8" ]; then
-    echo -e "${RED}FAIL:${NONE} please use Python >= 3.8"
+  if [ $PY_MAIN_VERSION -ne "3" -o $PY_SUB_VERSION -lt "9" ]; then
+    echo -e "${RED}FAIL:${NONE} please use Python >= 3.9"
     exit 1
   fi
 }
@@ -122,13 +123,22 @@ function build_and_install_ops() {
   export no_proxy=bcebos.com,paddlepaddle.org.cn,${no_proxy}
   echo -e "${BLUE}[build]${NONE} build and install fastdeploy_base_ops..."
   ${python} setup_ops_base.py install --install-lib ${OPS_TMP_DIR_BASE}
+  find ${OPS_TMP_DIR_BASE} -type f -name "*.o" -exec rm -f {} \;
   echo -e "${BLUE}[build]${NONE} build and install fastdeploy_ops..."
   if [ "$CPU_USE_BF16" == "true" ]; then
+    if [ "$BUILDING_ARCS" == "" ]; then
       CPU_USE_BF16=True ${python} setup_ops.py install --install-lib ${OPS_TMP_DIR}
-      :
+    else
+      BUILDING_ARCS=${BUILDING_ARCS} CPU_USE_BF16=True ${python} setup_ops.py install --install-lib ${OPS_TMP_DIR}
+    fi
+    find ${OPS_TMP_DIR} -type f -name "*.o" -exec rm -f {} \;
   elif [ "$CPU_USE_BF16" == "false" ]; then
+    if [ "$BUILDING_ARCS" == "" ]; then
       ${python} setup_ops.py install --install-lib ${OPS_TMP_DIR}
-      :
+    else
+      BUILDING_ARCS=${BUILDING_ARCS} ${python} setup_ops.py install --install-lib ${OPS_TMP_DIR}
+    fi
+    find ${OPS_TMP_DIR} -type f -name "*.o" -exec rm -f {} \;
   else
       echo "Error: Invalid parameter '$CPU_USE_BF16'. Please use true or false."
       exit 1
@@ -146,11 +156,7 @@ function build_and_install_ops() {
 
 function build_and_install() {
   echo -e "${BLUE}[build]${NONE} building fastdeploy wheel..."
-  if [ "$BUILDING_ARCS" == "" ]; then
-      ${python} setup.py bdist_wheel --python-tag py3
-  else
-      BUILDING_ARCS=${BUILDING_ARCS} ${python} setup.py bdist_wheel --python-tag py3
-  fi
+  ${python} setup.py bdist_wheel --python-tag=py3
 
   if [ $? -ne 0 ]; then
     echo -e "${RED}[FAIL]${NONE} build fastdeploy wheel failed"

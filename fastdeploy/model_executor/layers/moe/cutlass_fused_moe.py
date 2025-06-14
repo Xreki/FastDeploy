@@ -16,8 +16,6 @@
 
 import paddle
 from paddle import nn
-from paddle.distributed import fleet
-from paddle.framework import in_dynamic_or_pir_mode
 from paddle.nn.quant import weight_quantize
 
 from fastdeploy.model_executor.ops.gpu import (moe_expert_dispatch,
@@ -63,13 +61,15 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
 
         assert len(ffn1_tensor) == self.num_local_experts
         assert len(ffn2_tensor) == self.num_local_experts
+
+        pack_num = 1
+        if self.moe_quant_type == "w4a8":
+            pack_num = 2
         assert ffn1_tensor[0].shape == [
-            self.hidden_size,
-            self.moe_intermediate_size * 2
+            self.hidden_size // pack_num, self.moe_intermediate_size * 2
         ]
         assert ffn2_tensor[0].shape == [
-            self.moe_intermediate_size,
-            self.hidden_size
+            self.moe_intermediate_size // pack_num, self.hidden_size
         ]
 
         added_weight_attrs = ["moe_ffn1_weight", "moe_ffn2_weight"]
@@ -94,7 +94,9 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
             moe_ffn2_weight_scale = moe_ffn2_weight_scale.cast(
                 paddle.get_default_dtype())
 
-        if self.moe_quant_type in ["weight_only_int4", "weight_only_int8", "w4a8"]:
+        if self.moe_quant_type in [
+                "weight_only_int4", "weight_only_int8", "w4a8"
+        ]:
 
             for idx, weight_tensor in enumerate([ffn1_tensor, ffn2_tensor]):
                 weight_name = added_weight_attrs[idx]
@@ -103,9 +105,8 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
                 weight_list = []
                 weight_scale_list = []
                 for i in range(self.num_local_experts):
-                    quant_weight, scale = weight_quantize(weight_tensor[i],
-                                                          algo=self.moe_quant_type,
-                                                          arch=80)
+                    quant_weight, scale = weight_quantize(
+                        weight_tensor[i], algo=self.moe_quant_type, arch=80)
                     weight_list.append(quant_weight)
                     if self.moe_quant_type != "w4a8":
                         # scale holds no memoty in w4a8, don't touch it!
@@ -131,6 +132,20 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
                             dtype=quanted_weight_scale.dtype,
                         ))
                     getattr(layer, scale_name).set_value(quanted_weight_scale)
+        else:
+            # default type
+            ffn1_tensor = paddle.stack(ffn1_tensor, axis=0)
+            ffn2_tensor = paddle.stack(ffn2_tensor, axis=0)
+            for idx, weight_tensor in enumerate([ffn1_tensor, ffn2_tensor]):
+                weight_name = added_weight_attrs[idx]
+                setattr(
+                    layer, weight_name,
+                    layer.create_parameter(
+                        shape=weight_tensor.shape,
+                        dtype=weight_tensor.dtype,
+                        default_initializer=paddle.nn.initializer.Constant(0),
+                    ))
+                getattr(layer, weight_name).set_value(weight_tensor)
 
         if self.moe_quant_type == "w4a8":
             assert moe_ffn1_weight_scale is not None
@@ -218,10 +233,5 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
             norm_topk_prob=True,
             routed_scaling_factor=1.0,
         )
-
-        if self.tp_size > 1:
-            from fastdeploy.distributed.communication_op import \
-                tensor_model_parallel_all_reduce
-            tensor_model_parallel_all_reduce(fused_moe_out)
 
         return fused_moe_out

@@ -23,9 +23,10 @@ import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
 
 from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
-                               KVCacheConfig, LLMConfig, LoadConfig,
-                               ModelConfig, MoEConfig, ParallelConfig,
-                               SpeculativeConfig, TmpConfig)
+                               FDConfig, GraphOptimizationConfig,
+                               KVCacheConfig, LoadConfig, ModelConfig,
+                               MoEConfig, ParallelConfig, SpeculativeConfig,
+                               TmpConfig)
 from fastdeploy.inter_communicator import EngineWorkerQueue as TaskQueue
 from fastdeploy.inter_communicator import IPCSignal
 from fastdeploy.model_executor.layers.quantization import \
@@ -47,23 +48,23 @@ class PaddleDisWorkerProc():
 
     def __init__(
         self,
-        llm_config: LLMConfig,
+        fd_config: FDConfig,
     ):
-        self.llm_config = llm_config
-        self.parallel_config = llm_config.parallel_config
+        self.fd_config = fd_config
+        self.parallel_config = fd_config.parallel_config
 
         # Initialize distributed enviroment
         (self.rank, self.local_rank) = self.init_distributed_enviroment()
-        self.llm_config.parallel_config.tensor_parallel_rank = self.local_rank
-        self.llm_config.model_config.tensor_parallel_rank = self.local_rank
-        self.llm_config.parallel_config.tensor_parallel_degree = self.rank
-        self.llm_config.model_config.tensor_parallel_degree = self.rank
-        self.llm_config.parallel_config.mp_size = self.rank
-        self.llm_config.parallel_config.ep_size = 1
-        self.llm_config.parallel_config.column_cut = False
+        self.fd_config.parallel_config.tensor_parallel_rank = self.local_rank
+        self.fd_config.model_config.tensor_parallel_rank = self.local_rank
+        self.fd_config.parallel_config.tensor_parallel_degree = self.rank
+        self.fd_config.model_config.tensor_parallel_degree = self.rank
+        self.fd_config.parallel_config.mp_size = self.rank
+        self.fd_config.parallel_config.ep_size = 1
+        self.fd_config.parallel_config.column_cut = False
 
         # TODO(gongshaotian): Use worker factory to get worker
-        self.worker = GpuWorker(llm_config=llm_config,
+        self.worker = GpuWorker(fd_config=fd_config,
                                 local_rank=self.local_rank,
                                 rank=self.rank)
 
@@ -231,10 +232,13 @@ class PaddleDisWorkerProc():
         model_block_memory_used = self.worker.cal_theortical_kvcache()
         num_blocks_local = int(available_kv_cache_memory //
                                model_block_memory_used)
+        print(
+            f"------- model_block_memory_used:{model_block_memory_used} --------"
+        )
         print(f"------- num_blocks_local:{num_blocks_local} --------")
 
         # 3. Send IPCSignal
-        if self.llm_config.parallel_config.do_profile:
+        if self.fd_config.parallel_config.do_profile:
             get_profile_block_num = np.zeros(shape=[self.rank], dtype=np.int32)
             self.get_profile_block_num_signal = IPCSignal(
                 name="get_profile_block_num",
@@ -282,8 +286,7 @@ def parse_args():
                         type=int,
                         default=34,
                         help="max batch size")
-    parser.add_argument("--total_block_num", type=int,
-                        default=2000)  # max_block_num -> total_block_num
+    parser.add_argument("--total_block_num", type=int, default=2000)
     parser.add_argument("--block_size", type=int, default=64)
     parser.add_argument("--engine_worker_queue_port", type=int, default=9923)
     parser.add_argument("--max_model_len",
@@ -319,12 +322,10 @@ def parse_args():
                         default=None,
                         help="Process ID of engine")
     parser.add_argument("--do_profile",
-                        type=int,
-                        default=0,
+                        action='store_true',
                         help="do profile or not")
     parser.add_argument("--dynamic_load_weight",
-                        type=int,
-                        default=0,
+                        action='store_true',
                         help="dynamic load weight or not")
     parser.add_argument("--pad_token_id",
                         type=int,
@@ -358,26 +359,43 @@ def parse_args():
         ],
     )
     parser.add_argument("--speculate_max_draft_tokens", type=int, default=1)
+
     parser.add_argument("--max_num_batched_tokens",
                         type=int,
                         default=2048,
                         help="max num batched tokens")
+    parser.add_argument("--enable_prefix_caching",
+                        action='store_true',
+                        help="enable prefix cache")
+    parser.add_argument("--splitwise_role",
+                        type=str,
+                        default="mixed",
+                        help="splitwise role")
+    parser.add_argument("--ori_vocab_size", type=int, default=None)
 
     args = parser.parse_args()
     return args
 
 
-def initialize_llm_config(args) -> LLMConfig:
-    """Initialize LLMConfig
-    TODO(gongshaotian): Unified all configs to LLMConfig
+def initialize_fd_config(args) -> FDConfig:
+    """Initialize FDConfig
+    TODO(gongshaotian): Unified all configs to FDConfig
     """
     # NOTE(gongshaotian): From build stream line model
     config, _ = ModelConfig.get_config_dict(args.model_name_or_path)
     model_config = ModelConfig.from_dict(config)
+    paddle.set_default_dtype(args.dtype)
 
     device_config = DeviceConfig()
     # model_config = ModelConfig()
     kv_cache_config = KVCacheConfig()
+
+    cachekv_dtype = config.get("cache_quant_type", None)
+    if cachekv_dtype is not None:
+        logger.info(
+            f"cachekv is set to [{cachekv_dtype}] according to your config file's cache_quant_type field"
+        )
+        kv_cache_config.cache_quant_dtype = config["cache_quant_type"]
     decoding_config = DecodingConfig()
     decoding_config = MoEConfig()
     tmp_config = TmpConfig()
@@ -386,6 +404,7 @@ def initialize_llm_config(args) -> LLMConfig:
     parallel_config = ParallelConfig()
     load_config = LoadConfig()
     moe_config = MoEConfig()
+    graph_opt_config = GraphOptimizationConfig()
 
     # Note(tangbinhan): used for load_checkpoint
     model_config.tensor_parallel_rank = parallel_config.tensor_parallel_rank
@@ -425,26 +444,31 @@ def initialize_llm_config(args) -> LLMConfig:
     model_config.group_size = group_size
     model_config.use_rmsnorm = config.get("use_rmsnorm", True)
     model_config.num_key_value_heads = num_key_value_heads
+    model_config.export_model_type = config.get("predict_model_type",
+                                                "weight_only_int8")
     tmp_config.has_zero_point = config.get("has_zero_point", False)
     tmp_config.is_channel_wise = config.get("is_channel_wise", False),
     model_config.start_layer_index = config.get("start_layer_index", 0)
-    model_config.use_moe = use_moe
     moe_config.num_experts = config.get("moe_num_experts", None)
     moe_config.moe_intermediate_size = config.get("moe_intermediate_size",
                                                   None)
     moe_config.moe_use_gate_correction_bias = config.get(
         "moe_use_gate_correction_bias", True)
     moe_config.moe_every2 = config.get("moe_every2", False)
-    moe_config.moe_topk = config.get("moe_topk", 8)
+    moe_config.top_k = config.get("moe_topk", 8)
     moe_config.moe_num_shared_experts = config.get("moe_num_shared_experts", 0)
     moe_config.moe_layer_start_index = config.get("moe_layer_start_index", 0)
     moe_config.moe_use_ffn_shared_weight_and_bias = config.get(
         "moe_use_ffn_shared_weight_and_bias", False)
     moe_config.use_moe = use_moe
     moe_config.moe_group = config.get("moe_group", False)
+    moe_config.moe_quant_type = config.get("moe_quant_type",
+                                           "weight_only_int4")
     tmp_config.weight_block_size = config.get("weight_block_size", [-1, -1])
-
     model_config.ori_vocab_size = config.get("vocab_size", -1)
+    if "ErnieBotLMHeadModel" in config.get("architectures"):
+        model_config.ori_vocab_size = args.ori_vocab_size
+
     weight_dtype, act_dtype, cachekv_dtype = parser_quant_type(
         model_config.export_model_type)
     model_config.weight_dtype = weight_dtype
@@ -506,19 +530,20 @@ def initialize_llm_config(args) -> LLMConfig:
     parallel_config.speculate_max_draft_tokens = args.speculate_max_draft_tokens
     parallel_config.max_num_batched_tokens = args.max_num_batched_tokens
 
-    llm_config = LLMConfig(model_config=model_config,
-                           parallel_config=parallel_config,
-                           speculative_config=speculative_config,
-                           device_config=device_config,
-                           additional_config=additional_config,
-                           load_config=load_config,
-                           tmp_config=tmp_config,
-                           moe_config=moe_config,
-                           decoding_config=decoding_config,
-                           quant_config=quant_config,
-                           kv_cache_config=kv_cache_config)
+    fd_config = FDConfig(model_config=model_config,
+                         parallel_config=parallel_config,
+                         speculative_config=speculative_config,
+                         device_config=device_config,
+                         additional_config=additional_config,
+                         load_config=load_config,
+                         tmp_config=tmp_config,
+                         moe_config=moe_config,
+                         decoding_config=decoding_config,
+                         quant_config=quant_config,
+                         kv_cache_config=kv_cache_config,
+                         graph_opt_config=graph_opt_config)
 
-    return llm_config
+    return fd_config
 
 
 def run_worker_proc():
@@ -528,11 +553,11 @@ def run_worker_proc():
     # Get args form Engine
     args = parse_args()
 
-    # Get llm_config
-    llm_config = initialize_llm_config(args)
+    # Get fd_config
+    fd_config = initialize_fd_config(args)
 
     # Start event loop
-    worker_proc = PaddleDisWorkerProc(llm_config)
+    worker_proc = PaddleDisWorkerProc(fd_config)
     worker_proc.init_device()
     worker_proc.load_model()
     worker_proc.determine_num_available_blocks()

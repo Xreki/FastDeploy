@@ -94,6 +94,18 @@ def get_sm_version(archs):
     return list(arch_set)
 
 
+def get_nvcc_version():
+    """
+    Get cuda version of nvcc.
+    """
+    nvcc_output = subprocess.check_output(["nvcc", "--version"],
+                                          universal_newlines=True)
+    output = nvcc_output.split()
+    release_idx = output.index("release") + 1
+    nvcc_cuda_version = float(output[release_idx].split(",")[0])
+    return nvcc_cuda_version
+
+
 def get_gencode_flags(archs):
     """
     Get gencode flags for current device or input.
@@ -149,7 +161,6 @@ if paddle.is_compiled_with_rocm():
                 "gpu_ops/save_with_output_msg.cc",
                 "gpu_ops/get_output.cc",
                 "gpu_ops/get_output_msg_with_topk.cc",
-                "gpu_ops/reset_need_stop_value.cc",
                 "gpu_ops/step.cu",
                 "gpu_ops/step_reschedule.cu",
                 "gpu_ops/set_data_ipc.cu",
@@ -175,25 +186,42 @@ if paddle.is_compiled_with_rocm():
     )
 elif paddle.is_compiled_with_cuda():
     sources = [
-        "gpu_ops/set_mask_value.cu", "gpu_ops/set_value_by_flags.cu",
-        "gpu_ops/ngram_mask.cu", "gpu_ops/gather_idx.cu",
-        "gpu_ops/get_output_ep.cc", "gpu_ops/get_mm_split_fuse.cc",
+        "gpu_ops/set_mask_value.cu",
+        "gpu_ops/set_value_by_flags.cu",
+        "gpu_ops/ngram_mask.cu",
+        "gpu_ops/gather_idx.cu",
+        "gpu_ops/get_output_ep.cc",
+        "gpu_ops/get_mm_split_fuse.cc",
         "gpu_ops/token_penalty_multi_scores.cu",
-        "gpu_ops/token_penalty_only_once.cu", "gpu_ops/stop_generation.cu",
+        "gpu_ops/token_penalty_only_once.cu",
+        "gpu_ops/stop_generation.cu",
         "gpu_ops/stop_generation_multi_ends.cu",
-        "gpu_ops/stop_generation_multi_stop_seqs.cu", "gpu_ops/set_flags.cu",
-        "gpu_ops/step.cu", "gpu_ops/step_reschedule.cu",
-        "gpu_ops/fused_get_rope.cu", "gpu_ops/get_padding_offset.cu",
-        "gpu_ops/update_inputs.cu", "gpu_ops/update_inputs_beam.cu",
-        "gpu_ops/beam_search_softmax.cu", "gpu_ops/rebuild_padding.cu",
-        "gpu_ops/set_data_ipc.cu", "gpu_ops/read_data_ipc.cu",
-        "gpu_ops/enforce_generation.cu", "gpu_ops/dequant_int8.cu",
-        "gpu_ops/tune_cublaslt_gemm.cu", "gpu_ops/swap_cache_batch.cu",
-        "gpu_ops/swap_cache.cu", "gpu_ops/step_system_cache.cu",
-        "gpu_ops/cpp_extensions.cu", "gpu_ops/share_external_data.cu",
+        "gpu_ops/stop_generation_multi_stop_seqs.cu",
+        "gpu_ops/set_flags.cu",
+        "gpu_ops/step.cu",
+        "gpu_ops/step_reschedule.cu",
+        "gpu_ops/fused_get_rope.cu",
+        "gpu_ops/get_padding_offset.cu",
+        "gpu_ops/update_inputs.cu",
+        "gpu_ops/update_inputs_beam.cu",
+        "gpu_ops/beam_search_softmax.cu",
+        "gpu_ops/rebuild_padding.cu",
+        "gpu_ops/set_data_ipc.cu",
+        "gpu_ops/read_data_ipc.cu",
+        "gpu_ops/enforce_generation.cu",
+        "gpu_ops/dequant_int8.cu",
+        "gpu_ops/tune_cublaslt_gemm.cu",
+        "gpu_ops/swap_cache_batch.cu",
+        "gpu_ops/swap_cache.cu",
+        "gpu_ops/step_system_cache.cu",
+        "gpu_ops/cpp_extensions.cc",
+        "gpu_ops/share_external_data.cu",
         "gpu_ops/per_token_quant_fp8.cu",
         "gpu_ops/extract_text_token_output.cu",
-        "gpu_ops/update_split_fuse_input.cu"
+        "gpu_ops/update_split_fuse_input.cu",
+        "gpu_ops/text_image_index_out.cu",
+        "gpu_ops/text_image_gather_scatter.cu",
+        "gpu_ops/sample_kernels/rejection_top_p_sampling.cu",
     ]
 
     # pd_disaggregation
@@ -201,6 +229,8 @@ elif paddle.is_compiled_with_cuda():
         "gpu_ops/remote_cache_kv_ipc.cc",
         "gpu_ops/open_shm_and_get_meta_signal.cc",
         "gpu_ops/init_signal_layerwise.cc",
+        "gpu_ops/get_data_ptr_ipc.cu",
+        "gpu_ops/ipc_sent_key_value_cache_by_remote_ptr.cu",
     ]
 
     cutlass_dir = "third_party/cutlass"
@@ -252,6 +282,8 @@ elif paddle.is_compiled_with_cuda():
 
     nvcc_compile_args = get_gencode_flags(archs)
     nvcc_compile_args += ["-DPADDLE_DEV"]
+    nvcc_compile_args += ["-DPADDLE_ON_INFERENCE"]
+    nvcc_compile_args += ["-DPy_LIMITED_API=0x03090000"]
     nvcc_compile_args += [
         "-Igpu_ops/cutlass_kernels",
         "-Ithird_party/cutlass/include",
@@ -259,6 +291,10 @@ elif paddle.is_compiled_with_cuda():
         "-Igpu_ops",
         "-Ithird_party/nlohmann_json/include",
     ]
+    nvcc_version = get_nvcc_version()
+    print(f'nvcc_version = {nvcc_version}')
+    if nvcc_version >= 12.0:
+        sources += ["gpu_ops/sample_kernels/air_top_p_sampling.cu"]
     cc = max(get_sm_version(archs))
     print(f"cc = {cc}")
     if cc >= 80:
@@ -300,7 +336,6 @@ elif paddle.is_compiled_with_cuda():
             "gpu_ops/scaled_gemm_f8_i4_f16_weight_quantize.cu",
             "gpu_ops/cutlass_kernels/cutlass_heuristic.cu",
             "gpu_ops/cutlass_kernels/cutlass_preprocessors.cu",
-            "gpu_ops/air_topp_sampling.cu",
         ]
     if cc >= 90:
         nvcc_compile_args += [
@@ -316,7 +351,6 @@ elif paddle.is_compiled_with_cuda():
     if cc >= 89:
         sources += find_end_files(
             "gpu_ops/cutlass_kernels/fp8_gemm_fused/autogen", ".cu")
-
     setup(
         name="fastdeploy_ops",
         ext_modules=CUDAExtension(
@@ -394,6 +428,7 @@ else:
         "-fPIC",
         "-Wno-parentheses",
         "-DPADDLE_WITH_CUSTOM_KERNEL",
+        "-DPADDLE_ON_INFERENCE"
         "-mavx512f",
         "-mavx512vl",
         "-fopenmp",
@@ -405,6 +440,7 @@ else:
         "-g",
         "-lstdc++fs",
         "-D_GLIBCXX_USE_CXX11_ABI=1",
+        "-DPy_LIMITED_API=0x03090000",
     ]
     if use_bf16:
         # avx512-bf16 flags

@@ -33,6 +33,7 @@ from fastdeploy.entrypoints.openai.protocol import (
     ChatCompletionResponseStreamChoice,
     ChatMessage,
     UsageInfo,
+    PromptTokenUsageInfo,
     ChatCompletionResponse,
     ErrorResponse,
 )
@@ -70,8 +71,7 @@ class OpenAIServingChat:
             current_req_dict = request.to_dict_for_infer(request_id)
             current_req_dict["arrival_time"] = time.time()
             self.engine_client.format_and_add_data(current_req_dict)
-
-        except ValueError as e:
+        except Exception as e:
             return ErrorResponse(code=400, message=str(e))
 
         del current_req_dict
@@ -83,7 +83,7 @@ class OpenAIServingChat:
             try:
                 return await self.chat_completion_full_generator(
                     request, request_id, request.model)
-            except ValueError as e:
+            except Exception as e:
                 return ErrorResponse(code=400, message=str(e))
 
     def _create_streaming_error_response(self, message: str) -> str:
@@ -177,7 +177,8 @@ class OpenAIServingChat:
                             chunk.usage = UsageInfo(
                                 prompt_tokens=num_prompt_tokens,
                                 completion_tokens=0,
-                                total_tokens=num_prompt_tokens
+                                total_tokens=num_prompt_tokens,
+                                prompt_tokens_details=PromptTokenUsageInfo(cached_tokens=num_cached_tokens)
                             )
                         yield f"data: {chunk.model_dump_json(exclude_unset=True)} \n\n"
                     first_iteration = False
@@ -309,7 +310,8 @@ class OpenAIServingChat:
         usage = UsageInfo(
             prompt_tokens=num_prompt_tokens,
             completion_tokens=num_generated_tokens,
-            total_tokens=num_prompt_tokens + num_generated_tokens
+            total_tokens=num_prompt_tokens + num_generated_tokens,
+            prompt_tokens_details=PromptTokenUsageInfo(cached_tokens=final_res.get("num_cached_tokens", 0))
         )
         work_process_metrics.e2e_request_latency.observe(time.time() - final_res["metrics"]["request_start_time"])
         return ChatCompletionResponse(

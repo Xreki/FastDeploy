@@ -139,6 +139,7 @@ class ErnieBotConfig(PretrainedConfig):
         moe_use_ffn_shared_weight_and_bias=False,
         moe_intermediate_size: int | None = None,
         moe_use_aux_free: bool | None = None,
+        is_quantized: bool  = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -223,7 +224,7 @@ class ErnieBotConfig(PretrainedConfig):
         elif moe_use_aux_free is not None:
             self.moe_use_gate_correction_bias = moe_use_aux_free
         self.weight_block_size = weight_block_size
-
+        self.is_quantized = is_quantized
         self.register_unsavable_keys(
             [
                 "refined_recompute",
@@ -233,6 +234,8 @@ class ErnieBotConfig(PretrainedConfig):
                 "use_var_len_flash_attn",
             ]
         )
+        if not hasattr(self, "head_dim"):
+            self.head_dim = self.hidden_size // self.num_attention_heads
 
 
 class ErnieBotMoEConfig(ErnieBotConfig):

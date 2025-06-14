@@ -20,23 +20,24 @@ import paddle
 from paddle import nn
 from paddle.common_ops_import import convert_dtype
 
-from fastdeploy.config import LLMConfig, LoadConfig, ModelConfig
-from fastdeploy.model_executor.models.ernie import ErnieBotPretrainedModel
+from fastdeploy.config import FDConfig, LoadConfig, ModelConfig
+from fastdeploy.model_executor.models.ernie45t_moe import ErniePretrainedModel
 from fastdeploy.model_executor.models.model_base import ModelRegistry
 from fastdeploy.model_executor.models.qwen2 import Qwen2PretrainedModel
 from fastdeploy.model_executor.models.utils import (convert_ndarray_dtype,
                                                     load_checkpoint)
 
 MODEL_CLASSES = {
-    "ErnieForCausalLM": ErnieBotPretrainedModel,
+    "ErnieForCausalLM": ErniePretrainedModel,
     "Qwen2ForCausalLM": Qwen2PretrainedModel,
+    "ErnieBotLMHeadModel": ErniePretrainedModel
 }
 
 
-def get_model_from_loader(llm_config: LLMConfig) -> nn.Layer:
+def get_model_from_loader(fd_config: FDConfig) -> nn.Layer:
     """ load or download model """
-    model_loader = DefaultModelLoader(llm_config.load_config)
-    model = model_loader.load_model(llm_config)
+    model_loader = DefaultModelLoader(fd_config.load_config)
+    model = model_loader.load_model(fd_config)
     return model
 
 
@@ -52,7 +53,7 @@ class BaseModelLoader(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def load_model(self, llm_config: LLMConfig) -> nn.Layer:
+    def load_model(self, fd_config: FDConfig) -> nn.Layer:
         """ Load a model with the given configurations."""
         raise NotImplementedError
 
@@ -66,29 +67,32 @@ class DefaultModelLoader(BaseModelLoader):
     def download_model(self, model_config: ModelConfig) -> None:
         pass
 
-    def load_model(self, llm_config: LLMConfig) -> nn.Layer:
+    def load_model(self, fd_config: FDConfig) -> nn.Layer:
         context = paddle.LazyGuard()
-        architectures = llm_config.model_config.architectures[0]
+        architectures = fd_config.model_config.architectures[0]
 
         # TODO(gongshaotian): Now, only support safetensor
         model_class = MODEL_CLASSES[architectures]
         state_dict = load_checkpoint(
-            llm_config.parallel_config.model_name_or_path,
+            fd_config.parallel_config.model_name_or_path,
             model_class,
-            llm_config.model_config,
+            fd_config.model_config,
             return_numpy=True)
         with context:
             model_cls = ModelRegistry.get_class(architectures)
-            model = model_cls(llm_config)
+            model = model_cls(fd_config)
 
         model.eval()
         for k, v in state_dict.items():
-            if convert_dtype(v.dtype) == llm_config.parallel_config.dtype:
+            if convert_dtype(v.dtype) == fd_config.parallel_config.dtype:
                 continue
             elif convert_dtype(v.dtype) == "float32":
                 continue
+            elif convert_dtype(v.dtype) in ["int8", "uint8"]:
+                # this is for quantization, we don't need to convert it
+                continue
             state_dict[k] = convert_ndarray_dtype(
-                v, llm_config.parallel_config.dtype)
+                v, fd_config.parallel_config.dtype)
         model.set_state_dict(state_dict)
 
         return model

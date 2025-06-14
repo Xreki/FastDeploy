@@ -95,6 +95,7 @@ class DataProcessor:
         video_max_frames: int = 180,
         video_min_frames: int = 16,
         video_fps: int = 2,
+        **kwargs
     ) -> None:
         # Tokenizer and image preprocessor
         self.tokenizer = ErnieVLTokenizer.from_pretrained(tokenizer_name, verbose=False)

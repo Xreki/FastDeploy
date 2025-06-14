@@ -26,6 +26,7 @@ from fastdeploy.engine.sampling_params import SamplingParams
 from fastdeploy.utils import data_processor_logger
 
 
+
 @dataclass
 class Request:
     def __init__(
@@ -43,7 +44,8 @@ class Request:
         preprocess_start_time: Optional[float] = None,
         preprocess_end_time: Optional[float] = None,
         multimodal_inputs: Optional[dict] = None,
-        raw_request: bool = True
+        raw_request: bool = True,
+        disaggregate_info: Optional[dict] = None
     ) -> None:
         self.request_id = request_id
         self.prompt = prompt
@@ -53,12 +55,15 @@ class Request:
         self.system = system
         self.sampling_params = sampling_params
         self.history = history
+        # model specific token ids: end of sentence token ids
         self.eos_token_ids = eos_token_ids
+        self.num_cached_tokens = 0
 
         self.arrival_time = arrival_time
         self.preprocess_start_time = preprocess_start_time
         self.preprocess_end_time = preprocess_end_time
         self.raw_request = raw_request
+        self.disaggregate_info = disaggregate_info
 
 
         # Multi-modal related

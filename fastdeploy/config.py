@@ -129,15 +129,15 @@ class ModelConfig(PretrainedConfig):
         freeze_embedding=False,
         rope_head_dim=None,
         base_model_prefix=None,
-        use_moe=False,
         ffn_hidden_size: Optional[int] = None,
-        dtype=None,
+        dtype="bfloat16",
         export_model_type: str = "weight_only_int8",
         use_stop_seqs: bool = False,
         return_all_hidden_states: bool = False,
         start_layer_index: int = 0,
         output_via_mq: bool = True,
         generation_phase: GenerationPhase = GenerationPhase.PREFILL,
+        tie_word_embeddings: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -149,9 +149,10 @@ class ModelConfig(PretrainedConfig):
             self.num_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
         self.num_key_value_heads = num_key_value_heads
-        self.head_dim = head_dim
-        if self.head_dim == -1:
-            self.head_dim = hidden_size // num_attention_heads
+        print("before set dim: ", kwargs)
+        self.head_dim = hidden_size // num_attention_heads if kwargs.get(
+            "head_dim", None) is None else kwargs.get("head_dim")
+        print("set dim: ", self.head_dim)
         self.hidden_act = hidden_act
         self.hidden_dropout_prob = hidden_dropout_prob
         self.max_position_embeddings = max_position_embeddings
@@ -160,6 +161,7 @@ class ModelConfig(PretrainedConfig):
         self.use_rope = use_rope
         self.use_rmsnorm = use_rmsnorm
         self.weight_sharing = weight_sharing
+
         self.weight_sharing_add_bias = weight_sharing_add_bias
         self.use_flash_attention = use_flash_attention
         self.use_fast_ffn = use_fast_ffn
@@ -177,7 +179,6 @@ class ModelConfig(PretrainedConfig):
         self.prefix_name = prefix_name
         self.freeze_embedding = freeze_embedding
         self.rope_head_dim = rope_head_dim
-        self.use_moe = use_moe
         self.base_model_prefix = base_model_prefix
         if moe_layer_start_index is not None:
             self.moe_layer_start_index = moe_layer_start_index
@@ -190,6 +191,8 @@ class ModelConfig(PretrainedConfig):
         self.return_all_hidden_states = return_all_hidden_states
         self.start_layer_index = start_layer_index
         self.output_via_mq = output_via_mq
+        self.dtype = dtype
+        self.tie_word_embeddings = tie_word_embeddings
 
 
 # This class will be removed in future and replaced by MoEConfig
@@ -281,14 +284,13 @@ class MoEConfig:
     moe_layer_start_index = 0
     moe_use_ffn_shared_weight_and_bias = (False, )
     moe_group = (False, )
-    moe_quant_type = "weight_only_int8"
+    moe_quant_type = "weight_only_int4"
     num_max_dispatch_tokens_per_rank = 256
 
     has_multimodality: bool = False
     im_patch_id = (
         100295  # multimodality, TODO(liuyuanle): read from config.json
     )
-    moe_tag = ""
 
 
 @dataclass
@@ -564,11 +566,7 @@ class LoadConfig:
                                                                           1]
 
         layer_name = f"{model_config.base_model_prefix}.decoder.norm"
-        if not model_config.use_moe:
-            mapping[
-                layer_name] = f"{model_config.base_model_prefix}.decoder.norm.weight"
-        else:
-            mapping[layer_name] = "ernie.norm.weight"
+        mapping[layer_name] = "ernie.norm.weight"
 
         layer_name = f"{model_config.base_model_prefix}.e_norm"
         mapping[layer_name] = f"{model_config.base_model_prefix}.e_norm.weight"
@@ -656,7 +654,7 @@ class DecodingConfig:
 
 
 @dataclass
-class LLMConfig:
+class FDConfig:
     """
     The configuration class which contains all fastdeploy-related configuration. This
     simplifies passing around the distinct configurations in the codebase.

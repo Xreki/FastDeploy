@@ -22,7 +22,7 @@ import numpy as np
 import paddle
 import paddle.nn as nn
 
-from fastdeploy.config import KVCacheConfig, LLMConfig
+from fastdeploy.config import FDConfig, KVCacheConfig
 from fastdeploy.engine.request import Request
 from fastdeploy.model_executor.layers.attention import get_attention_backend
 from fastdeploy.model_executor.layers.attention.base_attention_backend import \
@@ -46,9 +46,9 @@ logger = get_logger("gpu_model_runner", "gpu_model_runner.log")
 class GPUModelRunner(ModelRunnerBase):
     """ """
 
-    def __init__(self, llm_config: LLMConfig, device: str, rank: int,
+    def __init__(self, fd_config: FDConfig, device: str, rank: int,
                  local_rank: int):
-        super().__init__(llm_config=llm_config, device=device)
+        super().__init__(fd_config=fd_config, device=device)
         self.rank = rank
         self.local_rank = local_rank
 
@@ -64,7 +64,7 @@ class GPUModelRunner(ModelRunnerBase):
                                       dtype='int32')
 
         # Initialize share inputs
-        self._init_share_inputs(self.llm_config.parallel_config.max_num_seqs)
+        self._init_share_inputs(self.fd_config.parallel_config.max_num_seqs)
         self.infer_seed_increment = paddle.full(
             shape=[self.parallel_config.max_num_seqs, 1],
             fill_value=4,
@@ -295,8 +295,7 @@ class GPUModelRunner(ModelRunnerBase):
             self.parallel_config.max_model_len).reshape((1, -1))
         # TODO(gongshaotian): move to models
         self.share_inputs["rope_emb"] = get_rope(
-            rotary_dim=self.model_config.hidden_size //
-            self.model_config.num_attention_heads,
+            rotary_dim=self.model_config.head_dim,
             position_ids=tmp_position_ids,
             base=self.model_config.rope_theta,
             model_config=self.model_config)
@@ -374,7 +373,7 @@ class GPUModelRunner(ModelRunnerBase):
             f"Starting to load model {self.model_config.architectures[0]}")
         time_before_load = time.perf_counter()
         # 1. Load original model
-        self.model = get_model_from_loader(llm_config=self.llm_config)
+        self.model = get_model_from_loader(fd_config=self.fd_config)
 
         # 2. Load lora model
 
@@ -415,6 +414,10 @@ class GPUModelRunner(ModelRunnerBase):
 
         for i in range(self.model_config.num_layers):
             cache_type = self.parallel_config.dtype
+
+            if self.fd_config.kv_cache_config.cache_quant_dtype == "cache_int8":
+                cache_type = 'uint8'
+
             cache_kvs["key_caches_{}".format(i)] = paddle.full(
                 shape=kv_cache_shape,
                 fill_value=0,
@@ -445,13 +448,12 @@ class GPUModelRunner(ModelRunnerBase):
         self.model_config.kv_num_heads = int(
             self.model_config.num_key_value_heads
         ) // self.parallel_config.mp_size
-        # head_dim = self.model_config.hidden_size // self.model_config.num_attention_heads
-        head_dim = 128
+        head_dim = self.model_config.head_dim
 
         # Get the attention backend
         attn_cls = get_attention_backend(
             self.parallel_config.attention_backend)
-        attn_backend = attn_cls(self.llm_config,
+        attn_backend = attn_cls(self.fd_config,
                                 kv_num_heads=self.model_config.kv_num_heads,
                                 num_heads=num_heads,
                                 head_dim=head_dim)
@@ -480,15 +482,16 @@ class GPUModelRunner(ModelRunnerBase):
             # 3. Prepare lora
 
             # 4. Run model
-            model_output = self.model(self.share_inputs["ids_remove_padding"],
-                                      self.forward_meta)
+            model_output = self.model(
+                ids_remove_padding=self.share_inputs["ids_remove_padding"],
+                forward_meta=self.forward_meta)
             hiddden_states = rebuild_padding(
                 model_output,
                 self.share_inputs["cum_offsets"],
                 self.share_inputs["seq_lens_this_time"],
                 self.share_inputs["seq_lens_decoder"],
                 self.share_inputs["seq_lens_encoder"],
-                self.share_inputs["padding_offset"],
+                None,  # speculative decoding requires
                 self.parallel_config.max_model_len,
             )
 
@@ -516,8 +519,11 @@ class GPUModelRunner(ModelRunnerBase):
                 msg_queue_id=self.parallel_config.msg_queue_id,
                 mp_rank=self.local_rank,
                 use_ep=self.parallel_config.use_ep)
-            post_process(sampled_token_ids=sampled_token_ids,
-                         model_output=model_output_data)
+
+            post_process(
+                sampled_token_ids=sampled_token_ids,
+                model_output=model_output_data,
+            )
 
             # 7. Updata 'infer_seed' and step_cuda()
             self.share_inputs["infer_seed"].add_(self.infer_seed_increment)
@@ -564,7 +570,7 @@ class GPUModelRunner(ModelRunnerBase):
             self.share_inputs["seq_lens_this_time"],
             self.share_inputs["seq_lens_decoder"],
             self.share_inputs["seq_lens_encoder"],
-            self.share_inputs["padding_offset"],
+            None,  #self.share_inputs["padding_offset"],
             self.parallel_config.max_model_len,
         )
 
@@ -659,19 +665,24 @@ class GPUModelRunner(ModelRunnerBase):
         })
 
     def cal_theortical_kvcache(self):
-        """ Calculate the total block memory required at the model level """
+        """
+        Calculate the total block memory required at the model level
+        TODO(gongshaotian): Move to Attention Backend
+        """
         """
         Byte of dtype:
-        - bf16: 2
-        - c8:
-        - c4:
+        - default(bf16): 2
+        - cache_int8: 1
+        - cache_int4:
         """
-        byte_of_dtype = 2
+        cache_quant_dtype = self.kv_cache_config.cache_quant_dtype
 
-        # head_dim = self.model_config.hidden_size // self.model_config.num_attention_heads
-        head_dim = 128
-        hidden_dim = head_dim * self.model_config.kv_num_heads
+        if cache_quant_dtype == "cache_int8":
+            byte_of_dtype = 1
+        else:  # default
+            byte_of_dtype = 2
 
+        hidden_dim = self.model_config.head_dim * self.model_config.kv_num_heads
         required_memory = (
             byte_of_dtype * 2 *  # k + v
             (self.parallel_config.block_size * hidden_dim) *

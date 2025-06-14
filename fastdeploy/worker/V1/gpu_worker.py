@@ -21,7 +21,7 @@ import paddle
 import paddle.nn as nn
 import pynvml
 
-from fastdeploy.config import LLMConfig
+from fastdeploy.config import FDConfig
 from fastdeploy.engine.request import Request
 from fastdeploy.utils import get_logger
 from fastdeploy.worker.output import ModelRunnerOutput
@@ -36,12 +36,12 @@ class GpuWorker(WorkerBase):
 
     def __init__(
         self,
-        llm_config: LLMConfig,
+        fd_config: FDConfig,
         local_rank: int,
         rank: int,
     ):
         super().__init__(
-            llm_config=llm_config,
+            fd_config=fd_config,
             local_rank=local_rank,
             rank=rank,
         )
@@ -66,7 +66,7 @@ class GpuWorker(WorkerBase):
 
         # Construct model runner
         self.model_runner: GPUModelRunner = GPUModelRunner(
-            llm_config=self.llm_config,
+            fd_config=self.fd_config,
             device=self.device,
             rank=self.rank,
             local_rank=self.local_rank)

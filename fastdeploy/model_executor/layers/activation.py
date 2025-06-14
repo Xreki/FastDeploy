@@ -18,7 +18,7 @@
 from paddle import nn
 from paddle.incubate.nn.functional import fused_bias_act
 
-from fastdeploy.config import LLMConfig
+from fastdeploy.config import FDConfig
 from fastdeploy.platforms import current_platform
 
 
@@ -29,7 +29,7 @@ class SiluAndMul(nn.Layer):
 
     def __init__(
         self,
-        llm_config: LLMConfig,
+        fd_config: FDConfig,
         bias=None,
         act_method="gelu",
         dequant_scales=None,
@@ -42,7 +42,7 @@ class SiluAndMul(nn.Layer):
         activation method, and more.
 
         Args:
-            llm_config (Any): Arguments related to inference, including quantization
+            fd_config (Any): Arguments related to inference, including quantization
                 settings.
             bias (Optional[Tensor]): Optional bias term to be added to the output.
             act_method (str, optional): Activation method to be applied.
@@ -67,22 +67,18 @@ class SiluAndMul(nn.Layer):
             raise NotImplementedError
 
         self.bias = bias
+        act_method = act_method.lower()
         if act_method == "silu":
             act_method = "swiglu"
-        from fastdeploy.utils import get_logger
 
-        logger = get_logger("worker", "worker.log")
-        logger.info("============avtivation debug start=================")
-        logger.info(f"act_method: {act_method}")
-        logger.info("============avtivation debug end=================")
         self.act_method = act_method
         self.dequant_scales = dequant_scales
         self.shift = shift
         self.smooth = smooth
         self.quant_scale = quant_scale
-        self.quant_round_type = llm_config.quant_config.quant_round_type
-        self.quant_max_bound = llm_config.quant_config.quant_max_bound
-        self.quant_min_bound = llm_config.quant_config.quant_min_bound
+        self.quant_round_type = fd_config.quant_config.quant_round_type if fd_config.quant_config else 0
+        self.quant_max_bound = fd_config.quant_config.quant_max_bound if fd_config.quant_config else 0
+        self.quant_min_bound = fd_config.quant_config.quant_min_bound if fd_config.quant_config else 0
 
         self._dtype = self._helper.get_default_dtype()
         if self._dtype == "bfloat16":
@@ -96,7 +92,7 @@ class SiluAndMul(nn.Layer):
                     bfloat16 as default dtype, but received {self._dtype}")
 
         # fp8 is not support smooth quantization
-        if "float8" in llm_config.model_config.act_dtype:
+        if "float8" in fd_config.model_config.act_dtype:
             self.dequant_scales = None
             self.shift = None
             self.smooth = None

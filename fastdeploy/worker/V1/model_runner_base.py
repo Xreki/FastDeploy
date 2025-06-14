@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 
 from paddle import nn
 
-from fastdeploy.config import LLMConfig
+from fastdeploy.config import FDConfig
 from fastdeploy.utils import get_logger
 from fastdeploy.worker.output import ModelRunnerOutput
 
@@ -31,15 +31,15 @@ class ModelRunnerBase(ABC):
         contain input preparation, token generation, and tokenprocessing.
     """
 
-    def __init__(self, llm_config: LLMConfig, device: str) -> None:
+    def __init__(self, fd_config: FDConfig, device: str) -> None:
         # Initialize config
-        self.llm_config = llm_config
-        self.model_config = llm_config.model_config
-        self.load_config = llm_config.load_config
-        self.device_config = llm_config.device_config
-        self.speculative_config = llm_config.speculative_config
-        self.kv_cache_config = self.llm_config.kv_cache_config
-        self.parallel_config = self.llm_config.parallel_config
+        self.fd_config = fd_config
+        self.model_config = fd_config.model_config
+        self.load_config = fd_config.load_config
+        self.device_config = fd_config.device_config
+        self.speculative_config = fd_config.speculative_config
+        self.kv_cache_config = self.fd_config.kv_cache_config
+        self.parallel_config = self.fd_config.parallel_config
         # ... config
 
         self.device = device
