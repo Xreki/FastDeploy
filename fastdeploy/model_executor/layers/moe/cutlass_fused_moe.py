@@ -32,10 +32,6 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
     """
 
     def __init__(self, moe_compute_params):
-        def print_members(obj):
-            for k, v in vars(obj).items():
-                print(f"{k}: {v}")
-        print_members(moe_compute_params)
         self.num_local_experts = moe_compute_params.num_local_experts
         self.moe_quant_type = moe_compute_params.moe_quant_type
         self.hidden_size = moe_compute_params.hidden_size

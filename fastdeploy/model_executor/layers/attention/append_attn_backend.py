@@ -306,30 +306,4 @@ class AppendAttentionBackend(AttentionBackend):
         TODO(vivienfanghuagood) WIP
         """
         raise NotImplementedError("this function not supported now")
-        # metadata = self.attention_metadata
-
-        # seq_q_length = forward_meta.seq_lens_this_time
-        # seq_kv_length = forward_meta.seq_lens_decoder
-
-        # seq_lens_encoder = forward_meta["seq_lens_encoder"]
-        # seq_lens_decoder = forward_meta["seq_lens_decoder"]
-        # seq_lens_this_time = forward_meta["seq_lens_this_time"]
         
-        # bsz = seq_lens_encoder.shape[0]
-        # max_len_encoder = seq_lens_encoder.max().item()
-        # encoder_ids = paddle.arange(max_len_encoder).tile([bsz, 1])  # 每个批次生成完整索引
-        # encoder_mask = paddle.arange(max_len_encoder).unsqueeze(0) < seq_lens_encoder  # 根据 encoder 长度生成掩码
-        # encoder_ids = paddle.masked_select(encoder_ids, encoder_mask)  # 筛选有效的 Encoder 索引
-
-        # # 生成批次索引用于保持顺序
-        # encoder_batch_indices = paddle.repeat_interleave(
-        #     paddle.arange(bsz), seq_lens_encoder.squeeze(-1)
-        # )  # 每个样本的索引重复对应的长度
-
-        # # 处理 Decoder 部分
-        # decoder_mask = seq_lens_decoder > 0  # 筛选非零 decoder 长度
-        # decoder_ids = paddle.masked_select(seq_lens_decoder, decoder_mask)  # 提取非零 decoder 索引
-        # decoder_batch_indices = paddle.masked_select(paddle.arange(bsz), decoder_mask.squeeze(-1))  # 提取有效的批次索引
-        
-        # return res
-

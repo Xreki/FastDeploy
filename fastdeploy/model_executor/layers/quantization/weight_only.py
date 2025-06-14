@@ -123,6 +123,3 @@ class GPUWeightOnlyLinearMethod(WeightOnlyLinearMethod):
         layer.linear_weight.set_value(quanted_weight_tensor)
         layer.linear_weight_scale.set_value(
             weight_scale_tensor.astype(paddle.get_default_dtype()))
-        # print("weight shape: ", layer.linear_weight.shape)
-        # print("weight_scale shape: ", layer.linear_weight_scale.shape)
-        # import sys;sys.exit()

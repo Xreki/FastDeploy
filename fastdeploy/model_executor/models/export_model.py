@@ -510,9 +510,6 @@ def build_stream_line_model(
 
     logger.info(f"{runtime_timer.log()}")
     runtime_timer.start(f"{stage_flag} stage set parameters time")
-    def print_members(obj):
-        for k, v in vars(obj).items():
-            print(f"{k}: {v}")
 
     if config["hidden_act"].lower() == "swiglu":
         model_config.hidden_act = "swiglu"
@@ -583,8 +580,6 @@ def build_stream_line_model(
     )
     model_config.weight_dtype = weight_dtype
     model_config.act_dtype = act_dtype
-    print_members(model_config)
-    # import sys;sys.exit()
 
     if weight_dtype == "int8" and act_dtype in ["bfloat16", "float16"]:
         quant_cls = get_quantization_config("weight_only")
