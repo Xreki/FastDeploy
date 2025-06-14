@@ -169,7 +169,6 @@ class ModelRunner(ModelRunnerBase):
             moe_group="dummy",
         )
         config.is_mtp = False
-        config.use_ep = False
         self.model_cfg = config
         if self.is_safetensors_model:
             meta_json = os.path.join(self.args.model_name_or_path,
@@ -204,6 +203,7 @@ class ModelRunner(ModelRunnerBase):
                 dtype="bfloat16",
             )
         config.vision_config = vision_config
+        self.vision_config = vision_config
         config.pixel_hidden_size = config.vision_config.hidden_size
         config.im_patch_id = tokenizer.get_vocab()["<|IMAGE_PLACEHOLDER|>"]
         config.max_text_id = config.im_patch_id
@@ -411,6 +411,9 @@ class ModelRunner(ModelRunnerBase):
                 self.model_cfg,
                 return_numpy=True,
             )
+            for key in list(state_dict.keys()):
+                if key.startswith("vision_model.") or key.startswith("ernie.resampler_model."):
+                    state_dict.pop(key)
             self.model.set_state_dict(state_dict)
 
     @paddle.no_grad()
@@ -450,13 +453,34 @@ class ModelRunner(ModelRunnerBase):
                         if k in compat_keys:
                             new_k = k.replace(name, "")
                             tensor = f.get_tensor(k)
-                            if name == "ernie.resampler_model." and new_k == "spatial_linear.0.weight":
-                                splited_tensors = np.split(
-                                    tensor, tensor_parallel_degree, axis=0)
-                                state_dict[new_k] = splited_tensors[
-                                    tensor_parallel_rank]
-                            else:
-                                state_dict[new_k] = tensor
+                            if tensor_parallel_degree > 1:
+                                if name == "ernie.resampler_model." and new_k == "spatial_linear.0.weight":
+                                    tensor = np.split(
+                                        tensor, tensor_parallel_degree, axis=0)[tensor_parallel_rank]
+                                elif name == "vision_model.":
+                                    if "attn.proj.weight" in new_k or "fc2.weight" in new_k:
+                                        tensor = np.split(tensor, tensor_parallel_degree, axis=0)[tensor_parallel_rank]
+                                    elif "fc1.weight" in new_k or "fc1.bias" in new_k:
+                                        tensor = np.split(tensor, tensor_parallel_degree, axis=-1)[tensor_parallel_rank]
+                                    elif "qkv.weight" in new_k:
+                                        head_dim = self.vision_config.hidden_size // self.vision_config.num_heads
+                                        tensor = tensor.reshape([self.vision_config.hidden_size, 3,
+                                                                self.vision_config.num_heads, head_dim])
+                                        tensor = np.split(
+                                            tensor,
+                                            tensor_parallel_degree,
+                                            axis=-2
+                                        )[tensor_parallel_rank].reshape(
+                                            [self.vision_config.hidden_size, -1])
+                                    elif "qkv.bias" in new_k:
+                                        head_dim = self.vision_config.hidden_size // self.vision_config.num_heads
+                                        tensor = tensor.reshape([3, self.vision_config.num_heads, head_dim])
+                                        tensor = np.split(
+                                            tensor,
+                                            tensor_parallel_degree,
+                                            axis=-2
+                                        )[tensor_parallel_rank].reshape([-1])
+                            state_dict[new_k] = tensor
             model.set_state_dict(state_dict)
 
         vision_model = DFNRopeVisionTransformerPretrainedModel(
@@ -465,7 +489,15 @@ class ModelRunner(ModelRunnerBase):
                                            level="O2",
                                            dtype="bfloat16")
         vision_model.eval()
-        if self.is_safetensors_model:
+        if not self.is_safetensors_model:
+            if self.tensor_parallel_degree > 1:
+                vit_state_dict = self.vit_load(
+                    args.vision_model_name_or_path,
+                    self.tensor_parallel_degree,
+                    self.tensor_parallel_rank
+                )
+                vision_model.set_state_dict(vit_state_dict)
+        else:
             set_vision_state_dict(
                 vision_model,
                 tensor_parallel_degree=self.tensor_parallel_degree,
@@ -491,14 +523,6 @@ class ModelRunner(ModelRunnerBase):
                 tensor_parallel_rank=self.tensor_parallel_rank,
                 name="ernie.resampler_model.",
             )
-        if self.tensor_parallel_degree > 1:
-            vit_state_dict = self.vit_load(
-                args.vision_model_name_or_path,
-                self.tensor_parallel_degree,
-                self.tensor_parallel_rank
-            )
-            vision_model.set_state_dict(vit_state_dict)
-
         return vision_model, resampler_model
 
     @paddle.no_grad()
