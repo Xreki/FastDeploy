@@ -24,12 +24,14 @@ from fastdeploy.config import FDConfig, LoadConfig, ModelConfig
 from fastdeploy.model_executor.models.ernie45t_moe import ErniePretrainedModel
 from fastdeploy.model_executor.models.model_base import ModelRegistry
 from fastdeploy.model_executor.models.qwen2 import Qwen2PretrainedModel
+from fastdeploy.model_executor.models.qwen3moe import Qwen3PretrainedModel
 from fastdeploy.model_executor.models.utils import (convert_ndarray_dtype,
                                                     load_checkpoint)
 
 MODEL_CLASSES = {
     "ErnieForCausalLM": ErniePretrainedModel,
     "Qwen2ForCausalLM": Qwen2PretrainedModel,
+    "Qwen3MoeForCausalLM": Qwen3PretrainedModel,
     "ErnieBotLMHeadModel": ErniePretrainedModel
 }
 
@@ -83,16 +85,17 @@ class DefaultModelLoader(BaseModelLoader):
             model = model_cls(fd_config)
 
         model.eval()
-        for k, v in state_dict.items():
-            if convert_dtype(v.dtype) == fd_config.parallel_config.dtype:
-                continue
-            elif convert_dtype(v.dtype) == "float32":
-                continue
-            elif convert_dtype(v.dtype) in ["int8", "uint8"]:
-                # this is for quantization, we don't need to convert it
-                continue
-            state_dict[k] = convert_ndarray_dtype(
-                v, fd_config.parallel_config.dtype)
+        if not fd_config.moe_config.use_moe:
+            for k, v in state_dict.items():
+                if convert_dtype(v.dtype) == fd_config.parallel_config.dtype:
+                    continue
+                elif convert_dtype(v.dtype) == "float32":
+                    continue
+                elif convert_dtype(v.dtype) in ["int8", "uint8"]:
+                    # this is for quantization, we don't need to convert it
+                    continue
+                state_dict[k] = convert_ndarray_dtype(
+                    v, fd_config.parallel_config.dtype)
         model.set_state_dict(state_dict)
 
         return model

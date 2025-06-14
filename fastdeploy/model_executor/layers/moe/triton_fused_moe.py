@@ -201,7 +201,7 @@ class TritonFusedMoeMethod(FusedMoEMethodBase):
             compute_type_enum=1,
             use_fp8_w8a8=False,
             use_int8_w8a16=True,
-            even_Ks=True,
+            even_Ks=hidden_size % config["BLOCK_SIZE_K"] == 0,
         )
 
         intermediate_cache2 = paddle.incubate.nn.functional.swiglu(
@@ -247,7 +247,7 @@ class TritonFusedMoeMethod(FusedMoEMethodBase):
             compute_type_enum=1,
             use_fp8_w8a8=False,
             use_int8_w8a16=True,
-            even_Ks=True,
+            even_Ks=moe_intermediate_size % config["BLOCK_SIZE_K"] == 0,
         )
 
         intermediate_cache3.reshape_([token_num, top_k, hidden_size])

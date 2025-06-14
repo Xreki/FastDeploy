@@ -149,7 +149,7 @@ class ModelRunner(ModelRunnerBase):
                 speculate_max_draft_tokens,
                 return_all_hidden_states=False,
                 moe_quant_type=getattr(self.model_cfg, "moe_quant_type",
-                                       "weight_only_int4"),
+                                       "weight_only_int8"),
                 use_safetensors=self.model_cfg.is_unified_ckpt,
                 return_fd_config=True)
             model.eval()
@@ -162,21 +162,30 @@ class ModelRunner(ModelRunnerBase):
             self.fd_config.model_config.kv_num_heads = int(
                 self.fd_config.model_config.num_key_value_heads
             ) // self.fd_config.parallel_config.mp_size
-            head_dim = self.fd_config.model_config.hidden_size // self.fd_config.model_config.num_attention_heads
             self.attn_backend = attn_backend_cls(
                 self.fd_config,
                 kv_num_heads=self.fd_config.model_config.kv_num_heads,
                 num_heads=num_heads,
-                head_dim=head_dim)
+                head_dim=self.fd_config.model_config.head_dim)
             self._init_kvcache()
 
     def init_rotary_position_embedding(self, max_model_len):
+        use_ernie_rotray = (os.getenv("USE_ERNIE_ROTRAY", default="1") == "1")
         tmp_position_ids = paddle.arange(max_model_len).reshape((1, -1))
-        self.share_inputs["rope_emb"] = get_rope(
-            rotary_dim=self.model_cfg.head_dim,
-            position_ids=tmp_position_ids,
-            base=self.rope_theta,
-            model_config=self.config)
+        # TODO(lizexu) to refactor the rotray embedding in the next PR!
+        if use_ernie_rotray:
+            self.share_inputs["rope_emb"] = get_rope(
+                rotary_dim=self.model_cfg.head_dim,
+                position_ids=tmp_position_ids,
+                base=self.rope_theta,
+                model_config=self.config)
+        else:
+            # it's the only choise to run Qwen3-MoE!
+            from fastdeploy.model_executor.layers.rotary_embedding import RopeEmbedding
+
+            self.share_inputs["rope_emb"] = RopeEmbedding.get_neox_style_position_embedding(
+                tmp_position_ids, head_dim=self.model_cfg.head_dim, base=1e6
+            )
 
     def _init_kvcache(self):
         """
@@ -588,8 +597,8 @@ class ModelRunner(ModelRunnerBase):
         """
         fake input to profile
         """
-        full_length = num_total_tokens // number_of_tasks
-        input_length = int(full_length * self.args.kv_cache_ratio)
+        input_length = num_total_tokens // number_of_tasks
+
         block_num = (input_length + self.args.block_size - 1 +
                      self.args.enc_dec_block_num) // self.args.block_size
 

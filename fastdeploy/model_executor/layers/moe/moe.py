@@ -22,9 +22,6 @@ from paddlenlp.utils.log import logger
 
 from fastdeploy.model_executor.layers.utils import get_tensor
 
-from .cutlass_fused_moe import CutlassFusedMoeMethod
-from .triton_fused_moe import TritonFusedMoeMethod
-
 
 @dataclass
 class MoEComputeParams:
@@ -128,8 +125,10 @@ class FusedMoE(nn.Layer):
         moe_compute_params.tp_size = self.tp_size
 
         if use_method == "cutlass":
+            from .cutlass_fused_moe import CutlassFusedMoeMethod
             self.compute_method = CutlassFusedMoeMethod(moe_compute_params)
         else:
+            from .triton_fused_moe import TritonFusedMoeMethod
             self.compute_method = TritonFusedMoeMethod(moe_compute_params)
 
         if self.moe_use_gate_correction_bias:
@@ -153,13 +152,28 @@ class FusedMoE(nn.Layer):
 
         up_gate_proj_weight = []
         down_proj_weight = []
-        for j in range(self.num_experts):
-            up_gate_proj_weight.append(
-                get_tensor(
-                    state_dict.pop(self.ffn1_expert_weight_key.format(j))))
-            down_proj_weight.append(
-                get_tensor(
-                    state_dict.pop(self.ffn2_expert_weight_key.format(j))))
+        down_proj_weight_scale = []
+        is_ffn_merged = self.ffn1_expert_weight_key.format(0) in state_dict
+        if is_ffn_merged:
+            for j in range(self.num_experts):
+                up_gate_proj_weight.append(
+                    get_tensor(
+                        state_dict.pop(self.ffn1_expert_weight_key.format(j))))
+                down_proj_weight.append(
+                    get_tensor(
+                        state_dict.pop(self.ffn2_expert_weight_key.format(j))))
+        else:
+            self.gate_expert_weight_key = self.ffn1_expert_weight_key.replace("up_gate_proj", "gate_proj")
+            self.up_expert_weight_key = self.ffn1_expert_weight_key.replace("up_gate_proj", "up_proj")
+            for j in range(self.num_experts):
+                gate = get_tensor(
+                        state_dict.pop(self.gate_expert_weight_key.format(j)))
+                up = get_tensor(
+                        state_dict.pop(self.up_expert_weight_key.format(j)))
+                up_gate_proj_weight.append(paddle.concat([gate, up], axis=-1))
+                down_proj_weight.append(
+                    get_tensor(
+                        state_dict.pop(self.ffn2_expert_weight_key.format(j))))
         return up_gate_proj_weight, down_proj_weight
 
     def load_state_dict(self, state_dict, is_update: bool = False):
@@ -172,9 +186,23 @@ class FusedMoE(nn.Layer):
                 state_dict.pop(self.gate_weight_key))
             self.gate_weight = self.create_parameter(
                 shape=gate_weight_tensor.shape,
+                dtype="float32"
+            )
+            self.gate_weight.set_value(gate_weight_tensor.astype("float32"))
+
+        # gate_correction_bias
+        if self.moe_use_gate_correction_bias:
+            gate_correction_bias_tensor = get_tensor(
+                state_dict.pop(self.gate_correction_bias_key))
+
+            self.gate_correction_bias = self.create_parameter(
+                shape=gate_correction_bias_tensor.shape,
                 dtype="float32",
             )
-            self.gate_weight.set_value(gate_weight_tensor.cast("float32"))
+
+            self.gate_correction_bias.set_value(gate_correction_bias_tensor)
+        else:
+            self.gate_correction_bias = None
 
         up_gate_proj_weight, down_proj_weight = self.load_gate_state_dict(
             state_dict)
