@@ -75,13 +75,11 @@ def parse_args():
     parser.add_argument("--bytes_per_layer_per_block", type=int, default=1024,
                        help="per layer per block bytes")
     parser.add_argument("--cache_dtype", type=str, default="bfloat16",
-                       choices=["wint8", "bfloat16", "wint4"],
+                       choices=["uint8", "bfloat16"],
                        help="cache dtype")
     
     args = parser.parse_args()
     return args
-
-
 
 class CacheTransferManager:
     """

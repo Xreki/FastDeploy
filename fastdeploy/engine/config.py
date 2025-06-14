@@ -213,8 +213,8 @@ class CacheConfig:
         self.kv_cache_ratio = kv_cache_ratio
         self.enc_dec_block_num = enc_dec_block_num
         self.cache_dtype = cache_dtype
-        if hasattr(model_cfg, "kvcache_quant_type"):
-            self.cache_dtype = self.model_cfg.kvcache_quant_type
+        if hasattr(model_cfg, "cache_quant_type"):
+            self.cache_dtype = model_cfg.cache_quant_type
 
         self.enable_chunked_prefill = enable_chunked_prefill
 
@@ -239,9 +239,11 @@ class CacheConfig:
         self.model_cfg.kv_num_head = kv_num_head
 
         # TODO check name
-        if self.cache_dtype.lower() == "wint4":
+        if self.cache_dtype.lower() == "cache_int4":
             byte_size = 0.5
-        elif self.cache_dtype.lower() == "wint8":
+            self.cache_dtype = "uint8"
+        elif self.cache_dtype.lower() == "cache_int8":
+            self.cache_dtype = "uint8"
             byte_size = 1
         else:
             byte_size = 2

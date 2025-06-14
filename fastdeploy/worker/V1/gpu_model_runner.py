@@ -53,6 +53,9 @@ class GPUModelRunner(ModelRunnerBase):
         self.rank = rank
         self.local_rank = local_rank
 
+        #logger.info(f"{device}")
+        self.device_ids_list = self.parallel_config.device_ids.split(",")
+
         #  Sampler
         self.sampler = Sampler()
 
@@ -475,12 +478,13 @@ class GPUModelRunner(ModelRunnerBase):
         kv_cache_shape = self.attn_backends[0].get_kv_cache_shape(
             max_num_blocks=max_block_num)
 
-        if self.parallel_config.enable_prefix_caching or self.parallel_config.splitwise_role != "mixed":
+        if not self.parallel_config.do_profile and \
+            (self.parallel_config.enable_prefix_caching or self.parallel_config.splitwise_role != "mixed"):
             cache_kvs_list = []
             for i in range(self.model_config.num_layers):
                 key_cache = paddle.empty(shape=[], dtype=cache_type)
-                key_cache_name = f"key_caches_{i}_rank{self.rank}.device{self.device_ids_list[self.rank]}"
-                val_cache_name = f"value_caches_{i}_rank{self.rank}.device{self.device_ids_list[self.rank]}"
+                key_cache_name = f"key_caches_{i}_rank{self.local_rank}.device{self.device_ids_list[self.local_rank]}"
+                val_cache_name = f"value_caches_{i}_rank{self.local_rank}.device{self.device_ids_list[self.local_rank]}"
                 key_cache = share_external_data(key_cache, key_cache_name,
                                                 kv_cache_shape)
                 cache_kvs_list.append(key_cache)
@@ -719,7 +723,8 @@ class GPUModelRunner(ModelRunnerBase):
         self.num_gpu_blocks = num_gpu_blocks
 
         # Reset block table and kv cache with global block num
-        self.initialize_kv_cache()
+        if not (self.parallel_config.enable_prefix_caching or self.parallel_config.splitwise_role != "mixed"):
+            self.initialize_kv_cache()
 
         self.share_inputs["block_tables"] = paddle.full(
             [self.parallel_config.max_num_seqs, self.num_gpu_blocks],
@@ -739,6 +744,8 @@ class GPUModelRunner(ModelRunnerBase):
             "free_list_len":
             paddle.full([1], self.free_list_len, dtype="int32"),
         })
+
+        self.parallel_config.do_profile = False
 
     def cal_theortical_kvcache(self):
         """
