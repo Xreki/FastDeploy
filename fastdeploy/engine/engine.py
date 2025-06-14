@@ -363,6 +363,13 @@ class LLMEngine(object):
             llm_logger.error(error_msg)
             raise EngineError(error_msg, error_code=400)
 
+        def print_members(obj):
+            for k, v in vars(obj).items():
+                console_logger.info(f"{k}: {v}")
+        console_logger.info("!!!add_requests")
+        print_members(request)
+        # import sys;sys.exit()
+        
         request.preprocess_end_time = time.time()
         self.scheduler.put_requests([request])
         llm_logger.info(
@@ -607,7 +614,8 @@ class LLMEngine(object):
         if self.cfg.nnode > 1:
             pd_cmd = pd_cmd + f" --ips {self.cfg.ips}"
         log_dir = os.getenv("FD_LOG_DIR", default="log")
-        pd_cmd = pd_cmd + arguments + f" 2>{log_dir}/launch_worker.log"
+        pd_cmd = pd_cmd + arguments
+        # pd_cmd = pd_cmd + arguments + f" 2>{log_dir}/launch_worker.log"
         llm_logger.info("Launch worker service command: {}".format(pd_cmd))
         p = subprocess.Popen(
             pd_cmd,

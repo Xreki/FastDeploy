@@ -193,11 +193,6 @@ class AppendAttentionBackend(AttentionBackend):
                 layer.layer_id] = init_signal_layerwise(
                     metadata.kv_signal_metadata,
                     layer.layer_id + self.start_layer_index)
-        # print("attention q shape:", q.shape)
-        # print("attention k shape:", k.shape)
-        # print("attention v shape:", v.shape)
-        # print("attention qkv shape:", qkv.shape)
-
         # import pdb;pdb.set_trace()
         # print("qkv", qkv)
         # if layer.layer_id < 1:
