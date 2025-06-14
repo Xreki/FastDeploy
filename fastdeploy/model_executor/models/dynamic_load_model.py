@@ -15,30 +15,28 @@
 """
 from __future__ import annotations
 
-import json
 import os
 import time
 from multiprocessing.shared_memory import SharedMemory
-from typing import Any
-from typing import Dict
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 import paddle
 from paddle import nn
-from paddle.distributed import fleet
-from paddlenlp.trl import llm_utils
 from paddlenlp.utils.log import logger
 
-from fastdeploy.model_executor.models.ernie_vl.configuration import ErnieBotMoEVLConfig
-from fastdeploy.model_executor.models.ernie_vl.dfnrope import DFNRopeVisionTransformerConfig
-from fastdeploy.model_executor.models.ernie_vl.dfnrope.modeling import DFNRopeVisionTransformerPretrainedModel
-from fastdeploy.model_executor.models.ernie_vl.modeling_resampler import ScatterOp
-from fastdeploy.model_executor.models.ernie_vl.modeling_resampler import VariableResolutionResamplerModel
+from fastdeploy.model_executor.models.ernie45t_vl.configuration import \
+    ErnieBotMoEVLConfig
+from fastdeploy.model_executor.models.ernie45t_vl.dfnrope import \
+    DFNRopeVisionTransformerConfig
+from fastdeploy.model_executor.models.ernie45t_vl.dfnrope.modeling import \
+    DFNRopeVisionTransformerPretrainedModel
+from fastdeploy.model_executor.models.ernie45t_vl.modeling_resampler import \
+    VariableResolutionResamplerModel
 
 
 class DynamicLoadModel(nn.Layer):
-    """EfficientLLM model"""
+    """FastDeploy model"""
 
     def __init__(
         self,
@@ -46,7 +44,7 @@ class DynamicLoadModel(nn.Layer):
         dtype: str = "bfloat16",
         block_size: int = 64,
         max_len: int = 8192,
-        stage_flag: str = "EfficientLLM-Inference",
+        stage_flag: str = "FastDeploy-Inference",
         model_path: Optional[str] = None,
         ori_vocab_size: Optional[int] = None,
         draft_type: str = "None",
@@ -69,14 +67,14 @@ class DynamicLoadModel(nn.Layer):
         **kwargs,
     ):
         """
-        Initialize EfficientLLM model with configuration and build model immediately.
+        Initialize FastDeploy model with configuration and build model immediately.
 
         Args:
             config: Model configuration dictionary
             dtype: Data type for model parameters
             block_size: Block size for attention
             max_seq_len: Maximum sequence length
-            stage_flag: Stage flag for EfficientLLM
+            stage_flag: Stage flag for FastDeploy
             model_path: Path to model weights
             ori_vocab_size: Original vocabulary size
             **kwargs: Additional arguments for model configuration
@@ -127,8 +125,7 @@ class DynamicLoadModel(nn.Layer):
         if self.load_model_from_ipc:
             self.update_parameters()
 
-        logger.info(
-            "EfficientLLM model built successfully by DynamicLoadModel")
+        logger.info("FastDeploy model built successfully by DynamicLoadModel")
 
     def inject_pp_vision_model(self):
         """
@@ -172,8 +169,8 @@ class DynamicLoadModel(nn.Layer):
                 config=config.vision_config)
 
             vision_model = paddle.amp.decorate(models=vision_model,
-                                            level="O2",
-                                            dtype="bfloat16")
+                                               level="O2",
+                                               dtype="bfloat16")
 
             resampler_model = VariableResolutionResamplerModel(
                 config.pixel_hidden_size,
@@ -183,8 +180,8 @@ class DynamicLoadModel(nn.Layer):
                 config=config,
             )
             resampler_model = paddle.amp.decorate(models=resampler_model,
-                                                level="O2",
-                                                dtype="bfloat16")
+                                                  level="O2",
+                                                  dtype="bfloat16")
 
             vision_model.eval()
             resampler_model.eval()
@@ -193,7 +190,7 @@ class DynamicLoadModel(nn.Layer):
             logger.info("inject vision model successfully")
 
     def _build_model(self) -> paddle.nn.Layer:
-        """Build the EfficientLLM model architecture."""
+        """Build the FastDeploy model architecture."""
         from .export_model import build_stream_line_model
 
         _, _, model, _ = build_stream_line_model(
@@ -283,7 +280,6 @@ class DynamicLoadModel(nn.Layer):
                 for name, param in model.state_dict().items():
                     logger.info(f"Clearing model parameter: {name}")
                     param._clear_data()
-
 
         paddle.device.cuda.empty_cache()
         if not self.first_load:
@@ -454,7 +450,8 @@ class DynamicLoadModel(nn.Layer):
                 if not param._is_initialized():
                     if erro_log:
                         logger.error(
-                            f"Parameter {name}-{param} was not properly cleared!")
+                            f"Parameter {name}-{param} was not properly cleared!"
+                        )
                     all_update = False
 
         if all_update:

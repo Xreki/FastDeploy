@@ -42,7 +42,6 @@ class ErnieMoEVLProcessor(ErnieProcessor):
             image_preprocessor_name=preprocessor_path,
             **processor_kwargs
         )
-        self.ernie_processor.eval()
         self.image_patch_id = self.ernie_processor.image_patch_id
         self.spatial_conv_size = self.ernie_processor.spatial_conv_size
 

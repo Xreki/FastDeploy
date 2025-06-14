@@ -13,18 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-
 import json
-from dataclasses import dataclass, asdict, fields as dataclass_fields
+from dataclasses import asdict, dataclass
+from dataclasses import fields as dataclass_fields
 from typing import Any, Dict, List, Optional
 
 from fastdeploy.engine.config import (CacheConfig, Config, ModelConfig,
-                                     ParallelConfig, TaskOption)
+                                      TaskOption)
 from fastdeploy.scheduler.config import SchedulerConfig
 from fastdeploy.utils import FlexibleArgumentParser
-from fastdeploy.scheduler.config import SchedulerConfig
-from paddlenlp.trainer import strtobool
-
 
 
 def nullable_str(x: str) -> Optional[str]:
@@ -144,31 +141,10 @@ class EngineArgs:
     """
     Splitwise role: prefill, decode or mixed
     """
-    data_parallel_size: int = 8
-    """
-    Number of data parallelism.
-    """
 
-    enable_expert_parallel: bool = False
+    innode_prefill_ports: Optional[List[int]] = None
     """
-    Enable expert parallelism.
-    """
-
-    local_data_parallel_id: int = 0
-
-    cache_transfer_protocol: str = "ipc"
-    """
-    Protocol to use for cache transfer.
-    """
-
-    pd_comm_port: int = 12330
-    """
-    Port for splitwise communication.
-    """
-
-    rdma_comm_ports: Optional[List[int]] = None
-    """
-    Ports for rdma communication.
+    Port for innode dispatch request.
     """
 
     enable_chunked_prefill: bool = False
@@ -181,7 +157,8 @@ class EngineArgs:
     """
     max_long_partial_prefills: int = 1
     """
-    For chunked prefill, the maximum number of prompts longer than –long-prefill-token-threshold that will be prefilled concurrently. 
+    For chunked prefill, the maximum number of prompts longer than –long-prefill-token-threshold 
+    that will be prefilled concurrently. 
     """
     long_prefill_token_threshold: int = 0
     """
@@ -189,78 +166,48 @@ class EngineArgs:
     """
     static_decode_blocks: int = 2
     """
-    additional decode block num 
+    additional decode block num
     """
-
     scheduler_name: str = "local"
     """
     Scheduler name to be used
     """
-    scheduler_name: str = "local"
+    scheduler_max_size: int = -1
     """
     Size of scheduler
     """
-    scheduler_max_size: int = -1
+    scheduler_ttl: int = 900
     """
     TTL of request
     """
-    scheduler_ttl: int = 900
-    """
-    Timeout for waiting for response
-    """
-    scheduler_wait_response_timeout: float = 0.001
+    scheduler_host: str = "127.0.0.1"
     """
     Host of redis
     """
-    scheduler_host: str = "127.0.0.1"
+    scheduler_port: int = 6379
     """
     Port of redis
     """
-    scheduler_port: int = 6379
+    scheduler_db: int = 0
     """
     DB of redis
     """
-    scheduler_db: int = 0
+    scheduler_password: Optional[str] = None
     """
     Password of redis
     """
-    scheduler_password: Optional[str] = None
+    scheduler_topic: str = "default"
     """
     Topic of scheduler
     """
-    scheduler_topic: str = "default"
+    scheduler_min_load_score: float = 1
     """
-    Max write time of redis
+    Minimum load score for task assignment
     """
-    scheduler_sync_period: int = 5
+    scheduler_load_shards_num: int = 1
     """
-    SplitWise Use, node load sync period
+    Number of shards for load balancing table
     """
-    scheduler_expire_period: int = 3000
-    """
-    SplitWise Use, node will not be scheduled after expire_period ms not sync load
-    """
-    scheduler_release_load_expire_period: int = 600
-    """
-    SplitWise Use, scheduler will release req load after expire period(s)
-    """
-    scheduler_reader_parallel: int = 4
-    """
-    SplitWise Use, Results Reader Sync Parallel
-    """
-    scheduler_writer_parallel: int = 4
-    """
-    SplitWise Use, Results Writer Sync Parallel
-    """
-    scheduler_reader_batch_size: int = 200
-    """
-    SplitWise Use, Results Reader Batch Size
-    """
-    scheduler_writer_batch_size: int = 200
-    """
-    SplitWise Use, Results Writer Batch Size
-    """
-    scheduler_remote_write_time: int = 3
 
     def __post_init__(self):
         """
@@ -276,18 +223,14 @@ class EngineArgs:
         """
         # Model parameters group
         model_group = parser.add_argument_group("Model Configuration")
-        model_group.add_argument(
-            "--model",
-            type=str,
-            default=EngineArgs.model,
-            help="Model name or path to be used."
-        )
-        model_group.add_argument(
-            "--model-config-name",
-            type=nullable_str,
-            default=EngineArgs.model_config_name,
-            help="The model configuration file name."
-        )
+        model_group.add_argument("--model",
+                                 type=str,
+                                 default=EngineArgs.model,
+                                 help="Model name or path to be used.")
+        model_group.add_argument("--model-config-name",
+                                 type=nullable_str,
+                                 default=EngineArgs.model_config_name,
+                                 help="The model configuration file name.")
         model_group.add_argument(
             "--tokenizer",
             type=nullable_str,
@@ -298,26 +241,21 @@ class EngineArgs:
             "--max-model-len",
             type=int,
             default=EngineArgs.max_model_len,
-            help="Maximum context length supported by the model."
-        )
+            help="Maximum context length supported by the model.")
         model_group.add_argument(
             "--block-size",
             type=int,
             default=EngineArgs.block_size,
-            help="Number of tokens processed in one block."
-        )
-        model_group.add_argument(
-            "--task",
-            type=str,
-            default=EngineArgs.task,
-            help="Task to be executed by the model."
-        )
+            help="Number of tokens processed in one block.")
+        model_group.add_argument("--task",
+                                 type=str,
+                                 default=EngineArgs.task,
+                                 help="Task to be executed by the model.")
         model_group.add_argument(
             "--use-warmup",
             type=int,
             default=EngineArgs.use_warmup,
-            help="Flag to indicate whether to use warm-up before inference."
-        )
+            help="Flag to indicate whether to use warm-up before inference.")
         model_group.add_argument(
             "--limit-mm-per-prompt",
             default=EngineArgs.limit_mm_per_prompt,
@@ -339,73 +277,47 @@ class EngineArgs:
         model_group.add_argument(
             "--speculative_config",
             default=None,
-            help="Configuration for speculative execution."
-        )
+            help="Configuration for speculative execution.")
 
         model_group.add_argument(
             "--dynamic_load_weight",
             type=int,
             default=EngineArgs.dynamic_load_weight,
-            help="Flag to indicate whether to load weight dynamically."
-        )
+            help="Flag to indicate whether to load weight dynamically.")
 
-        model_group.add_argument(
-            "--engine-worker-queue-port",
-            type=int,
-            default=8002,
-            help="port for engine worker queue"
-        )
+        model_group.add_argument("--engine-worker-queue-port",
+                                 type=int,
+                                 default=EngineArgs.engine_worker_queue_port,
+                                 help="port for engine worker queue")
 
         # Parallel processing parameters group
         parallel_group = parser.add_argument_group("Parallel Configuration")
-        parallel_group.add_argument(
-            "--tensor-parallel-size",
-            "-tp",
-            type=int,
-            default=EngineArgs.tensor_parallel_size,
-            help="Degree of tensor parallelism."
-        )
+        parallel_group.add_argument("--tensor-parallel-size",
+                                    "-tp",
+                                    type=int,
+                                    default=EngineArgs.tensor_parallel_size,
+                                    help="Degree of tensor parallelism.")
         parallel_group.add_argument(
             "--max-num-seqs",
             type=int,
             default=EngineArgs.max_num_seqs,
-            help="Maximum number of sequences per iteration."
-        )
+            help="Maximum number of sequences per iteration.")
         parallel_group.add_argument(
             "--num-gpu-blocks-override",
             type=int,
             default=EngineArgs.num_gpu_blocks_override,
-            help="Override for the number of GPU blocks."
-        )
+            help="Override for the number of GPU blocks.")
         parallel_group.add_argument(
             "--max-num-batched-tokens",
             type=int,
             default=EngineArgs.max_num_batched_tokens,
-            help="Maximum number of tokens to batch together."
-        )
+            help="Maximum number of tokens to batch together.")
         parallel_group.add_argument(
             "--gpu-memory-utilization",
             type=float,
             default=EngineArgs.gpu_memory_utilization,
             help="Fraction of GPU memory to be utilized."
         )
-
-        parallel_group.add_argument(
-            "--data-parallel-size",
-            type=int,
-            default=EngineArgs.data_parallel_size,
-            help="Degree of data parallelism.")
-        parallel_group.add_argument(
-            "--enable-expert-parallel",
-            action='store_true',
-            default=EngineArgs.enable_expert_parallel,
-            help="Enable expert parallelism.")
-        
-        parallel_group.add_argument(
-            "--local_data_parallel_id",
-            type=int,
-            default=EngineArgs.local_data_parallel_id,
-            help="Local Data Parallel ID")
 
         # CacheConfig parameters group
         cache_group = parser.add_argument_group("Cache Configuration")
@@ -414,8 +326,7 @@ class EngineArgs:
             "--kv-cache-ratio",
             type=float,
             default=EngineArgs.kv_cache_ratio,
-            help="Ratio of tokens to process in a block."
-        )
+            help="Ratio of tokens to process in a block.")
 
         cache_group.add_argument(
             "--cpu-offload-gb",
@@ -444,14 +355,11 @@ class EngineArgs:
             "--pod-ips",
             type=lambda s: s.split(",") if s else None,
             default=EngineArgs.pod_ips,
-            help="List of IP addresses for nodes in the cluster (comma-separated)."
-        )
-        system_group.add_argument(
-            "--nnode",
-            type=int,
-            default=EngineArgs.nnode,
-            help="Number of nodes in the cluster."
-        )
+            help="List of IP addresses for nodes in the cluster (comma-separated).")
+        system_group.add_argument("--nnode",
+                                  type=int,
+                                  default=EngineArgs.nnode,
+                                  help="Number of nodes in the cluster.")
 
         # Performance tuning parameters group
         perf_group = parser.add_argument_group("Performance Tuning")
@@ -462,6 +370,19 @@ class EngineArgs:
             help="Flag to enable prefix caching."
         )
 
+        perf_group.add_argument(
+            "--splitwise-role",
+            type=str,
+            default=EngineArgs.splitwise_role,
+            help="Role of splitwise. Default is 'mixed'. (prefill, decode, mixed)"
+        )
+
+        perf_group.add_argument(
+            "--innode-prefill-ports",
+            type=lambda s: s.split(",") if s else None,
+            default=EngineArgs.innode_prefill_ports,
+            help="port for innode prefill"
+        )
 
         perf_group.add_argument(
             "--enable-chunked-prefill",
@@ -479,7 +400,8 @@ class EngineArgs:
             "--max-long-partial-prefills",
             type=int,
             default=EngineArgs.max_long_partial_prefills,
-            help="For chunked prefill, the maximum number of prompts longer than long-prefill-token-threshold that will be prefilled concurrently."
+            help=("For chunked prefill, the maximum number of prompts longer than long-prefill-token-threshold"
+                  "that will be prefilled concurrently.")
         )
         perf_group.add_argument(
             "--long-prefill-token-threshold",
@@ -487,35 +409,6 @@ class EngineArgs:
             default=EngineArgs.long_prefill_token_threshold,
             help="For chunked prefill, the threshold number of tokens for a prompt to be considered long."
         )
-
-        perf_group.add_argument(
-            "--splitwise-role",
-            type=str,
-            default=EngineArgs.splitwise_role,
-            help="Role of splitwise. Default is 'mixed'. (prefill, decode, mixed)"
-        )
-
-
-        perf_group.add_argument(
-            "--cache-transfer-protocol",
-            type=str,
-            default=EngineArgs.cache_transfer_protocol,
-            help="support protocol list, comma separated, default is ipc"
-        )
-
-        perf_group.add_argument(
-            "--pd-comm-port",
-            default=EngineArgs.pd_comm_port,
-            help="port for splitwise communication."
-        )
-
-        perf_group.add_argument(
-            "--rdma-comm-ports",
-            type=lambda s: s.split(",") if s else None,
-            default=EngineArgs.rdma_comm_ports,
-            help="ports for rdma communication."
-        )
-
 
         # Scheduler parameters group
         scheduler_group = parser.add_argument_group("Scheduler")
@@ -537,13 +430,6 @@ class EngineArgs:
             help=f"TTL of request. Default is {EngineArgs.scheduler_ttl} seconds. (local,global)"
         )
         scheduler_group.add_argument(
-            "--scheduler-wait-response-timeout",
-            type=float,
-            default=EngineArgs.scheduler_wait_response_timeout,
-            help=("Timeout for waiting for response. Default is "
-                  f"{EngineArgs.scheduler_wait_response_timeout} seconds. (local,global)")
-        )
-        scheduler_group.add_argument(
             "--scheduler-host",
             default=EngineArgs.scheduler_host,
             help=f"Host address of redis. Default is {EngineArgs.scheduler_host}. (global)"
@@ -552,8 +438,7 @@ class EngineArgs:
             "--scheduler-port",
             type=int,
             default=EngineArgs.scheduler_port,
-            help=f"Port of redis. Default is {EngineArgs.scheduler_port}. (global)"
-        )
+            help=f"Port of redis. Default is {EngineArgs.scheduler_port}. (global)")
         scheduler_group.add_argument(
             "--scheduler-db",
             type=int,
@@ -571,58 +456,17 @@ class EngineArgs:
             help=f"Topic of scheduler. Defaule is {EngineArgs.scheduler_topic}. (global)"
         )
         scheduler_group.add_argument(
-            "--scheduler-remote-write-time",
-            type=int,
-            default=EngineArgs.scheduler_remote_write_time,
-            help=f"Max write time of redis. Default is {EngineArgs.scheduler_remote_write_time} seconds (global)"
+            "--scheduler-min-load-score",
+            type=float,
+            default=EngineArgs.scheduler_min_load_score,
+            help=f"Minimum load score for task assignment. Default is {EngineArgs.scheduler_min_load_score} (global)"
         )
         scheduler_group.add_argument(
-            "--scheduler-sync-period",
+            "--scheduler-load-shards-num",
             type=int,
-            default=EngineArgs.scheduler_sync_period,
-            help=f"SplitWise Use, node load sync period, Default is {EngineArgs.scheduler_sync_period}ms. (global)"
-        )
-        scheduler_group.add_argument(
-            "--scheduler-expire-period",
-            type=int,
-            default=EngineArgs.scheduler_expire_period,
-            help=f"SplitWise Use, node will not be scheduled after expire-period ms not sync load,"
-                 f" Default is {EngineArgs.scheduler_expire_period}ms. (global)"
-        )
-        scheduler_group.add_argument(
-            "--scheduler-release-load-expire-period",
-            type=int,
-            default=EngineArgs.scheduler_release_load_expire_period,
-            help=f"SplitWise Use, scheduler will release req load after expire period(s). "
-                 f"Default is {EngineArgs.scheduler_release_load_expire_period}. (global)"
-        )
-        scheduler_group.add_argument(
-            "--scheduler-reader-parallel",
-            type=int,
-            default=EngineArgs.scheduler_reader_parallel,
-            help=f"SplitWise Use, Results Reader Sync Parallel, "
-                 f"Default is {EngineArgs.scheduler_reader_parallel}. (global)"
-        )
-        scheduler_group.add_argument(
-            "--scheduler-writer-parallel",
-            type=int,
-            default=EngineArgs.scheduler_writer_parallel,
-            help=f"SplitWise Use, Results Writer Sync Parallel, "
-                 f"Default is {EngineArgs.scheduler_writer_parallel}. (global)"
-        )
-        scheduler_group.add_argument(
-            "--scheduler-reader-batch-size",
-            type=int,
-            default=EngineArgs.scheduler_reader_batch_size,
-            help=f"SplitWise Use, Results Reader Batch Size, "
-                 f"Default is {EngineArgs.scheduler_reader_batch_size}. (global)"
-        )
-        scheduler_group.add_argument(
-            "--scheduler-writer-batch-size",
-            type=int,
-            default=EngineArgs.scheduler_writer_batch_size,
-            help=f"SplitWise Use, Results Writer Batch Size, "
-                 f"Default is {EngineArgs.scheduler_writer_batch_size}. (global)"
+            default=EngineArgs.scheduler_load_shards_num,
+            help=("Number of shards for load balancing table. Default is "
+                  f"{EngineArgs.scheduler_load_shards_num} (global)")
         )
 
         return parser
@@ -632,20 +476,19 @@ class EngineArgs:
         """
         Create an instance of EngineArgs from command line arguments.
         """
-        return cls(**{
-            field.name: getattr(args, field.name)
-            for field in dataclass_fields(cls)
-        })
+        return cls(
+            **{
+                field.name: getattr(args, field.name)
+                for field in dataclass_fields(cls)
+            })
 
     def create_model_config(self) -> ModelConfig:
         """
         Create and return a ModelConfig object based on the current settings.
         """
-        return ModelConfig(
-            model_name_or_path=self.model,
-            config_json_file=self.model_config_name,
-            dynamic_load_weight=self.dynamic_load_weight
-        )
+        return ModelConfig(model_name_or_path=self.model,
+                           config_json_file=self.model_config_name,
+                           dynamic_load_weight=self.dynamic_load_weight)
 
     def create_cache_config(self, model_cfg) -> CacheConfig:
         """
@@ -663,9 +506,6 @@ class EngineArgs:
             model_cfg=model_cfg,
             enable_chunked_prefill=self.enable_chunked_prefill,
             enc_dec_block_num=self.static_decode_blocks,
-            rdma_comm_ports=self.rdma_comm_ports,
-            cache_transfer_protocol=self.cache_transfer_protocol,
-            pd_comm_port=self.pd_comm_port,
         )
 
     def create_scheduler_config(self) -> SchedulerConfig:
@@ -674,7 +514,9 @@ class EngineArgs:
         """
         prefix = "scheduler_"
         prefix_len = len(prefix)
-        extra_params = ["max_model_len", "enable_chunked_prefill", "max_num_partial_prefills", "max_long_partial_prefills", "long_prefill_token_threshold"]
+        extra_params = ["max_model_len", "enable_chunked_prefill",
+                        "max_num_partial_prefills", "max_long_partial_prefills",
+                        "long_prefill_token_threshold"]
 
         all = asdict(self)
         params = dict()
@@ -686,23 +528,13 @@ class EngineArgs:
 
         return SchedulerConfig(**params)
 
-    def create_parallel_config(self) -> ParallelConfig:
-        """
-        Create and return a ParallelConfig object based on the current settings.
-        """
-        return ParallelConfig(
-            tensor_parallel_size=self.tensor_parallel_size,
-            enable_expert_parallel=self.enable_expert_parallel,
-            data_parallel_size=self.data_parallel_size,
-            local_data_parallel_id=self.local_data_parallel_id
-        )
-
     def create_engine_config(self) -> Config:
         """
         Create and return a Config object based on the current settings.
         """
         model_cfg = self.create_model_config()
-        if not model_cfg.is_unified_ckpt and hasattr(model_cfg, 'tensor_parallel_size'):
+        if not model_cfg.is_unified_ckpt and hasattr(model_cfg,
+                                                     'tensor_parallel_size'):
             self.tensor_parallel_size = model_cfg.tensor_parallel_size
         if self.max_num_batched_tokens is None:
             if self.enable_chunked_prefill:
@@ -716,7 +548,6 @@ class EngineArgs:
             scheduler_config=scheduler_cfg,
             tokenizer=self.tokenizer,
             cache_config=self.create_cache_config(model_cfg),
-            parallel_config=self.create_parallel_config(),
             max_model_len=self.max_model_len,
             tensor_parallel_size=self.tensor_parallel_size,
             max_num_seqs=self.max_num_seqs,
@@ -730,6 +561,7 @@ class EngineArgs:
             mm_processor_kwargs=self.mm_processor_kwargs,
             enable_mm=self.enable_mm,
             splitwise_role=self.splitwise_role,
+            innode_prefill_ports=self.innode_prefill_ports,
             max_num_partial_prefills=self.max_num_partial_prefills,
             max_long_partial_prefills=self.max_long_partial_prefills,
             long_prefill_token_threshold=self.long_prefill_token_threshold

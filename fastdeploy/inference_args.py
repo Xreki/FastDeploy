@@ -14,18 +14,15 @@
 # limitations under the License.
 """
 
-# cipher_token=WjI1fQOvhN  # do not edit this line
+import copy
 import json
 import os
 import re
-import copy
+from enum import Enum
 
 import numpy as np
-
-from enum import Enum
-from paddlenlp.utils.log import logger
-
 import paddle
+from paddlenlp.utils.log import logger
 
 
 class GenerationPhase(Enum):
@@ -63,7 +60,6 @@ class InferenceArgs:
         gqa_use_tensorcore=False,
         use_dynamic_cachekv_quant=False,
         max_position_embeddings=512,
-        use_avx512=False,
         speculate_method=None,
         speculate_max_draft_token_num=1,
         use_moe=False,
@@ -89,7 +85,6 @@ class InferenceArgs:
         head_dim=None,
         is_quantized=False,
         use_safetensors=False,
-        ernie_config=None,
     ):
         """
         Initialization function for quantization of the Transformer model
@@ -114,7 +109,6 @@ class InferenceArgs:
         use_dynamic_cachekv_quant (bool, optional): Whether to use dynamic caching for kv quantization.
             Default is False.
         max_position_embeddings (int, optional): Maximum position embeddings. Default is 512.
-        use_avx512 (bool, optional): Whether to use AVX512. Default is False.
         Returns:
         None
         """
@@ -130,7 +124,7 @@ class InferenceArgs:
 
         self.weight_block_size = weight_block_size
         # self.weight_block_size = [-1, -1]
-        self.use_avx512 = use_avx512
+        self.use_offline_quant = use_offline_quant
         self.ffn_hidden_size = ffn_hidden_size
         self.mp_rank = mp_rank
         if use_ep:
@@ -151,18 +145,13 @@ class InferenceArgs:
             head_dim if head_dim is not None else hidden_size // num_attention_heads
         )
         self.num_attention_heads = num_attention_heads
-        self.num_key_value_heads = (
-            num_key_value_heads
-            if num_key_value_heads >= 0
-            else self.num_attention_heads
-        )
-        self.qkv_hidden_size = (
-            self.num_attention_heads + 2 * self.num_key_value_heads
-        ) * self.head_dim
+        self.num_key_value_heads = (num_key_value_heads if num_key_value_heads
+                                    >= 0 else self.num_attention_heads)
+        self.qkv_hidden_size = (self.num_attention_heads +
+                                2 * self.num_key_value_heads) * self.head_dim
         self.dim_feedforward = ffn_hidden_size
 
         self.max_position_embeddings = max_position_embeddings
-        self.use_avx512 = use_avx512
         self.model_path = model_path
         self.use_fake_parameter = use_fake_parameter
         self.fp8_type = fp8_type
@@ -175,11 +164,7 @@ class InferenceArgs:
 
         # deal model laod
         self.is_quantized = is_quantized
-        if "ErnieMoEVLForCausalLM" in ernie_config.architectures:
-            # Hack, to be changed.
-            load_weight_gpu = False
-        else:
-            load_weight_gpu = "gpu" in paddle.device.get_device()
+        load_weight_gpu = "gpu" in paddle.device.get_device()
         self.load_weight_gpu = load_weight_gpu
         if load_weight_gpu and use_safetensors:
             if is_quantized:
@@ -230,12 +215,12 @@ class InferenceArgs:
             activation = "swiglu"
 
             moe_use_gate_correction_bias = False
-            moe_every2 = (False,)
-            moe_topk = (8,)
-            moe_num_shared_experts = (0,)
+            moe_every2 = (False, )
+            moe_topk = (8, )
+            moe_num_shared_experts = (0, )
             moe_layer_start_index = 0
-            moe_use_ffn_shared_weight_and_bias = (False,)
-            moe_group = (False,)
+            moe_use_ffn_shared_weight_and_bias = (False, )
+            moe_group = (False, )
             moe_quant_type = self.moe_quant_type
             num_max_dispatch_tokens_per_rank = 256
 
@@ -256,18 +241,17 @@ class InferenceArgs:
                 self.moe_config.num_experts + redundant_experts_num
             ) // self.nranks
             self.moe_config.num_experts_start_offset = (
-                self.moe_config.num_experts_per_rank * self.mp_rank
-            )
+                self.moe_config.num_experts_per_rank * self.mp_rank)
             if isinstance(moe_intermediate_size, list):
-                self.moe_config.moe_intermediate_size = moe_intermediate_size[0]
+                self.moe_config.moe_intermediate_size = moe_intermediate_size[
+                    0]
             else:
                 self.moe_config.moe_intermediate_size = moe_intermediate_size
             self.moe_config.moe_every2 = moe_every2
             self.moe_config.moe_num_shared_experts = moe_num_shared_experts
             self.moe_config.moe_layer_start_index = moe_layer_start_index
             self.moe_config.moe_use_ffn_shared_weight_and_bias = (
-                moe_use_ffn_shared_weight_and_bias
-            )
+                moe_use_ffn_shared_weight_and_bias)
             self.moe_config.moe_group = moe_group
             self.moe_config.top_k = moe_topk
             self.moe_config.moe_use_gate_correction_bias = moe_use_gate_correction_bias
@@ -281,7 +265,8 @@ class InferenceArgs:
         self.use_weight_only = True if self.weight_dtype != self.act_dtype else False
         # arch (int): The compute arch for target device. For example, A100 is 80, v100 is 70,
         # if you do not assign arch, we will get arch from your device, default: None.
-        self.weight_only_linear_arch = os.getenv("FLAGS_weight_only_linear_arch")
+        self.weight_only_linear_arch = os.getenv(
+            "FLAGS_weight_only_linear_arch")
         if self.weight_only_linear_arch is not None:
             self.weight_only_linear_arch = int(self.weight_only_linear_arch)
 
@@ -327,9 +312,8 @@ class InferenceArgs:
         self.speculate_max_draft_token_num = speculate_max_draft_token_num
 
         # set_scales
-        if (
-            self.act_dtype == "float8_e4m3fn"
-        ):  # 4 exponent bits, 3 mantissa bits, and supports finite numbers
+        if (self.act_dtype == "float8_e4m3fn"
+            ):  # 4 exponent bits, 3 mantissa bits, and supports finite numbers
             self.quant_max_bound = 448.0
             self.quant_min_bound = -448.0
             self.quant_round_type = 1
@@ -374,15 +358,6 @@ class InferenceArgs:
         Raises:
             AssertionError: If the custom quantization type string format is incorrect.
         """
-        if hasattr(InferenceArgs, "use_avx512") and self.use_avx512:
-            if quant_type == "fp16":
-                return "float32", "fp16", "fp16"
-            elif quant_type == "bf16":
-                return "float32", "bf16", "fp16"
-            elif quant_type == "weight_only_int8" or quant_type == "wint8":
-                return "float32", "bf16_int8", "fp16"
-            else:
-                return "float32", "bf16_int8", "fp16"
         cache_type = self.default_type
         if "c8" in quant_type:
             cache_type = "int8"
@@ -399,24 +374,26 @@ class InferenceArgs:
             pattern = f"({'|'.join(map(re.escape, ['w', 'a', 'c']))})"
             splited_type = re.split(pattern, quant_type)
             splited_type = [tmp_type for tmp_type in splited_type if tmp_type]
-            assert (
-                len(splited_type) % 2 == 0 and len(splited_type) <= 6
-            ), f"Quant type[{quant_type}] format error."
+            assert (len(splited_type) % 2 == 0 and len(splited_type)
+                    <= 6), f"Quant type[{quant_type}] format error."
 
             quant_type_list = []
             if "w" in splited_type:
                 w_idx = splited_type.index("w")
-                quant_type_list.append(self.get_quant_dtype(splited_type[w_idx + 1]))
+                quant_type_list.append(
+                    self.get_quant_dtype(splited_type[w_idx + 1]))
             else:
                 quant_type_list.append(self.default_type)
             if "a" in splited_type:
                 a_idx = splited_type.index("a")
-                quant_type_list.append(self.get_quant_dtype(splited_type[a_idx + 1]))
+                quant_type_list.append(
+                    self.get_quant_dtype(splited_type[a_idx + 1]))
             else:
                 quant_type_list.append(self.default_type)
             if "c" in splited_type:
                 c_idx = splited_type.index("c")
-                quant_type_list.append(self.get_quant_dtype(splited_type[c_idx + 1]))
+                quant_type_list.append(
+                    self.get_quant_dtype(splited_type[c_idx + 1]))
             else:
                 quant_type_list.append(self.default_type)
 
@@ -493,58 +470,57 @@ class InferenceArgs:
 
             num_heads = self.num_attention_heads // self.mp_size
             kv_num_heads = self.num_key_value_heads // self.mp_size
-            col_dim = (
-                kv_num_heads * self.head_dim if self.is_channel_wise else kv_num_heads
-            )
+            col_dim = (kv_num_heads *
+                       self.head_dim if self.is_channel_wise else kv_num_heads)
 
             for k, v in self.cachekv_scale_dict.items():
                 # cache_kv_scale
                 if k.endswith(".activation_quanter"):
                     if self.is_channel_wise:
-                        v_array = (
-                            np.array(v).reshape(-1, self.head_dim).astype(np.float32)
-                        )
+                        v_array = (np.array(v).reshape(
+                            -1, self.head_dim).astype(np.float32))
                     else:
                         v_array = np.array(v).reshape(-1).astype(np.float32)
                     if v_array.size > col_dim:
                         cache_scale = [
                             v_array[i].tolist()
-                            for i in range(0, num_heads, num_heads // kv_num_heads)
+                            for i in range(0, num_heads, num_heads //
+                                           kv_num_heads)
                         ]
                     else:
                         cache_scale = [
-                            v_array[i].tolist() for i in range(0, kv_num_heads)
+                            v_array[i].tolist()
+                            for i in range(0, kv_num_heads)
                         ]
 
-                    if (
-                        self.has_zero_point and self.cachekv_dtype == "int4"
-                    ):  # cache_int4_zp
+                    if (self.has_zero_point
+                            and self.cachekv_dtype == "int4"):  # cache_int4_zp
                         self.cachekv_scale_dict[k] = 1.0 / np.array(
-                            cache_scale
-                        ).flatten().astype(np.float32)
+                            cache_scale).flatten().astype(np.float32)
                     else:
                         self.cachekv_scale_dict[k] = (
-                            self.cache_quant_max_bound
-                            / np.array(cache_scale).flatten().astype(np.float32)
-                        )
+                            self.cache_quant_max_bound /
+                            np.array(cache_scale).flatten().astype(np.float32))
                 # cache_kv_zp
                 elif k.endswith(".zero_point"):
                     if self.is_channel_wise:
-                        v_array = (
-                            np.array(v).reshape(-1, self.head_dim).astype(np.float32)
-                        )
+                        v_array = (np.array(v).reshape(
+                            -1, self.head_dim).astype(np.float32))
                     else:
                         v_array = np.array(v).reshape(-1).astype(np.float32)
                     if v_array.size > col_dim:
                         cache_zp = [
                             v_array[i].tolist()
-                            for i in range(0, num_heads, num_heads // kv_num_heads)
+                            for i in range(0, num_heads, num_heads //
+                                           kv_num_heads)
                         ]
                     else:
-                        cache_zp = [v_array[i].tolist() for i in range(0, kv_num_heads)]
+                        cache_zp = [
+                            v_array[i].tolist()
+                            for i in range(0, kv_num_heads)
+                        ]
                     self.cachekv_scale_dict[k] = (
-                        np.array(cache_zp).flatten().astype(np.float32)
-                    )
+                        np.array(cache_zp).flatten().astype(np.float32))
                 else:
                     continue
         else:
@@ -564,13 +540,11 @@ class InferenceArgs:
         if not self.use_fake_parameter:
             # weight_scale
             if self.use_ep:
-                weight_scale_json_path = os.path.join(
-                    self.model_path, "weight_scales.json"
-                )
+                weight_scale_json_path = os.path.join(self.model_path,
+                                                      "weight_scales.json")
             else:
                 weight_scale_json_path = os.path.join(
-                    self.model_path, f"weight_scales_{self.mp_rank}.json"
-                )
+                    self.model_path, f"weight_scales_{self.mp_rank}.json")
             if os.path.exists(weight_scale_json_path):
                 with open(weight_scale_json_path) as json_file:
                     self.weight_scale_dict = json.load(json_file)
@@ -581,11 +555,11 @@ class InferenceArgs:
 
             # act_scale
             if self.use_ep:
-                act_scale_json_path = os.path.join(self.model_path, "act_scales.json")
+                act_scale_json_path = os.path.join(self.model_path,
+                                                   "act_scales.json")
             else:
                 act_scale_json_path = os.path.join(
-                    self.model_path, f"act_scales_{self.mp_rank}.json"
-                )
+                    self.model_path, f"act_scales_{self.mp_rank}.json")
             if os.path.exists(act_scale_json_path):
                 with open(act_scale_json_path) as json_file:
                     self.act_scale_dict = json.load(json_file)
@@ -616,100 +590,69 @@ class InferenceArgs:
                             self.cachekv_scale_dict[k].extend(v)
             else:
                 for possible_cache_scales_file_name in [
-                    f"cachekv_scales_{self.mp_rank}.json",
-                    f"cachekv_act_scales_{self.mp_rank}.json",
+                        f"cachekv_scales_{self.mp_rank}.json",
+                        f"cachekv_act_scales_{self.mp_rank}.json",
                 ]:
                     cache_scale_json_path = os.path.join(
-                        self.model_path, possible_cache_scales_file_name
-                    )
+                        self.model_path, possible_cache_scales_file_name)
                     if os.path.exists(cache_scale_json_path):
                         with open(cache_scale_json_path) as json_file:
                             self.cachekv_scale_dict = json.load(json_file)
                         break
             num_heads = self.num_attention_heads // self.mp_size
             kv_num_heads = self.num_key_value_heads // self.mp_size
-            col_dim = (
-                kv_num_heads * self.head_dim if self.is_channel_wise else kv_num_heads
-            )
+            col_dim = (kv_num_heads *
+                       self.head_dim if self.is_channel_wise else kv_num_heads)
 
             for k, v in self.cachekv_scale_dict.items():
                 # cache_kv_scale
                 if k.endswith(".activation_quanter"):
                     if self.is_channel_wise:
-                        v_array = (
-                            np.array(v).reshape(-1, self.head_dim).astype(np.float32)
-                        )
+                        v_array = (np.array(v).reshape(
+                            -1, self.head_dim).astype(np.float32))
                     else:
                         v_array = np.array(v).reshape(-1).astype(np.float32)
                     if v_array.size > col_dim:
                         cache_scale = [
                             v_array[i].tolist()
-                            for i in range(0, num_heads, num_heads // kv_num_heads)
+                            for i in range(0, num_heads, num_heads //
+                                           kv_num_heads)
                         ]
                     else:
                         cache_scale = [
-                            v_array[i].tolist() for i in range(0, kv_num_heads)
+                            v_array[i].tolist()
+                            for i in range(0, kv_num_heads)
                         ]
 
-                    if (
-                        self.has_zero_point and self.cachekv_dtype == "int4"
-                    ):  # cache_int4_zp
+                    if (self.has_zero_point
+                            and self.cachekv_dtype == "int4"):  # cache_int4_zp
                         self.cachekv_scale_dict[k] = 1.0 / np.array(
-                            cache_scale
-                        ).flatten().astype(np.float32)
+                            cache_scale).flatten().astype(np.float32)
                     else:
                         self.cachekv_scale_dict[k] = (
-                            self.cache_quant_max_bound
-                            / np.array(cache_scale).flatten().astype(np.float32)
-                        )
+                            self.cache_quant_max_bound /
+                            np.array(cache_scale).flatten().astype(np.float32))
                 # cache_kv_zp
                 elif k.endswith(".zero_point"):
                     if self.is_channel_wise:
-                        v_array = (
-                            np.array(v).reshape(-1, self.head_dim).astype(np.float32)
-                        )
+                        v_array = (np.array(v).reshape(
+                            -1, self.head_dim).astype(np.float32))
                     else:
                         v_array = np.array(v).reshape(-1).astype(np.float32)
                     if v_array.size > col_dim:
                         cache_zp = [
                             v_array[i].tolist()
-                            for i in range(0, num_heads, num_heads // kv_num_heads)
+                            for i in range(0, num_heads, num_heads //
+                                           kv_num_heads)
                         ]
                     else:
-                        cache_zp = [v_array[i].tolist() for i in range(0, kv_num_heads)]
+                        cache_zp = [
+                            v_array[i].tolist()
+                            for i in range(0, kv_num_heads)
+                        ]
                     self.cachekv_scale_dict[k] = (
-                        np.array(cache_zp).flatten().astype(np.float32)
-                    )
+                        np.array(cache_zp).flatten().astype(np.float32))
                 else:
                     continue
         else:
             raise NotImplementedError("fake parameter not support now")
-
-
-class FMTKeys:
-    """
-    The parameter keys stored in your model_state.padarams.
-    """
-
-    def __init__(self, num_layers):
-        """
-        Initialization keys retrive weight from model_state.padarams.
-
-        Args:
-        num_layers (int): Number of layers in the Transformer model.
-        Returns:
-        None
-        """
-        self.norm_before_qkv_weight_keys = [None for i in range(num_layers)]
-        self.norm_before_qkv_bias_keys = [None for i in range(num_layers)]
-        self.qkv_linear_weight_keys = [None for i in range(num_layers)]
-        self.qkv_linear_bias_keys = [None for i in range(num_layers)]
-        self.out_linear_weight_keys = [None for i in range(num_layers)]
-        self.out_linear_bias_keys = [None for i in range(num_layers)]
-
-        self.ffn_layernorm_weight_keys = [None for i in range(num_layers)]
-        self.ffn_layernorm_bias_keys = [None for i in range(num_layers)]
-        self.ffn1_weight_keys = [None for i in range(num_layers)]
-        self.ffn1_bias_keys = [None for i in range(num_layers)]
-        self.ffn2_weight_keys = [None for i in range(num_layers)]
-        self.ffn2_bias_keys = [None for i in range(num_layers)]

@@ -9,7 +9,9 @@
   - engine：管理大模型整体执行引擎类有关代码
   - entrypoints：用户入口调用接口
   - input：用户输入处理模块，包括预处理，多模态输入处理，tokenize等功能
+  - metrics:监控系统的一些指标 耗时之类等功能
   - model_executor
+    -
     - layers：大模型组网需要用到的layer模块
     - model_runner：模型推理执行模块
     - models：FastDeploy内置的大模型类模块
@@ -21,5 +23,3 @@
   - splitwise: 分离式部署相关模块
 - scripts / tools：FastDeploy用于执行功能的辅助脚本，比如编译，单测执行，代码风格纠正等
 - test：项目单测验证使用到的代码
-
-

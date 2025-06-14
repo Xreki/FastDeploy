@@ -14,174 +14,127 @@
 # limitations under the License.
 """
 
-# cipher_token=WjI1fQOvhN  # do not edit this line
 import paddle
 from paddle import nn
 from paddle.distributed import fleet
 
 from .utils import get_tensor
-from fastdeploy.platforms import current_platform
-
-try:
-    from fastdeploy.model_executor.ops.npu import word_embedding_parallel
-except ImportError:
-    pass
 
 
-class Embeddings(nn.Layer):
+class VocabParallelEmbedding(nn.Layer):
     """
-    Embeddings Layer
+    VocabParallelEmbedding Layer
     """
 
     def __init__(
         self,
-        layer_name,
-        vocab_size,
-        hidden_size=768,
-        hidden_dropout_prob=0.1,
-        max_position_embeddings=512,
-        type_vocab_size=16,
-        initializer_range=0.02,
-        sequence_parallel=False,
-        freeze_embedding=False,
-        weight_sharing=True,
-        weight_sharing_add_bias=False,
-        use_rope=True,
-        rope_head_dim=None,
-        column_cut=False,
-        prefix_name="",
-        use_ep=False,
+        fd_config,
+        num_embeddings,
+        embedding_dim=768,
+        params_dtype="bfloat16",
+        prefix="",
     ):
         """
-        Initialize the embedding layer for the model.
+        Initialize the VocabParallelEmbedding layer for the model.
 
         Args:
-            layer_name (str): Name of the layer.
-            vocab_size (int): Vocabulary size of the embedding layer.
-            hidden_size (int, optional): Hidden size of the embedding vectors. Defaults to 768.
-            hidden_dropout_prob (float, optional): Dropout probability for the embedding vectors.
-                Defaults to 0.1.
-            max_position_embeddings (int, optional): Maximum number of positional embeddings.
-                Defaults to 512.
-            type_vocab_size (int, optional): Type vocabulary size. Not used in this snippet.
-                Defaults to 16.
-            initializer_range (float, optional): Standard deviation of the normal initializer.
-                Defaults to 0.02.
-            sequence_parallel (bool, optional): Whether to enable sequence parallelism.
-                Defaults to False.
-            freeze_embedding (bool, optional): Whether to freeze the embedding layer during training.
-                Defaults to False.
-            weight_sharing (bool, optional): Whether to share weights with another layer.
-                Defaults to True.
-            weight_sharing_add_bias (bool, optional): Whether to add bias when weight sharing is enabled.
-                Defaults to False.
-            use_rope (bool, optional): Whether to use RoPE (Rotary Position Embedding).
-                Defaults to True.
-            rope_head_dim (int, optional): Head dimension for RoPE (if used). Defaults to None.
-            column_cut (bool, optional): The embedding weight distributed on your gpu cards is divided by row or column.
-                Defaults to False means divide by row.
-                When vocab_size can not be divided by world_size but hidden_size can,
-                we can consider split embedding weight by column.
+            fd_config (FDConfig): Arguments related to inference, containing
+                attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
+                num_attention_heads, and ffn_hidden_size.
+            num_embeddings : vocabulary size.
+            embedding_dim : size of hidden state.
+            params_dtype : data type of parameters.
+            prefix (str): Unique name of the layer, used for naming internal attributes,
+                you can give it any name you like.
         """
         super().__init__()
+        self.fd_config = fd_config
         hcg = fleet.get_hybrid_communicate_group()
         self.mp_rank = hcg.get_model_parallel_rank()
-        self.column_cut = column_cut
+        self.column_cut = fd_config.parallel_config.column_cut
         self.world_size = hcg.get_model_parallel_world_size()
-        self.ring_id = hcg.get_model_parallel_group().id  # for NPU
-        self._word_emb_name = (
-            prefix_name + "word_embedding_expanded_" + str(self.mp_rank) + ".w_0"
-        )
-        self._pos_emb_name = prefix_name + "pos_embedding_0.w_0"
-        self.use_rope = use_rope
-        self.rope_head_dim = rope_head_dim
-        self.use_ep = use_ep
+        self.ring_id = hcg.get_model_parallel_group().id
+        self.use_rope = fd_config.model_config.use_rope
+        self.rope_head_dim = fd_config.model_config.rope_head_dim
+        self.use_ep = fd_config.parallel_config.use_ep
+        self.hidden_dropout_prob = fd_config.model_config.hidden_dropout_prob
+        self.initializer_range = fd_config.model_config.initializer_range
+        self.weight_sharing = fd_config.model_config.weight_sharing
+        self.sequence_parallel = fd_config.parallel_config.sequence_parallel
+        self.weight_sharing_add_bias = fd_config.model_config.weight_sharing_add_bias
+        self.max_position_embeddings = fd_config.model_config.max_position_embeddings
+        self.freeze_embedding = fd_config.model_config.freeze_embedding
+        self.tie_word_embeddings = fd_config.model_config.tie_word_embeddings
 
-        self.sequence_parallel = sequence_parallel
-        if current_platform.is_npu():
-            # npu call custom op to calculate parallel word_embedding
-            self.word_embeddings = self.create_parameter(
-                shape=[vocab_size, hidden_size // self.world_size],
-                attr=None,
-                dtype=self._helper.get_default_dtype(),
-                is_bias=False,
+        if self.use_ep:
+            self.word_embeddings = nn.Embedding(
+                num_embeddings,
+                embedding_dim,
             )
         else:
-            # gpu
-            if use_ep:
-                self.word_embeddings = nn.Embedding(
-                    vocab_size,
-                    hidden_size,
+            if not self.column_cut:
+                self.word_embeddings = fleet.meta_parallel.VocabParallelEmbedding(
+                    num_embeddings,
+                    embedding_dim,
+                    mp_group=fleet.get_hybrid_communicate_group().
+                    get_model_parallel_group(),
+                    weight_attr=paddle.ParamAttr(
+                        initializer=nn.initializer.Normal(
+                            mean=0.0, std=self.initializer_range), ),
                 )
             else:
-                if not self.column_cut:
-                    self.word_embeddings = fleet.meta_parallel.VocabParallelEmbedding(
-                        vocab_size,
-                        hidden_size,
-                        mp_group=fleet.get_hybrid_communicate_group().get_model_parallel_group(),
-                        weight_attr=paddle.ParamAttr(
-                            name=self._word_emb_name,
-                            initializer=nn.initializer.Normal(
-                                mean=0.0, std=initializer_range
-                            ),
-                        ),
-                    )
-                else:
-                    # column cut embedding
-                    self.word_embeddings = nn.Embedding(
-                        vocab_size,
-                        hidden_size // self.world_size,
-                    )
-                    self.word_embeddings.weight.is_distributed = True
-                    self.word_embeddings.weight.split_axis = 1
+                # column cut embedding
+                self.word_embeddings = nn.Embedding(
+                    num_embeddings,
+                    embedding_dim // self.world_size,
+                )
+
+                self.word_embeddings.weight.is_distributed = True
+                self.word_embeddings.weight.split_axis = 1
 
         if not self.use_rope:
             self.position_embeddings = nn.Embedding(
-                max_position_embeddings,
-                hidden_size,
-                weight_attr=paddle.ParamAttr(
-                    name=self._pos_emb_name,
-                    initializer=nn.initializer.Normal(mean=0.0, std=initializer_range),
-                ),
+                self.max_position_embeddings,
+                embedding_dim,
+                weight_attr=paddle.ParamAttr(initializer=nn.initializer.Normal(
+                    mean=0.0, std=self.initializer_range), ),
             )
 
-        self.layer_name = layer_name
+        self.prefix = prefix
 
-        if weight_sharing and weight_sharing_add_bias:
-            if self.world_size > 1:
-                bias_name = "server_nlg_mask_lm_out_fc_" + str(self.mp_rank) + ".b_0"
-            else:
-                bias_name = "server_nlg_mask_lm_out_fc.b_0"
+        if self.weight_sharing and self.weight_sharing_add_bias:
+            bias_name = "lm_head"
             mask_lm_out_bias_attr = paddle.ParamAttr(
                 name=bias_name,
                 initializer=paddle.nn.initializer.Constant(value=0.0),
             )
-            assert vocab_size % self.world_size == 0
-            if use_ep:
+            assert num_embeddings % self.world_size == 0
+            if self.use_ep:
                 self.bias = self.create_parameter(
-                    shape=[vocab_size],
+                    shape=[num_embeddings],
                     dtype=paddle.get_default_dtype(),
-                    attr=mask_lm_out_bias_attr,
+                    attr=paddle.ParamAttr(
+                        initializer=paddle.nn.initializer.Constant(
+                            value=0.0), ),
                     is_bias=True,
                 )
             else:
                 self.bias = self.create_parameter(
-                    shape=[vocab_size // self.world_size],
+                    shape=[num_embeddings // self.world_size],
                     dtype=paddle.get_default_dtype(),
                     attr=mask_lm_out_bias_attr,
                     is_bias=True,
                 )
                 self.bias.is_distributed = True
 
-        if freeze_embedding:
+        if self.freeze_embedding:
             self.word_embeddings.weight.learning_rate = 0.0
             if not self.use_rope:
                 self.position_embeddings.weight.learning_rate = 0.0
 
-        self.dropout = nn.Dropout(hidden_dropout_prob)
-        self.rope_head_dim_shape_tensor = paddle.ones(
-            (self.rope_head_dim), dtype="int8"
-        )
+        self.dropout = nn.Dropout(self.hidden_dropout_prob)
+        self.rope_head_dim_shape_tensor = paddle.ones((self.rope_head_dim),
+                                                      dtype="int8")
 
     def load_state_dict(self, state_dict):
         """
@@ -190,16 +143,17 @@ class Embeddings(nn.Layer):
         Args:
             state_dict (dict): A dictionary containing the checkpoint weights and biases.
         """
-        if current_platform.is_npu():
-            self.word_embeddings.set_value(
-                get_tensor(state_dict.pop(self.layer_name + ".weight"))
-            )
+        if self.weight_sharing:
+            self.word_embeddings.weight.set_value(
+                get_tensor(state_dict[self.prefix + ".weight"]).astype(
+                    paddle.get_default_dtype()))
+        elif self.tie_word_embeddings:
+            # load after lm_head finished
+            pass
         else:
             self.word_embeddings.weight.set_value(
-                get_tensor(state_dict.pop(self.layer_name + ".weight")).astype(
-                    paddle.get_default_dtype()
-                )
-            )
+                get_tensor(state_dict.pop(self.prefix + ".weight")).astype(
+                    paddle.get_default_dtype()))
 
     def forward(self, ids_remove_padding=None):
         """
@@ -212,33 +166,21 @@ class Embeddings(nn.Layer):
         Returns:
             Tensor: Embedded tensor representation of the input IDs.
         """
-        if current_platform.is_npu():
-            # npu
-            input_embedings = word_embedding_parallel(
-                ids_remove_padding,
-                self.word_embeddings,
-                parallel_type="ColumnParallel",
-                rank=self.mp_rank,
-                nranks=self.world_size,
-                root=0,
-                ring_id=self.ring_id,
-            )
+        if self.use_ep:
+            input_embedings = self.word_embeddings(ids_remove_padding)
         else:
-            # gpu
-            if self.use_ep:
+            if self.column_cut:
                 input_embedings = self.word_embeddings(ids_remove_padding)
+                inputs_embeds_temp = []
+                paddle.distributed.all_gather(
+                    inputs_embeds_temp,
+                    input_embedings,
+                    group=fleet.get_hybrid_communicate_group().
+                    get_model_parallel_group(),
+                    sync_op=True,
+                )
+                input_embedings = paddle.concat(inputs_embeds_temp, -1)
             else:
-                if self.column_cut:
-                    input_embedings = self.word_embeddings(ids_remove_padding)
-                    inputs_embeds_temp = []
-                    paddle.distributed.all_gather(
-                        inputs_embeds_temp,
-                        input_embedings,
-                        group=fleet.get_hybrid_communicate_group().get_model_parallel_group(),
-                        sync_op=True,
-                    )
-                    input_embedings = paddle.concat(inputs_embeds_temp, -1)
-                else:
-                    input_embedings = self.word_embeddings(ids_remove_padding)
+                input_embedings = self.word_embeddings(ids_remove_padding)
 
         return input_embedings

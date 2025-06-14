@@ -16,6 +16,11 @@ platform interface file
 """
 
 import paddle
+import enum
+class _Backend(enum.Enum):
+    NATIVE_ATTN = enum.auto()
+    APPEND_ATTN = enum.auto()
+
 
 class Platform:
     """
@@ -54,7 +59,7 @@ class Platform:
         return paddle.is_compiled_with_rocm()
 
     @classmethod
-    def get_attention_backend_cls(self, selected_backend, head_size):
+    def get_attention_backend_cls(self, selected_backend):
         """Get the attention backend"""
         return ""
 

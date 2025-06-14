@@ -11,61 +11,49 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """predict_generation under dynamic graph"""
 
 from __future__ import annotations
-
-import os
-import sys
-
 
 import argparse
 import copy
 import json
 import multiprocessing as mp
+import os
 import struct
+import sys
+import time
 from glob import glob
 
 import numpy as np
+import paddle
+import paddle.distributed as dist
+from paddle import profiler
+from paddle.distributed import fleet
 from paddlenlp.trainer import RuntimeTimer, strtobool
 from paddlenlp.utils.log import logger
 from tqdm import tqdm
 
-import paddle
-import paddle.distributed as dist
-from paddle.distributed import fleet
-import time
-
-from fastdeploy.model_executor.models.data_utils import (
-    convert_fc_infer_data,
-    convert_to_input_ids,
-    get_infer_data_type,
-    insert_fc_instruction,
-)
-
-from fastdeploy.model_executor.models.utils import (
-    get_rotary_position_embedding,
-    infer_save_test_case,
-    load_prefix_weights,
-    load_sharded_checkpoint,
-)
-from fastdeploy.model_executor.models.token_utils import TokenTimer, check_output
 from fastdeploy.inference_args import GenerationPhase
-
+from fastdeploy.model_executor.models.data_utils import (convert_fc_infer_data,
+                                                         convert_to_input_ids,
+                                                         get_infer_data_type,
+                                                         insert_fc_instruction)
+from fastdeploy.model_executor.models.token_utils import (TokenTimer,
+                                                          check_output)
+from fastdeploy.model_executor.models.utils import (
+    get_rotary_position_embedding, infer_save_test_case, load_prefix_weights,
+    load_sharded_checkpoint)
 
 try:
-    from fastdeploy.model_executor.ops.gpu import speculate_update_input_ids_cpu
+    from fastdeploy.model_executor.ops.gpu import \
+        speculate_update_input_ids_cpu
 except ImportError:
     pass
 
 from fastdeploy.model_executor.models.speculate_proposers import (
-    AutogressiveProposer,
-    EagleProposer,
-    HydraProposer,
-    InferenceWithReferenceProposer,
-    MTPProposer,
-)
+    AutogressiveProposer, EagleProposer, HydraProposer,
+    InferenceWithReferenceProposer, MTPProposer)
 from fastdeploy.platforms import current_platform
 
 should_check_python_safety = False
@@ -76,8 +64,6 @@ if should_check_python_safety:
     from utils.token_utils import TokenTimer, check_python_safe
 
     check_python_safe()
-
-from paddle import profiler
 
 
 def my_on_trace_ready(prof):  # 定义回调函数，性能分析器结束采集数据时会被调用
@@ -91,17 +77,14 @@ def my_on_trace_ready(prof):  # 定义回调函数，性能分析器结束采集
         None
     """
     callback = profiler.export_chrome_tracing(
-        "./profiler_demo"
-    )  # 创建导出性能数据到profiler_demo文件夹的回调函数
+        "./profiler_demo")  # 创建导出性能数据到profiler_demo文件夹的回调函数
     callback(prof)  # 执行该导出函数
-    prof.summary(
-        sorted_by=profiler.SortedKeys.GPUTotal
-    )  # 打印表单，按GPUTotal排序表单项
+    prof.summary(sorted_by=profiler.SortedKeys.GPUTotal)  # 打印表单，按GPUTotal排序表单项
 
 
-p = profiler.Profiler(
-    scheduler=[3, 5], on_trace_ready=my_on_trace_ready, timer_only=False
-)  # 初始化Profiler对象
+p = profiler.Profiler(scheduler=[3, 5],
+                      on_trace_ready=my_on_trace_ready,
+                      timer_only=False)  # 初始化Profiler对象
 
 
 def deserialize_from_file(fp):
@@ -372,16 +355,19 @@ def get_parser(add_input_output_file: bool = True):
 
     if add_input_output_file:
         parser.add_argument("--input_file", type=str, required=True)
-        parser.add_argument(
-            "--output_file", type=str, default="predict.json", required=True
-        )
+        parser.add_argument("--output_file",
+                            type=str,
+                            default="predict.json",
+                            required=True)
     parser.add_argument("--save_output_file_flush", type=int, default=10)
     parser.add_argument("--embedding_only", default="False", type=strtobool)
     parser.add_argument(
         "--moe_quant_type",
         default="default",
         type=str,
-        choices=["weight_only_int4", "weight_only_int8", "w4a8", "fp8", "default"],
+        choices=[
+            "weight_only_int4", "weight_only_int8", "w4a8", "fp8", "default"
+        ],
         help="quant type for moe part",
     )
     return parser
@@ -398,16 +384,12 @@ def setup_args():
         args.block_size = 1
     if args.beam_width > 1:
         args.max_num_blocks = args.batch_size * (
-            (args.max_seq_len + args.block_size - 1) // args.block_size
-        ) + args.batch_size * (args.beam_width - 1) * (
-            (args.max_dec_len + args.block_size - 1) // args.block_size
-        )
+            (args.max_seq_len + args.block_size - 1) //
+            args.block_size) + args.batch_size * (args.beam_width - 1) * (
+                (args.max_dec_len + args.block_size - 1) // args.block_size)
     else:
-        args.max_num_blocks = (
-            args.batch_size
-            * args.beam_width
-            * ((args.max_seq_len + args.block_size - 1) // args.block_size)
-        )
+        args.max_num_blocks = (args.batch_size * args.beam_width * (
+            (args.max_seq_len + args.block_size - 1) // args.block_size))
     assert args.msg_queue_id >= 0
     return args
 
@@ -466,15 +448,19 @@ class Predictor:
             self.use_system = args.use_system
             if not self.use_beam_search:
                 self.result_queue = mp.Queue()
-                from fastdeploy.model_executor.models.utils import MAX_BSZ, MAX_DRAFT_TOKENS
+                from fastdeploy.model_executor.models.utils import (
+                    MAX_BSZ, MAX_DRAFT_TOKENS)
 
                 if self.args.use_ep and (not self.args.ep_just_for_test):
                     self.args.msg_queue_id = self.tp_rank
 
                 if args.speculate_method is not None:
-                    from fastdeploy.model_executor.models.utils import speculate_read_res
+                    from fastdeploy.model_executor.models.utils import \
+                        speculate_read_res
 
-                    output_tensor_max_shape = [MAX_BSZ * MAX_DRAFT_TOKENS + MAX_BSZ + 2]
+                    output_tensor_max_shape = [
+                        MAX_BSZ * MAX_DRAFT_TOKENS + MAX_BSZ + 2
+                    ]
                     self.read_res_process = mp.Process(
                         target=speculate_read_res,
                         args=[
@@ -500,9 +486,8 @@ class Predictor:
                         ],
                     )
 
-                if self.tp_rank == 0 or (
-                    self.args.use_ep and (not self.args.ep_just_for_test)
-                ):
+                if self.tp_rank == 0 or (self.args.use_ep and
+                                         (not self.args.ep_just_for_test)):
                     self.read_res_process.start()
             if self.args.fake_server_p:
                 self.preprocess_time = []
@@ -517,8 +502,7 @@ class Predictor:
                     dtype=self.args.dtype,
                 )
                 self.pre_caches = [
-                    item.squeeze_(0)
-                    for item in paddle.split(
+                    item.squeeze_(0) for item in paddle.split(
                         self.prefix_cache,
                         self.prefix_cache.shape[0],
                         axis=0,
@@ -535,10 +519,8 @@ class Predictor:
             if "quant_type" in model_config:
 
                 if args.predict_model_type != model_config["quant_type"]:
-                    if (
-                        model_config["quant_type"] == "W8A8C8"
-                        and args.predict_model_type == "W8A8C16"
-                    ):
+                    if (model_config["quant_type"] == "W8A8C8"
+                            and args.predict_model_type == "W8A8C16"):
                         # cache kv int8 is optional. W8A8C8 can support
                         # exporting both W8A8C8 and W8A8C16 inference models.
                         pass
@@ -546,8 +528,7 @@ class Predictor:
                         logger.debug(
                             f"The arg export_model_type {args.predict_model_type} \
                             != model_config['quant_type'] {model_config['quant_type']}. \
-                            {model_config['quant_type']} will be used."
-                        )
+                            {model_config['quant_type']} will be used.")
                         args.predict_model_type = model_config["quant_type"]
 
             if args.use_cache_kv_int8 and "C8" not in args.predict_model_type:
@@ -560,9 +541,8 @@ class Predictor:
             use_beam_search = True if args.beam_width > 1 else False
             # TODO: 动态图会cuda error 700，后续再修复
 
-            from fastdeploy.model_executor.models.export_model import (
-                build_stream_line_model,
-            )
+            from fastdeploy.model_executor.models.export_model import \
+                build_stream_line_model
 
             config, tokenizer, model, _ = build_stream_line_model(
                 config_path,
@@ -608,8 +588,7 @@ class Predictor:
                 try:
                     from tools.enforce_generation import (
                         build_transformers_prefix_allowed_tokens_fn,
-                        generate_enf_gen_context,
-                    )
+                        generate_enf_gen_context)
 
                     logger.info(
                         f"Loading enforce generation context from {args.enf_gen_input_file}"
@@ -619,12 +598,11 @@ class Predictor:
                         args.enf_gen_context_cache_dir,
                     )
                     self.enf_gen_func = build_transformers_prefix_allowed_tokens_fn(
-                        self.tokenizer, parser
-                    )
-                    self.enf_gen_first_allowed_tokens = self.enf_gen_func(0, [])
+                        self.tokenizer, parser)
+                    self.enf_gen_first_allowed_tokens = self.enf_gen_func(
+                        0, [])
                     self.enf_gen_first_allowed_tokens_len = len(
-                        self.enf_gen_first_allowed_tokens
-                    )
+                        self.enf_gen_first_allowed_tokens)
                     logger.info("Load enforce generation context success")
                 except BaseException as e:
                     self.enf_gen_func = None
@@ -636,19 +614,17 @@ class Predictor:
                 self.enf_gen_func = None
 
             # init cache_kvs
-            num_layers = self.model_config.get(
-                "num_layers", None
-            ) or self.model_config.get("num_hidden_layers", None)
+            num_layers = self.model_config.get("num_layers",
+                                               None) or self.model_config.get(
+                                                   "num_hidden_layers", None)
             self.cache_kvs = []
             self.free_list = list(range(args.max_num_blocks))
             self.used_list = [[] for _ in range(self.beam_batch_size)]
-            head_dim = (
-                self.model_config["hidden_size"]
-                // self.model_config["num_attention_heads"]
-            )
+            head_dim = (self.model_config["hidden_size"] //
+                        self.model_config["num_attention_heads"])
             self.pre_ids = paddle.to_tensor(
-                np.zeros((self.beam_batch_size, args.max_dec_len)).astype("int64") - 1
-            )
+                np.zeros((self.beam_batch_size,
+                          args.max_dec_len)).astype("int64") - 1)
             tmp_position_ids = paddle.arange(args.max_seq_len).reshape((1, -1))
             compression_ratio = self.model_config.get("compression_ratio", 1)
             rope_theta = self.model_config.get("rope_theta", 10000.0)
@@ -658,21 +634,6 @@ class Predictor:
                 compression_ratio=compression_ratio,
                 rope_theta=rope_theta,
             )
-            if current_platform.is_npu():
-                # NOTE(duanyanhui): FLAGS_npu_use_compressed_mask is used for NPU long text scenes like speed-128k.
-                # It will be set to True by default in the next version.
-                if int(os.getenv("FLAGS_npu_use_compressed_mask", "0")) > 0:
-                    self.attention_mask = np.tril(np.ones([128, 128])).astype("float32")
-                else:
-                    self.attention_mask = np.tril(
-                        np.ones([args.max_seq_len, args.max_seq_len])
-                    ).astype("float32")
-                self.rope_emb = get_rotary_position_embedding(
-                    tmp_position_ids.repeat_interleave(args.batch_size, axis=0),
-                    head_dim=head_dim,
-                    compression_ratio=compression_ratio,
-                    rope_theta=rope_theta,
-                )
             self.input_ids = paddle.full(
                 shape=[self.beam_batch_size, args.max_seq_len],
                 fill_value=self.tokenizer.pad_id,
@@ -706,8 +667,7 @@ class Predictor:
                                 cur_head_dim,
                             ],
                             dtype=cache_type,
-                        )
-                    )
+                        ))
             self.qkv_weights_lora_A = None
             self.qkv_weights_lora_B = None
             self.linear_weights_lora_A = None
@@ -717,8 +677,10 @@ class Predictor:
             self.ffn2_weights_lora_A = None
             self.ffn2_weights_lora_B = None
             if args.lora_num > 0:
-                lora_states = load_sharded_checkpoint(args.lora_dir, return_numpy=True)
-                lora_config_path = os.path.join(args.lora_dir, "lora_config.json")
+                lora_states = load_sharded_checkpoint(args.lora_dir,
+                                                      return_numpy=True)
+                lora_config_path = os.path.join(args.lora_dir,
+                                                "lora_config.json")
                 with open(lora_config_path) as config_file:
                     lora_config = json.load(config_file)
                 lora_scale = lora_config.get("scaling", 1.0)
@@ -760,8 +722,8 @@ class Predictor:
                     value = lora_states[f"gpt.decoder.layers.{i}.linear1.lora_B"]
                     convert_value = np.zeros_like(value)
                     out_dim = value.shape[-1]
-                    convert_value[:, : out_dim // 2] = value[:, ::2]
-                    convert_value[:, out_dim // 2 :] = value[:, 1::2]
+                    convert_value[:, :out_dim // 2] = value[:, ::2]
+                    convert_value[:, out_dim // 2:] = value[:, 1::2]
                     ffn1_weights_lora_B.append(convert_value.transpose((1, 0)))
 
                     ffn2_weights_lora_A.append(
@@ -784,54 +746,38 @@ class Predictor:
                     * lora_scale
                 )
                 self.qkv_weights_lora_B = paddle.to_tensor(
-                    np.expand_dims(np.stack(qkv_weights_lora_B), 0).repeat(
-                        args.lora_num, 0
-                    ),
+                    np.expand_dims(np.stack(qkv_weights_lora_B),
+                                   0).repeat(args.lora_num, 0),
                     dtype=args.dtype,
                 )
-                self.linear_weights_lora_A = (
-                    paddle.to_tensor(
-                        np.expand_dims(np.stack(linear_weights_lora_A), 0).repeat(
-                            args.lora_num, 0
-                        ),
-                        dtype=args.dtype,
-                    )
-                    * lora_scale
-                )
+                self.linear_weights_lora_A = (paddle.to_tensor(
+                    np.expand_dims(np.stack(linear_weights_lora_A), 0).repeat(
+                        args.lora_num, 0),
+                    dtype=args.dtype,
+                ) * lora_scale)
                 self.linear_weights_lora_B = paddle.to_tensor(
-                    np.expand_dims(np.stack(linear_weights_lora_B), 0).repeat(
-                        args.lora_num, 0
-                    ),
+                    np.expand_dims(np.stack(linear_weights_lora_B),
+                                   0).repeat(args.lora_num, 0),
                     dtype=args.dtype,
                 )
-                self.ffn1_weights_lora_A = (
-                    paddle.to_tensor(
-                        np.expand_dims(np.stack(ffn1_weights_lora_A), 0).repeat(
-                            args.lora_num, 0
-                        ),
-                        dtype=args.dtype,
-                    )
-                    * lora_scale
-                )
+                self.ffn1_weights_lora_A = (paddle.to_tensor(
+                    np.expand_dims(np.stack(ffn1_weights_lora_A), 0).repeat(
+                        args.lora_num, 0),
+                    dtype=args.dtype,
+                ) * lora_scale)
                 self.ffn1_weights_lora_B = paddle.to_tensor(
-                    np.expand_dims(np.stack(ffn1_weights_lora_B), 0).repeat(
-                        args.lora_num, 0
-                    ),
+                    np.expand_dims(np.stack(ffn1_weights_lora_B),
+                                   0).repeat(args.lora_num, 0),
                     dtype=args.dtype,
                 )
-                self.ffn2_weights_lora_A = (
-                    paddle.to_tensor(
-                        np.expand_dims(np.stack(ffn2_weights_lora_A), 0).repeat(
-                            args.lora_num, 0
-                        ),
-                        dtype=args.dtype,
-                    )
-                    * lora_scale
-                )
+                self.ffn2_weights_lora_A = (paddle.to_tensor(
+                    np.expand_dims(np.stack(ffn2_weights_lora_A), 0).repeat(
+                        args.lora_num, 0),
+                    dtype=args.dtype,
+                ) * lora_scale)
                 self.ffn2_weights_lora_B = paddle.to_tensor(
-                    np.expand_dims(np.stack(ffn2_weights_lora_B), 0).repeat(
-                        args.lora_num, 0
-                    ),
+                    np.expand_dims(np.stack(ffn2_weights_lora_B),
+                                   0).repeat(args.lora_num, 0),
                     dtype=args.dtype,
                 )
 
@@ -858,20 +804,21 @@ class Predictor:
                 )
                 args.speculate_max_draft_tokens = self.proposer.hydra_num_heads
             elif args.speculate_method == "eagle":
-                self.proposer = EagleProposer(
-                    args, args.speculate_max_draft_tokens, args.batch_size
-                )
+                self.proposer = EagleProposer(args,
+                                              args.speculate_max_draft_tokens,
+                                              args.batch_size)
             elif args.speculate_method == "mtp":
-                self.proposer = MTPProposer(
-                    args, args.speculate_max_draft_tokens, args.batch_size
-                )
+                self.proposer = MTPProposer(args,
+                                            args.speculate_max_draft_tokens,
+                                            args.batch_size)
             else:
                 self.proposer = None
 
     def preprocess(self, dials: list[list[dict]], extra_infos=None):
         """Pre-process generation inputs."""
         # construct inputs
-        system_prompt_version = self.model_config.get("system_prompt_version", "V1")
+        system_prompt_version = self.model_config.get("system_prompt_version",
+                                                      "V1")
 
         if not self.args.fake_server_p:
             if os.getenv("EP_DEBUG", "False") == "True":
@@ -896,9 +843,8 @@ class Predictor:
                     old_input_ids = input_ids[i]
                     len_old_input_ids = len(old_input_ids)
                     input_ids_new.append([])
-                    for j in range(
-                        (test_len + len_old_input_ids - 1) // len_old_input_ids
-                    ):
+                    for j in range((test_len + len_old_input_ids - 1) //
+                                   len_old_input_ids):
                         input_ids_new[-1].extend(old_input_ids)
                     input_ids_new[-1] = input_ids_new[-1][:test_len]
                     num_input_tokens_new += test_len
@@ -933,7 +879,8 @@ class Predictor:
         inputs["block_tables"] = paddle.full(
             shape=[
                 self.beam_batch_size,
-                (max_sec_len + self.args.block_size - 1) // self.args.block_size,
+                (max_sec_len + self.args.block_size - 1) //
+                self.args.block_size,
             ],
             fill_value=-1,
             dtype="int32",
@@ -943,26 +890,24 @@ class Predictor:
             for i in range(bs // self.args.beam_width):
                 query_seq_len = seq_len[i * self.args.beam_width]
                 if query_seq_len + self.args.max_dec_len > max_sec_len:
-                    raise ValueError(
-                        f"input_len({query_seq_len}) + \
+                    raise ValueError(f"input_len({query_seq_len}) + \
                         max_dec_len({self.args.max_dec_len}) > max_seq_len({max_sec_len})"
-                    )
+                                     )
                 input_block_ids = []
                 for j in range(query_seq_len):
                     used_block_id = self.free_list.pop()
                     input_block_ids.append(used_block_id)
                 for beam_id in range(self.args.beam_width):
-                    self.used_list[i * self.args.beam_width + beam_id].extend(
-                        input_block_ids
-                    )
+                    self.used_list[i * self.args.beam_width +
+                                   beam_id].extend(input_block_ids)
                     inputs["block_tables"][
-                        i * self.args.beam_width + beam_id, :query_seq_len
-                    ] = paddle.to_tensor(input_block_ids, dtype="int32")
+                        i * self.args.beam_width +
+                        beam_id, :query_seq_len] = paddle.to_tensor(
+                            input_block_ids, dtype="int32")
                     for k in range(self.args.max_dec_len):
                         used_block_id = self.free_list.pop()
-                        self.used_list[i * self.args.beam_width + beam_id].append(
-                            used_block_id
-                        )
+                        self.used_list[i * self.args.beam_width +
+                                       beam_id].append(used_block_id)
                         inputs["block_tables"][
                             i * self.args.beam_width + beam_id,
                             query_seq_len + k,
@@ -971,40 +916,36 @@ class Predictor:
             for i in range(bs):
                 real_len = seq_len[i] + self.args.max_dec_len
                 if real_len > max_sec_len:
-                    raise ValueError(
-                        f"input_len({seq_len[i]}) + \
+                    raise ValueError(f"input_len({seq_len[i]}) + \
                         max_dec_len({self.args.max_dec_len}) > max_seq_len({max_sec_len})"
-                    )
-                for j in range(
-                    (real_len + self.args.block_size - 1) // self.args.block_size
-                ):
+                                     )
+                for j in range((real_len + self.args.block_size - 1) //
+                               self.args.block_size):
                     used_block_id = self.free_list.pop()
                     self.used_list[i].append(used_block_id)
                     inputs["block_tables"][i, j] = used_block_id
-        if current_platform.is_npu():
-            inputs["attention_mask"] = ((self.attention_mask - 1) * 1e6).astype(
-                self.args
-            )
 
         def get_full_array(data, dtype="float32"):
-            return np.array([data] * self.beam_batch_size).reshape(-1, 1).astype(dtype)
+            return np.array([data] * self.beam_batch_size).reshape(
+                -1, 1).astype(dtype)
 
         inputs["top_p"] = get_full_array(self.args.top_p)
         inputs["temperature"] = get_full_array(self.args.temperature)
 
         inputs["eos_token_id"] = np.array(
-            [self.tokenizer.eos_token_id, self.tokenizer.cls_token_id]
-        ).astype("int64")
+            [self.tokenizer.eos_token_id,
+             self.tokenizer.cls_token_id]).astype("int64")
 
         inputs["penalty_score"] = get_full_array(self.args.penalty_score)
         inputs["frequency_score"] = get_full_array(self.args.frequency_score)
         inputs["presence_score"] = get_full_array(self.args.presence_score)
 
-        inputs["seq_lens_this_time"] = np.array(seq_len).astype("int32").reshape(-1, 1)
-        inputs["seq_lens_encoder"] = np.array(seq_lens).astype("int32").reshape(-1, 1)
-        inputs["seq_lens_decoder"] = (
-            np.array([0] * self.beam_batch_size).astype("int32").reshape(-1, 1)
-        )
+        inputs["seq_lens_this_time"] = np.array(seq_len).astype(
+            "int32").reshape(-1, 1)
+        inputs["seq_lens_encoder"] = np.array(seq_lens).astype(
+            "int32").reshape(-1, 1)
+        inputs["seq_lens_decoder"] = (np.array(
+            [0] * self.beam_batch_size).astype("int32").reshape(-1, 1))
         if self.args.benchmark:
             if is_encoder:
                 inputs["seq_lens_this_time"][:] = test_len
@@ -1022,33 +963,29 @@ class Predictor:
         inputs["stop_nums"] = np.array([self.beam_batch_size]).astype("int64")
         inputs["pre_ids"] = self.pre_ids
         inputs["rope_emb"] = self.rope_emb
-        inputs["bad_tokens"] = np.array(
-            [
-                -1,
-            ]
-        ).astype("int64")
+        inputs["bad_tokens"] = np.array([
+            -1,
+        ]).astype("int64")
         if self.args.use_stop_seqs:
             # NOTE(Zhenyu Li): just for test
-            inputs["stop_seqs"] = np.array(
+            inputs["stop_seqs"] = np.array([
                 [
-                    [
-                        2,
-                        -1,
-                        -1,
-                    ],
-                    [
-                        51989,
-                        18425,
-                        4538,
-                    ],
-                ]
-            ).astype("int64")
+                    2,
+                    -1,
+                    -1,
+                ],
+                [
+                    51989,
+                    18425,
+                    4538,
+                ],
+            ]).astype("int64")
             inputs["stop_seqs_len"] = np.array([1, 3]).astype("int32")
         if self.args.lora_num > 0:
             # NOTE(Zhenyu Li): just for test
-            inputs["w_offsets"] = np.array(
-                [i % self.args.lora_num for i in range(self.beam_batch_size)]
-            ).astype("int32")
+            inputs["w_offsets"] = np.array([
+                i % self.args.lora_num for i in range(self.beam_batch_size)
+            ]).astype("int32")
         if self.use_system:
             # NOTE(Zhenyu Li): just for test
             inputs["system_ids"] = paddle.full(
@@ -1057,22 +994,21 @@ class Predictor:
                 dtype="int32",
             )
             inputs["system_lens"] = paddle.full(
-                shape=[self.args.batch_size, 1], fill_value=0, dtype="int32"
-            )
+                shape=[self.args.batch_size, 1], fill_value=0, dtype="int32")
             for i in range(bs):
                 inputs["system_lens"][i] = 0  # system_len
                 inputs["system_ids"][i] = i
 
-        inputs["next_tokens"] = paddle.full(
-            shape=[self.beam_batch_size, 1], fill_value=-1, dtype="int64"
-        )
-        inputs["is_block_step"] = paddle.full(
-            shape=[self.beam_batch_size], fill_value=False, dtype="bool"
-        )
+        inputs["next_tokens"] = paddle.full(shape=[self.beam_batch_size, 1],
+                                            fill_value=-1,
+                                            dtype="int64")
+        inputs["is_block_step"] = paddle.full(shape=[self.beam_batch_size],
+                                              fill_value=False,
+                                              dtype="bool")
         for i in range(bs):
-            inputs["min_dec_len"][i : i + 1] = self.args.min_dec_len
-            inputs["max_dec_len"][i : i + 1] = self.args.max_dec_len
-            inputs["stop_flags"][i : i + 1] = 0
+            inputs["min_dec_len"][i:i + 1] = self.args.min_dec_len
+            inputs["max_dec_len"][i:i + 1] = self.args.max_dec_len
+            inputs["stop_flags"][i:i + 1] = 0
 
         if self.use_beam_search:
             inputs["beam_offset"] = -1 * np.ones(
@@ -1088,50 +1024,37 @@ class Predictor:
                 -1,
                 dtype="int32",
             )
-            inputs["cum_score"] = np.zeros(
-                shape=(self.beam_batch_size, 1), dtype="float32"
-            )
+            inputs["cum_score"] = np.zeros(shape=(self.beam_batch_size, 1),
+                                           dtype="float32")
             inputs["beam_hyps"] = np.full(
-                (self.beam_batch_size, self.args.max_dec_len), -1, "int32"
-            )
-            inputs["beam_hyps_score"] = np.full((self.beam_batch_size, 1), -1e8).astype(
-                "float32"
-            )
-            inputs["beam_finished"] = (
-                np.array(
-                    [
-                        0,
-                    ]
-                    * self.beam_batch_size
-                )
-                .astype("bool")
-                .reshape(-1, 1)
-            )
-            inputs["beam_width"] = (
-                np.array([self.args.beam_width]).astype("int32").reshape(1, 1)
-            )
-            inputs["beam_group_num"] = (
-                np.array([self.args.beam_group_num]).astype("int32").reshape(1, 1)
-            )
+                (self.beam_batch_size, self.args.max_dec_len), -1, "int32")
+            inputs["beam_hyps_score"] = np.full((self.beam_batch_size, 1),
+                                                -1e8).astype("float32")
+            inputs["beam_finished"] = (np.array([
+                0,
+            ] * self.beam_batch_size).astype("bool").reshape(-1, 1))
+            inputs["beam_width"] = (np.array([self.args.beam_width
+                                              ]).astype("int32").reshape(1, 1))
+            inputs["beam_group_num"] = (np.array(
+                [self.args.beam_group_num]).astype("int32").reshape(1, 1))
             inputs["beam_length_penalty"] = np.full(
-                (self.args.batch_size, 1), self.args.beam_length_penalty
-            ).astype("float32")
+                (self.args.batch_size, 1),
+                self.args.beam_length_penalty).astype("float32")
             inputs["beam_diversity_penalty"] = np.full(
-                (self.args.batch_size, 1), self.args.beam_diversity_penalty
-            ).astype("float32")
+                (self.args.batch_size, 1),
+                self.args.beam_diversity_penalty).astype("float32")
             for i in range(bs):
                 inputs["beam_hyps"][i, :] = -1
                 inputs["cum_score"][i, :] = 0
-                inputs["beam_offset"][i // self.args.beam_width, :, : seq_len[i]] = 0
+                inputs["beam_offset"][i //
+                                      self.args.beam_width, :, :seq_len[i]] = 0
 
         if self.args.enf_gen:
             vocab_size = self.model_config["vocab_size"]
             inputs["enf_gen_status_and_tokens"] = np.full(
-                (self.beam_batch_size, vocab_size + 3), -1, dtype="int32"
-            )
+                (self.beam_batch_size, vocab_size + 3), -1, dtype="int32")
             inputs["enf_gen_logit_mask"] = np.full(
-                (self.beam_batch_size, vocab_size), True, dtype=bool
-            )
+                (self.beam_batch_size, vocab_size), True, dtype=bool)
             self.token_sequence = [[] for _ in range(self.beam_batch_size)]
 
         if self.args.speculate_method is not None:
@@ -1143,9 +1066,9 @@ class Predictor:
                 fill_value=0,
                 dtype="int64",
             )
-            inputs["accept_num"] = np.full(
-                shape=[self.args.batch_size], fill_value=0, dtype="int32"
-            )
+            inputs["accept_num"] = np.full(shape=[self.args.batch_size],
+                                           fill_value=0,
+                                           dtype="int32")
             inputs["draft_tokens"] = np.full(
                 shape=[
                     self.args.batch_size,
@@ -1168,7 +1091,8 @@ class Predictor:
             hidden_size = self.model_config["hidden_size"]
             inputs["output_hidden_states"] = paddle.full(
                 shape=[
-                    self.args.batch_size * (self.args.speculate_max_draft_tokens + 1),
+                    self.args.batch_size *
+                    (self.args.speculate_max_draft_tokens + 1),
                     hidden_size,
                 ],
                 fill_value=0.0,
@@ -1176,7 +1100,8 @@ class Predictor:
             )
             inputs["output_padding_offset"] = paddle.full(
                 shape=[
-                    self.args.batch_size * (self.args.speculate_max_draft_tokens + 1)
+                    self.args.batch_size *
+                    (self.args.speculate_max_draft_tokens + 1)
                 ],
                 fill_value=0,
                 dtype="int32",
@@ -1195,7 +1120,11 @@ class Predictor:
                 for bid in range(bs):
                     self.proposer.update(bid, seq_lens[bid])
 
-        self.inputs_info = {"inputs": inputs, "real_bs": bs, "seq_len": seq_len}
+        self.inputs_info = {
+            "inputs": inputs,
+            "real_bs": bs,
+            "seq_len": seq_len
+        }
         return inputs
 
     def pad_batch_data(self, insts):
@@ -1219,12 +1148,14 @@ class Predictor:
 
     def enf_gen_init(self, model_inputs):
         """"""
-        model_inputs["enf_gen_status_and_tokens"][
-            :, 2
-        ] = self.enf_gen_first_allowed_tokens_len
-        model_inputs["enf_gen_status_and_tokens"][
-            :, 3 : self.enf_gen_first_allowed_tokens_len + 3
-        ] = np.array(self.enf_gen_first_allowed_tokens)
+        model_inputs[
+            "enf_gen_status_and_tokens"][:,
+                                         2] = self.enf_gen_first_allowed_tokens_len
+        model_inputs[
+            "enf_gen_status_and_tokens"][:, 3:self.
+                                         enf_gen_first_allowed_tokens_len +
+                                         3] = np.array(
+                                             self.enf_gen_first_allowed_tokens)
 
     def enf_gen_step_process(self, step_out, model_inputs):
         """"""
@@ -1233,15 +1164,15 @@ class Predictor:
             for i in range(real_batch_size):
                 cur_step = model_inputs["step_idx"][i]
                 cur_token_sequence = model_inputs["beam_cache_ids"][
-                    i, :cur_step
-                ].tolist()
+                    i, :cur_step].tolist()
                 cur_allow_tokens = self.enf_gen_func(i, cur_token_sequence)
                 cur_allow_tokens_len = len(cur_allow_tokens)
-                model_inputs["enf_gen_status_and_tokens"][i, 2] = cur_allow_tokens_len
+                model_inputs["enf_gen_status_and_tokens"][
+                    i, 2] = cur_allow_tokens_len
                 if cur_allow_tokens_len > 0:
                     model_inputs["enf_gen_status_and_tokens"][
-                        i, 3 : cur_allow_tokens_len + 3
-                    ] = np.array(cur_allow_tokens)
+                        i, 3:cur_allow_tokens_len +
+                        3] = np.array(cur_allow_tokens)
         else:
             step_out_list = step_out.tolist()
             for i in range(real_batch_size):
@@ -1249,16 +1180,15 @@ class Predictor:
                 if token != -1:
                     self.token_sequence[i].append(token)
                     next_step_allowed_tokens = self.enf_gen_func(
-                        i, self.token_sequence[i]
-                    )
-                    next_step_allowed_tokens_len = len(next_step_allowed_tokens)
+                        i, self.token_sequence[i])
+                    next_step_allowed_tokens_len = len(
+                        next_step_allowed_tokens)
                     model_inputs["enf_gen_status_and_tokens"][
-                        i, 2
-                    ] = next_step_allowed_tokens_len
+                        i, 2] = next_step_allowed_tokens_len
                     if next_step_allowed_tokens_len > 0:
                         model_inputs["enf_gen_status_and_tokens"][
-                            i, 3 : next_step_allowed_tokens_len + 3
-                        ] = np.array(next_step_allowed_tokens)
+                            i, 3:next_step_allowed_tokens_len +
+                            3] = np.array(next_step_allowed_tokens)
 
     def infer(self, inputs: dict) -> list[list[int]]:
         """
@@ -1295,15 +1225,7 @@ class Predictor:
             model_inputs["ffn2_weights_lora_B"] = self.ffn2_weights_lora_B
         if self.args.prefix_path:
             model_inputs["pre_caches"] = self.pre_caches
-        if (
-            current_platform.is_cuda() and current_platform.available()
-        ) or paddle.is_compiled_with_xpu():
-            from fastdeploy.model_executor.ops.gpu import reset_stop_value
-        elif paddle.is_compiled_with_custom_device("npu"):
-            from paddle_custom_device.npu import reset_stop_value
-        else:  # CPU
-            from fastdeploy.model_executor.ops.cpu import reset_stop_value
-        reset_stop_value(inputs["not_need_stop"])
+        inputs["not_need_stop"][0] = True
         if self.proposer is not None:
             self.proposer.insert_query(self.inputs_info)
         if self.args.enf_gen:
@@ -1316,7 +1238,8 @@ class Predictor:
                         self.proposer.run(
                             model_inputs,
                             real_batch_size=self.args.batch_size,
-                            seq_lens_this_time=model_inputs["seq_lens_this_time"],
+                            seq_lens_this_time=model_inputs[
+                                "seq_lens_this_time"],
                         )
                     out = self.model(**model_inputs)
                     if self.show_topk:
@@ -1329,7 +1252,8 @@ class Predictor:
                         self.proposer.run(
                             model_inputs,
                             real_batch_size=self.args.batch_size,
-                            seq_lens_this_time=model_inputs["seq_lens_this_time"],
+                            seq_lens_this_time=model_inputs[
+                                "seq_lens_this_time"],
                         )
                     out = self.model(**model_inputs)
                     if self.args.return_all_hidden_states:
@@ -1355,7 +1279,8 @@ class Predictor:
         if self.show_topk > 0:
             topk_tokens_all = []
             for i in range(len(out_res)):
-                (next_tokens, next_probs), (topk_tokens, topk_probs) = out_res[i]
+                (next_tokens, next_probs), (topk_tokens,
+                                            topk_probs) = out_res[i]
                 tmp_res = {}
                 tmp_res["token"] = next_tokens
                 tmp_res["prob"] = next_probs
@@ -1384,7 +1309,8 @@ class Predictor:
             res.append(np.array(data_list).reshape(-1, 1))
         res = np.concatenate(res, axis=1)
 
-        sentences = self.tokenizer.batch_decode(res.tolist(), skip_special_tokens=True)
+        sentences = self.tokenizer.batch_decode(res.tolist(),
+                                                skip_special_tokens=True)
         os.system("rm -f ./real_time_save.temp_ids_rank_*")
         return {"result": sentences}
 
@@ -1402,20 +1328,23 @@ class Predictor:
                 global p
                 p.start()
                 for i in range(10):
-                    model_inputs = self.preprocess(batch_dials, extra_infos=extra_infos)
+                    model_inputs = self.preprocess(batch_dials,
+                                                   extra_infos=extra_infos)
                     for k, v in model_inputs.items():
                         if isinstance(v, np.ndarray):
                             model_inputs[k] = paddle.to_tensor(v)
                         else:
                             model_inputs[k] = copy.deepcopy(v)
-                    model_inputs["not_need_stop"] = model_inputs["not_need_stop"].cpu()
+                    model_inputs["not_need_stop"] = model_inputs[
+                        "not_need_stop"].cpu()
                     res = self.infer(model_inputs)
                     p.step()
                     if i == 5:
                         p.stop()
                         exit()
 
-            model_inputs = self.preprocess(batch_dials, extra_infos=extra_infos)
+            model_inputs = self.preprocess(batch_dials,
+                                           extra_infos=extra_infos)
             for k, v in model_inputs.items():
                 if isinstance(v, np.ndarray):
                     model_inputs[k] = paddle.to_tensor(v)
@@ -1426,22 +1355,17 @@ class Predictor:
             if self.use_beam_search:
                 infer_result = self.infer(model_inputs)
                 infer_result[infer_result == -1] = 2
-                self.num_output_tokens += (
-                    (
-                        (infer_result != self.tokenizer.eos_token_id)
-                        & (infer_result != self.tokenizer.cls_token_id)
-                    )
-                    .sum()
-                    .item()
-                )
+                self.num_output_tokens += ((
+                    (infer_result != self.tokenizer.eos_token_id)
+                    & (infer_result
+                       != self.tokenizer.cls_token_id)).sum().item())
                 output = self.postprocess(infer_result)
                 return output
             else:
                 res = self.infer(model_inputs)
                 result = []
-                if self.tp_rank == 0 or (
-                    self.args.use_ep and (not self.args.ep_just_for_test)
-                ):
+                if self.tp_rank == 0 or (self.args.use_ep and
+                                         (not self.args.ep_just_for_test)):
                     while len(result) < self.bsz:
                         queue_res = self.result_queue.get()
                         result.append(queue_res[-1])
@@ -1455,7 +1379,8 @@ class Predictor:
                 return result
         else:
             s_time1 = time.time()
-            model_inputs = self.preprocess(batch_dials, extra_infos=extra_infos)
+            model_inputs = self.preprocess(batch_dials,
+                                           extra_infos=extra_infos)
             for k, v in model_inputs.items():
                 if isinstance(v, np.ndarray):
                     model_inputs[k] = paddle.to_tensor(v)
@@ -1506,12 +1431,12 @@ def main():
     args = setup_args()
 
     if args.predict_model_type not in [
-        "default",
-        "WINT8",
-        "W8A8C16",
-        "W8A8C8",
-        "W8A16C8",
-        "W8A16C16",
+            "default",
+            "WINT8",
+            "W8A8C16",
+            "W8A8C8",
+            "W8A16C8",
+            "W8A16C16",
     ]:
         raise ValueError(
             "predict_model_type must be in ['default', 'WINT8', 'W8A8C16', 'W8A8C8']"
@@ -1525,9 +1450,8 @@ def main():
 
     check_output_dir = False
     if check_output_dir and not check_output(args.model_name_or_path):
-        logger.error(
-            "args.model_name_or_path is not safe."
-        )  # Must before using paddlenlp, paddleslim logger
+        logger.error("args.model_name_or_path is not safe."
+                     )  # Must before using paddlenlp, paddleslim logger
         sys.exit(-1)
 
     token_audit = False
@@ -1542,11 +1466,12 @@ def main():
     # inference
     infer_dials: list[list[dict]] = []
     if args.input_file is None or not os.path.exists(args.input_file):
-        infer_dials = [
-            [
-                {"role": "user", "utterance": "北京天安门广场在哪里?\n"},
-            ]
-        ] * args.batch_size
+        infer_dials = [[
+            {
+                "role": "user",
+                "utterance": "北京天安门广场在哪里?\n"
+            },
+        ]] * args.batch_size
     else:
         with open(args.input_file, "r") as fin:
             if args.fake_server_p:
@@ -1564,23 +1489,21 @@ def main():
                         if "fc_data" == cur_format:
                             cur_dial = convert_fc_infer_data(cur_line)
                             tools = [
-                                tool
-                                for item in cur_dial
-                                if isinstance(item, list)
-                                for tool in item
+                                tool for item in cur_dial
+                                if isinstance(item, list) for tool in item
                             ]
                             system = next(
-                                (
-                                    item["utterance"]
-                                    for item in cur_dial
-                                    if "role" in item and item["role"] == "system"
-                                ),
+                                (item["utterance"] for item in cur_dial
+                                 if "role" in item and item["role"] == "system"
+                                 ),
                                 None,
                             )
                             if tools:
                                 cur_dial = insert_fc_instruction(
-                                    cur_dial, {"tools": tools, "system": system}
-                                )
+                                    cur_dial, {
+                                        "tools": tools,
+                                        "system": system
+                                    })
                             infer_dials.append(cur_dial)
                         elif "qa_data" == cur_format:
                             infer_dials.append(cur_line)
@@ -1592,26 +1515,23 @@ def main():
                         )
 
     if args.beam_width > 1:
-        infer_dials = [dials for dials in infer_dials for _ in range(args.beam_width)]
+        infer_dials = [
+            dials for dials in infer_dials for _ in range(args.beam_width)
+        ]
 
     beam_batch_size = args.beam_width * args.batch_size
 
     test_case = []
 
-    args.save_output_file_flush = (
-        args.save_output_file_flush // beam_batch_size * beam_batch_size
-    )
+    args.save_output_file_flush = (args.save_output_file_flush //
+                                   beam_batch_size * beam_batch_size)
     if predictor.args.use_ep and (not predictor.args.ep_just_for_test):
-        args.output_file = (
-            os.path.dirname(args.output_file)
-            + "/"
-            + os.path.basename(args.output_file).split(".")[0]
-            + f"_{paddle.distributed.get_rank()}.json"
-        )
+        args.output_file = (os.path.dirname(args.output_file) + "/" +
+                            os.path.basename(args.output_file).split(".")[0] +
+                            f"_{paddle.distributed.get_rank()}.json")
 
     predictor.runtime_timer.start(
-        f"msgid-{args.msg_queue_id} predict stage running time"
-    )
+        f"msgid-{args.msg_queue_id} predict stage running time")
     if predictor.args.use_ep and (not predictor.args.ep_just_for_test):
         start_idx = predictor.tp_rank * predictor.args.batch_size
         offset_now = predictor.tp_degree * predictor.args.batch_size
@@ -1620,17 +1540,14 @@ def main():
         offset_now = beam_batch_size
 
     if args.fake_server_p:
-        infer_dials = infer_dials[predictor.tp_rank :: 8]
+        infer_dials = infer_dials[predictor.tp_rank::8]
         # warm up
         warm_up_time = 10
         for warm_i in range(warm_up_time):
             batch_dials = []
-            batch_dials.append(
-                [
-                    10002,
-                ]
-                * 1000
-            )
+            batch_dials.append([
+                10002,
+            ] * 1000)
             predictor.predict(batch_dials)
 
         threshold_token_num = 6000
@@ -1640,11 +1557,8 @@ def main():
             dial_len_sum = 0
             b_num = 0
             batch_dials = []
-            while (
-                dial_len_sum < threshold_token_num
-                and b_num < args.batch_size
-                and len(infer_dials) > 0
-            ):
+            while (dial_len_sum < threshold_token_num
+                   and b_num < args.batch_size and len(infer_dials) > 0):
                 dial_now = infer_dials.pop()
                 batch_dials.append(dial_now)
                 dial_len_sum += len(dial_now)
@@ -1658,12 +1572,12 @@ def main():
                 logger.info("end!!!")
             logger.info(f"bsz now: {b_num}")
             logger.info(f"remain query num: {len(infer_dials)}")
-            predictor.predict(
-                batch_dials, all_token=all_token_num, warm_up_time=warm_up_time
-            )
+            predictor.predict(batch_dials,
+                              all_token=all_token_num,
+                              warm_up_time=warm_up_time)
     else:
         for idx in tqdm(range(start_idx, len(infer_dials), offset_now)):
-            batch_dials = infer_dials[idx : idx + beam_batch_size]
+            batch_dials = infer_dials[idx:idx + beam_batch_size]
             print("inputs ->", batch_dials)
             result = predictor.predict(batch_dials)
             print("result ->", result)
@@ -1671,25 +1585,24 @@ def main():
             for in_dial, out_resp in zip(batch_dials, result["result"]):
                 if not isinstance(in_dial, list):
                     in_dial = []
-                conversation_data = in_dial + [{"role": "bot", "utterance": out_resp}]
+                conversation_data = in_dial + [{
+                    "role": "bot",
+                    "utterance": out_resp
+                }]
                 test_case.append(conversation_data)
 
-            if (
-                args.save_output_file_flush > 0
-                and idx % args.save_output_file_flush == 0
-                and idx > 0
-            ):
+            if (args.save_output_file_flush > 0
+                    and idx % args.save_output_file_flush == 0 and idx > 0):
                 if paddle.distributed.get_rank() == 0 or (
-                    predictor.args.use_ep and (not predictor.args.ep_just_for_test)
-                ):
+                        predictor.args.use_ep and
+                    (not predictor.args.ep_just_for_test)):
                     infer_save_test_case(
-                        test_case[idx - args.save_output_file_flush : idx],
+                        test_case[idx - args.save_output_file_flush:idx],
                         args.output_file,
                     )
     logger.info(
         f"The task is completed. Total input token: {predictor.num_input_tokens}. \
-        Total output token: {predictor.num_output_tokens}"
-    )
+        Total output token: {predictor.num_output_tokens}")
 
     logger.info(f"{predictor.runtime_timer.log()}")
 
@@ -1702,16 +1615,12 @@ def main():
         pass
 
     if paddle.distributed.get_rank() == 0 or (
-        predictor.args.use_ep and (not predictor.args.ep_just_for_test)
-    ):
+            predictor.args.use_ep and (not predictor.args.ep_just_for_test)):
         if args.save_output_file_flush == 0:
             infer_save_test_case(test_case, args.output_file)
         else:
-            write_case_idx = (
-                len(test_case)
-                // args.save_output_file_flush
-                * args.save_output_file_flush
-            )
+            write_case_idx = (len(test_case) // args.save_output_file_flush *
+                              args.save_output_file_flush)
             if len(test_case) % args.save_output_file_flush == 0:
                 write_case_idx -= args.save_output_file_flush
             infer_save_test_case(test_case[write_case_idx:], args.output_file)

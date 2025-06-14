@@ -17,16 +17,14 @@
 import json
 import os
 from datetime import datetime
-from typing import Literal, Optional, Dict, List, Any
+from typing import Any, Dict, List, Literal, Optional
 
-from fastdeploy.utils import llm_logger, check_unified_ckpt, get_host_ip, is_port_available
-from fastdeploy.download_model import download_from_txt
 from fastdeploy.scheduler import SchedulerConfig
-
-from pathlib import Path
-
+from fastdeploy.utils import (check_unified_ckpt, get_host_ip,
+                              is_port_available, llm_logger)
 
 TaskOption = Literal["generate"]
+
 
 class ModelConfig:
     """
@@ -37,6 +35,7 @@ class ModelConfig:
         is_unified_ckpt (bool): Flag indicating if the checkpoint is unified.
         model_name_or_path (str): Name or path of the model.
     """
+
     def __init__(self,
                  model_name_or_path: str,
                  config_json_file: str = "config.json",
@@ -50,17 +49,6 @@ class ModelConfig:
             config_json_file (str): Path to the configuration JSON file. Default is 'config.json'.
             download_dir (Optional[str]): Directory to download model files. Default is None.
         """
-        if model_name_or_path:
-            path = Path(model_name_or_path)
-            if not path.exists():
-                from aistudio_sdk.snapshot_download import snapshot_download
-                try:
-                    local_path = os.getenv("FD_MODEL_CACHE", default=f'{os.getenv("HOME")}/{model_name_or_path}')
-                    snapshot_download(repo_id=model_name_or_path, revision="master",
-                                      local_dir=local_path)
-                    model_name_or_path = local_path
-                except Exception as e:
-                    llm_logger.error(f"{model_name_or_path} not exist:{e}")
         self.model_dir = model_name_or_path
         self.is_unified_ckpt = check_unified_ckpt(self.model_dir)
         self.dynamic_load_weight = dynamic_load_weight
@@ -70,19 +58,26 @@ class ModelConfig:
             try:
                 from paddlenlp.transformers import AutoConfig
                 config = AutoConfig.from_pretrained(model_name_or_path)
-                config_dict = {k: v for k, v in vars(config).items() if not k.startswith('_')}
+                config_dict = {
+                    k: v
+                    for k, v in vars(config).items() if not k.startswith('_')
+                }
                 for key, value in config_dict.items():
                     setattr(self, key, value)
-            except Exception as e:
-                llm_logger.error("Don't support the current model, you can use `paddlenlp` to register your model.")
-                raise ValueError("Don't support the current model, you can use `paddlenlp` to register your model.")
+            except Exception:
+                llm_logger.error(
+                    "Don't support the current model, you can use `paddlenlp` to register your model."
+                )
+                raise ValueError(
+                    "Don't support the current model, you can use `paddlenlp` to register your model."
+                )
         else:
             with open(config_file, "r", encoding="utf-8") as f:
                 config_dict = json.load(f)
                 for key, value in config_dict.items():
                     try:
                         setattr(self, key, value)
-                    except Exception as e:
+                    except Exception:
                         continue
 
         if isinstance(self.architectures, list):
@@ -95,6 +90,7 @@ class ModelConfig:
         """
         Override attribute names from the exported model's configuration.
         """
+
         if not self.is_unified_ckpt and hasattr(self, "infer_model_mp_num"):
             self.tensor_parallel_size = self.infer_model_mp_num
             del self.infer_model_mp_num
@@ -125,25 +121,29 @@ class ModelConfig:
         self.max_stop_seqs_num = int(os.getenv("MAX_STOP_SEQS_NUM", "5"))
         self.stop_seqs_max_len = int(os.getenv("STOP_SEQS_MAX_LEN", "8"))
 
-        self.ellm_dynamic_quant_type = os.getenv("ELLM_DYNAMIC_QUANT_TYPE", "default")
+        self.ellm_dynamic_quant_type = os.getenv("ELLM_DYNAMIC_QUANT_TYPE",
+                                                 "default")
         # 动态图推理是否使用停止序列
-        self.ellm_dynamic_use_stop_seqs = int(os.getenv("ELLM_DYNAMIC_USE_STOP_SEQS", "0")) == 1
+        self.ellm_dynamic_use_stop_seqs = int(
+            os.getenv("ELLM_DYNAMIC_USE_STOP_SEQS", "0")) == 1
 
         def reset_config_value(key, value):
             if not hasattr(self, key.lower()):
                 if os.getenv(key, None):
                     value = eval(os.getenv(key))
-                    llm_logger.info(f"Get parameter `{key}` = {value} from environment.")
+                    llm_logger.info(
+                        f"Get parameter `{key}` = {value} from environment.")
                 else:
-                    llm_logger.info(f"Parameter `{key}` will use default value {value}.")
+                    llm_logger.info(
+                        f"Parameter `{key}` will use default value {value}.")
                 setattr(self, key.lower(), value)
 
-        if self.architectures == "ErnieForCausalLM" and not hasattr(self, "model_name"):
+        if ("ErnieForCausalLM" in self.architectures or "ErnieBotLMHeadModel"
+                in self.architectures) and not hasattr(self, "model_name"):
             self.model_name = os.getenv("FD_MODEL_NAME")
             assert self.model_name is not None, (
                 "There is no parameter model_name in config.json or "
-                "FD_MODEL_NAME in environment variables."
-            )
+                "FD_MODEL_NAME in environment variables.")
 
         reset_config_value("COMPRESSION_RATIO", 1.0)
         reset_config_value("ROPE_THETA", 10000)
@@ -159,8 +159,8 @@ class ModelConfig:
         llm_logger.info("Model Configuration Information :")
         for k, v in self.__dict__.items():
             llm_logger.info("{:<20}:{:<6}{}".format(k, "", v))
-        llm_logger.info("=============================================================")
-
+        llm_logger.info(
+            "=============================================================")
 
 
 class CacheConfig:
@@ -171,11 +171,13 @@ class CacheConfig:
         block_size (int): Size of a cache block in number of tokens.
         gpu_memory_utilization (float): Fraction of GPU memory to use for model execution.
         cache_dtype (str): Data type for kv cache storage. Default is 'bfloat16'.
-        num_gpu_blocks_override (Optional[int]): Number of GPU blocks to use. Overrides profiled num_gpu_blocks if provided.
+        num_gpu_blocks_override (Optional[int]): Number of GPU blocks to use.
+        Overrides profiled num_gpu_blocks if provided.
         kv_cache_ratio (float): Ratio for calculating the maximum block number.
         enc_dec_block_num (int): Number of encoder-decoder blocks.
         enable_prefix_caching (bool): Flag to enable prefix caching.
     """
+
     def __init__(
         self,
         block_size: int,
@@ -191,9 +193,6 @@ class CacheConfig:
         model_cfg=None,
         cache_queue_port=None,
         enable_chunked_prefill=False,
-        rdma_comm_ports=None,
-        cache_transfer_protocol=None,
-        pd_comm_port=None,
     ):
         """
         Initialize the CacheConfig class.
@@ -214,15 +213,11 @@ class CacheConfig:
         self.kv_cache_ratio = kv_cache_ratio
         self.enc_dec_block_num = enc_dec_block_num
         self.cache_dtype = cache_dtype
-        if hasattr(model_cfg, "kvcache_quant_type"):
-            self.cache_dtype = self.model_cfg.kvcache_quant_type
+        if hasattr(model_cfg, "cache_quant_type"):
+            self.cache_dtype = model_cfg.cache_quant_type
 
         self.enable_chunked_prefill = enable_chunked_prefill
-        self.rdma_comm_ports = rdma_comm_ports
-        self.cache_transfer_protocol = cache_transfer_protocol
-        if pd_comm_port is not None:
-            self.pd_comm_port = pd_comm_port
-        
+
         self.enable_prefix_caching = enable_prefix_caching
         if cpu_offload_gb is None:
             self.enable_hierarchical_cache = False
@@ -235,72 +230,43 @@ class CacheConfig:
         self.cpu_offload_gb = cpu_offload_gb
 
         if (hasattr(self.model_cfg, "num_key_value_heads")
-            and hasattr(self.model_cfg, "num_key_value_heads")
-            and self.model_cfg.num_key_value_heads is not None
-            and int(self.model_cfg.num_key_value_heads) > 0):
-            kv_num_head = int(
-                self.model_cfg.num_key_value_heads)
+                and hasattr(self.model_cfg, "num_key_value_heads")
+                and self.model_cfg.num_key_value_heads is not None
+                and int(self.model_cfg.num_key_value_heads) > 0):
+            kv_num_head = int(self.model_cfg.num_key_value_heads)
         else:
             kv_num_head = self.model_cfg.num_attention_heads
         self.model_cfg.kv_num_head = kv_num_head
 
-
         # TODO check name
-        if self.cache_dtype.lower() == "wint4":
+        if self.cache_dtype.lower() == "cache_int4":
             byte_size = 0.5
-        elif self.cache_dtype.lower() == "wint8":
+            self.cache_dtype = "uint8"
+        elif self.cache_dtype.lower() == "cache_int8":
+            self.cache_dtype = "uint8"
             byte_size = 1
         else:
             byte_size = 2
 
         self.each_token_cache_space = int(
-            self.model_cfg.num_layers
-            * kv_num_head
-            * self.model_cfg.head_dim
-            * byte_size
-        ) 
-        self.bytes_per_block = int(
-            self.each_token_cache_space * self.block_size
-        ) 
+            self.model_cfg.num_layers * kv_num_head * self.model_cfg.head_dim *
+            byte_size)
+        self.bytes_per_block = int(self.each_token_cache_space *
+                                   self.block_size)
         self.bytes_per_layer_per_block = int(
-            self.block_size
-            * self.model_cfg.kv_num_head
-            * self.model_cfg.head_dim // tensor_parallel_size
-            * byte_size
-        )
+            self.block_size * self.model_cfg.kv_num_head *
+            self.model_cfg.head_dim // tensor_parallel_size * byte_size)
 
         if self.cpu_offload_gb is None:
             self.num_cpu_blocks = 0
         else:
-            self.num_cpu_blocks = int(self.cpu_offload_gb * 1024**3 / self.bytes_per_block)
+            self.num_cpu_blocks = int(self.cpu_offload_gb * 1024**3 /
+                                      self.bytes_per_block)
         self._verify_args()
 
     def metrics_info(self):
         """Convert cache_config to dict(key: str, value: str) for prometheus metrics info."""
         return {key: str(value) for key, value in self.__dict__.items()}
-
-    
-    def get_rdma_ip(self, device_ids):
-        """
-        get rdma ip
-        """
-        if self.cache_transfer_protocol is None:
-            return ""
-        if self.pd_comm_port is None:
-            return ""
-
-        self.rdma_ips = []
-        # llm_logger.info(f"{device_ids}")
-        device_ids = device_ids.split(",")
-        for device_id in device_ids:
-            with open(f'/dev/tmp/rdma_ips_{device_id}.txt', 'r') as f:
-                rdma_ips = f.readline().strip()
-                # break
-            self.rdma_ips.append(rdma_ips)
-        llm_logger.info(f"{self.rdma_ips}")
-        return self.rdma_ips
-
-
 
     def _verify_args(self):
         if self.gpu_memory_utilization > 1.0:
@@ -308,10 +274,8 @@ class CacheConfig:
                 "GPU memory utilization must be less than 1.0. Got "
                 f"{self.gpu_memory_utilization}.")
         if self.kv_cache_ratio > 1.0:
-            raise ValueError(
-                "KV cache ratio must be less than 1.0. Got "
-                f"{self.kv_cache_ratio}.")
-
+            raise ValueError("KV cache ratio must be less than 1.0. Got "
+                             f"{self.kv_cache_ratio}.")
 
     def postprocess(self, num_total_tokens, number_of_tasks):
         """
@@ -320,23 +284,27 @@ class CacheConfig:
         self.dec_token_num = self.enc_dec_block_num * self.block_size
         if self.num_gpu_blocks_override is not None:
             self.total_block_num = self.num_gpu_blocks_override
-            self.prefill_kvcache_block_num = int(self.total_block_num * self.kv_cache_ratio)
+            self.prefill_kvcache_block_num = int(self.total_block_num *
+                                                 self.kv_cache_ratio)
         else:
             length = num_total_tokens // number_of_tasks
-            block_num = (length + self.block_size - 1 + self.enc_dec_block_num) // self.block_size
-            self.total_block_num =  block_num * number_of_tasks
+            block_num = (length + self.block_size - 1 +
+                         self.enc_dec_block_num) // self.block_size
+            self.total_block_num = block_num * number_of_tasks
             self.prefill_kvcache_block_num = self.total_block_num
-            llm_logger.info(f"Doing profile, the total_block_num:{self.total_block_num}")
-        
+            llm_logger.info(
+                f"Doing profile, the total_block_num:{self.total_block_num}")
 
     def reset(self, num_gpu_blocks):
         """
         reset gpu block number
         """
-        self.total_block_num  = num_gpu_blocks
-        self.prefill_kvcache_block_num = int(self.total_block_num * self.kv_cache_ratio)
-        llm_logger.info((f"Reset block num, the total_block_num:{self.total_block_num},"
-            f" prefill_kvcache_block_num:{self.prefill_kvcache_block_num}"))
+        self.total_block_num = num_gpu_blocks
+        self.prefill_kvcache_block_num = int(self.total_block_num *
+                                             self.kv_cache_ratio)
+        llm_logger.info(
+            (f"Reset block num, the total_block_num:{self.total_block_num},"
+             f" prefill_kvcache_block_num:{self.prefill_kvcache_block_num}"))
 
     def print(self):
         """
@@ -345,40 +313,9 @@ class CacheConfig:
         """
         llm_logger.info("Cache Configuration Information :")
         for k, v in self.__dict__.items():
-                llm_logger.info("{:<20}:{:<6}{}".format(k, "", v))
-        llm_logger.info("=============================================================")
-
-
-class ParallelConfig:
-    """
-    Configuration for parallelism.
-
-    Attributes:
-        tensor_parallel_size (int): Size of tensor parallelism.
-        data_parallel_size (int): Size of data parallelism.
-        local_data_parallel_id (int): ID of local data parallel.
-        enable_expert_parallel (bool): Whether to enable expert parallel.
-    """
-    def __init__(
-        self,
-        tensor_parallel_size: int = 1,
-        data_parallel_size: int = 1,
-        local_data_parallel_id: int = 0,
-        enable_expert_parallel: bool = False,
-    ):
-        """
-        Initialize the ParallelConfig class.
-
-        Args:
-            tensor_parallel_size (int): Size of tensor parallelism.
-            data_parallel_size (int): Size of data parallelism.
-            local_data_parallel_id (int): ID of local data parallel.
-            enable_expert_parallel (bool): Whether to enable expert parallel.
-        """
-        self.tensor_parallel_size = tensor_parallel_size
-        self.data_parallel_size = data_parallel_size
-        self.local_data_parallel_id = local_data_parallel_id
-        self.enable_expert_parallel = enable_expert_parallel
+            llm_logger.info("{:<20}:{:<6}{}".format(k, "", v))
+        llm_logger.info(
+            "=============================================================")
 
 
 class Config:
@@ -401,15 +338,15 @@ class Config:
         engine_worker_queue_port (int): Port for engine worker queue.
         enable_mm (bool): Flag to enable multi-modal processing.
         splitwise_role (str): Splitwise role.
-        innode_prefill_ports (Optional[List[int]]): Innode prefill ports. 
+        innode_prefill_ports (Optional[List[int]]): Innode prefill ports.
             Temporary configuration, will be removed in the future.
     """
+
     def __init__(
         self,
         model_config: ModelConfig,
         cache_config: CacheConfig,
         scheduler_config: SchedulerConfig,
-        parallel_config: ParallelConfig,
         model_name_or_path: str = None,
         tokenizer: str = None,
         tensor_parallel_size: int = 8,
@@ -436,7 +373,6 @@ class Config:
         Args:
             model_config (ModelConfig): Model configuration object.
             cache_config (CacheConfig): Cache configuration object.
-            parallel_config (ParallelConfig): Parallel configuration object.
             scheduler_config (SchedulerConfig): Scheduler configuration object.
             model_name_or_path (str): Model directory path or model name.
             tokenizer (str): Default is the model.
@@ -457,7 +393,6 @@ class Config:
         self.model_config = model_config
         self.cache_config = cache_config
         self.scheduler_config = scheduler_config
-        self.parallel_config = parallel_config
         self.model_name_or_path = model_name_or_path
         self.tokenizer = tokenizer
         self.max_num_batched_tokens = max_num_batched_tokens
@@ -479,32 +414,39 @@ class Config:
 
         assert self.splitwise_role in ["mixed", "prefill", "decode"]
 
+        # TODO: Temporary configuration, will be removed in the future.
+        if innode_prefill_ports is None:
+            assert self.splitwise_role in ["mixed", "prefill"], \
+                " `innode_prefill_ports` can only support in decode mode"
         # TODO
         self.max_prefill_batch = 3
         if enable_mm:
-            self.max_prefill_batch = 1 # TODO:当前多模prefill阶段只支持并行度为1,待优化
-
+            self.max_prefill_batch = 1  # TODO:当前多模prefill阶段只支持并行度为1,待优化
 
         self.engine_worker_queue_port = engine_worker_queue_port
-        self.device_ids = ",".join([str(i) for i in range(self.tensor_parallel_size)])
-        self.device_ids = os.getenv("CUDA_VISIBLE_DEVICES",
-                                    self.device_ids)
+        self.device_ids = ",".join(
+            [str(i) for i in range(self.tensor_parallel_size)])
+        self.device_ids = os.getenv("CUDA_VISIBLE_DEVICES", self.device_ids)
 
         self.read_from_config()
         self.postprocess()
         self.check()
         self.print()
 
-
     def postprocess(self):
         """
         calculate some parameters
         """
         if len(self.device_ids.split(',')) > self.tensor_parallel_size:
-            self.device_ids = ",".join(self.device_ids.split(',')[:self.tensor_parallel_size:])
-        assert len(self.device_ids.split(',')) == self.tensor_parallel_size
+            self.device_ids = ",".join(
+                self.device_ids.split(',')[:self.tensor_parallel_size:])
+        assert len(
+            self.device_ids.split(',')
+        ) == self.tensor_parallel_size, f"The number of available GPUs is {len(self.device_ids.split(','))}, " \
+            f"which is less than the tensor parallel required {self.tensor_parallel_size}."
 
-        assert self.tensor_parallel_size % self.nnode == 0, f"tensor_parallel_size: {self.tensor_parallel_size} should be divisible by nnode: {self.nnode}"
+        assert self.tensor_parallel_size % self.nnode == 0, f"tensor_parallel_size: {self.tensor_parallel_size} " \
+            f"should be divisible by nnode: {self.nnode}"
         self.tp_num_per_node = self.tensor_parallel_size // self.nnode
         self.host_ip = get_host_ip()
 
@@ -516,13 +458,14 @@ class Config:
                 self.max_num_batched_tokens = 2048
             else:
                 self.max_num_batched_tokens = self.max_model_len
-        
+
         if self.long_prefill_token_threshold == 0:
             self.long_prefill_token_threshold = int(self.max_model_len * 0.04)
 
-        self.cache_config.postprocess(self.max_num_batched_tokens, self.max_num_seqs)
-        self.cache_config.max_block_num_per_seq = int(self.max_model_len // self.cache_config.block_size)
-
+        self.cache_config.postprocess(self.max_num_batched_tokens,
+                                      self.max_num_seqs)
+        self.cache_config.max_block_num_per_seq = int(
+            self.max_model_len // self.cache_config.block_size)
 
     def check(self):
         """
@@ -531,32 +474,52 @@ class Config:
         assert (
             self.max_num_seqs <= 256
         ), "The parameter `max_num_seqs` is not allowed to exceed 256, " "but now it's {}.".format(
-            self.max_num_seqs
-        )
-        assert (is_port_available('0.0.0.0', self.engine_worker_queue_port)
-				), f"The parameter `engine_worker_queue_port`:{self.engine_worker_queue_port} is already in use."
-        assert (8 >= self.tensor_parallel_size > 0), f"tensor_parallel_size: {self.tensor_parallel_size} should be between 1 and 8"
+            self.max_num_seqs)
+        assert (
+            is_port_available('0.0.0.0', self.engine_worker_queue_port)
+        ), f"The parameter `engine_worker_queue_port`:{self.engine_worker_queue_port} is already in use."
+        assert (
+            8 >= self.tensor_parallel_size > 0
+        ), f"tensor_parallel_size: {self.tensor_parallel_size} should be between 1 and 8"
         assert (self.nnode >= 1), f"nnode: {self.nnode} should no less than 1"
-        assert (self.max_model_len >= 16), f"max_model_len: {self.max_model_len} should be larger than 16"
-        assert (self.max_num_seqs >= 1), f"max_num_seqs: {self.max_num_seqs} should be larger than 1"
-        assert (self.max_num_batched_tokens >= self.max_num_seqs), f"max_num_batched_tokens: {self.max_num_batched_tokens} should be larger than or equal to max_num_seqs: {self.max_num_seqs}"
-        assert (self.max_num_batched_tokens <= self.max_model_len * self.max_num_seqs), f"max_num_batched_tokens: {self.max_num_batched_tokens} should be larger" \
+        assert (
+            self.max_model_len >= 16
+        ), f"max_model_len: {self.max_model_len} should be larger than 16"
+        assert (
+            self.max_num_seqs
+            >= 1), f"max_num_seqs: {self.max_num_seqs} should be larger than 1"
+        assert (
+            self.max_num_batched_tokens >= self.max_num_seqs
+        ), f"max_num_batched_tokens: {self.max_num_batched_tokens} " \
+            f"should be larger than or equal to max_num_seqs: {self.max_num_seqs}"
+        assert (self.max_num_batched_tokens <= self.max_model_len * self.max_num_seqs), \
+                f"max_num_batched_tokens: {self.max_num_batched_tokens} should be larger" \
                 f"than or equal to max_num_seqs: {self.max_num_seqs} * max_model_len: {self.max_model_len}"
-        assert (self.max_num_partial_prefills >= 1), f"max_num_partial_prefills: {self.max_num_partial_prefills} should be larger than or equal to 1"
+        assert (
+            self.max_num_partial_prefills >= 1
+        ), f"max_num_partial_prefills: {self.max_num_partial_prefills} should be larger than or equal to 1"
 
-        assert (self.max_long_partial_prefills >= 1), f"max_long_partial_prefills: {self.max_long_partial_prefills} should be larger than or equal to 1"
-        assert (self.max_long_partial_prefills <= self.max_num_partial_prefills), f"max_long_partial_prefills: {self.max_long_partial_prefills} should " \
+        assert (
+            self.max_long_partial_prefills >= 1
+        ), f"max_long_partial_prefills: {self.max_long_partial_prefills} should be larger than or equal to 1"
+        assert (self.max_long_partial_prefills <= self.max_num_partial_prefills), \
+                f"max_long_partial_prefills: {self.max_long_partial_prefills} should " \
                 f"be less than or equal to max_num_partial_prefills: {self.max_num_partial_prefills}"
 
         if not self.cache_config.enable_chunked_prefill:
-            assert (self.max_num_batched_tokens >= self.max_model_len), f"max_num_batched_tokens: {self.max_num_batched_tokens} should be larger than or equal to max_model_len: {self.max_model_len}"
+            assert (
+                self.max_num_batched_tokens >= self.max_model_len
+            ), f"max_num_batched_tokens: {self.max_num_batched_tokens} " \
+                f"should be larger than or equal to max_model_len: {self.max_model_len}"
 
         if self.max_num_partial_prefills > 1:
-            assert (self.cache_config.enable_chunked_prefill is True), f"Chunked prefill must be enabled to set max_num_partial_prefills > 1"
-            assert (self.long_prefill_token_threshold < self.max_model_len), f"long_prefill_token_threshold: {self.long_prefill_token_threshold} should be less than max_model_len: {self.max_model_len}"
+            assert (self.cache_config.enable_chunked_prefill is True), \
+            "Chunked prefill must be enabled to set max_num_partial_prefills > 1"
+            assert (self.long_prefill_token_threshold < self.max_model_len), \
+            f"long_prefill_token_threshold: {self.long_prefill_token_threshold} should be less than"\
+            f" max_model_len: {self.max_model_len}"
 
         self.scheduler_config.check()
-
 
     def print(self, file=None):
         """
@@ -565,7 +528,8 @@ class Config:
         Args:
             file (str): the path of file to save config
         """
-        llm_logger.info("=================== Configuration Information ===============")
+        llm_logger.info(
+            "=================== Configuration Information ===============")
         for k, v in self.__dict__.items():
             if k == "generation_config" and v is not None:
                 for gck, gcv in v.to_dict().items():
@@ -574,7 +538,8 @@ class Config:
                 v.print()
             else:
                 llm_logger.info("{:<20}:{:<6}{}".format(k, "", v))
-        llm_logger.info("=============================================================")
+        llm_logger.info(
+            "=============================================================")
         if file is not None:
             f = open(file, "a")
             now_time = datetime.now()
@@ -582,35 +547,6 @@ class Config:
             for k, v in self.__dict__.items():
                 f.write("{:<20}:{:<6}{}\n".format(k, "", v))
             f.close()
-
-    def init_cache_info(self):
-        """
-        initialize cache info
-        """
-        disaggregate_info = {}
-        if self.splitwise_role != "mixed":
-            disaggregate_info["role"] = self.splitwise_role
-            disaggregate_info["cache_info"] = dict()
-            current_protocol = self.cache_config.cache_transfer_protocol.split(",")
-            disaggregate_info["transfer_protocol"] = current_protocol
-            for protocol in current_protocol:
-                if protocol == "ipc":
-                    disaggregate_info["cache_info"][protocol] = {
-                        "ip": self.host_ip,
-                        "port": self.engine_worker_queue_port,
-                        "device_ids": self.device_ids
-                    }
-                elif protocol == "rdma":
-                    disaggregate_info["cache_info"][protocol] = {
-                        "ip": self.host_ip,
-                        "port": self.cache_config.pd_comm_port,
-                        "rdma_ip": self.cache_config.get_rdma_ip(self.device_ids),
-                        # "rdma_ip":[],
-                        "rdma_port": self.cache_config.rdma_comm_ports,
-                    }
-        self.disaggregate_info = disaggregate_info
-        llm_logger.info(f"disaggregate_info: {self.disaggregate_info}")
-
 
     def read_from_config(self):
         """
@@ -621,12 +557,14 @@ class Config:
             if hasattr(cls, key):
                 value = getattr(cls, key)
                 setattr(cls, value_name, value)
-                llm_logger.info(f"Reset parameter {value_name} = {value} from configuration.")
+                llm_logger.info(
+                    f"Reset parameter {value_name} = {value} from configuration."
+                )
 
         reset_value(self.cache_config, "block_size", "infer_model_block_size")
-        reset_value(self.model_config, "return_full_hidden_states", "return_full_hidden_states")
+        reset_value(self.model_config, "return_full_hidden_states",
+                    "return_full_hidden_states")
         reset_value(self.cache_config, "cache_dtype", "infer_model_dtype")
-
 
     def __str__(self) -> str:
         return json.dumps(self.__dict__, indent=4)

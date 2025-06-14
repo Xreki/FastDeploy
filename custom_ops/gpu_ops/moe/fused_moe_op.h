@@ -959,7 +959,9 @@ void topk_gating_softmax_launcher_helper(const T* input,
 }
 
 template <typename T, typename IdxT = int>
-void topk_gating_softmax_kernelLauncher(const T* input,
+struct topk_gating_softmax_kernelLauncher{
+
+static void run(const T* input,
                                         const T* gating_correction_bias,
                                         T* output,
                                         T* softmax,
@@ -1039,6 +1041,7 @@ void topk_gating_softmax_kernelLauncher(const T* input,
     }
   }
 }
+};
 
 // ========================== Permutation things
 // =======================================
@@ -1057,11 +1060,13 @@ void topk_gating_softmax_kernelLauncher(const T* input,
 // to row 0 in the original matrix. Thus, to know where to read in the source
 // matrix, we simply take the modulus of the expanded index.
 
-template <typename T, int VecSize>
+template <typename T, int VecSize, typename OutT=T>
 __global__ void initialize_moe_routing_kernel(
     const T* unpermuted_input,
-    T* permuted_output,
+    OutT* permuted_output,
     const int* expanded_dest_row_to_expanded_source_row,
+    const int *expert_idx_per_token, 
+    const float *w4a8_in_scale,
     int* expanded_source_row_to_expanded_dest_row,
     const int64_t num_rows,
     const int64_t active_rows,
@@ -1083,28 +1088,50 @@ __global__ void initialize_moe_routing_kernel(
     expanded_source_row_to_expanded_dest_row[expanded_source_row] =
         expanded_dest_row;
   }
+  
+  if (expanded_dest_row < active_rows) {
 
-  if ((blockIdx.x + blockIdx.y * gridDim.x) < active_rows) {
-    // Duplicate and permute rows
+    const int expert_idx = expert_idx_per_token[expanded_dest_row];
+    const float scale = w4a8_in_scale ? w4a8_in_scale[expert_idx] : -1;
     const int source_row = expanded_source_row % num_rows;
 
     const T* source_row_ptr = unpermuted_input + source_row * cols;
-    T* dest_row_ptr = permuted_output + expanded_dest_row * cols;
+    OutT *dest_row_ptr = permuted_output + expanded_dest_row * cols;
 
     for (int tid = threadIdx.x * VecSize; tid < cols;
          tid += blockDim.x * VecSize) {
       // dest_row_ptr[tid] = source_row_ptr[tid];
       Load<T, VecSize>(&source_row_ptr[tid], &src_vec);
-      Store<T, VecSize>(src_vec, &dest_row_ptr[tid]);
+
+      if constexpr (std::is_same<OutT, int8_t>::value) {
+        using StoreT = AlignedVector<OutT, VecSize>;
+        StoreT dest_vec;
+        const float max_bound = 127.f;
+        const float min_bound = -127.f;
+        for (int j = 0; j < VecSize; j++) {
+          float quant_value =
+              max_bound * scale * static_cast<float>(src_vec[j]);
+          quant_value = quant_value > max_bound ? max_bound : quant_value;
+          quant_value = quant_value < min_bound ? min_bound : quant_value;
+          dest_vec[j] = static_cast<int8_t>(round(quant_value));
+        }
+        Store<OutT, VecSize>(dest_vec, &dest_row_ptr[tid]);
+      } else {
+        Store<T, VecSize>(src_vec, &dest_row_ptr[tid]);
+      }
     }
   }
 }
 
-template <typename T>
-void initialize_moe_routing_kernelLauncher(
+template <typename T, typename OutT = T>
+struct initialize_moe_routing_kernelLauncher{
+
+static void run(
     const T* unpermuted_input,
-    T* permuted_output,
+    OutT* permuted_output,
     const int* expanded_dest_row_to_expanded_source_row,
+    const int *expert_idx_per_token, 
+    const float *w4a8_in_scale,
     int* expanded_source_row_to_expanded_dest_row,
     const int64_t num_rows,
     const int64_t active_rows,
@@ -1120,6 +1147,8 @@ void initialize_moe_routing_kernelLauncher(
             unpermuted_input,
             permuted_output,
             expanded_dest_row_to_expanded_source_row,
+            expert_idx_per_token,
+            w4a8_in_scale,
             expanded_source_row_to_expanded_dest_row,
             num_rows,
             k * active_rows,
@@ -1131,6 +1160,8 @@ void initialize_moe_routing_kernelLauncher(
             unpermuted_input,
             permuted_output,
             expanded_dest_row_to_expanded_source_row,
+            expert_idx_per_token,
+            w4a8_in_scale,
             expanded_source_row_to_expanded_dest_row,
             num_rows,
             k * active_rows,
@@ -1138,6 +1169,7 @@ void initialize_moe_routing_kernelLauncher(
             num_rows * k);
   }
 }
+};
 
 // ============================== Infer GEMM sizes
 // =================================
@@ -1248,7 +1280,8 @@ __global__ void finalize_moe_routing_kernel(
 }
 
 template <typename T>
-void finalize_moe_routing_kernelLauncher(
+struct finalize_moe_routing_kernelLauncher{
+static void run(
     const T* expanded_permuted_rows,
     T* reduced_unpermuted_output,
     const T* bias,
@@ -1280,123 +1313,5 @@ void finalize_moe_routing_kernelLauncher(
             routed_scaling_factor,
             num_rows);
 }
-
-// ========================= TopK Softmax specializations
-// ===========================
-template void topk_gating_softmax_kernelLauncher(const float*,
-                                                 const float*,
-                                                 float*,
-                                                 float*,
-                                                 int*,
-                                                 int*,
-                                                 float*,
-                                                 const int64_t,
-                                                 const int64_t,
-                                                 const int64_t,
-                                                 const bool,
-                                                 cudaStream_t,
-                                                 const bool);
-template void topk_gating_softmax_kernelLauncher(const half*,
-                                                 const half*,
-                                                 half*,
-                                                 half*,
-                                                 int*,
-                                                 int*,
-                                                 half*,
-                                                 const int64_t,
-                                                 const int64_t,
-                                                 const int64_t,
-                                                 const bool,
-                                                 cudaStream_t,
-                                                 const bool);
-#ifdef PADDLE_CUDA_BF16
-template void topk_gating_softmax_kernelLauncher(const __nv_bfloat16*,
-                                                 const __nv_bfloat16*,
-                                                 __nv_bfloat16*,
-                                                 __nv_bfloat16*,
-                                                 int*,
-                                                 int*,
-                                                 __nv_bfloat16*,
-                                                 const int64_t,
-                                                 const int64_t,
-                                                 const int64_t,
-                                                 const bool,
-                                                 cudaStream_t,
-                                                 const bool);
-#endif
-// ===================== Specializations for init routing
-// =========================
-template void initialize_moe_routing_kernelLauncher(const float*,
-                                                    float*,
-                                                    const int*,
-                                                    int*,
-                                                    const int64_t,
-                                                    const int64_t,
-                                                    const int64_t,
-                                                    const int64_t,
-                                                    cudaStream_t);
-template void initialize_moe_routing_kernelLauncher(const half*,
-                                                    half*,
-                                                    const int*,
-                                                    int*,
-                                                    const int64_t,
-                                                    const int64_t,
-                                                    const int64_t,
-                                                    const int64_t,
-                                                    cudaStream_t);
-#ifdef PADDLE_CUDA_BF16
-template void initialize_moe_routing_kernelLauncher(const __nv_bfloat16*,
-                                                    __nv_bfloat16*,
-                                                    const int*,
-                                                    int*,
-                                                    const int64_t,
-                                                    const int64_t,
-                                                    const int64_t,
-                                                    const int64_t,
-                                                    cudaStream_t);
-#endif
-// ==================== Specializations for final routing
-// ===================================
-template void finalize_moe_routing_kernelLauncher(const float*,
-                                                  float*,
-                                                  const float*,
-                                                  const float*,
-                                                  const int*,
-                                                  const int*,
-                                                  const int64_t,
-                                                  const int64_t,
-                                                  const int64_t,
-                                                  const int64_t,
-                                                  const bool,
-                                                  const float,
-                                                  cudaStream_t);
-template void finalize_moe_routing_kernelLauncher(const half*,
-                                                  half*,
-                                                  const half*,
-                                                  const float*,
-                                                  const int*,
-                                                  const int*,
-                                                  const int64_t,
-                                                  const int64_t,
-                                                  const int64_t,
-                                                  const int64_t,
-                                                  const bool,
-                                                  const float,
-                                                  cudaStream_t);
-#ifdef PADDLE_CUDA_BF16
-template void finalize_moe_routing_kernelLauncher(const __nv_bfloat16*,
-                                                  __nv_bfloat16*,
-                                                  const __nv_bfloat16*,
-                                                  const float*,
-                                                  const int*,
-                                                  const int*,
-                                                  const int64_t,
-                                                  const int64_t,
-                                                  const int64_t,
-                                                  const int64_t,
-                                                  const bool,
-                                                  const float,
-                                                  cudaStream_t);
-#endif
-
+};
 }  // namespace phi

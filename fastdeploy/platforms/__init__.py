@@ -22,6 +22,7 @@ from .cpu import CPUPlatform
 from .xpu import XPUPlatform
 from .npu import NPUPlatform
 from .dcu import DCUPlatform
+from .base import _Backend
 
 _current_platform = None
 

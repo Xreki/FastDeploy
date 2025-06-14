@@ -17,53 +17,37 @@
 from __future__ import annotations
 
 import collections
+import glob
 import hashlib
 import json
 import multiprocessing as mp
 import os
 import random
+import re
 import struct
 from functools import partial
 from typing import Callable, Optional
 
 import numpy as np
-from paddlenlp.transformers import PretrainedTokenizer
-from paddlenlp.transformers.model_utils import _add_variant
-from paddlenlp.transformers.utils import paddlenlp_load
-from paddlenlp.transformers.model_utils import load_tp_checkpoint
-from safetensors import safe_open
-
-from paddlenlp.utils.env import (
-    PADDLE_WEIGHTS_INDEX_NAME,
-    SAFE_MASTER_WEIGHTS_INDEX_NAME,
-    SAFE_PEFT_WEIGHTS_INDEX_NAME,
-    SAFE_WEIGHTS_INDEX_NAME,
-)
-from paddlenlp.utils.log import logger
-from tqdm import tqdm
-
 import paddle
 import paddle.distributed as dist
 from paddle.common_ops_import import convert_dtype
 from paddle.distributed import fleet
-import paddle
-import paddle.distributed as dist
-from fastsafetensors import SafeTensorsFileLoader, SingleGroup
-from paddle.distributed import fleet
-
-from .configuration import ErnieBotConfig, QuantizationConfig
-from .tokenizer import ErnieBotTokenizer
-import glob
+from paddlenlp.transformers import PretrainedTokenizer
+from paddlenlp.transformers.model_utils import _add_variant, load_tp_checkpoint
+from paddlenlp.transformers.utils import paddlenlp_load
+from paddlenlp.utils.env import (PADDLE_WEIGHTS_INDEX_NAME,
+                                 SAFE_MASTER_WEIGHTS_INDEX_NAME,
+                                 SAFE_PEFT_WEIGHTS_INDEX_NAME,
+                                 SAFE_WEIGHTS_INDEX_NAME)
+from paddlenlp.utils.log import logger
+from safetensors import safe_open
+from tqdm import tqdm
 
 from fastdeploy.platforms import current_platform
 
-MODEL_LIB_NAMES = [
-    "ernie_bot.modeling",
-    "ernie_bot.modeling_pp",
-    "ernie_bot.modeling_moe",
-    "ernie_bot.modeling_rm",
-    "ernie_bot.proxy_distill",
-]
+from .configuration import ErnieBotConfig, QuantizationConfig
+from .tokenizer import ErnieBotTokenizer
 
 MAX_BSZ = 512
 MAX_DRAFT_TOKENS = 6
@@ -86,7 +70,8 @@ class UniqueIDGenerator:
         first_key = sorted_keys[0]
         first_parameter = state_dict[first_key].cast("float32")
         # 假设模型参数是唯一的，通过第一个key来获取md5sum
-        model_md5 = hashlib.md5(str(first_parameter.sum()).encode("utf-8")).hexdigest()
+        model_md5 = hashlib.md5(str(
+            first_parameter.sum()).encode("utf-8")).hexdigest()
         unique_id = f"{model_md5}-{random.randint(10000, 99999)}"
         return unique_id
 
@@ -103,20 +88,20 @@ def load_sharded_checkpoint(folder, variant=None, return_numpy=False):
 
     """
     # Load the index
-    pdparams_file = os.path.join(folder, _add_variant("model_state.pdparams", variant))
+    pdparams_file = os.path.join(folder,
+                                 _add_variant("model_state.pdparams", variant))
     lora_pdparams_file = os.path.join(
-        folder, _add_variant("lora_model_state.pdparams", variant)
-    )
-    safetensors_file = os.path.join(folder, _add_variant("model.safetensors", variant))
+        folder, _add_variant("lora_model_state.pdparams", variant))
+    safetensors_file = os.path.join(folder,
+                                    _add_variant("model.safetensors", variant))
     if os.path.isfile(pdparams_file):
         return paddle.load(pdparams_file, return_numpy=return_numpy)
     if os.path.isfile(lora_pdparams_file):
         return paddle.load(lora_pdparams_file, return_numpy=return_numpy)
     if os.path.isfile(safetensors_file):
         try:
-            from paddlenlp.utils.safetensors import (
-                fast_load_file as safe_load_file,
-            )
+            from paddlenlp.utils.safetensors import \
+                fast_load_file as safe_load_file
         except ImportError:
             from safetensors.numpy import load_file as safe_load_file
 
@@ -124,19 +109,18 @@ def load_sharded_checkpoint(folder, variant=None, return_numpy=False):
         if not return_numpy:
             for key in list(state_dict.keys()):
                 if isinstance(state_dict[key], np.ndarray):
-                    state_dict[key] = paddle.Tensor(state_dict.pop(key), zero_copy=True)
+                    state_dict[key] = paddle.Tensor(state_dict.pop(key),
+                                                    zero_copy=True)
         return state_dict
 
-    index_file = os.path.join(folder, _add_variant(PADDLE_WEIGHTS_INDEX_NAME, variant))
+    index_file = os.path.join(folder,
+                              _add_variant(PADDLE_WEIGHTS_INDEX_NAME, variant))
     safe_index_file = os.path.join(
-        folder, _add_variant(SAFE_WEIGHTS_INDEX_NAME, variant)
-    )
+        folder, _add_variant(SAFE_WEIGHTS_INDEX_NAME, variant))
     safe_master_file = os.path.join(
-        folder, _add_variant(SAFE_MASTER_WEIGHTS_INDEX_NAME, variant)
-    )
+        folder, _add_variant(SAFE_MASTER_WEIGHTS_INDEX_NAME, variant))
     safe_peft_file = os.path.join(
-        folder, _add_variant(SAFE_PEFT_WEIGHTS_INDEX_NAME, variant)
-    )
+        folder, _add_variant(SAFE_PEFT_WEIGHTS_INDEX_NAME, variant))
 
     index_present = os.path.isfile(index_file)
     safe_index_present = os.path.isfile(safe_index_file)
@@ -163,9 +147,8 @@ def load_sharded_checkpoint(folder, variant=None, return_numpy=False):
 
     if load_safe:
         try:
-            from paddlenlp.utils.safetensors import (
-                fast_load_file as safe_load_file,
-            )
+            from paddlenlp.utils.safetensors import \
+                fast_load_file as safe_load_file
         except ImportError:
             from safetensors.numpy import load_file as safe_load_file
 
@@ -173,11 +156,8 @@ def load_sharded_checkpoint(folder, variant=None, return_numpy=False):
         index = json.load(f)
 
     shard_files = list(set(index["weight_map"].values()))
-    loader = (
-        safe_load_file
-        if load_safe
-        else partial(paddlenlp_load, map_location="np" if return_numpy else "cpu")
-    )
+    loader = (safe_load_file if load_safe else partial(
+        paddlenlp_load, map_location="np" if return_numpy else "cpu"))
 
     ret = {}
     for shard_file in tqdm(shard_files):
@@ -192,7 +172,8 @@ def load_sharded_checkpoint(folder, variant=None, return_numpy=False):
     return ret
 
 
-def convert_ndarray_dtype(np_array: np.ndarray, target_dtype: str) -> np.ndarray:
+def convert_ndarray_dtype(np_array: np.ndarray,
+                          target_dtype: str) -> np.ndarray:
     """convert ndarray
 
     Args:
@@ -230,7 +211,8 @@ def ernie_bot_postprocess_past_key_value(past_key_values):
     """
     Cache = collections.namedtuple("Cache", ["k", "v"])
     # (layer_num, bs, prefixlen, head_num/tensor_parallel_degree, head_dim)*2
-    keys, values = paddle.transpose(past_key_values, perm=[2, 0, 1, 3, 4]).split(2)
+    keys, values = paddle.transpose(past_key_values, perm=[2, 0, 1, 3,
+                                                           4]).split(2)
 
     past_key_values = []
     for k, v in zip(keys, values):
@@ -238,7 +220,8 @@ def ernie_bot_postprocess_past_key_value(past_key_values):
     return past_key_values
 
 
-def ernie_bot_pad_attention_mask(input_ids_shape, num_prefix_tokens, attention_mask):
+def ernie_bot_pad_attention_mask(input_ids_shape, num_prefix_tokens,
+                                 attention_mask):
     """
     ernie_bot_pad_attention_mask
     """
@@ -307,13 +290,11 @@ def pad_batch_data(insts, pad_id=0, return_seq_len=False, pad_style="right"):
     # pad to max input len
     # max_len = args.max_len
     if pad_style == "left":
-        inst_data = np.array(
-            [[pad_id] * (max_len - len(inst)) + list(inst) for inst in insts]
-        )
+        inst_data = np.array([[pad_id] * (max_len - len(inst)) + list(inst)
+                              for inst in insts])
     else:
         inst_data = np.array(
-            [list(inst) + [pad_id] * (max_len - len(inst)) for inst in insts]
-        )
+            [list(inst) + [pad_id] * (max_len - len(inst)) for inst in insts])
     if return_seq_len:
         seq_len = np.array([len(inst) for inst in insts])
         return inst_data.astype("int64").reshape([-1, max_len]), seq_len
@@ -333,8 +314,7 @@ def load_prefix_weights(
         prefix_path (str): the path of prefix weight
     """
     past_key_values = paddle.to_tensor(
-        np.load(f"{prefix_path}/pre_caches.npy")
-    ).unsqueeze(2)
+        np.load(f"{prefix_path}/pre_caches.npy")).unsqueeze(2)
 
     if batch_size > 1:
         past_key_values = paddle.concat([past_key_values] * batch_size, axis=2)
@@ -346,9 +326,8 @@ def load_prefix_weights(
     return past_key_values
 
 
-def build_for_generation(
-    model, tokenizer: PretrainedTokenizer, generation_kwargs: dict
-):
+def build_for_generation(model, tokenizer: PretrainedTokenizer,
+                         generation_kwargs: dict):
     """build `ErnieBotForGenerationFuse` to generate tokens
 
     Args:
@@ -455,9 +434,8 @@ def save_infer_result(trainer, dev_ds, k=100, src_length=256, tgt_length=512):
                 all_instructions.append(ds["src"])
                 all_answers.append(ds["tgt"])
 
-    batch_texts = batchfy_text(
-        all_instructions, trainer.args.per_device_eval_batch_size
-    )
+    batch_texts = batchfy_text(all_instructions,
+                               trainer.args.per_device_eval_batch_size)
     predictor = Predictor(
         tokenizer=trainer.tokenizer,
         model=trainer.model,
@@ -470,15 +448,19 @@ def save_infer_result(trainer, dev_ds, k=100, src_length=256, tgt_length=512):
         outputs = predictor.predict(texts)
         for i, (text, result) in enumerate(zip(texts, outputs["result"])):
             out = {
-                "instruction": text,
-                "answer": all_answers[bs * trainer.args.per_device_eval_batch_size + i],
-                "output": result,
+                "instruction":
+                text,
+                "answer":
+                all_answers[bs * trainer.args.per_device_eval_batch_size + i],
+                "output":
+                result,
             }
             all_output.append(out)
 
     # save results
     if trainer.args.tensor_parallel_rank == 0:
-        with open(os.path.join(trainer.args.output_dir, "infer_result.json"), "w") as f:
+        with open(os.path.join(trainer.args.output_dir, "infer_result.json"),
+                  "w") as f:
             for out in all_output:
                 f.write(json.dumps(out, ensure_ascii=False) + "\n")
 
@@ -517,7 +499,8 @@ def w4a8_weight_convert(state_dict):
                 name,
                 w4a8_weight_bites_name_map,
             )
-            state_dict[name] = weight_q.numpy() if weight_q is not None else value
+            state_dict[name] = weight_q.numpy(
+            ) if weight_q is not None else value
             del weight_q
     w4a8_weight_bites_layers_map = {}
     w4a8_weight_bites_layers_map["qkv_gemm_bits_map"] = []
@@ -530,10 +513,13 @@ def w4a8_weight_convert(state_dict):
         elif "out_proj" in name_keys:
             w4a8_weight_bites_layers_map["out_gemm_bits_map"].append(gemm_bits)
         elif "linear1" in name_keys:
-            w4a8_weight_bites_layers_map["ffn1_gemm_bits_map"].append(gemm_bits)
+            w4a8_weight_bites_layers_map["ffn1_gemm_bits_map"].append(
+                gemm_bits)
         elif "linear2" in name_keys:
-            w4a8_weight_bites_layers_map["ffn2_gemm_bits_map"].append(gemm_bits)
-    logger.debug(f"w4a8_weight_bites_layers_map:{w4a8_weight_bites_layers_map}")
+            w4a8_weight_bites_layers_map["ffn2_gemm_bits_map"].append(
+                gemm_bits)
+    logger.debug(
+        f"w4a8_weight_bites_layers_map:{w4a8_weight_bites_layers_map}")
     return state_dict, w4a8_weight_bites_layers_map
 
 
@@ -609,149 +595,6 @@ def deserialize_from_file(fp):
     return data_arr
 
 
-def get_rotary_position_embedding(
-    position_ids, head_dim, compression_ratio=1, rope_theta=10000.0
-):
-    """
-    Pre-calculate rotary position embedding for position_ids.
-
-    Args:
-        position_ids: [1, S]
-        head_dim: D
-
-    Returns:
-        rot_emb: [2, 1, S, 1, D // 2] or [2, 1, S, 1, D], cos + sin
-    """
-    bsz, max_seq_len = position_ids.shape[:2]
-    inv_freq = rope_theta ** (
-        -paddle.arange(0, head_dim, 2, dtype="float32") / head_dim
-    )
-    compression_position_ids = position_ids / compression_ratio
-
-    # shape: [B, S, D/2]
-    freqs = paddle.einsum(
-        "ij,k->ijk", compression_position_ids.cast("float32"), inv_freq
-    )
-
-    if paddle.is_compiled_with_xpu():
-        # shape: [B, S, D]
-        rot_emb = paddle.zeros((2, bsz, max_seq_len, 1, head_dim), dtype="float32")
-        emb = paddle.stack([freqs, freqs], axis=-1).reshape(
-            (bsz, max_seq_len, head_dim)
-        )
-    else:
-        # shape: [B, S, D/2]
-        rot_emb = paddle.zeros((2, bsz, max_seq_len, 1, head_dim // 2), dtype="float32")
-        emb = paddle.stack([freqs], axis=-1).reshape((bsz, max_seq_len, head_dim // 2))
-    # shape: [B, S, 1, D]
-    emb = paddle.unsqueeze(emb, 2)
-    rot_emb[0] = paddle.cos(emb)
-    rot_emb[1] = paddle.sin(emb)
-    if paddle.is_compiled_with_custom_device("npu"):
-        return (
-            paddle.concat([rot_emb, rot_emb], axis=3)
-            .transpose([0, 1, 2, 4, 3])
-            .reshape([2, bsz, max_seq_len, 1, head_dim])
-        )
-    else:
-        return rot_emb
-
-
-def get_rotary_position_embedding_3d(
-    position_ids,
-    head_dim,
-    compression_ratio=1.0,
-    rope_theta=10000.0,
-    seq_len=131072,
-    freq_allocation=2,
-):
-    """
-    Pre-calculate rotary position embedding for position_ids.
-
-    Args:
-        position_ids: [1, S]
-        head_dim: D
-
-    Returns:
-        rot_emb: [2, 1, S, 1, D // 2] or [2, 1, S, 1, D], cos + sin
-    """
-    rot_emb = paddle.zeros((2, 1, seq_len, 1, head_dim // 2), dtype="float32")
-
-    # position_ids_3d: [bsz, seq_len, 3]
-    position_ids_3d = paddle.tile(
-        paddle.arange(seq_len, dtype="int64").unsqueeze(0).unsqueeze(-1), [1, 1, 3]
-    )
-
-    position_ids_3d[:, : position_ids.shape[1], :] = position_ids
-
-    # import pdb;pdb.set_trace()
-
-    # position_ids: [bsz, seq_len]
-    position_ids = paddle.arange(0, seq_len, 1, dtype="float32").reshape((1, -1))
-
-    position_ids = position_ids / compression_ratio
-
-    indices = paddle.arange(0, head_dim, 2, dtype="float32")
-    indices = 1 / rope_theta ** (indices / head_dim)
-    # sinusoid_inp: [bsz, seq_len, 1, head_dim // 2]
-    sinusoid_inp = position_ids.unsqueeze(-1) * indices.unsqueeze(0)
-    # pos_emb: [bsz, seq_len, 1, head_dim]
-    pos_emb = paddle.concat(
-        [paddle.sin(sinusoid_inp), paddle.cos(sinusoid_inp)], axis=-1
-    )
-    # pos_emb: [bsz, 1, seq_len, head_dim]
-    pos_emb = paddle.reshape(pos_emb, (-1, 1, seq_len, head_dim))
-    # pos_emb: [bsz, seq_len, 1, head_dim]
-    pos_emb = pos_emb.transpose([0, 2, 1, 3])
-    # sin: [bsz, seq_len, 1, head_dim // 2]
-    sin, cos = paddle.chunk(pos_emb, 2, axis=-1)
-    batch_indices = paddle.arange(end=position_ids.shape[0]).cast("int64")
-    # batch_indices: [[0]]
-    batch_indices = batch_indices[..., None]
-    # sin, cos: [3, seq_len, 1, head_dim // 2]
-    sin = sin.tile([position_ids.shape[0], 1, 1, 1])
-    cos = cos.tile([position_ids.shape[0], 1, 1, 1])
-
-    tmp_pos_id_0 = position_ids_3d[..., 0].squeeze().astype("int64")
-    tmp_pos_id_1 = position_ids_3d[..., 1].squeeze().astype("int64")
-    tmp_pos_id_2 = position_ids_3d[..., 2].squeeze().astype("int64")
-
-    sin_bsz = paddle.index_select(sin, index=batch_indices, axis=0)
-    sin_t = paddle.index_select(sin_bsz, index=tmp_pos_id_0, axis=1)[
-        :, :, :, -freq_allocation:
-    ]
-    sin_h = paddle.index_select(sin_bsz, index=tmp_pos_id_1, axis=1)[
-        :, :, :, : head_dim // 2 - freq_allocation : 2
-    ]
-    sin_w = paddle.index_select(sin_bsz, index=tmp_pos_id_2, axis=1)[
-        :, :, :, 1 : head_dim // 2 - freq_allocation : 2
-    ]
-    sin_hw = paddle.stack([sin_h, sin_w], axis=-1).reshape(
-        sin_h.shape[:-1] + [sin_h.shape[-1] * 2]
-    )
-    sin_thw = paddle.concat([sin_hw, sin_t], axis=-1)  # noqa
-
-    cos_bsz = paddle.index_select(cos, index=batch_indices, axis=0)
-    cos_t = paddle.index_select(cos_bsz, index=tmp_pos_id_0, axis=1)[
-        :, :, :, -freq_allocation:
-    ]
-    cos_h = paddle.index_select(cos_bsz, index=tmp_pos_id_1, axis=1)[
-        :, :, :, : head_dim // 2 - freq_allocation : 2
-    ]
-    cos_w = paddle.index_select(cos_bsz, index=tmp_pos_id_2, axis=1)[
-        :, :, :, 1 : head_dim // 2 - freq_allocation : 2
-    ]
-    cos_hw = paddle.stack([cos_h, cos_w], axis=-1).reshape(
-        cos_h.shape[:-1] + [cos_h.shape[-1] * 2]
-    )
-    cos_thw = paddle.concat([cos_hw, cos_t], axis=-1)  # noqa
-
-    rot_emb[0] = cos_thw  # noqa
-    rot_emb[1] = sin_thw  # noqa
-
-    return rot_emb
-
-
 def read_res(
     model_name_or_path,
     output_tensor_max_shape,
@@ -759,31 +602,34 @@ def read_res(
     msg_queue_id=None,
     use_ep=False,
     ep_just_for_test=False,
+    tokenizer=None,
 ):
     """Read result from queue."""
     if msg_queue_id is None:
-        if (
-            current_platform.is_cuda() and current_platform.available()
-        ) or paddle.is_compiled_with_xpu():
+        if (current_platform.is_cuda() and
+                current_platform.available()) or paddle.is_compiled_with_xpu():
             from fastdeploy.model_executor.ops.gpu import get_output
         elif paddle.is_compiled_with_custom_device("npu"):
             from paddle_custom_device.npu import get_output
         else:  # CPU
             from fastdeploy.model_executor.ops.cpu import get_output
     else:
-        if (
-            current_platform.is_cuda() and current_platform.available()
-        ) or paddle.is_compiled_with_xpu():
+        if (current_platform.is_cuda() and
+                current_platform.available()) or paddle.is_compiled_with_xpu():
             from fastdeploy.model_executor.ops.gpu import get_output_dynamic
         elif paddle.is_compiled_with_custom_device("npu"):
             from paddle_custom_device.npu import get_output_dynamic
         else:  # CPU
             from fastdeploy.model_executor.ops.cpu import get_output_dynamic
 
-    tokenizer = ErnieBotTokenizer.from_pretrained(model_name_or_path)
+    if tokenizer is None:
+        tokenizer = ErnieBotTokenizer.from_pretrained(model_name_or_path)
+
     paddle.device.set_device("cpu")
     paddle.disable_static()
-    output_tensor = paddle.full(output_tensor_max_shape, fill_value=2, dtype="int64")
+    output_tensor = paddle.full(output_tensor_max_shape,
+                                fill_value=2,
+                                dtype="int64")
 
     while True:
         outputs = []
@@ -795,7 +641,7 @@ def read_res(
             if int(output_tensor[0, 0]) == -2:  # read none
                 continue
             bsz = int(output_tensor[1, 0])
-            output_numpy = output_tensor[2 : bsz + 2].numpy()
+            output_numpy = output_tensor[2:bsz + 2].numpy()
             output_numpy[output_numpy == -1] = 2
             outputs.append(output_numpy)
 
@@ -823,12 +669,15 @@ def speculate_read_res(
     if msg_queue_id is None:
         from fastdeploy.model_executor.ops.gpu import speculate_get_output
     else:
-        from fastdeploy.model_executor.ops.gpu import speculate_get_output_dynamic
+        from fastdeploy.model_executor.ops.gpu import \
+            speculate_get_output_dynamic
 
     tokenizer = ErnieBotTokenizer.from_pretrained(model_name_or_path)
     paddle.device.set_device("cpu")
     paddle.disable_static()
-    output_tensor = paddle.full(output_tensor_max_shape, fill_value=2, dtype="int64")
+    output_tensor = paddle.full(output_tensor_max_shape,
+                                fill_value=2,
+                                dtype="int64")
     while True:
         outputs = []
         for _ in range(MAX_BSZ):
@@ -838,22 +687,18 @@ def speculate_read_res(
             if msg_queue_id is None:
                 speculate_get_output(output_tensor, 0, True)
             else:
-                speculate_get_output_dynamic(output_tensor, 0, True, msg_queue_id)
+                speculate_get_output_dynamic(output_tensor, 0, True,
+                                             msg_queue_id)
             if int(output_tensor[0]) == -2:  # read none
                 continue
             bsz = int(output_tensor[1])
-            accept_num = output_tensor[2 : bsz + 2].numpy()
+            accept_num = output_tensor[2:bsz + 2].numpy()
             for bi in range(bsz):
                 outputs[bi].extend(
-                    output_tensor.numpy()[
-                        2
-                        + MAX_BSZ
-                        + bi * MAX_DRAFT_TOKENS : 2
-                        + MAX_BSZ
-                        + bi * MAX_DRAFT_TOKENS
-                        + accept_num[bi]
-                    ].tolist()
-                )
+                    output_tensor.numpy()[2 + MAX_BSZ +
+                                          bi * MAX_DRAFT_TOKENS:2 + MAX_BSZ +
+                                          bi * MAX_DRAFT_TOKENS +
+                                          accept_num[bi]].tolist())
             if int(output_tensor[0]) == -1:
                 break
 
@@ -880,13 +725,10 @@ def calculate_effective_tokens(training_args, train_dataset, max_seq_len):
     else:
         sharding_parallel_degree = 1
 
-    total_batch = (
-        training_args.max_steps
-        * training_args.per_device_train_batch_size
-        * training_args.gradient_accumulation_steps
-        * sharding_parallel_degree
-        * data_parallel_degree
-    )
+    total_batch = (training_args.max_steps *
+                   training_args.per_device_train_batch_size *
+                   training_args.gradient_accumulation_steps *
+                   sharding_parallel_degree * data_parallel_degree)
     for i, data in enumerate(train_dataset):
         if i == total_batch:
             break
@@ -930,8 +772,8 @@ def estimate_training(train_dataset, data_args, training_args, model_args):
             "The results between sampling and non-sampling methods may differ."
         )
         train_dataset.max_estimate_samples = min(
-            training_args.max_estimate_samples, train_dataset.max_estimate_samples
-        )
+            training_args.max_estimate_samples,
+            train_dataset.max_estimate_samples)
 
     if train_dataset.max_estimate_samples > 0:
         train_batches = 0
@@ -945,52 +787,63 @@ def estimate_training(train_dataset, data_args, training_args, model_args):
 
         train_tokens *= training_args.num_train_epochs
         train_batches *= training_args.num_train_epochs
-        global_batch_size = (
-            training_args.per_device_train_batch_size
-            * training_args.gradient_accumulation_steps
-            * max(training_args.data_parallel_degree, 1)
-            * max(training_args.sharding_parallel_degree, 1)
-        )
+        global_batch_size = (training_args.per_device_train_batch_size *
+                             training_args.gradient_accumulation_steps *
+                             max(training_args.data_parallel_degree, 1) *
+                             max(training_args.sharding_parallel_degree, 1))
         max_steps = int(np.ceil(train_batches / global_batch_size))
 
         if max_samples != train_dataset.max_estimate_samples:
             max_steps *= max_samples / train_dataset.max_estimate_samples
             train_tokens *= max_samples / train_dataset.max_estimate_samples
-            train_dataset.used_samples *= (
-                max_samples / train_dataset.max_estimate_samples
-            )
+            train_dataset.used_samples *= (max_samples /
+                                           train_dataset.max_estimate_samples)
             train_dataset.unused_samples *= (
-                max_samples / train_dataset.max_estimate_samples
-            )
+                max_samples / train_dataset.max_estimate_samples)
 
         res = {
-            "num_train_epochs": int(training_args.num_train_epochs),
-            "max_steps": int(np.ceil(max_steps)),
-            "train_tokens": int(train_tokens),
-            "global_batch_size": int(global_batch_size),
-            "gradient_accumulation_steps": training_args.gradient_accumulation_steps,
-            "warmup_steps": int(np.ceil(0.1 * max_steps)),
-            "per_device_train_batch_size": int(
-                training_args.per_device_train_batch_size
-            ),
-            "tensor_parallel_degree": int(training_args.tensor_parallel_degree),
-            "pipeline_parallel_degree": int(training_args.pipeline_parallel_degree),
-            "sharding_parallel_degree": int(training_args.sharding_parallel_degree),
-            "seed": training_args.seed,
-            "num_samples_each_epoch": data_args.num_samples_each_epoch,
-            "example_from_same_task_prob": data_args.example_from_same_task_prob,
-            "pseudo_sampling_prob": data_args.pseudo_sampling_prob,
-            "trigger_data_prob": data_args.trigger_data_prob,
-            "max_seq_len": int(data_args.max_seq_len),
-            "valid": True,
-            "train_samples": int(max_samples * training_args.num_train_epochs),
-            "estimate_samples": int(train_dataset.max_estimate_samples),
-            "actual_train_samples": int(
-                train_dataset.used_samples * training_args.num_train_epochs
-            ),
-            "skip_samples": int(
-                train_dataset.unused_samples * training_args.num_train_epochs
-            ),
+            "num_train_epochs":
+            int(training_args.num_train_epochs),
+            "max_steps":
+            int(np.ceil(max_steps)),
+            "train_tokens":
+            int(train_tokens),
+            "global_batch_size":
+            int(global_batch_size),
+            "gradient_accumulation_steps":
+            training_args.gradient_accumulation_steps,
+            "warmup_steps":
+            int(np.ceil(0.1 * max_steps)),
+            "per_device_train_batch_size":
+            int(training_args.per_device_train_batch_size),
+            "tensor_parallel_degree":
+            int(training_args.tensor_parallel_degree),
+            "pipeline_parallel_degree":
+            int(training_args.pipeline_parallel_degree),
+            "sharding_parallel_degree":
+            int(training_args.sharding_parallel_degree),
+            "seed":
+            training_args.seed,
+            "num_samples_each_epoch":
+            data_args.num_samples_each_epoch,
+            "example_from_same_task_prob":
+            data_args.example_from_same_task_prob,
+            "pseudo_sampling_prob":
+            data_args.pseudo_sampling_prob,
+            "trigger_data_prob":
+            data_args.trigger_data_prob,
+            "max_seq_len":
+            int(data_args.max_seq_len),
+            "valid":
+            True,
+            "train_samples":
+            int(max_samples * training_args.num_train_epochs),
+            "estimate_samples":
+            int(train_dataset.max_estimate_samples),
+            "actual_train_samples":
+            int(train_dataset.used_samples * training_args.num_train_epochs),
+            "skip_samples":
+            int(train_dataset.unused_samples * training_args.num_train_epochs),
         }
         if hasattr(training_args, "num_of_gpus"):
             res["num_of_gpus"] = training_args.num_of_gpus
@@ -1002,36 +855,54 @@ def estimate_training(train_dataset, data_args, training_args, model_args):
             res["valid"] = False
 
         if getattr(training_args, "estimation_output_file", None):
-            with open(training_args.estimation_output_file, "w", encoding="utf-8") as f:
+            with open(training_args.estimation_output_file,
+                      "w",
+                      encoding="utf-8") as f:
                 json.dump(res, f)
 
         return max_steps
     else:
         res = {
-            "num_train_epochs": int(training_args.num_train_epochs),
-            "max_steps": 0,
-            "gradient_accumulation_steps": training_args.gradient_accumulation_steps,
-            "train_tokens": 0,
-            "per_device_train_batch_size": int(
-                training_args.per_device_train_batch_size
-            ),
-            "tensor_parallel_degree": int(training_args.tensor_parallel_degree),
-            "pipeline_parallel_degree": int(training_args.pipeline_parallel_degree),
-            "sharding_parallel_degree": int(training_args.sharding_parallel_degree),
-            "num_samples_each_epoch": data_args.num_samples_each_epoch,
-            "example_from_same_task_prob": data_args.example_from_same_task_prob,
-            "pseudo_sampling_prob": data_args.pseudo_sampling_prob,
-            "trigger_data_prob": data_args.trigger_data_prob,
-            "max_seq_len": int(data_args.max_seq_len),
-            "seed": data_args.seed,
-            "valid": False,
-            "train_samples": 0,
+            "num_train_epochs":
+            int(training_args.num_train_epochs),
+            "max_steps":
+            0,
+            "gradient_accumulation_steps":
+            training_args.gradient_accumulation_steps,
+            "train_tokens":
+            0,
+            "per_device_train_batch_size":
+            int(training_args.per_device_train_batch_size),
+            "tensor_parallel_degree":
+            int(training_args.tensor_parallel_degree),
+            "pipeline_parallel_degree":
+            int(training_args.pipeline_parallel_degree),
+            "sharding_parallel_degree":
+            int(training_args.sharding_parallel_degree),
+            "num_samples_each_epoch":
+            data_args.num_samples_each_epoch,
+            "example_from_same_task_prob":
+            data_args.example_from_same_task_prob,
+            "pseudo_sampling_prob":
+            data_args.pseudo_sampling_prob,
+            "trigger_data_prob":
+            data_args.trigger_data_prob,
+            "max_seq_len":
+            int(data_args.max_seq_len),
+            "seed":
+            data_args.seed,
+            "valid":
+            False,
+            "train_samples":
+            0,
         }
         if hasattr(training_args, "num_of_gpus"):
             res["num_of_gpus"] = training_args.num_of_gpus
 
         if getattr(training_args, "estimation_output_file", None):
-            with open(training_args.estimation_output_file, "w", encoding="utf-8") as f:
+            with open(training_args.estimation_output_file,
+                      "w",
+                      encoding="utf-8") as f:
                 json.dump(res, f)
 
         logger.error("No valid data found, please check your dataset format.")
@@ -1048,17 +919,15 @@ def get_w4a8_gemm_config_tuple(file_root_path):
         gemm_tuple_list = []
         for line in file:
             line_split = line.split(" ")
-            gemm_tuple_list.append(
-                [
-                    int(line_split[1]),
-                    int(line_split[2]),
-                    int(line_split[3]),
-                    int(line_split[4]),
-                    int(line_split[5]),
-                    int(line_split[6]),
-                    int(line_split[7]),
-                ]
-            )
+            gemm_tuple_list.append([
+                int(line_split[1]),
+                int(line_split[2]),
+                int(line_split[3]),
+                int(line_split[4]),
+                int(line_split[5]),
+                int(line_split[6]),
+                int(line_split[7]),
+            ])
         gemm_tuple_list.sort(key=lambda x: x[0])
         gemm_tuple_numpy = np.array(gemm_tuple_list, dtype="int32")
         gemm_tuple_numpy = gemm_tuple_numpy.flatten()
@@ -1070,23 +939,20 @@ def get_w4a8_gemm_config_tuple(file_root_path):
     ffn2_gemm_config_tuple = []
     try:
         qkv_tuned_gemm_config_log_path = os.path.join(
-            f"{file_root_path}", "qkv_tuned_gemm_config.log"
-        )
+            f"{file_root_path}", "qkv_tuned_gemm_config.log")
         with open(qkv_tuned_gemm_config_log_path) as file:
             qkv_gemm_config_tuple = get_gemm_config_tuple_from_file(file)
         out_linear_tuned_gemm_config_log_path = os.path.join(
-            f"{file_root_path}", "out_linear_tuned_gemm_config.log"
-        )
+            f"{file_root_path}", "out_linear_tuned_gemm_config.log")
         with open(out_linear_tuned_gemm_config_log_path) as file:
-            out_linear_gemm_config_tuple = get_gemm_config_tuple_from_file(file)
+            out_linear_gemm_config_tuple = get_gemm_config_tuple_from_file(
+                file)
         ffn1_tuned_gemm_config_log_path = os.path.join(
-            f"{file_root_path}", "ffn1_tuned_gemm_config.log"
-        )
+            f"{file_root_path}", "ffn1_tuned_gemm_config.log")
         with open(ffn1_tuned_gemm_config_log_path) as file:
             ffn1_gemm_config_tuple = get_gemm_config_tuple_from_file(file)
         ffn2_tuned_gemm_config_log_path = os.path.join(
-            f"{file_root_path}", "ffn2_tuned_gemm_config.log"
-        )
+            f"{file_root_path}", "ffn2_tuned_gemm_config.log")
         with open(ffn2_tuned_gemm_config_log_path) as file:
             ffn2_gemm_config_tuple = get_gemm_config_tuple_from_file(file)
     except Exception:
@@ -1095,7 +961,8 @@ def get_w4a8_gemm_config_tuple(file_root_path):
         )
     w4a8_gemm_config = {}
     w4a8_gemm_config["qkv_gemm_config_tuple"] = qkv_gemm_config_tuple
-    w4a8_gemm_config["out_linear_gemm_config_tuple"] = out_linear_gemm_config_tuple
+    w4a8_gemm_config[
+        "out_linear_gemm_config_tuple"] = out_linear_gemm_config_tuple
     w4a8_gemm_config["ffn1_gemm_config_tuple"] = ffn1_gemm_config_tuple
     w4a8_gemm_config["ffn2_gemm_config_tuple"] = ffn2_gemm_config_tuple
     return w4a8_gemm_config
@@ -1120,7 +987,8 @@ def update_refined_recompute(rr, sequence_parallel, lora=False):
         ops = rr.split(",")
         for op in ops:
             if ":" not in op:
-                raise ValueError("Illegal refined_recompute input, please check.")
+                raise ValueError(
+                    "Illegal refined_recompute input, please check.")
             op_name, skip_num = op.split(":")[0], int(op.split(":")[1])
             if op_name not in rr_res:
                 raise ValueError(
@@ -1128,10 +996,10 @@ def update_refined_recompute(rr, sequence_parallel, lora=False):
                 )
 
             if op_name in [
-                "mlp_row_ln",
-                "attention_row_ln",
-                "attention_column_ln",
-                "mlp_column_ln",
+                    "mlp_row_ln",
+                    "attention_row_ln",
+                    "attention_column_ln",
+                    "mlp_column_ln",
             ]:
                 if not sequence_parallel:
                     logger.warning(
@@ -1173,7 +1041,8 @@ def model_convert_fp8(model_path, device=None):
     weight_scales_path = os.path.join(model_path, "weight_scales_0.json")
     with open(weight_scales_path, "r") as weight_scales_file:
         weight_scales = json.load(weight_scales_file)
-        if "gpt.decoder.layers." + str(0) + ".gate.weight_quanter" in weight_scales:
+        if "ernie.decoder.layers." + str(
+                0) + ".gate.weight_quanter" in weight_scales:
             logger.info("FP8 model checkpoint already converted")
             return
         else:
@@ -1187,35 +1056,40 @@ def model_convert_fp8(model_path, device=None):
     gate_bias_name = ".gate.bias"
     up_bias_name = ".up.bias"
 
-    params_states = paddle.load(os.path.join(model_path, "model_state.pdparams"))
+    params_states = paddle.load(
+        os.path.join(model_path, "model_state.pdparams"))
     new_path = os.path.join(model_path, "model_state.pdparams")
 
     for i in range(0, nums_layers):
-        ffn1_weights = params_states["gpt.decoder.layers." + str(i) + ffn1_weights_name]
+        ffn1_weights = params_states["ernie.decoder.layers." + str(i) +
+                                     ffn1_weights_name]
         ffn1_weights_0 = ffn1_weights[:, ::2]
         ffn1_weights_1 = ffn1_weights[:, 1::2]
 
         ffn1_weights_0_range = paddle.abs(ffn1_weights_0).max()
         ffn1_weights_1_range = paddle.abs(ffn1_weights_1).max()
 
-        weight_scales["gpt.decoder.layers." + str(i) + ".gate.weight_quanter"] = (
-            paddle.cast(ffn1_weights_0_range, "float").numpy().tolist()
-        )
-        weight_scales["gpt.decoder.layers." + str(i) + ".up.weight_quanter"] = (
-            paddle.cast(ffn1_weights_1_range, "float").numpy().tolist()
-        )
-        params_states["gpt.decoder.layers." + str(i) + gate_weights_name] = (
-            ffn1_weights_0 * 448 / ffn1_weights_0_range
-        )
-        params_states["gpt.decoder.layers." + str(i) + up_weights_name] = (
-            ffn1_weights_1 * 448 / ffn1_weights_1_range
-        )
-        del params_states["gpt.decoder.layers." + str(i) + ffn1_weights_name]
+        weight_scales["ernie.decoder.layers." + str(i) +
+                      ".gate.weight_quanter"] = (paddle.cast(
+                          ffn1_weights_0_range, "float").numpy().tolist())
+        weight_scales["ernie.decoder.layers." + str(i) +
+                      ".up.weight_quanter"] = (paddle.cast(
+                          ffn1_weights_1_range, "float").numpy().tolist())
+        params_states["ernie.decoder.layers." + str(i) +
+                      gate_weights_name] = (ffn1_weights_0 * 448 /
+                                            ffn1_weights_0_range)
+        params_states["ernie.decoder.layers." + str(i) +
+                      up_weights_name] = (ffn1_weights_1 * 448 /
+                                          ffn1_weights_1_range)
+        del params_states["ernie.decoder.layers." + str(i) + ffn1_weights_name]
 
-        ffn1_bias = params_states["gpt.decoder.layers." + str(i) + ffn1_bias_name]
-        params_states["gpt.decoder.layers." + str(i) + gate_bias_name] = ffn1_bias[::2]
-        params_states["gpt.decoder.layers." + str(i) + up_bias_name] = ffn1_bias[1::2]
-        del params_states["gpt.decoder.layers." + str(i) + ffn1_bias_name]
+        ffn1_bias = params_states["ernie.decoder.layers." + str(i) +
+                                  ffn1_bias_name]
+        params_states["ernie.decoder.layers." + str(i) +
+                      gate_bias_name] = ffn1_bias[::2]
+        params_states["ernie.decoder.layers." + str(i) +
+                      up_bias_name] = ffn1_bias[1::2]
+        del params_states["ernie.decoder.layers." + str(i) + ffn1_bias_name]
 
     with open(model_path + "/weight_scales_0.json", "w") as weight_scales_file:
         json.dump(weight_scales, weight_scales_file)
@@ -1234,9 +1108,11 @@ def quantization_func(
     """
 
     def apply_block_fp8(tensor):
-        from fastdeploy.model_executor.layers.utils import per_block_cast_to_fp8
+        from fastdeploy.model_executor.layers.utils import \
+            per_block_cast_to_fp8
 
-        quanted_weight_tensor, weight_scale_tensor = per_block_cast_to_fp8(tensor)
+        quanted_weight_tensor, weight_scale_tensor = per_block_cast_to_fp8(
+            tensor)
         # 转成uint8存
         return quanted_weight_tensor.view("uint8"), weight_scale_tensor
 
@@ -1251,15 +1127,15 @@ def quantization_func(
         return quanted_weight_tensor, weight_scale_tensor
 
     def apply_wint4_fp8(tensor, groupsize=-1, scale_dtype="float16"):
-        from fastdeploy.model_executor.gpu import scaled_gemm_f8_i4_f16_weight_quantize
+        from fastdeploy.model_executor.gpu import \
+            scaled_gemm_f8_i4_f16_weight_quantize
 
         quanted_weight_tensor, weight_scale_tensor = (
             scaled_gemm_f8_i4_f16_weight_quantize(
                 paddle.cast(tensor, "float32"),
                 groupsize=config.groupsize,
                 scale_dtype=config.scale_dtype,
-            )
-        )
+            ))
         return quanted_weight_tensor, weight_scale_tensor
 
     def apply_cast(tensor, weight_dtype):
@@ -1274,34 +1150,32 @@ def quantization_func(
         quanted_weight_tensor, weight_scale_tensor = apply_block_fp8(tensor)
     elif config.quantization_type == "Wint8":
         quanted_weight_tensor, weight_scale_tensor = apply_weight_quantize(
-            tensor, "weight_only_int8"
-        )
+            tensor, "weight_only_int8")
     elif config.quantization_type == "Wint4":
         quanted_weight_tensor, weight_scale_tensor = apply_weight_quantize(
-            tensor, "weight_only_int4"
-        )
+            tensor, "weight_only_int4")
     elif config.quantization_type == "W4AFp8":
         quanted_weight_tensor, weight_scale_tensor = apply_wint4_fp8(
-            tensor, config.groupsize, config.scale_dtype
-        )
+            tensor, config.groupsize, config.scale_dtype)
     elif config.quantization_type == "W4A8":
         quanted_weight_tensor, weight_scale_tensor = apply_weight_quantize(
-            tensor, "w4a8"
-        )
+            tensor, "w4a8")
     else:
         quanted_weight_tensor, weight_scale_tensor = apply_cast(
-            tensor, config.quantization_type
-        )
+            tensor, config.quantization_type)
 
     if PrePostQuantFn is not None:
         quanted_weight_tensor, weight_scale_tensor = PrePostQuantFn(
-            False, quanted_weight_tensor, weight_scale_tensor, config, ernie_config
-        )
+            False, quanted_weight_tensor, weight_scale_tensor, config,
+            ernie_config)
 
     return quanted_weight_tensor, weight_scale_tensor
 
 
-def load_ep_checkpoint(model_path, config, return_numpy=False, return_key_name=True):
+def load_ep_checkpoint(model_path,
+                       config,
+                       return_numpy=False,
+                       return_key_name=True):
     """
     load ep checkpoint
     """
@@ -1314,9 +1188,9 @@ def load_ep_checkpoint(model_path, config, return_numpy=False, return_key_name=T
             files = glob.glob(model_path + "/merged_tp1_state_split/*")
             for file_name in files:
                 try:
-                    state_dicts += [
-                        {file_name.split("/")[-1]: file_name}
-                    ]  # save {layer_name: weight_file_name}
+                    state_dicts += [{
+                        file_name.split("/")[-1]: file_name
+                    }]  # save {layer_name: weight_file_name}
                 except Exception:
                     pass
             new_state_dict = {}
@@ -1325,9 +1199,8 @@ def load_ep_checkpoint(model_path, config, return_numpy=False, return_key_name=T
                     new_state_dict[key] = value
             state_dict = new_state_dict
         else:
-            with open(
-                os.path.join(model_path, "model.safetensors.index.json"), "r"
-            ) as f:
+            with open(os.path.join(model_path, "model.safetensors.index.json"),
+                      "r") as f:
                 weight_map = json.load(f)["weight_map"]
                 state_dict = {
                     k: "[" + k + "]" + os.path.join(model_path, v)
@@ -1337,26 +1210,24 @@ def load_ep_checkpoint(model_path, config, return_numpy=False, return_key_name=T
     else:
         # return_numpy=True cpu
         # return_numpy=False gpu
-        with open(os.path.join(model_path, "model.safetensors.index.json"), "r") as f:
+        with open(os.path.join(model_path, "model.safetensors.index.json"),
+                  "r") as f:
             weight_list = json.load(f)["weight_map"]
-        filtered_map = {k: v for k, v in weight_list.items()
-                        if "experts" not in k}
+        filtered_map = {
+            k: v
+            for k, v in weight_list.items() if "experts" not in k
+        }
         num_local_ffn_keys = []
-        quant_suffix = (
-            "quant_weight"
-            if config.use_offline_quant and config.moe_quant_type != "default"
-            else ""
-        )
-        scale_suffix = (
-            "quant_scale"
-            if config.use_offline_quant and config.moe_quant_type != "default"
-            else ""
-        )
+        quant_suffix = ("quant_weight" if config.use_offline_quant
+                        and config.moe_quant_type != "default" else "")
+        scale_suffix = ("quant_scale" if config.use_offline_quant
+                        and config.moe_quant_type != "default" else "")
 
         for i in range(config.moe_layer_start_index, config.num_layers):
             for j in range(
-                config.num_experts_start_offset,
-                config.num_experts_start_offset + config.num_experts_per_rank,
+                    config.num_experts_start_offset,
+                    config.num_experts_start_offset +
+                    config.num_experts_per_rank,
             ):
                 ffn1_quant_key = f"ernie.layers.{i}.mlp.experts.{j}.up_gate_proj.weight.{quant_suffix}"
                 ffn2_quant_key = (
@@ -1377,16 +1248,15 @@ def load_ep_checkpoint(model_path, config, return_numpy=False, return_key_name=T
 
         state_dict = {}
         for k, safetensor_path in filtered_map.items():
-            with safe_open(
-                os.path.join(model_path, safetensor_path), framework="np", device="cpu"
-            ) as f:
+            with safe_open(os.path.join(model_path, safetensor_path),
+                           framework="np",
+                           device="cpu") as f:
                 if k in f.keys():
                     weight = f.get_tensor(k)
                     if not return_numpy:
                         weight = paddle.Tensor(weight, zero_copy=True)
                         weight = weight._copy_to(
-                            paddle.framework._current_expected_place(), False
-                        )
+                            paddle.framework._current_expected_place(), False)
                     state_dict[k] = weight
     return state_dict
 
@@ -1395,7 +1265,8 @@ def get_safetensor_file(model_path):
     """
     get_safetensor_file
     """
-    with open(os.path.join(model_path, "model.safetensors.index.json"), "r") as f:
+    with open(os.path.join(model_path, "model.safetensors.index.json"),
+              "r") as f:
         weight_map = json.load(f)["weight_map"]
     weight_files_in_index = set()
     for weight_name in weight_map:
@@ -1407,15 +1278,13 @@ def get_safetensor_file(model_path):
     return key_name_list, safetensor_list
 
 
-def safetensors_weights_iterator(
-    safe_tensor_list: list[str],
-):
+def safetensors_weights_iterator(safe_tensor_list: list[str], ):
     """
     safetensors_weights_iterator
     """
     for st_file in tqdm(
-        safe_tensor_list,
-        desc="Loading safetensors checkpoint shards",
+            safe_tensor_list,
+            desc="Loading safetensors checkpoint shards",
     ):
         with safe_open(st_file, framework="np") as f:
             for name in f.keys():  # noqa: SIM118
@@ -1423,12 +1292,11 @@ def safetensors_weights_iterator(
                 yield name, param
 
 
-def fastsafetensors_weights_iterator(
-    safetensor_list: list[str]
-):
+def fastsafetensors_weights_iterator(safetensor_list: list[str]):
     """
     fastsafetensors_weights_iterator
     """
+    from fastsafetensors import SafeTensorsFileLoader, SingleGroup
     world_size = dist.get_world_size()
     if world_size > 1:
         dist.init_parallel_env()
@@ -1436,18 +1304,22 @@ def fastsafetensors_weights_iterator(
         device = f"gpu:{pg.rank}" if paddle.is_compiled_with_cuda() else "cpu"
     else:
         pg = SingleGroup()
-        device = f"gpu:{pg.rank()}" if paddle.is_compiled_with_cuda() else "cpu"
+        device = f"gpu:{pg.rank()}" if paddle.is_compiled_with_cuda(
+        ) else "cpu"
 
     safetensor_files_sub_lists = [
         safetensor_list[i:i + world_size]
         for i in range(0, len(safetensor_list), world_size)
     ]
     for st_file in tqdm(
-        safetensor_files_sub_lists,
-        desc="Loading fastsafetensors checkpoint shards",
+            safetensor_files_sub_lists,
+            desc="Loading fastsafetensors checkpoint shards",
     ):
-        loader = SafeTensorsFileLoader(
-            pg, device, nogds=True, debug_log=False, framework="paddle")
+        loader = SafeTensorsFileLoader(pg,
+                                       device,
+                                       nogds=True,
+                                       debug_log=False,
+                                       framework="paddle")
         rank_file_map = {i: [f] for i, f in enumerate(st_file)}
         loader.add_filenames(rank_file_map)
         try:
@@ -1463,14 +1335,13 @@ def fastsafetensors_weights_iterator(
             loader.close()
 
 
-def get_state_dict(model_path, config, use_fastsafetensor=True):
+def get_state_dict(model_path, config, use_fastsafetensor=False):
     """
     get_state_dict
     """
     state_dict = {}
     _, safetensor_list = get_safetensor_file(
-        os.path.join(model_path, f"rank{config.tensor_parallel_rank}")
-    )
+        os.path.join(model_path, f"rank{config.tensor_parallel_rank}"))
     if use_fastsafetensor:
         weights_iterator = fastsafetensors_weights_iterator(safetensor_list)
     else:
@@ -1488,10 +1359,11 @@ def apply_quant(name_action_quant_mappings, key, tensor, state_dict):
     if key in name_action_quant_mappings:
         action = name_action_quant_mappings.pop(key)
         quant_weight_tensor, weight_quanter_tensor = action(tensor)
-        if quant_weight_tensor._is_initialized():
+        if quant_weight_tensor is not None and weight_quanter_tensor is not None:
             state_dict[key + ".quant_weight"] = quant_weight_tensor
-        if weight_quanter_tensor._is_initialized():
             state_dict[key + ".weight_quanter"] = weight_quanter_tensor
+        else:
+            state_dict[key] = quant_weight_tensor
     else:
         state_dict[key] = tensor
 
@@ -1502,10 +1374,10 @@ def get_tp_state_dict(model_path, cls, config, use_fastsafetensor=True):
     """
     loaded_state_dict_keys, safetensor_list = get_safetensor_file(model_path)
 
-    name_action_mappings = cls._get_tensor_parallel_mappings(
-        config, is_split=True)
-    state_keys_map = cls._resolve_prefix_keys(
-        name_action_mappings.keys(), loaded_state_dict_keys)
+    name_action_mappings = cls._get_tensor_parallel_mappings(config,
+                                                             is_split=True)
+    state_keys_map = cls._resolve_prefix_keys(name_action_mappings.keys(),
+                                              loaded_state_dict_keys)
     for k, v in state_keys_map.items():
         name_action_mappings[v] = name_action_mappings.pop(k)
 
@@ -1518,8 +1390,7 @@ def get_tp_state_dict(model_path, cls, config, use_fastsafetensor=True):
         name_action_quant_mappings = cls._get_tensor_quantization_mappings(
             config)
         quant_state_keys_map = cls._resolve_prefix_keys(
-            name_action_quant_mappings.keys(), loaded_state_dict_keys
-        )
+            name_action_quant_mappings.keys(), loaded_state_dict_keys)
         for k, v in quant_state_keys_map.items():
             name_action_quant_mappings[v] = name_action_quant_mappings.pop(k)
     state_dict = {}
@@ -1539,30 +1410,102 @@ def load_checkpoint(model_path, cls, config, return_numpy=True, load_gpu=True):
     """
     load checkpoint
     """
-    if config.use_ep:
-        state_dict = load_ep_checkpoint(
-            model_path, config, return_numpy=True, return_key_name=True
-        )
+    if getattr(config, "use_ep", False):
+        state_dict = load_ep_checkpoint(model_path,
+                                        config,
+                                        return_numpy=True,
+                                        return_key_name=True)
     else:
-        if load_gpu:
-            # 预切
-            rank_dirs = [
-                f
-                for f in os.listdir(model_path)
-                if f.startswith("rank") and os.path.isdir(os.path.join(model_path, f))
-            ]
-            if len(rank_dirs) > 1:
-                if config.tensor_parallel_degree != len(rank_dirs):
-                    raise ValueError(
-                        f"Your model only supports loading with tp{len(rank_dirs)}"
-                    )
-                state_dict = get_state_dict(
-                    model_path, config, use_fastsafetensor=True)
-            else:
-                state_dict = get_tp_state_dict(
-                    model_path, cls, config, use_fastsafetensor=True)
+        rank_dirs = [
+            f for f in os.listdir(model_path) if f.startswith("rank")
+            and os.path.isdir(os.path.join(model_path, f))
+        ]
+        if len(rank_dirs) > 1:
+            if config.tensor_parallel_degree != len(rank_dirs):
+                raise ValueError(
+                    f"Your model only supports loading with tp{len(rank_dirs)}"
+                )
+            state_dict = get_state_dict(model_path, config)
         else:
-            state_dict = load_tp_checkpoint(
-                model_path, cls, config, return_numpy=return_numpy
-            )
+            state_dict = load_tp_checkpoint(model_path,
+                                            cls,
+                                            config,
+                                            return_numpy=return_numpy)
     return state_dict
+
+
+def parser_quant_type(quant_type):
+    """
+    Parse the quantization type string and return the corresponding quantization types for weights,
+    activations, and custom.
+
+    Args:
+        quant_type (str): The quantization type string. It can be one of the following formats:
+            - "weight_only_int8" or "wint8": Only weights are quantized to int8.
+            - "weight_only_int4" or "wint4": Only weights are quantized to int4.
+            - A custom string in the format of "wxaybzcfp8", where 'x', 'y', 'z' are the quantization bitwidths
+            for weights, activations, and custom respectively,
+                and 'a', 'b', 'c' are the prefixes indicating the quantization types
+                (e.g., 'fp8' for floating-point 8-bit).
+                If a prefix is missing, the default quantization type will be used.
+
+    Returns:
+        tuple: A tuple of three strings representing the quantization types for weights, activations,
+                and custom respectively.
+                If the input is "weight_only_int8" or "wint8", returns ("int8", default_type, default_type).
+                If the input is "weight_only_int4" or "wint4", returns ("int4", default_type, default_type).
+                For custom strings, returns the parsed quantization types based on the input format.
+
+    Raises:
+        AssertionError: If the custom quantization type string format is incorrect.
+    """
+    default_type = paddle.get_default_dtype()
+    if quant_type == "default" or quant_type is None:
+        return default_type, default_type, default_type
+    conver_dict = {
+        "8": "int8",
+        "4": "int4",
+        "16": paddle.get_default_dtype(),
+        "fp8": "float8_e4m3fn",
+        "fp16": "float16",
+        "bf16": "bfloat16",
+        "fp32": "float32"
+    }
+    cache_type = default_type
+    if "c8" in quant_type:
+        cache_type = "int8"
+    elif "cfp8" in quant_type:
+        cache_type = "fp8"
+    elif "c4" in quant_type:
+        cache_type = "int4"
+
+    if "weight_only_int8" in quant_type or "wint8" in quant_type:
+        return "int8", default_type, cache_type
+    elif "weight_only_int4" in quant_type or "wint4" in quant_type:
+        return "int4", default_type, cache_type
+    else:
+        # split quant type, eg. w4afp8c8 -> ['w', '4', 'a', 'fp8', 'c', '8']
+        pattern = f"({'|'.join(map(re.escape, ['w', 'a', 'c']))})"
+        splited_type = re.split(pattern, quant_type)
+        splited_type = [tmp_type for tmp_type in splited_type if tmp_type]
+        assert (len(splited_type) % 2 == 0 and len(splited_type)
+                <= 6), f"Quant type[{quant_type}] format error."
+
+        quant_type_list = []
+        if "w" in splited_type:
+            w_idx = splited_type.index("w")
+            quant_type_list.append(conver_dict[splited_type[w_idx + 1]])
+        else:
+            quant_type_list.append(default_type)
+        if "a" in splited_type:
+            a_idx = splited_type.index("a")
+            quant_type_list.append(conver_dict[splited_type[a_idx + 1]])
+        else:
+            quant_type_list.append(default_type)
+        if "c" in splited_type:
+            c_idx = splited_type.index("c")
+            quant_type_list.append(conver_dict[splited_type[c_idx + 1]])
+        else:
+            quant_type_list.append(default_type)
+
+        return quant_type_list[0], quant_type_list[1], quant_type_list[2]

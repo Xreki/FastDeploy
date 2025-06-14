@@ -15,9 +15,13 @@
 from .attention import Attention
 from .base_attention_backend import AttentionBackend
 from .native_paddle_backend import PaddleNativeAttnBackend
+from .attention_selecter import get_attention_backend
+from .append_attn_backend import AppendAttentionBackend
 
 __all__ = [
     "Attention",
     "AttentionBackend",
     "PaddleNativeAttnBackend",
+    "get_attention_backend",
+    "AppendAttentionBackend",
 ]

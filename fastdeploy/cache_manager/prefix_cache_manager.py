@@ -28,7 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 
-from fastdeploy.cache_manager.cache_data import CacheStatus, BlockNode
+from fastdeploy.cache_manager.data import CacheStatus, BlockNode
 from fastdeploy.cache_manager.cache_metrics import CacheMetrics
 from fastdeploy.inter_communicator import IPCSignal
 from fastdeploy.inter_communicator import EngineCacheQueue
@@ -57,7 +57,6 @@ class PrefixCacheManager:
             self.enable_splitwise = 1
         else:
             self.enable_splitwise = 0
-        self.splitwise_role = splitwise_role
 
         self.cache_config = cache_config
 
@@ -180,7 +179,6 @@ class PrefixCacheManager:
                 + f" {py_launcher} {py_path}"
                 + f" --device_id {int(device_ids[i])}"
                 + f" --rank {i}"
-                + f" --splitwise_role {self.splitwise_role}"
                 + f" --num_layers {cache_config.model_cfg.num_layers}"
                 + f" --head_dim {cache_config.model_cfg.head_dim}"
                 + f" --kv_num_head {kv_num_head}"
@@ -194,8 +192,6 @@ class PrefixCacheManager:
                 + f" --bytes_per_layer_per_block {cache_config.bytes_per_layer_per_block}"
                 + f" --block_size {cache_config.block_size}"
                 + f" --engine_pid {pid_suffix}"
-                + f" --protocol {cache_config.cache_transfer_protocol}"
-                + f" --rdma_port {cache_config.rdma_comm_ports[i] if cache_config.rdma_comm_ports is not None else ''}"
                 + f" >{log_dir}/launch_cache_manager_{int(device_ids[i])}.log 2>&1"
             )
             logger.info(f"Launch cache transfer manager, command:{launch_cmd}")

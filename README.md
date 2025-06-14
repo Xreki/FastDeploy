@@ -36,7 +36,7 @@ python -m pip install --pre paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/
 # git clone FastDeploy仓库
 cd FastDeploy
 # 一键编译+安装本机可用的sm架构，whl包产物在dist/
-bash tools/build_wheel.sh
+bash build.sh
 ```
 
 ## 快速使用

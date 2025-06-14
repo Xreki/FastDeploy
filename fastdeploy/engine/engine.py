@@ -15,7 +15,6 @@
 """
 from __future__ import annotations
 
-from typing import List, Tuple, Dict, Optional
 import os
 import re
 import signal
@@ -26,27 +25,24 @@ import time
 import traceback
 import uuid
 import weakref
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+import paddle
 import zmq
 from tqdm import tqdm
-import paddle
 
 from fastdeploy.engine.args_utils import EngineArgs
-from fastdeploy.engine.request import Request
-from fastdeploy.engine.request import RequestOutput
+from fastdeploy.engine.request import Request, RequestOutput
 from fastdeploy.engine.resource_manager import ResourceManager
 from fastdeploy.input.preprocess import InputPreprocessor
-from fastdeploy.inter_communicator import EngineWorkerQueue
-from fastdeploy.inter_communicator import IPCSignal
-from fastdeploy.inter_communicator import ZmqClient
+from fastdeploy.inter_communicator import (EngineWorkerQueue, IPCSignal,
+                                           ZmqClient)
 from fastdeploy.metrics.metrics import main_process_metrics
-from fastdeploy.output.token_processor import TokenProcessor
-from fastdeploy.output.token_processor import WarmUpTokenProcessor
+from fastdeploy.output.token_processor import (TokenProcessor,
+                                               WarmUpTokenProcessor)
 from fastdeploy.splitwise.splitwise_connector import SplitwiseConnector
-from fastdeploy.utils import console_logger
-from fastdeploy.utils import EngineError
-from fastdeploy.utils import llm_logger
+from fastdeploy.utils import EngineError, console_logger, llm_logger
 
 
 class LLMEngine(object):
@@ -89,15 +85,18 @@ class LLMEngine(object):
             cfg (Config): Config object containing all the configuration parameters.
         """
         self.cfg = cfg
+        self.running = True
         self.scheduler = cfg.scheduler_config.scheduler()
 
-        self.input_processor = InputPreprocessor(
-            cfg.tokenizer, cfg.limit_mm_per_prompt, cfg.mm_processor_kwargs, cfg.enable_mm)
+        self.input_processor = InputPreprocessor(cfg.tokenizer,
+                                                 cfg.limit_mm_per_prompt,
+                                                 cfg.mm_processor_kwargs,
+                                                 cfg.enable_mm)
         self.resource_manager = ResourceManager(cfg.max_num_seqs, cfg.cache_config, \
                 cfg.tensor_parallel_size, cfg.splitwise_role)
 
-        os.environ['INFERENCE_MSG_QUEUE_ID'] = str(self.cfg.engine_worker_queue_port)
-
+        os.environ['INFERENCE_MSG_QUEUE_ID'] = str(
+            self.cfg.engine_worker_queue_port)
 
         address = ('0.0.0.0', self.cfg.engine_worker_queue_port)
         self.engine_worker_queue = EngineWorkerQueue(
@@ -105,14 +104,16 @@ class LLMEngine(object):
             is_server=True,
             num_client=self.cfg.tensor_parallel_size)
 
-
-        self.split_connector = SplitwiseConnector(cfg, self.scheduler, self.engine_worker_queue, self.resource_manager)
+        self.split_connector = SplitwiseConnector(cfg, self.scheduler,
+                                                  self.engine_worker_queue,
+                                                  self.resource_manager)
 
         self.token_processor = TokenProcessor(
-            cfg=self.cfg, cached_generated_tokens=self.scheduler, engine_worker_queue=self.engine_worker_queue,
+            cfg=self.cfg,
+            cached_generated_tokens=self.scheduler,
+            engine_worker_queue=self.engine_worker_queue,
             split_connector=self.split_connector)
         self.token_processor.set_resource_manager(self.resource_manager)
-
 
         self.is_started = False
 
@@ -120,13 +121,13 @@ class LLMEngine(object):
             self.do_profile = 1
         else:
             self.do_profile = 0
-        
-        self.partial_chunked_tokens = [0] * (self.cfg.max_num_partial_prefills + 1)
+
+        self.partial_chunked_tokens = [0] * (
+            self.cfg.max_num_partial_prefills + 1)
         for idx in range(1, self.cfg.max_num_partial_prefills + 1):
             self.partial_chunked_tokens[idx] = (self.cfg.max_num_batched_tokens // idx) \
                                 // self.cfg.cache_config.block_size * self.cfg.cache_config.block_size
 
-        
         self._finalizer = weakref.finalize(self, self._exit_sub_services)
 
     def start(self, api_server_pid=None):
@@ -151,13 +152,14 @@ class LLMEngine(object):
             self.zmq_server.create_router()
             time.sleep(3)
 
-        if self.do_profile == 0 and (self.cfg.cache_config.enable_prefix_caching or self.cfg.splitwise_role != "mixed"):
+        if self.do_profile == 0 and (
+                self.cfg.cache_config.enable_prefix_caching
+                or self.cfg.splitwise_role != "mixed"):
             self.cache_manager_processes = self.resource_manager.cache_manager.launch_cache_manager(
                 self.cfg.cache_config, \
                 self.cfg.tensor_parallel_size, self.cfg.device_ids, \
                 self.cfg.engine_worker_queue_port, self.ipc_signal_suffix
                 )
-
 
         self.worker_proc = self._start_worker_service()
         console_logger.info("Waitting worker processes ready...")
@@ -198,20 +200,12 @@ class LLMEngine(object):
         # Start TokenProcessor thread
         self.token_processor.run()
 
-
         if self.do_profile:
             self._stop_profile()
 
-
         if self.cfg.splitwise_role != "mixed":
+            self.engine_worker_queue.available_prefill_instances.put(1)
             self.split_mode_get_tasks()
-
-            self.cfg.init_cache_info()
-
-            role = self.cfg.splitwise_role
-            host_ip = self.cfg.host_ip
-            disaggregate = self.cfg.disaggregate_info
-            self.scheduler.start(role, host_ip, disaggregate)
 
         console_logger.info(
             "Worker processes are launched with {} seconds.".format(
@@ -223,15 +217,17 @@ class LLMEngine(object):
         Recieve output for zmq
         """
         assert self.api_server_pid is not None
-        while True:
+        while self.running:
             try:
+
                 def get_results_handler(request_ids):
                     results = dict()
                     try:
                         results = self.scheduler.get_results(request_ids)
                         for req_id, contents in results.items():
-                            results[req_id] = [data.to_dict()
-                                               for data in contents]
+                            results[req_id] = [
+                                data.to_dict() for data in contents
+                            ]
                     except Exception as e:
                         llm_logger.error(f"Get results handler error: {e}")
                     return results
@@ -248,7 +244,7 @@ class LLMEngine(object):
         """
         try:
             acc = None
-            while True:
+            while self.running:
                 results = self.scheduler.get_results([request_id])
                 for _, contents in results.items():
                     for result in contents:
@@ -272,8 +268,7 @@ class LLMEngine(object):
         Insert task to engine thread, monitor scheduler request queue.
         if the engine has resource, insert task to engine
         """
-        current_id = -1
-        while True:
+        while self.running:
             try:
                 if self.resource_manager.available_batch() == 0:
                     time.sleep(0.001)
@@ -281,14 +276,11 @@ class LLMEngine(object):
                 if self.engine_worker_queue.num_tasks() > 0:
                     time.sleep(0.001)
                     continue
-                if len(self.split_connector.current_request_ids) > 0:
-                    time.sleep(0.001)
-                    continue
 
                 num_prefill_batch = min(
                     int(self.resource_manager.available_batch()),
                     self.cfg.max_prefill_batch)
-                
+
                 self.resource_manager.check_and_free_block_tables()
                 tasks = self.scheduler.get_requests(
                     available_blocks=self.resource_manager.available_block_num(
@@ -298,19 +290,15 @@ class LLMEngine(object):
                     enc_dec_block_num,
                     max_num_batched_tokens=self.cfg.max_num_batched_tokens,
                     batch=num_prefill_batch)
-                
+
                 if len(tasks) == 0:
                     time.sleep(0.001)
                     continue
 
-                if self.cfg.splitwise_role != "mixed":
-                    llm_logger.info("Inserting splitwise tasks")
-                    self.split_connector.send_splitwise_tasks(tasks, current_id)
+                if self.cfg.splitwise_role == "decode":
+                    self.split_connector.send_splitwise_tasks(tasks)
 
-                current_id = (current_id + 1) % 100003
-
-                self.insert_tasks(tasks, current_id)
-
+                self.insert_tasks(tasks)
                 main_process_metrics.num_requests_waiting.dec(len(tasks))
                 main_process_metrics.num_requests_running.inc(len(tasks))
             except Exception as e:
@@ -323,7 +311,7 @@ class LLMEngine(object):
             return
 
         added_requests: Dict[str, int] = dict()
-        while True:
+        while self.running:
             try:
                 block = True if len(added_requests) == 0 else False
                 if not self.cfg.enable_mm:
@@ -340,8 +328,9 @@ class LLMEngine(object):
                     request = Request.from_dict(data)
                     llm_logger.debug(f"Receive request: {request}")
 
-                results: List[Tuple[str, Optional[str]]] = self.scheduler.put_requests(
-                    [] if request is None else [request])
+                results: List[Tuple[
+                    str, Optional[str]]] = self.scheduler.put_requests(
+                        [] if request is None else [request])
 
                 if request:
                     if request.request_id not in added_requests:
@@ -367,8 +356,7 @@ class LLMEngine(object):
             except Exception as e:
                 llm_logger.error(
                     f"Error happend while receving new request from zmq, details={e}, "
-                    f"traceback={traceback.format_exc()}"
-                )
+                    f"traceback={traceback.format_exc()}")
 
     def add_requests(self, task, sampling_params=None):
         """
@@ -387,7 +375,8 @@ class LLMEngine(object):
         if sampling_params is not None:
             request.sampling_params = sampling_params
         request.preprocess_start_time = time.time()
-        request = self.data_processor.process_request(request, self.cfg.max_model_len)
+        request = self.data_processor.process_request(request,
+                                                      self.cfg.max_model_len)
 
         request.prompt_token_ids_len = len(request.prompt_token_ids)
         input_ids_len = request.prompt_token_ids_len
@@ -409,7 +398,7 @@ class LLMEngine(object):
             )
             llm_logger.error(error_msg)
             raise EngineError(error_msg, error_code=400)
-
+        
         request.preprocess_end_time = time.time()
         self.scheduler.put_requests([request])
         llm_logger.info(
@@ -427,55 +416,38 @@ class LLMEngine(object):
         """
         Split mode get tasks
         """
-        waiting_requests = []
+
         def receiver_loop():
-            while True:
+            while self.running:
                 try:
-                    if len(waiting_requests) > 0:
-                        for task in waiting_requests:
-                            if self.resource_manager.is_resource_sufficient(
-                                    task.prompt_token_ids_len):
-                                self.insert_tasks([task])
-                                waiting_requests.remove(task)
-                            else:
-                                break
                     if not self.engine_worker_queue.disaggregate_queue_empty():
-                        items = self.engine_worker_queue.get_disaggregated_tasks()
+                        items = self.engine_worker_queue.get_disaggregated_tasks(
+                        )
                         for item in items:
                             role = item[0]
                             tasks = item[1]
                             if role == "prefill":
-                                llm_logger.info(f"get prefill tasks")
+                                llm_logger.info("get prefill tasks")
                                 for task in tasks:
-                                    task.max_tokens = task.min_tokens = 2 
+                                    task.max_tokens = task.min_tokens = 2
                                 self.insert_tasks(tasks)
                             elif role == "decode":
-                                llm_logger.info(f"get decode tasks")
-                                if hasattr(tasks[0], 'finished'): 
+                                llm_logger.info("get decode tasks")
+                                if tasks[0].finished:
                                     if not isinstance(tasks, list):
                                         tasks = [tasks]
                                     for task in tasks:
                                         task.finished = False
-                                    # self.scheduler.put_results(tasks)
-
+                                    self.scheduler.put_results(tasks)
                                     self.insert_tasks(tasks, allocated=True)
                                 else:
-                                    if len(waiting_requests):
-                                        for task in tasks:
-                                            waiting_requests.append(task)
-                                    else:
-                                        for task in tasks:
-                                            if not self.resource_manager.is_resource_sufficient(
-                                                    task.prompt_token_ids_len):
-                                                waiting_requests.append(task)
-                                            else:
-                                                self.insert_tasks([task])
-                                        
+                                    self.insert_tasks(tasks)
                     else:
                         time.sleep(0.001)
                         continue
                 except Exception as e:
                     llm_logger.error(f"get decode tasks error: {e}")
+
         threading.Thread(target=receiver_loop, daemon=True).start()
 
     def update_requests_chunk_size(self, requests):
@@ -494,10 +466,13 @@ class LLMEngine(object):
             if current_request_size[idx] <= 0:
                 chunk_request_num -= 1
 
-        if not self.cfg.cache_config.enable_chunked_prefill or len(requests) == 0:
+        if not self.cfg.cache_config.enable_chunked_prefill or len(
+                requests) == 0:
             return
 
-        current_request_size = [request.prompt_token_ids_len for request in requests]
+        current_request_size = [
+            request.prompt_token_ids_len for request in requests
+        ]
         requests_chunk = [[] for _ in range(len(requests))]
         chunk_request_num = len(current_request_size)
         while chunk_request_num >= 1:
@@ -505,18 +480,26 @@ class LLMEngine(object):
             for idx in range(len(current_request_size)):
                 if current_request_size[idx] <= 0:
                     continue
-                chunk_size = min(current_request_size[idx], self.partial_chunked_tokens[chunk_request_num])
+                chunk_size = min(
+                    current_request_size[idx],
+                    self.partial_chunked_tokens[chunk_request_num])
                 update_tokens(idx, chunk_size)
-            
+
             while remain_batched_tokens >= self.cfg.cache_config.block_size:
                 # 当前 max_num_batched_tokens 还有剩余时，优先分配给较短的请求
-                waiting_requests = [input_lens for input_lens in current_request_size if input_lens > 0]
+                waiting_requests = [
+                    input_lens for input_lens in current_request_size
+                    if input_lens > 0
+                ]
                 if len(waiting_requests) == 0:
                     break
 
                 available_tokens = remain_batched_tokens // self.cfg.cache_config.block_size * self.cfg.cache_config.block_size
                 append_idx = current_request_size.index(min(waiting_requests))
-                chunk_size = min(current_request_size[append_idx], self.partial_chunked_tokens[chunk_request_num], available_tokens)
+                chunk_size = min(
+                    current_request_size[append_idx],
+                    self.partial_chunked_tokens[chunk_request_num],
+                    available_tokens)
                 update_tokens(append_idx, chunk_size, update_chunk=True)
 
         for idx in range(len(requests)):
@@ -526,15 +509,19 @@ class LLMEngine(object):
         """
         update each multimodal request's chunk size info
         """
-        if not self.cfg.cache_config.enable_chunked_prefill or len(requests) == 0:
+        if not self.cfg.cache_config.enable_chunked_prefill or len(
+                requests) == 0:
             return
-        
+
         for request in requests:
             inputs = request.multimodal_inputs
             input_ids = paddle.to_tensor(inputs["input_ids"], dtype="int64")
-            image_type_ids = paddle.to_tensor(inputs["image_type_ids"], dtype="int32")
+            image_type_ids = paddle.to_tensor(inputs["image_type_ids"],
+                                              dtype="int32")
             image_mask = input_ids == self.data_processor.image_patch_id
-            image_token_sum = paddle.full(shape=[len(input_ids) + 1], fill_value=0, dtype="int32")
+            image_token_sum = paddle.full(shape=[len(input_ids) + 1],
+                                          fill_value=0,
+                                          dtype="int32")
             image_token_sum[1:] = paddle.cumsum(image_mask.cast("int32"))
             grid_thw = []
             for one in inputs["grid_thw"]:
@@ -543,41 +530,46 @@ class LLMEngine(object):
                 else:
                     grid_thw.extend([[2, one[1], one[2]]] * (one[0] // 2))
             grid_thw = paddle.to_tensor(grid_thw, dtype="int64")
-            
+
             from fastdeploy.model_executor.ops.gpu import get_mm_split_fuse
             chunk_image_num, chunk_seq_len = get_mm_split_fuse(
-                input_ids,
-                image_type_ids,
-                image_token_sum,
-                grid_thw,
-                self.data_processor.image_patch_id,
-                len(grid_thw),
-                0,
-                len(input_ids),
-                0,
-                self.partial_chunked_tokens[1],
-                2048
-            )
+                input_ids, image_type_ids, image_token_sum, grid_thw,
+                self.data_processor.image_patch_id, len(grid_thw), 0,
+                len(input_ids), 0, self.partial_chunked_tokens[1], 2048)
 
             num_chunks = len(chunk_image_num)
             chunks_info = []
             input_ids_st, image_type_ids_st, grid_thw_st, patch_st = 0, 0, 0, 0
             for idx in range(num_chunks):
-                chunk_input_ids = inputs["input_ids"][input_ids_st:input_ids_st + chunk_seq_len[idx]]
-                chunk_token_type_ids = inputs["token_type_ids"][input_ids_st:input_ids_st + chunk_seq_len[idx]]
-                actual_image_num = paddle.sum(grid_thw[grid_thw_st:grid_thw_st + chunk_image_num[idx], 0])
-                chunk_image_type_ids = inputs["image_type_ids"][image_type_ids_st:image_type_ids_st + actual_image_num]
-                chunk_grid_thw = grid_thw[grid_thw_st:grid_thw_st + chunk_image_num[idx]].numpy()
+                chunk_input_ids = inputs["input_ids"][
+                    input_ids_st:input_ids_st + chunk_seq_len[idx]]
+                chunk_token_type_ids = inputs["token_type_ids"][
+                    input_ids_st:input_ids_st + chunk_seq_len[idx]]
+                actual_image_num = paddle.sum(
+                    grid_thw[grid_thw_st:grid_thw_st + chunk_image_num[idx],
+                             0])
+                chunk_image_type_ids = inputs["image_type_ids"][
+                    image_type_ids_st:image_type_ids_st + actual_image_num]
+                chunk_grid_thw = grid_thw[grid_thw_st:grid_thw_st +
+                                          chunk_image_num[idx]].numpy()
                 chunk_patch_num = np.sum(np.prod(chunk_grid_thw, axis=1))
-                chunk_images = inputs["images"][patch_st:patch_st + chunk_patch_num]
-                
+                chunk_images = inputs["images"][patch_st:patch_st +
+                                                chunk_patch_num]
+
                 chunks_info.append({
-                    "input_ids": chunk_input_ids,
-                    "token_type_ids": chunk_token_type_ids,
-                    "image_type_ids": chunk_image_type_ids if chunk_image_type_ids.shape[0] else None,
-                    "grid_thw": chunk_grid_thw if chunk_grid_thw.shape[0] else None,
-                    "images": chunk_images if chunk_images.shape[0] else None,
-                    "position_ids": None
+                    "input_ids":
+                    chunk_input_ids,
+                    "token_type_ids":
+                    chunk_token_type_ids,
+                    "image_type_ids":
+                    chunk_image_type_ids
+                    if chunk_image_type_ids.shape[0] else None,
+                    "grid_thw":
+                    chunk_grid_thw if chunk_grid_thw.shape[0] else None,
+                    "images":
+                    chunk_images if chunk_images.shape[0] else None,
+                    "position_ids":
+                    None
                 })
 
                 input_ids_st += chunk_seq_len[idx]
@@ -586,7 +578,7 @@ class LLMEngine(object):
                 patch_st += chunk_patch_num
             request.set("prefill_chunk_info", chunks_info)
 
-    def insert_tasks(self, tasks, current_id=-1, allocated=False):
+    def insert_tasks(self, tasks, allocated=False):
         """
         Insert tasks to engine.
         """
@@ -595,22 +587,14 @@ class LLMEngine(object):
             current_tasks = []
             for task in tasks:
                 cur_task_idx = self.resource_manager.req_dict[task.request_id]
+                llm_logger.info(f"{cur_task_idx} {task.request_id}")
                 del self.resource_manager.req_dict[task.request_id]
                 cur_task = self.resource_manager.tasks_list[cur_task_idx]
-                if task.error_code != 200:
-                    self.resource_manager.stop_flags[cur_task_idx] = True
-                    self.resource_manager.tasks_list[cur_task_idx] = None
-                    self.resource_manager._recycle_block_tables(cur_task)
-                    if task.request_id in self.token_processor.tokens_counter:
-                        del self.token_processor.tokens_counter[task.request_id]
-                    self.scheduler.put_results([task])
-                    llm_logger.warning(f"{task.request_id} prefill failed with msg:{task.error_msg}, recycle resource.")
-                    continue
-                llm_logger.info(f"{cur_task_idx} {task.request_id}")
                 cur_task.prompt_token_ids[0] = task.outputs.token_ids[0]
                 self.token_processor.tokens_counter[task.request_id] = 1
                 current_tasks.append(cur_task)
-            self.engine_worker_queue.put_tasks((current_tasks, self.resource_manager.real_bsz))
+            self.engine_worker_queue.put_tasks(
+                (current_tasks, self.resource_manager.real_bsz))
             return True
 
         self.resource_manager.check_and_free_block_tables()
@@ -632,12 +616,11 @@ class LLMEngine(object):
         req_ids = [t.request_id for t in tasks]
 
         tasks = self.resource_manager.allocate_resources_for_new_tasks(tasks)
-        
+
         if not tasks:
             error_msg = f"The request required resources is exceed the limit, request id={req_ids}."
             llm_logger.error(error_msg)
             raise EngineError(error_msg, error_code=500)
-            return False
 
         self.token_processor.number_of_tasks += len(tasks)
 
@@ -649,9 +632,10 @@ class LLMEngine(object):
                     is_decode = True
                 else:
                     is_prefill = True
-            self.token_processor.number_of_input_tokens += tasks[i].prompt_token_ids_len
+            self.token_processor.number_of_input_tokens += tasks[
+                i].prompt_token_ids_len
 
-        self.split_connector.send_cache_infos(tasks, current_id)
+        self.split_connector.send_cache_infos(tasks)
         if not is_decode:
             llm_logger.info(f"Tasks are sent to engine, req_ids={req_ids}")
             if not is_prefill:
@@ -661,6 +645,8 @@ class LLMEngine(object):
                     self.update_mm_requests_chunk_size(tasks)
             self.engine_worker_queue.put_tasks(
                 (tasks, self.resource_manager.real_bsz))
+            if is_prefill:
+                self.engine_worker_queue.available_prefill_instances.put(1)
         return True
 
     def task_is_finished(self, index):
@@ -772,16 +758,18 @@ class LLMEngine(object):
         """
         exit sub services
         """
+        self.running = False
 
         if hasattr(self, "cache_manager_processes"):
-            self.resource_manager.cache_manager.shm_cache_task_flag_broadcast.clear()
+            self.resource_manager.cache_manager.shm_cache_task_flag_broadcast.clear(
+            )
             self.resource_manager.cache_manager.cache_ready_signal.clear()
             for p in self.cache_manager_processes:
                 llm_logger.info(f"Killing cache manager process {p.pid}")
                 try:
                     os.killpg(p.pid, signal.SIGTERM)
-                except:
-                    pass
+                except Exception as e:
+                    print(f"Error extracting file: {e}")
         self.worker_ready_signal.clear()
         self.exist_task_signal.clear()
         self.exist_swapped_task_signal.clear()
@@ -792,11 +780,12 @@ class LLMEngine(object):
         if hasattr(self, "worker_proc") and self.worker_proc is not None:
             try:
                 os.killpg(self.worker_proc.pid, signal.SIGTERM)
-            except:
-                pass
+            except Exception as e:
+                print(f"Error extracting sub services: {e}")
+
+        self.engine_worker_queue.cleanup()
         if hasattr(self, "zmq_server") and self.zmq_server is not None:
             self.zmq_server.close()
-
 
     def _setting_environ_variables(self):
         """
@@ -807,7 +796,7 @@ class LLMEngine(object):
             "PADDLE_TRAINERS_NUM": 1,
             "TRAINER_INSTANCES_NUM": 1,
             "TRAINER_INSTANCES": "0.0.0.0",
-            "ENABLE_EFFICIENTLLM_LOAD_MODEL_CONCURRENCY": 0,
+            "ENABLE_FASTDEPLOY_LOAD_MODEL_CONCURRENCY": 0,
             "LOAD_STATE_DICT_THREAD_NUM": len(self.cfg.device_ids.split(',')),
             "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION": "python",
             "FLAGS_use_append_attn": 1,
@@ -820,7 +809,7 @@ class LLMEngine(object):
             # TODO dynamic load environment variable
             if self.cfg.splitwise_role == "prefill":
                 variables["FLAGS_fmt_write_cache_completed_signal"] = 1
-            
+
         command_prefix = ""
         for k, v in variables.items():
             command_prefix += f"{k}={v} "
@@ -840,8 +829,13 @@ class LLMEngine(object):
                                                 "0") == 1 else "-u"
         pd_cmd = f"{command_prefix} {sys.executable} {uncache_worker_stdout} -m paddle.distributed.launch"
         pd_cmd = pd_cmd + f" --log_dir {log_dir}"
-        py_script = os.path.join(current_dir_path,
-                                 "../model_executor/worker.py")
+
+        # TODO(liuyuanle): vl model use v1 worker
+        use_worker_v1 = (os.getenv("USE_WORKER_V1", default="1") == "1")
+        worker_path = "../worker/V1/worker_process.py"
+        if self.cfg.enable_mm or not use_worker_v1:
+            worker_path = "../worker/worker.py"
+        py_script = os.path.join(current_dir_path, worker_path)
         arguments = (
             f" --nnodes {str(self.cfg.nnode)}"
             f" --devices {self.cfg.device_ids} {py_script}"
@@ -849,8 +843,6 @@ class LLMEngine(object):
             f" --gpu_memory_utilization {self.cfg.cache_config.gpu_memory_utilization}"
             f" --model_name_or_path {str(self.cfg.model_name_or_path)}"
             f" --device_ids {self.cfg.device_ids}"
-            # f" --tensor_parallel_size {self.cfg.tensor_parallel_size}"
-            # f" --data_parallel_size {self.cfg.parallel_config.data_parallel_size}"
             f" --engine_worker_queue_port {str(self.cfg.engine_worker_queue_port)}"
             f" --total_block_num {self.cfg.cache_config.total_block_num}"
             f" --block_size {self.cfg.cache_config.block_size}"
@@ -861,15 +853,11 @@ class LLMEngine(object):
             f" --max_num_batched_tokens {self.cfg.max_num_batched_tokens}"
             f" --splitwise_role {self.cfg.splitwise_role}"
             f" --kv_cache_ratio {self.cfg.cache_config.kv_cache_ratio} --dtype {self.cfg.cache_config.cache_dtype}"
-        )
+            f" --ori_vocab_size {len(self.data_processor.tokenizer)}")
 
         worker_append_flag = {
             "enable_chunked_prefill":
             self.cfg.cache_config.enable_chunked_prefill,
-            "enable_prefix_caching":
-            self.cfg.cache_config.enable_prefix_caching,
-            # "enable_expert_parallel":
-            # self.cfg.parallel_config.enable_expert_parallel,
             "do_profile": self.do_profile,
             "dynamic_load_weight": self.cfg.model_config.dynamic_load_weight,
         }
@@ -1056,6 +1044,6 @@ class LLMEngine(object):
         self.worker_init_status["finished"] = True
         try:
             self.checking_worker_status_thread.join(timeout=1)
-        except Exception as e:
+        except Exception:
             pass
         return True

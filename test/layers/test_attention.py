@@ -12,18 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright 2023-2024 SGLang Team
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Adapt from
+# https://github.com/sgl-project/sglang/blob/main/python/sglang/test/attention/test_flashattn_backend.py
 
 import unittest
 
@@ -32,7 +22,6 @@ import paddle
 from fastdeploy.model_executor.layers.attention import PaddleNativeAttnBackend, Attention
 from fastdeploy.model_executor.model_runner import ReqToTokenPool, KVCache, MHATokenToKVPool
 from fastdeploy.model_executor.model_runner.model_runner_minimal_os import MinimalModelRunner
-from fastdeploy import InferenceArgs
 from fastdeploy.model_executor.model_runner import ForwardMeta, ForwardMode
 
 
@@ -322,7 +311,7 @@ class TestNativePaddleAttentionBackend(unittest.TestCase):
         else:
             self._setup_kv_cache(forward_batch, layer, self.seq_len)
 
-        self.backend.init_forward_metadata(forward_batch)
+        self.backend.init_attention_metadata(forward_batch)
 
         if mode == ForwardMode.EXTEND:
             expected_shape = [

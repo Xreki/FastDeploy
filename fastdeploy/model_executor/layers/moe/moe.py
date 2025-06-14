@@ -14,541 +14,169 @@
 # limitations under the License.
 """
 
-# cipher_token=WjI1fQOvhN  # do not edit this line
+from dataclasses import dataclass
 
 import paddle
 from paddle import nn
-from paddle.distributed import fleet
-from paddle.framework import in_dynamic_or_pir_mode
-from paddle.nn.quant import weight_quantize
-
-from fastdeploy.model_executor.layers.utils import (
-    get_tensor,
-    _set_var_distributed,
-    per_block_cast_to_fp8,
-)
-from fastdeploy.model_executor.ops.gpu import (
-    moe_expert_dispatch,
-    moe_expert_ffn,
-    moe_expert_reduce,
-)
-from fastdeploy.model_executor.layers.ffn1 import FFN1, FFN1Split
-from fastdeploy.model_executor.layers.linear import FFN2, Linear
-from fastdeploy.model_executor.layers.activation import fused_act_bias_wrapper
 from paddlenlp.utils.log import logger
 
-class MoELayer(nn.Layer):
+from fastdeploy.model_executor.layers.utils import get_tensor
+
+
+@dataclass
+class MoEComputeParams:
     """
-    MoELayer is a layer that performs MoE (Mixture of Experts) computation.
+    some params for computing MoE.
+    it is given to different compute methods.
+    """
+    global_num_experts: int = -1
+    top_k: int = -1
+    hidden_size: int = -1
+    num_local_experts: int = -1
+    moe_intermediate_size: int = -1
+
+    tp_size: int = -1
+    ep_size: int = -1
+    dp_size: int = -1
+
+    moe_quant_type: str = ""
+
+
+class FusedMoE(nn.Layer):
+    """
+    FusedMoE is a layer that performs MoE (Mixture of Experts) computation.
     """
 
     def __init__(
         self,
-        inference_args,
-        moe_config,
-        layer_name,
-        gate_weight_key,
-        ffn1_expert_weight_key,
-        ffn2_expert_weight_key,
-        ffn1_expert_weight_scale_key=None,
-        ffn2_expert_weight_scale_key=None,
-        ffn1_expert_in_scale_key=None,
-        ffn2_expert_in_scale_key=None,
+        fd_config,
+        moe_intermediate_size: int = -1,
+        num_experts: int = -1,
+        top_k: int = -1,
+        moe_use_gate_correction_bias: bool = False,
+        moe_quant_type: str = "weight_only_int4",
+        layer_idx: int = -1,
+        moe_tag: str = "",
+        gate_weight_key=None,
         gate_correction_bias_key=None,
-        ffn1_bias_key=None,
-        ffn2_bias_key=None,
-        ffn1_shared_weight_key=None,
-        ffn1_shared_bias_key=None,
-        ffn2_shared_weight_key=None,
-        ffn2_shared_bias_key=None,
-        layer_idx=0,
-        *args,
-        **kwargs,
+        ffn1_expert_weight_key=None,
+        ffn2_expert_weight_key=None,
+        moe_ffn1_bias_keys=None,
+        moe_ffn2_bias_keys=None,
+        moe_ffn1_weight_scale_keys=None,
+        moe_ffn2_weight_scale_keys=None,
+        moe_ffn1_in_scale_keys=None,
+        moe_ffn2_in_scale_keys=None,
+        use_method="cutlass",
     ):
         """
         Initialize the Moe layer with given parameters.
-
         Args:
-            inference_args (dict-like): Contains inference-related parameters, including
-                - weight_dtype (str): Data type of weights, e.g., 'float32', 'int8'.
-                - act_dtype (str): Data type of activations, e.g., 'float32', 'int8'.
-                - mp_size (int): Model parallelism size, used for distributed training.
-                - embed_dim (int): Hidden dimension size.
-
-            layer_name (str): Unique name of the layer.
-            gate_weight_key (str): Key name of gate_weight in the pdparams state dict.
-            ffn1_weight_key (str): Key name of ffn1_weight in the pdparams state dict.
-            ffn2_weight_key (str): Key name of ffn2_weight in the pdparams state dict.
-            ffn1_bias_key (str): Key name of ffn1_bias in the pdparams state dict.
-            ffn2_bias_key (str): Key name of ffn2_bias in the pdparams state dict.
+            fd_config (FDConfig): Arguments related to inference, containing
+                attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
+                num_attention_heads, and ffn_hidden_size.
         """
         super().__init__()
-        self.inference_args = inference_args
 
-        self.weight_dtype = inference_args.weight_dtype
-        self.nranks = kwargs.get("nranks", inference_args.mp_size)
+        self.fd_config = fd_config
+        self.layer_idx = layer_idx
+        self.tp_size = fd_config.parallel_config.mp_size
+        self.ep_size = fd_config.parallel_config.ep_size
 
-        self.embed_dim = inference_args.hidden_size
-        self.skip_quant = False
-        self.moe_config = moe_config
-        self.activation = self.moe_config.activation
-        self.set_prequant_weight = inference_args.set_prequant_weight
-        self.top_k = self.moe_config.top_k
+        self.moe_use_gate_correction_bias = moe_use_gate_correction_bias
 
-        moe_quant_type = kwargs.get("moe_quant_type", None)
-        self.moe_quant_type = moe_quant_type if moe_quant_type is not None else self.moe_config.moe_quant_type
-        moe_tag = kwargs.get("moe_tag", "")
-        logger.info(f"{moe_tag}MoE is running in {self.moe_quant_type} mode")
+        self.hidden_size = fd_config.model_config.hidden_size
+        self.moe_config = fd_config.moe_config
+        self.use_offline_quant = fd_config.tmp_config.use_offline_quant
 
-        self.num_experts = self.moe_config.num_experts
-        self.num_local_experts = kwargs.get("num_local_experts", self.num_experts)
-        self.num_shared_experts = self.moe_config.moe_num_shared_experts
+        self.moe_quant_type = moe_quant_type
+        self.num_experts = num_experts
+        self.num_local_experts = self.num_experts // self.ep_size
 
-        if self.num_experts // self.num_local_experts >= 2:
-            logger.debug(f"{moe_tag}MoE is running in ep mode")
-            self.moe_intermediate_size = self.moe_config.moe_intermediate_size
-        else:
-            logger.debug(f"{moe_tag}MoE is running in tp{self.nranks} mode")
-            self.moe_intermediate_size = (
-                self.moe_config.moe_intermediate_size // self.nranks
-            )
+        logger.info(
+            f"{moe_tag}MoE config is {num_experts=}, {top_k=}, hidden_size={self.hidden_size}, {moe_intermediate_size=}, moe_quant_type={self.moe_quant_type}, ep_size={self.ep_size}, tp_size={self.tp_size}."
+        )
 
-        self.num_experts_start_offset = self.moe_config.num_experts_start_offset
+        self.moe_intermediate_size = moe_intermediate_size // self.tp_size
 
-        self.with_moe_ffn1_bias = ffn1_bias_key is not None
-        self.with_moe_ffn2_bias = ffn2_bias_key is not None
-
-        self.layer_name = layer_name
         self.gate_weight_key = gate_weight_key
+
         self.gate_correction_bias_key = gate_correction_bias_key
-        self.ffn1_bias_key = ffn1_bias_key
-        self.ffn2_bias_key = ffn2_bias_key
 
         self.ffn1_expert_weight_key = ffn1_expert_weight_key
         self.ffn2_expert_weight_key = ffn2_expert_weight_key
-        self.ffn1_expert_weight_scale_key = ffn1_expert_weight_scale_key
-        self.ffn2_expert_weight_scale_key = ffn2_expert_weight_scale_key
-        self.ffn1_expert_in_scale_key = ffn1_expert_in_scale_key
-        self.ffn2_expert_in_scale_key = ffn2_expert_in_scale_key
+        self.ffn1_bias_key = moe_ffn1_bias_keys
+        self.ffn2_bias_key = moe_ffn2_bias_keys
 
-        self.gate_weight_name = self.layer_name + ".gate.weight"
-        self.gate_correction_bias_name = self.layer_name + ".gate.correction_bias"
-        self.ffn1_weight_name = self.layer_name + ".ffn1.weight"
-        self.ffn2_weight_name = self.layer_name + ".ffn2.weight"
-        self.ffn1_bias_name = self.layer_name + ".ffn1.bias"
-        self.ffn2_bias_name = self.layer_name + ".ffn2.bias"
+        if self.moe_quant_type == "w4a8":
+            # below keys are only used in MoE W4A8!
+            self.ffn1_expert_weight_scale_key = moe_ffn1_weight_scale_keys
+            self.ffn2_expert_weight_scale_key = moe_ffn2_weight_scale_keys
+            self.ffn1_expert_in_scale_key = moe_ffn1_in_scale_keys
+            self.ffn2_expert_in_scale_key = moe_ffn2_in_scale_keys
 
-        self.ffn1_shared_weight_name = self.layer_name + ".ffn1_shared.weight"
-        self.ffn1_shared_bias_name = self.layer_name + ".ffn1_shared.bias"
-        self.ffn2_shared_weight_name = self.layer_name + ".ffn2_shared.weight"
-        self.ffn2_shared_bias_name = self.layer_name + ".ffn2_shared.bias"
+        moe_compute_params = MoEComputeParams()
+        moe_compute_params.global_num_experts = self.num_experts
+        moe_compute_params.top_k = top_k
+        moe_compute_params.hidden_size = self.hidden_size
+        moe_compute_params.num_local_experts = self.num_local_experts
+        moe_compute_params.moe_quant_type = self.moe_quant_type
+        moe_compute_params.moe_intermediate_size = self.moe_intermediate_size
+        moe_compute_params.ep_size = self.ep_size
+        moe_compute_params.tp_size = self.tp_size
 
-        self._dtype = paddle.get_default_dtype()
-        self.quant_type = inference_args.quant_type
-
-        self.layer_idx = layer_idx
-        self.max_batch_size = self.inference_args.max_batch_size
-
-        if (
-            self.moe_quant_type == "weight_only_int8"
-            or self.moe_quant_type == "weight_only_int4"
-            or self.moe_quant_type == "w4a8"
-        ):
-            self.init_weight_only_scale()
-        elif self.moe_quant_type == "fp8":
-            self.init_weight_block_scale()
-
-        self.init_weight()
-        
-        if self.num_shared_experts > 0:
-            self.init_shared_experts_layer()
-
-    def init_weight_block_scale(self):
-        """init_weight_block_scale for fp8"""
-        self.moe_ffn1_weight_scale = self.create_parameter(
-            shape=[
-                self.num_local_experts,
-                self.moe_intermediate_size * 2 // 128,
-                self.embed_dim // 128,
-            ],  # [g, n, k]
-            attr=paddle.ParamAttr(
-                name=f"{self.layer_name}.{self.layer_idx}.linear1.weight_block_scale"
-            ),
-            dtype="float32",
-            is_bias=False,
-        )
-        self.moe_ffn2_weight_scale = self.create_parameter(
-            shape=[
-                self.num_local_experts,
-                self.embed_dim // 128,
-                self.moe_intermediate_size // 128,
-            ],  # [g, n, k]
-            attr=paddle.ParamAttr(
-                name=f"{self.layer_name}.{self.layer_idx}.linear2.weight_block_scale"
-            ),
-            dtype="float32",
-            is_bias=False,
-        )
-
-    def get_weight_create_dtype(self):
-        """
-        Get the data type for creating weights based on quantization settings.
-
-        Args:
-            self (object): The instance of the class where this method is defined.
-
-        Returns:
-            str: The data type for creating weights. It depends on the quantization settings:
-                - If `self.skip_quant` is True, returns the original data type `self._dtype`.
-                - If `self.inference_args.use_weight_only` is True and `self.weight_dtype` is "int4",
-                  returns "int8" to ensure compatibility or optimization.
-                - Otherwise, returns the specified weight data type `self.weight_dtype`.
-        """
-        if self.skip_quant:
-            return self._dtype
-        if (
-            self.moe_quant_type == "weight_only_int4"
-            or self.moe_quant_type == "weight_only_int8"
-            or self.moe_quant_type == "w4a8"
-        ):
-            return "int8"
-        return self.weight_dtype
-
-    def init_weight_only_scale(self):
-        """
-        Initialize the weight scale.
-        """
-
-        if self.layer_idx >= self.moe_config.moe_layer_start_index:
-            self.moe_ffn1_weight_scale = self.create_parameter(
-                shape=[self.num_local_experts, self.moe_intermediate_size * 2],
-                attr=paddle.ParamAttr(
-                    name=f"{self.layer_name}.{self.layer_idx}.linear1.weight_scale"
-                ),
-                dtype=self._dtype,
-                is_bias=False,
-            )
-            self.moe_ffn2_weight_scale = self.create_parameter(
-                shape=[self.num_local_experts, self.embed_dim],
-                attr=paddle.ParamAttr(
-                    name=f"{self.layer_name}.{self.layer_idx}.linear2.weight_scale"
-                ),
-                dtype=self._dtype,
-                is_bias=False,
-            )
-            if self.moe_quant_type == "w4a8":
-                self.moe_ffn1_in_scale = self.create_parameter(
-                    shape=[self.num_local_experts],
-                    attr=paddle.ParamAttr(
-                        name=f"layers.{self.layer_idx}.linear1.in_scale"
-                    ),
-                    dtype="float32",
-                    is_bias=False,
-                )
-                self.moe_ffn2_in_scale = self.create_parameter(
-                    shape=[self.num_local_experts],
-                    attr=paddle.ParamAttr(
-                        name=f"layers.{self.layer_idx}.linear2.in_scale"
-                    ),
-                    dtype="float32",
-                    is_bias=False,
-                )
+        if use_method == "cutlass":
+            from .cutlass_fused_moe import CutlassFusedMoeMethod
+            self.compute_method = CutlassFusedMoeMethod(moe_compute_params)
         else:
-            self.moe_ffn1_weight_scale = self.create_parameter(
-                shape=[self.moe_intermediate_size * 2],
-                attr=paddle.ParamAttr(
-                    name=f"{self.layer_name}.{self.layer_idx}.linear1.weight_scale"
-                ),
-                dtype=self._dtype,
-                is_bias=False,
-            )
-            self.moe_ffn2_weight_scale = self.create_parameter(
-                shape=[self.embed_dim],
-                attr=paddle.ParamAttr(
-                    name=f"{self.layer_name}.{self.layer_idx}.linear2.weight_scale"
-                ),
-                dtype=self._dtype,
-                is_bias=False,
-            )
+            from .triton_fused_moe import TritonFusedMoeMethod
+            self.compute_method = TritonFusedMoeMethod(moe_compute_params)
 
-        if self.moe_config.moe_use_ffn_shared_weight_and_bias:
-            self.moe_ffn1_shared_weight_scale = self.create_parameter(
-                shape=[1],
-                attr=paddle.ParamAttr(
-                    name=f"{self.layer_name}.{self.layer_idx}.linear1_shared.weight_scale"
-                ),
-                dtype=self._dtype,
-                is_bias=False,
-            )
-            self.moe_ffn2_shared_weight_scale = self.create_parameter(
-                shape=[1],
-                attr=paddle.ParamAttr(
-                    name=f"{self.layer_name}.{self.layer_idx}.linear2_shared.weight_scale"
-                ),
-                dtype=self._dtype,
-                is_bias=False,
-            )
-
-    def load_scale_state_dict(self):
-        """
-        load_scale_state_dict function.
-        """
-        up_gate_proj_weight_scale = []
-        down_proj_weight_scale = []
-        up_gate_proj_in_scale = []
-        down_proj_in_scale = []
-
-        for j in range(self.num_experts):
-            up_gate_proj_weight_scale.append(
-                self.inference_args.weight_scale_dict.pop(
-                    self.ffn1_expert_weight_scale_key.format(j)
-                )
-            )
-            down_proj_weight_scale.append(
-                self.inference_args.weight_scale_dict.pop(
-                    self.ffn2_expert_weight_scale_key.format(j)
-                )
-            )
-            up_gate_proj_in_scale.append(
-                self.inference_args.act_scale_dict.pop(
-                    self.ffn1_expert_in_scale_key.format(j)
-                )
-            )
-            down_proj_in_scale.append(
-                self.inference_args.act_scale_dict.pop(
-                    self.ffn2_expert_in_scale_key.format(j)
-                )
-            )
-        return (
-            up_gate_proj_weight_scale,
-            down_proj_weight_scale,
-            up_gate_proj_in_scale,
-            down_proj_in_scale,
-        )
-
-    def init_weight_shape(self):
-        """
-        Initialize the weight shape for the moe layer.
-        """
-        # gate shape
-        self.gate_weight_shape = [self.embed_dim, self.num_experts]
-        self.gate_correction_bias_shape = [1, self.num_experts]
-
-        # ffn1 shape
-        if self.moe_quant_type == "fp8":
-            self.ffn1_weight_shape = [
-                self.num_local_experts,
-                self.moe_intermediate_size * 2,
-                self.embed_dim,
-            ]
-        elif self.moe_quant_type == "weight_only_int4":
-            self.ffn1_weight_shape = [
-                self.num_local_experts,
-                self.embed_dim,
-                self.moe_intermediate_size,
-            ]
-        elif self.moe_quant_type == "w4a8":
-            self.ffn1_weight_shape = [
-                self.num_local_experts,
-                self.moe_intermediate_size * 2,
-                self.embed_dim // 2,
-            ]
-        else:
-            self.ffn1_weight_shape = [
-                self.num_local_experts,
-                self.embed_dim,
-                self.moe_intermediate_size * 2,
-            ]
-        if not self.activation.endswith("glu"):
-            self.ffn1_weight_shape = [
-                self.num_local_experts,
-                self.embed_dim,
-                self.moe_intermediate_size,
-            ]
-        self.ffn1_bias_shape = (
-            [self.num_local_experts, self.moe_intermediate_size * 2]
-            if self.activation.endswith("glu")
-            else [self.num_local_experts, self.moe_intermediate_size]
-        )
-        # ffn2 shape
-        if self.moe_quant_type == "fp8":
-            self.ffn2_weight_shape = [
-                self.num_local_experts,
-                self.embed_dim,
-                self.moe_intermediate_size,
-            ]
-        elif self.moe_quant_type == "weight_only_int4":
-            self.ffn2_weight_shape = [
-                self.num_local_experts,
-                self.moe_intermediate_size,
-                self.embed_dim // 2,
-            ]
-        elif self.moe_quant_type == "w4a8":
-            self.ffn2_weight_shape = [
-                self.num_local_experts,
-                self.embed_dim,
-                self.moe_intermediate_size // 2,
-            ]
-        else:
-            self.ffn2_weight_shape = [
-                self.num_local_experts,
-                self.moe_intermediate_size,
-                self.embed_dim,
-            ]
-        self.ffn2_bias_shape = [self.num_local_experts, self.embed_dim]
-
-    def init_weight(self):
-        """
-        Initialize the weights and biases.
-        """
-
-        self.init_weight_shape()
-        # gate
-        self.gate_weight = self.create_parameter(
-            shape=self.gate_weight_shape,
-            attr=paddle.ParamAttr(name=self.gate_weight_name),
-            dtype="float32",
-            is_bias=False,
-            default_initializer=paddle.nn.initializer.Constant(0),
-        )
-        if self.moe_config.moe_use_gate_correction_bias:
+        if self.moe_use_gate_correction_bias:
             self.gate_correction_bias = self.create_parameter(
-                shape=self.gate_correction_bias_shape,
-                attr=paddle.ParamAttr(name=self.gate_correction_bias_name),
+                shape=[1, self.num_experts],
                 dtype="float32",
-                is_bias=True,
-                default_initializer=paddle.nn.initializer.Constant(0),
             )
-
-        # ffn1
-        self.moe_ffn1_weight = self.create_parameter(
-            shape=self.ffn1_weight_shape,
-            attr=paddle.ParamAttr(name=self.ffn1_weight_name),
-            dtype=self.get_weight_create_dtype(),
-            is_bias=False,
-            default_initializer=paddle.nn.initializer.Constant(0),
-        )
-
-        self.moe_ffn1_bias = None
-        if self.with_moe_ffn1_bias:
-            self.moe_ffn1_bias = self.create_parameter(
-                shape=self.ffn1_bias_shape,
-                attr=paddle.ParamAttr(name=self.ffn1_bias_name),
-                dtype=self._dtype,
-                is_bias=True,
-            )
-
-        # ffn2
-        self.moe_ffn2_weight = self.create_parameter(
-            shape=self.ffn2_weight_shape,
-            attr=paddle.ParamAttr(name=self.ffn2_weight_name),
-            dtype=self.get_weight_create_dtype(),
-            is_bias=False,
-            default_initializer=paddle.nn.initializer.Constant(0),
-        )
-        self.moe_ffn2_bias = None
-        if self.with_moe_ffn2_bias:
-            self.moe_ffn2_bias = self.create_parameter(
-                shape=self.ffn2_bias_shape,
-                attr=paddle.ParamAttr(name=self.ffn2_bias_name),
-                dtype=self._dtype,
-                is_bias=True,
-            )
-
-        if self.nranks > 0:
-            # column parallel
-            _set_var_distributed(self.moe_ffn1_weight, split_axis=1)
-            _set_var_distributed(self.moe_ffn1_bias, split_axis=0)
-            # row parallel
-            _set_var_distributed(self.moe_ffn2_weight, split_axis=0)
-
-    def init_shared_experts_layer(self):
-        """
-        Initialize shared experts.
-        """
-        self.shared_experts_hidden_dim = self.num_shared_experts * self.moe_intermediate_size
-
-        self.shared_experts_prefix = f"ernie.layers.{self.layer_idx}.mlp.shared_experts"
-        self.shared_experts_up_gate_proj = FFN1(
-            inference_args=self.inference_args,
-            layer_name=f"{self.shared_experts_prefix}.up_gate_proj",
-            weight_key=f"{self.shared_experts_prefix}.up_gate_proj.weight",
-            dim_feedforward=self.shared_experts_hidden_dim,
-            bias_key=None,
-            activation=self.activation,
-            use_fast_ffn=True,
-        )
-
-        self.shared_experts_down_proj = FFN2(
-            inference_args=self.inference_args,
-            layer_name=f"{self.shared_experts_prefix}.down_proj",
-            weight_key=f"{self.shared_experts_prefix}.down_proj.weight",
-            dim_feedforward=self.shared_experts_hidden_dim,
-            bias_key=None,
-            use_smooth_quant=False,
-            shift_key=None,
-            smooth_key=None,
-        )
+        else:
+            self.gate_correction_bias = None
 
     def load_gate_state_dict(self, state_dict):
         """
         load_gate_state_dict function.
         """
-        logger.info("Load TP FFN1")
-        up_gate_proj_weight = []
-        up_gate_proj_weight_scale = []
-        down_proj_weight = []
-        down_proj_weight_scale = []
-        for j in range(self.num_experts):
-            up_gate_proj_weight.append(
-                get_tensor(state_dict.pop(self.ffn1_expert_weight_key.format(j)))
-                if self.moe_quant_type == "default" or not self.set_prequant_weight
-                else get_tensor(
-                    state_dict.pop(
-                        (self.ffn1_expert_weight_key + ".quant_weight").format(j)
-                    )
-                )
-            )
-            down_proj_weight.append(
-                get_tensor(state_dict.pop(self.ffn2_expert_weight_key.format(j)))
-                if self.moe_quant_type == "default" or not self.set_prequant_weight
-                else get_tensor(
-                    state_dict.pop(
-                        (self.ffn2_expert_weight_key + ".quant_weight").format(j)
-                    )
-                )
-            )
-            if self.set_prequant_weight and self.moe_quant_type != "w4a8":
-                up_gate_proj_weight_scale.append(
-                    get_tensor(
-                        state_dict.pop(
-                            (self.ffn1_expert_weight_key + ".weight_quanter").format(j)
-                        )
-                    )
-                )
-                down_proj_weight_scale.append(
-                    get_tensor(
-                        state_dict.pop(
-                            (self.ffn2_expert_weight_key + ".weight_quanter").format(j)
-                        )
-                    )
-                )
-        return (
-            up_gate_proj_weight,
-            down_proj_weight,
-            up_gate_proj_weight_scale,
-            down_proj_weight_scale,
-        )
-
-    def load_gate_correction_bias(self, state_dict):
-        """
-        load_gate_correction_bias function.
-        """
-        if self.moe_config.moe_use_gate_correction_bias:
+        # gate_correction_bias
+        if self.moe_use_gate_correction_bias:
             gate_correction_bias_tensor = get_tensor(
-                state_dict.pop(self.gate_correction_bias_key)
-            )
-            self.gate_correction_bias.set_value(gate_correction_bias_tensor.cast("float32"))
+                state_dict.pop(
+                    self.gate_correction_bias_key).astype("float32"))
+            self.gate_correction_bias.set_value(gate_correction_bias_tensor)
+
+        up_gate_proj_weight = []
+        down_proj_weight = []
+        is_ffn_merged = self.ffn1_expert_weight_key.format(0) in state_dict
+        if is_ffn_merged:
+            for j in range(self.num_experts):
+                up_gate_proj_weight.append(
+                    get_tensor(
+                        state_dict.pop(self.ffn1_expert_weight_key.format(j))))
+                down_proj_weight.append(
+                    get_tensor(
+                        state_dict.pop(self.ffn2_expert_weight_key.format(j))))
+        else:
+            self.gate_expert_weight_key = self.ffn1_expert_weight_key.replace(
+                "up_gate_proj", "gate_proj")
+            self.up_expert_weight_key = self.ffn1_expert_weight_key.replace(
+                "up_gate_proj", "up_proj")
+            for j in range(self.num_experts):
+                gate = get_tensor(
+                    state_dict.pop(self.gate_expert_weight_key.format(j)))
+                up = get_tensor(
+                    state_dict.pop(self.up_expert_weight_key.format(j)))
+                up_gate_proj_weight.append(paddle.concat([gate, up], axis=-1))
+                down_proj_weight.append(
+                    get_tensor(
+                        state_dict.pop(self.ffn2_expert_weight_key.format(j))))
+        return up_gate_proj_weight, down_proj_weight
 
     def load_state_dict(self, state_dict, is_update: bool = False):
         """
@@ -556,334 +184,65 @@ class MoELayer(nn.Layer):
         """
         # gate
         if not is_update:
-            gate_weight_tensor = get_tensor(state_dict.pop(self.gate_weight_key))
-            self.gate_weight.set_value(gate_weight_tensor.cast("float32"))
-            self.load_gate_correction_bias(state_dict)
+            gate_weight_tensor = get_tensor(
+                state_dict.pop(self.gate_weight_key))
+            self.gate_weight = self.create_parameter(
+                shape=gate_weight_tensor.shape, dtype="float32")
+            self.gate_weight.set_value(gate_weight_tensor.astype("float32"))
 
-        # shared experts
-        if self.num_shared_experts > 0:
-            self.shared_experts_up_gate_proj.load_state_dict(state_dict)
-            self.shared_experts_down_proj.load_state_dict(state_dict)
+        # gate_correction_bias
+        if self.moe_use_gate_correction_bias:
+            gate_correction_bias_tensor = get_tensor(
+                state_dict.pop(self.gate_correction_bias_key))
 
-        if self.moe_quant_type == "w4a8":
-            (
-                up_gate_proj_weight_scale_list,
-                down_proj_weight_scale_list,
-                up_gate_proj_in_scale_list,
-                down_proj_in_scale_list,
-            ) = self.load_scale_state_dict()
-            ffn1_in_scale_tensor = paddle.to_tensor(
-                up_gate_proj_in_scale_list, dtype="float32"
-            ).reshape_([self.num_local_experts])
-            self.moe_ffn1_in_scale.set_value(ffn1_in_scale_tensor)
-            ffn2_in_scale_tensor = paddle.to_tensor(
-                down_proj_in_scale_list, dtype="float32"
-            ).reshape_([self.num_local_experts])
-            self.moe_ffn2_in_scale.set_value(ffn2_in_scale_tensor)
-
-        (
-            up_gate_proj_weight,
-            down_proj_weight,
-            up_gate_proj_weight_scale,
-            down_proj_weight_scale,
-        ) = self.load_gate_state_dict(state_dict)
-        # ffn1
-        if not self.set_prequant_weight or self.moe_quant_type == "default":
-            ffn1_weight_tensor = paddle.concat(up_gate_proj_weight, axis=0).reshape_(
-                [self.num_local_experts, self.embed_dim, -1]
-            )
-        ffn1_weight_tensor_list = []
-        ffn1_weight_scale_tensor_list = []
-        if self.moe_quant_type == "fp8":
-            if self.set_prequant_weight:
-                ffn1_weight_tensor_offline = paddle.concat(
-                    up_gate_proj_weight, axis=0
-                ).reshape_((self.num_local_experts, -1, self.embed_dim))
-                ffn1_weight_tensor_scale_offline = paddle.concat(
-                    up_gate_proj_weight_scale, axis=0
-                ).reshape_(
-                    (
-                        self.num_local_experts,
-                        (self.ffn1_weight_shape[1] + 127) // 128,
-                        self.ffn1_weight_shape[2] // 128,
-                    )
-                )
-                self.moe_ffn1_weight.copy_(
-                    ffn1_weight_tensor_offline.view(paddle.float8_e4m3fn), False
-                )
-                self.moe_ffn1_weight_scale.set_value(ffn1_weight_tensor_scale_offline)
-            else:
-                ffn1_weight_tensor = ffn1_weight_tensor.transpose([0, 2, 1])
-                ffn1_fp8 = (
-                    paddle.empty_like(ffn1_weight_tensor, dtype=paddle.float8_e4m3fn),
-                    paddle.empty(
-                        (
-                            self.num_local_experts,
-                            (self.ffn1_weight_shape[1] + 127) // 128,
-                            self.ffn1_weight_shape[2] // 128,
-                        ),
-                        dtype=paddle.float32,
-                    ),
-                )
-
-                for i in range(self.num_local_experts):
-                    quanted_weight_tensor, weight_block_scale_tensor = (
-                        per_block_cast_to_fp8(ffn1_weight_tensor[i])
-                    )
-                    paddle.assign(quanted_weight_tensor, ffn1_fp8[0][i])
-                    paddle.assign(weight_block_scale_tensor, ffn1_fp8[1][i])
-                self.moe_ffn1_weight.copy_(ffn1_fp8[0], False)
-                self.moe_ffn1_weight_scale.set_value(ffn1_fp8[1])
-        elif self.moe_quant_type == "w4a8":
-            if self.set_prequant_weight:
-                ffn1_weight_tensor_list = up_gate_proj_weight
-            else:
-                if paddle.is_compiled_with_cuda():
-                    for i in range(self.num_local_experts):
-                        ffn1_weight_tensor_i, _ = weight_quantize(
-                            ffn1_weight_tensor[i].cast("int8"),
-                            algo="w4a8",
-                            arch=80,
-                        )
-                        ffn1_weight_tensor_list.append(ffn1_weight_tensor_i)
-
-            ffn1_weight_tensor = paddle.concat(ffn1_weight_tensor_list, axis=0)
-            ffn1_weight_scale_tensor_list = up_gate_proj_weight_scale_list
-            ffn1_weight_scale_tensor = paddle.concat(
-                ffn1_weight_scale_tensor_list, axis=0
-            )
-            self.moe_ffn1_weight_scale.set_value(
-                ffn1_weight_scale_tensor.cast(paddle.get_default_dtype()).reshape(
-                    [self.num_local_experts, -1]
-                )
-            )
-            self.moe_ffn1_weight.set_value(
-                ffn1_weight_tensor.reshape(
-                    [self.num_local_experts, -1, ffn1_weight_tensor.shape[-1]]
-                )
-            )
-        elif self.moe_quant_type == "weight_only_int4":  # WINT4 MOE
-            if self.set_prequant_weight:
-                ffn1_weight_tensor_list = up_gate_proj_weight
-                ffn1_weight_scale_tensor_list = up_gate_proj_weight_scale
-            else:
-                if paddle.is_compiled_with_cuda():
-                    for i in range(self.num_local_experts):
-                        ffn1_weight_tensor_i, ffn1_weight_scale_tensor_i = (
-                            weight_quantize(
-                                ffn1_weight_tensor[i],
-                                algo="weight_only_int4",
-                                arch=self.inference_args.weight_only_linear_arch,
-                            )
-                        )
-                        ffn1_weight_tensor_list.append(ffn1_weight_tensor_i)
-                        ffn1_weight_scale_tensor_list.append(ffn1_weight_scale_tensor_i)
-            ffn1_weight_tensor = paddle.concat(ffn1_weight_tensor_list, axis=0)
-            ffn1_weight_scale_tensor = paddle.concat(
-                ffn1_weight_scale_tensor_list, axis=0
-            )
-            self.moe_ffn1_weight_scale.set_value(
-                ffn1_weight_scale_tensor.cast(paddle.get_default_dtype()).reshape(
-                    [self.num_local_experts, -1]
-                )
-            )
-            self.moe_ffn1_weight.set_value(
-                ffn1_weight_tensor.reshape([self.num_local_experts, self.embed_dim, -1])
-            )
-        elif self.moe_quant_type == "weight_only_int8":  # WINT8 MOE
-            if self.set_prequant_weight:
-                ffn1_weight_tensor_list = up_gate_proj_weight
-                ffn1_weight_scale_tensor_list = up_gate_proj_weight_scale
-            else:
-                if paddle.is_compiled_with_cuda():
-                    for i in range(self.num_local_experts):
-                        ffn1_weight_tensor_i, ffn1_weight_scale_tensor_i = (
-                            weight_quantize(
-                                ffn1_weight_tensor[i],
-                                algo="weight_only_int8",
-                                arch=self.inference_args.weight_only_linear_arch,
-                            )
-                        )
-                        ffn1_weight_tensor_list.append(ffn1_weight_tensor_i)
-                        ffn1_weight_scale_tensor_list.append(ffn1_weight_scale_tensor_i)
-            ffn1_weight_tensor = paddle.concat(ffn1_weight_tensor_list, axis=0)
-            ffn1_weight_scale_tensor = paddle.concat(
-                ffn1_weight_scale_tensor_list, axis=0
-            )
-            self.moe_ffn1_weight_scale.set_value(
-                ffn1_weight_scale_tensor.cast(paddle.get_default_dtype()).reshape(
-                    [self.num_local_experts, -1]
-                )
-            )
-            self.moe_ffn1_weight.set_value(
-                ffn1_weight_tensor.reshape([self.num_local_experts, self.embed_dim, -1])
-            )
-        else:  # default
-            self.moe_ffn1_weight.set_value(
-                ffn1_weight_tensor.reshape([self.num_experts, self.embed_dim, -1])
+            self.gate_correction_bias = self.create_parameter(
+                shape=gate_correction_bias_tensor.shape,
+                dtype="float32",
             )
 
-        if self.with_moe_ffn1_bias:
-            moe_ffn1_bias_tensor = get_tensor(state_dict.pop(self.ffn1_bias_key))
-            self.moe_ffn1_bias.set_value(moe_ffn1_bias_tensor)
-
-        # ffn2
-        if not self.set_prequant_weight or self.moe_quant_type == "default":
-            ffn2_weight_tensor = paddle.concat(down_proj_weight, axis=0).reshape_(
-                [self.num_local_experts, -1, self.embed_dim]
-            )
-
-        ffn2_weight_tensor_list = []
-        ffn2_weight_scale_tensor_list = []
-        if self.moe_quant_type == "fp8":
-            if self.set_prequant_weight:
-                ffn2_weight_tensor_offline = paddle.concat(
-                    down_proj_weight, axis=0
-                ).reshape_((self.num_local_experts, self.embed_dim, -1))
-                ffn2_weight_tensor_scale_offline = paddle.concat(
-                    down_proj_weight_scale, axis=0
-                ).reshape_(
-                    (
-                        self.num_local_experts,
-                        (self.ffn2_weight_shape[1] + 127) // 128,
-                        self.ffn2_weight_shape[2] // 128,
-                    )
-                )
-                self.moe_ffn2_weight.copy_(
-                    ffn2_weight_tensor_offline.view(paddle.float8_e4m3fn), False
-                )
-                self.moe_ffn2_weight_scale.set_value(ffn2_weight_tensor_scale_offline)
-            else:
-                ffn2_weight_tensor = ffn2_weight_tensor.transpose([0, 2, 1])
-                ffn2_fp8 = (
-                    paddle.empty_like(ffn2_weight_tensor, dtype=paddle.float8_e4m3fn),
-                    paddle.empty(
-                        (
-                            self.num_local_experts,
-                            (self.ffn2_weight_shape[1] + 127) // 128,
-                            self.ffn2_weight_shape[2] // 128,
-                        ),
-                        dtype=paddle.float32,
-                    ),
-                )
-                for i in range(self.num_local_experts):
-                    quanted_weight_tensor, weight_block_scale_tensor = (
-                        per_block_cast_to_fp8(ffn2_weight_tensor[i])
-                    )
-                    paddle.assign(quanted_weight_tensor, ffn2_fp8[0][i])
-                    paddle.assign(weight_block_scale_tensor, ffn2_fp8[1][i])
-                self.moe_ffn2_weight.copy_(ffn2_fp8[0], False)
-                self.moe_ffn2_weight_scale.set_value(ffn2_fp8[1])
-        elif self.moe_quant_type == "w4a8":
-            if self.set_prequant_weight:
-                ffn2_weight_tensor_list = down_proj_weight
-            else:
-                if paddle.is_compiled_with_cuda():
-                    for i in range(self.num_local_experts):
-                        ffn2_weight_tensor_i, _ = weight_quantize(
-                            ffn2_weight_tensor[i].cast("int8"),
-                            algo="w4a8",
-                            arch=80,
-                        )
-                        ffn2_weight_tensor_list.append(ffn2_weight_tensor_i)
-            ffn2_weight_scale_tensor_list = down_proj_weight_scale_list
-            ffn2_weight_tensor = paddle.concat(ffn2_weight_tensor_list, axis=0)
-            ffn2_weight_scale_tensor = paddle.concat(
-                ffn2_weight_scale_tensor_list, axis=0
-            )
-            self.moe_ffn2_weight_scale.set_value(
-                ffn2_weight_scale_tensor.cast(paddle.get_default_dtype()).reshape(
-                    [self.num_local_experts, -1]
-                )
-            )
-            self.moe_ffn2_weight.set_value(
-                ffn2_weight_tensor.reshape(
-                    [self.num_local_experts, -1, ffn2_weight_tensor.shape[-1]]
-                )
-            )
-        elif self.moe_quant_type == "weight_only_int4":
-            if self.set_prequant_weight:
-                ffn2_weight_tensor_list = down_proj_weight
-                ffn2_weight_scale_tensor_list = down_proj_weight_scale
-            else:
-                if paddle.is_compiled_with_cuda():
-                    for i in range(self.num_local_experts):
-                        ffn2_weight_tensor_i, ffn2_weight_scale_tensor_i = (
-                            weight_quantize(
-                                ffn2_weight_tensor[i],
-                                algo="weight_only_int4",
-                                arch=self.inference_args.weight_only_linear_arch,
-                            )
-                        )
-                        ffn2_weight_tensor_list.append(ffn2_weight_tensor_i)
-                        ffn2_weight_scale_tensor_list.append(ffn2_weight_scale_tensor_i)
-            ffn2_weight_tensor = paddle.concat(ffn2_weight_tensor_list, axis=0)
-            ffn2_weight_scale_tensor = paddle.concat(
-                ffn2_weight_scale_tensor_list, axis=0
-            )
-            self.moe_ffn2_weight_scale.set_value(
-                ffn2_weight_scale_tensor.cast(paddle.get_default_dtype()).reshape(
-                    [self.num_local_experts, -1]
-                )
-            )
-            self.moe_ffn2_weight.set_value(
-                ffn2_weight_tensor.reshape(
-                    [
-                        self.num_local_experts,
-                        self.moe_config.moe_intermediate_size // self.nranks,
-                        -1,
-                    ]
-                )
-            )
-        elif self.moe_quant_type == "weight_only_int8":
-            if self.set_prequant_weight:
-                ffn2_weight_tensor_list = down_proj_weight
-                ffn2_weight_scale_tensor_list = down_proj_weight_scale
-            else:
-                if paddle.is_compiled_with_cuda():
-                    for i in range(self.num_local_experts):
-                        ffn2_weight_tensor_i, ffn2_weight_scale_tensor_i = (
-                            weight_quantize(
-                                ffn2_weight_tensor[i],
-                                algo="weight_only_int8",
-                                arch=self.inference_args.weight_only_linear_arch,
-                            )
-                        )
-                        ffn2_weight_tensor_list.append(ffn2_weight_tensor_i)
-                        ffn2_weight_scale_tensor_list.append(ffn2_weight_scale_tensor_i)
-            ffn2_weight_tensor = paddle.concat(ffn2_weight_tensor_list, axis=0)
-            ffn2_weight_scale_tensor = paddle.concat(
-                ffn2_weight_scale_tensor_list, axis=0
-            )
-            self.moe_ffn2_weight_scale.set_value(
-                ffn2_weight_scale_tensor.cast(paddle.get_default_dtype()).reshape(
-                    [self.num_local_experts, -1]
-                )
-            )
-            self.moe_ffn2_weight.set_value(
-                ffn2_weight_tensor.reshape(
-                    [
-                        self.num_local_experts,
-                        self.moe_config.moe_intermediate_size // self.nranks,
-                        -1,
-                    ]
-                )
-            )
+            self.gate_correction_bias.set_value(gate_correction_bias_tensor)
         else:
-            self.moe_ffn2_weight.set_value(
-                ffn2_weight_tensor.reshape(
-                    [
-                        self.num_experts,
-                        self.moe_intermediate_size,
-                        -1,
-                    ]
-                )
-            )
-        if self.with_moe_ffn2_bias:
-            moe_ffn2_bias_tensor = get_tensor(state_dict.pop(self.ffn2_bias_key))
-            self.moe_ffn2_bias.set_value(moe_ffn2_bias_tensor)
+            self.gate_correction_bias = None
 
-    def forward(self, x, **kwargs):
+        up_gate_proj_weight, down_proj_weight = self.load_gate_state_dict(
+            state_dict)
+
+        weight1_scale = None
+        weight2_scale = None
+        ffn1_in_scale = None
+        ffn2_in_scale = None
+        if self.moe_quant_type == "w4a8":
+            weight1_scale = []
+            weight2_scale = []
+            ffn1_in_scale = []
+            ffn2_in_scale = []
+
+            for j in range(self.num_experts):
+                weight1_scale.append(
+                    get_tensor(
+                        state_dict.pop(
+                            self.ffn1_expert_weight_scale_key.format(j))))
+                weight2_scale.append(
+                    get_tensor(
+                        state_dict.pop(
+                            self.ffn2_expert_weight_scale_key.format(j))))
+                ffn1_in_scale.append(
+                    get_tensor(
+                        state_dict.pop(
+                            self.ffn1_expert_in_scale_key.format(j))))
+                ffn2_in_scale.append(
+                    get_tensor(
+                        state_dict.pop(
+                            self.ffn2_expert_in_scale_key.format(j))))
+
+        # other weight is with compute_method
+        # different method may have different way to create weights
+        self.compute_method.create_weights(self, up_gate_proj_weight,
+                                           down_proj_weight, None, None,
+                                           weight1_scale, weight2_scale,
+                                           ffn1_in_scale, ffn2_in_scale)
+
+    def forward(self, x: paddle.Tensor):
         """
         Defines the forward computation of the moe layer.
 
@@ -894,77 +253,12 @@ class MoELayer(nn.Layer):
             Tensor: Output tensor.
 
         """
-        gate_out = paddle.matmul(x.cast("float32"), self.gate_weight)
 
-        (
-            permute_input,
-            token_nums_per_expert,
-            permute_indices_per_token,
-            top_k_weights,
-            top_k_indices,
-        ) = moe_expert_dispatch(
-            x,
-            gate_out,
-            (
-                self.gate_correction_bias
-                if self.moe_config.moe_use_gate_correction_bias
-                else None
-            ),
-            self.top_k,
-            self.moe_config.moe_group,
-            topk_only_mode=False,
-        )
+        out = self.compute_method.apply(self, x)
 
-        # TODO: dispatch 获取expert_idx_per_token
-        # expert_idx_per_token = []
-        # for expert_id in range(len(token_nums_per_expert)):
-        #     for i in range(token_nums_per_expert[expert_id]):
-        #         expert_idx_per_token.append(expert_id)
-        # expert_idx_per_token = paddle.to_tensor(expert_idx_per_token, "int64")
-        ffn_out = moe_expert_ffn(
-            permute_input,
-            token_nums_per_expert,
-            self.moe_ffn1_weight,
-            self.moe_ffn2_weight,
-            self.moe_ffn1_bias,
-            (
-                self.moe_ffn1_weight_scale
-                if hasattr(self, "moe_ffn1_weight_scale")
-                else None
-            ),
-            (
-                self.moe_ffn2_weight_scale
-                if hasattr(self, "moe_ffn2_weight_scale")
-                else None
-            ),
-            (self.moe_ffn2_in_scale if hasattr(self, "moe_ffn2_in_scale") else None),
-            None,  # expert_idx_per_token
-            self.moe_quant_type,
-            False,  # used_in_ep_low_latency
-        )
+        if self.tp_size > 1:
+            from fastdeploy.distributed.communication_op import \
+                tensor_model_parallel_all_reduce
+            tensor_model_parallel_all_reduce(out)
 
-        if self.with_moe_ffn1_bias and self.nranks > 1:
-            if in_dynamic_or_pir_mode():
-                hcg = fleet.get_hybrid_communicate_group()
-                mp_group = hcg.get_model_parallel_group()
-                paddle.distributed.all_reduce(ffn_out, group=mp_group)
-            else:
-                paddle.distributed.all_reduce(ffn_out, group=mp_group)
-
-        # reduce 中会做 topk 个 weight 的 norm 和 routed_scaling_factor
-        fused_moe_out = moe_expert_reduce(
-            ffn_out,
-            top_k_weights,
-            permute_indices_per_token,
-            top_k_indices,
-            self.moe_ffn2_bias if self.with_moe_ffn2_bias else None,
-            norm_topk_prob=True,
-            routed_scaling_factor=1.0,
-        )
-        
-        if self.num_shared_experts > 0:
-            s_x = self.shared_experts_up_gate_proj(x)
-            s_x = fused_act_bias_wrapper(s_x, act_method=self.activation)
-            fused_moe_out = fused_moe_out + self.shared_experts_down_proj(s_x)
-            
-        return fused_moe_out
+        return out

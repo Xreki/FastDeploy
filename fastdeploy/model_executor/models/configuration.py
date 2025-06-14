@@ -38,7 +38,7 @@ __all__ = [
 ERNIEBOT_PRETRAINED_INIT_CONFIGURATION = {
     "ernie-bot": {
         "attention_probs_dropout_prob": 0.0,
-        "hidden_act": "SwiGLU",
+        "hidden_act": "swiglu",
         "hidden_dropout_prob": 0.0,
         "hidden_size": 4096,
         "num_attention_heads": 32,
@@ -83,7 +83,7 @@ class ErnieBotConfig(PretrainedConfig):
         num_layers: int = 48,
         num_attention_heads: int = 32,
         num_key_value_heads: Optional[int] = None,
-        hidden_act: str = "SwiGLU",
+        hidden_act: str = "swiglu",
         hidden_dropout_prob: float = 0.0,
         attention_probs_dropout_prob: float = 0.0,
         max_position_embeddings: int = 512,

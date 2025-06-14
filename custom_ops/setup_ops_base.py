@@ -11,20 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+""" setup for FASTDEPLOY base ops """
 
-""" setup for EfficientLLM base ops """
-
-from paddle.utils.cpp_extension import setup, CppExtension
+from paddle.utils.cpp_extension import CppExtension, setup
 
 setup(
-    name="efficientllm_base_ops",
-    ext_modules=CppExtension(
-        sources=[
-            "gpu_ops/save_with_output_msg.cc",
-            "gpu_ops/get_output.cc",
-            "gpu_ops/reset_need_stop_value.cc",
-            "gpu_ops/get_output_msg_with_topk.cc",
-            "gpu_ops/transfer_output.cc",
-        ],
+    name="fastdeploy_base_ops",
+    ext_modules=CppExtension(sources=[
+        "gpu_ops/save_with_output_msg.cc",
+        "gpu_ops/get_output.cc",
+        "gpu_ops/get_output_msg_with_topk.cc",
+        "gpu_ops/transfer_output.cc",
+    ], 
+    extra_compile_args=["-DPy_LIMITED_API=0x03090000", "-DPADDLE_ON_INFERENCE"],
     ),
 )

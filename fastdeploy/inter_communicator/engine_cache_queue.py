@@ -156,11 +156,12 @@ class EngineCacheQueue:
         self.swap_to_cpu_barrier2 = self.manager.get_swap_to_cpu_barrier2()
         self.swap_to_gpu_barrier1 = self.manager.get_swap_to_gpu_barrier1()
         self.swap_to_gpu_barrier2 = self.manager.get_swap_to_gpu_barrier2()
-        self.total_num: int = (1 << self.num_client) - 1
+
 
         if not is_server:
             # Setup position and total_num for sync operations
             self.position: int = 1 << self.client_id
+            self.total_num: int = (1 << self.num_client) - 1
             logger.info(f"Connected EngineCacheQueue client_id: {self.client_id}")
 
     def _connect_with_retry(self,

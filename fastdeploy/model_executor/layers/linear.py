@@ -14,127 +14,76 @@
 # limitations under the License.
 """
 
-# cipher_token=WjI1fQOvhN  # do not edit this line
-import os
-
-import fastdeploy
-from paddlenlp.utils.log import logger
-
 import paddle
 from paddle import nn
-from paddle.nn.quant import weight_only_linear, weight_quantize
 
-from fastdeploy.platforms.utils import (
-    convert_to_npu_dequant_scale,
-    xpu_quant_weight,
-)
-
-import fastdeploy.model_executor.ops.gpu.deep_gemm as deep_gemm
-from .utils import per_block_cast_to_fp8, _set_var_distributed, get_tensor
 from fastdeploy.platforms import current_platform
 
+from .utils import _set_var_distributed, divide, get_tensor
 
-class Linear(nn.Layer):
+
+class LinearBase(nn.Layer):
     """
-    Linear Layer
+    LinearBase Layer
     """
 
     def __init__(
         self,
-        inference_args,
-        layer_name,
-        weight_key,
-        bias_key=None,
-        dim_feedforward=None,
-        skip_quant=False,
-        use_smooth_quant=True,
-        shift_key=None,
-        smooth_key=None,
+        fd_config,
+        prefix: str = "",
+        input_size: int = None,
+        output_size: int = None,
+        with_bias: bool = False,
+        add_bias: bool = False,
+        skip_quant: bool = False,
     ):
         """
-        Initialize a linear layer with additional parameters for inference and quantization.
+        Initializes a linear layer and provides additional parameters required for inference and quantization.
 
         Args:
-            inference_args (dict or object): Arguments related to inference, containing
-                attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
+            fd_config (FDConfig): Inference-related parameters containing attributes such as
+                weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
                 num_attention_heads, and ffn_hidden_size.
-            layer_name (str): Unique name of the layer, used for naming internal attributes,
-                you can give it any name you like.
-            weight_key (str): Key name of weight in the pdparams state dict.
-            bias_key (str): Key name of bias in the pdparams state dict. Defaults to None, means no bias.
-            dim_feedforward (int, optional): Size of intermediate layer. Defaults to None.
-            skip_quant (bool, optional): Whether to skip quantization for this layer.
-                Defaults to False.
-            use_smooth_quant (bool, optional): Whether to use smooth quantization for this
-                layer. Smooth quantization introduces additional parameters to improve
-                quantization accuracy. Defaults to True.
-            shift_key (str): Key name of linear_shift in the pdparams state dict.
-            smooth_key (str): Key name of smooth_weight in the pdparams state dict.
+            prefix (str): Unique name of the layer, used to name internal attributes.
+                Can be arbitrarily named.
+            input_size (int, optional): Number of input features. Defaults to None.
+            output_size (int, optional): Number of output features. Defaults to None.
+            weight_key (Any, optional): Key for weights. Defaults to None.
+            bias_key (Any, optional): Key for biases. Defaults to None.
+            skip_quant (bool, optional): Whether to skip quantization. Defaults to False.
 
+        Raises:
+            NotImplementedError: Raised if the current platform is not a CUDA platform.
         """
         super().__init__()
-        self.inference_args = inference_args
-        self.with_bias = bias_key is not None
+        if current_platform.is_cuda():
+            self.forward = self.forward_cuda
+        else:
+            raise NotImplementedError
+
+        self.fd_config = fd_config
         self.skip_quant = skip_quant
-        self.use_smooth_quant = use_smooth_quant
-        self.weight_dtype = inference_args.weight_dtype
-        self.act_dtype = inference_args.act_dtype
-        self.nranks = inference_args.mp_size
-        self.embed_dim = inference_args.hidden_size
-        self.head_dim = inference_args.head_dim
-        self.num_heads = inference_args.num_attention_heads // self.nranks
-        self.dim_feedforward = (
-            inference_args.dim_feedforward
-            if dim_feedforward is None
-            else dim_feedforward
-        ) // self.nranks
+        self.use_smooth_quant = fd_config.model_config.use_smooth_quant if hasattr(
+            fd_config.model_config, "use_smooth_quant") else False
+        self.weight_dtype = fd_config.model_config.weight_dtype
+        self.act_dtype = fd_config.model_config.act_dtype
+        self.input_size = input_size
+        self.output_size = output_size
+        self.with_bias = with_bias
+        self.add_bias = add_bias
+        self.prefix = prefix
+        # key
+        self.weight_key = f"{prefix}.weight"
+        self.bias_key = f"{prefix}.bias"
+        self.shift_key = f"{prefix}.shift_bias"
+        self.smooth_key = f"{prefix}.smooth_weight"
+        self.out_scale_key = f"{prefix}.out_scale"
 
-        self.weight_key = weight_key
-        self.bias_key = bias_key
-        self.shift_key = shift_key
-        self.smooth_key = smooth_key
-
-        self.layer_name = layer_name
-        self.weight_name = self.layer_name + ".weight"
-        self.bias_name = self.layer_name + ".bias"
-        self.weight_only_scale_name = self.layer_name + ".weight_only_scale"
-        self.out_scale_name = self.layer_name + ".out_scale"
-        if self.use_smooth_quant:
-            self.shift_name = self.layer_name + ".shift_bias"
-            self.smooth_name = self.layer_name + ".smooth_weight"
         self._dtype = self._helper.get_default_dtype()
 
-        self.use_gemm_dequant = os.getenv("FLAGS_use_gemm_dequant")
-        if self.use_gemm_dequant is not None:
-            self.use_gemm_dequant = int(self.use_gemm_dequant) == 1
-        else:
-            self.use_gemm_dequant = False
-        self.set_prequant_weight = inference_args.set_prequant_weight
-        if inference_args.use_weight_only:
-            self.init_weight_only_scale()
-        if self.inference_args.weight_block_size[0] != -1:
-            logger.debug("linear use_fp8_blockwise")
-            self.init_weight_block_scale()
-        if (
-            inference_args.weight_dtype == "int8" and inference_args.act_dtype == "int8"
-        ) or (
-            "float8" in inference_args.weight_dtype
-            and "float8" in inference_args.act_dtype
-        ):
-            self.set_ptq_scale()  # init and load scale
-        self.init_weight()
-
-    def init_weight_block_scale(self):
-        """init_weight_block_scale for fp8"""
-        self.linear_weight_scale = self.create_parameter(
-            shape=[
-                (self.embed_dim + 127) // 128,
-                (self.num_heads * self.head_dim + 127) // 128,
-            ],
-            attr=paddle.ParamAttr(name=self.layer_name + ".weight_block_scale"),
-            dtype="float32",
-            is_bias=False,
-        )
+        if fd_config.quant_config:
+            self.quant_method = fd_config.quant_config.get_quant_method(self)
+        self.use_offline_quant = fd_config.tmp_config.use_offline_quant
 
     def is_y_transposed(self):
         """
@@ -145,19 +94,14 @@ class Linear(nn.Layer):
         Returns:
             bool, whether the y tensor should be transposed for inference.
         """
-        if current_platform.is_dcu():
-            return False
-        elif current_platform.is_npu():
+        if self.weight_dtype == "int4":
             return True
-        else:  # GPU
-            if self.weight_dtype == "int4":
-                return True
-            if self.weight_dtype == "int8":
-                return True
-            if "float8" in self.weight_dtype:
-                return True
-            # bf16/fp16/fp32 y is not transposed
-            return False
+        if self.weight_dtype == "int8":
+            return True
+        if "float8" in self.weight_dtype:
+            return True
+        # bf16/fp16/fp32 y is not transposed
+        return False
 
     def init_weight_shape(self, trans=False):
         """
@@ -171,14 +115,14 @@ class Linear(nn.Layer):
             None.
         """
         self.linear_weight_shape = [
-            self.num_heads * self.head_dim,
-            self.embed_dim,
+            self.input_size,
+            self.output_size,
         ]
         if trans:
             self.linear_weight_shape.reverse()
         if self.use_smooth_quant:
-            self.linear_shift_shape = [self.num_heads * self.head_dim]
-            self.linear_smooth_shape = [self.num_heads * self.head_dim]
+            self.linear_shift_shape = [self.output_size]
+            self.linear_smooth_shape = [self.output_size]
         if self.weight_dtype == "int4":
             self.linear_weight_shape[0] //= 2
 
@@ -190,7 +134,6 @@ class Linear(nn.Layer):
 
         self.linear_weight = self.create_parameter(
             shape=self.linear_weight_shape,
-            attr=paddle.ParamAttr(name=self.weight_name),
             dtype=self.get_weight_create_dtype(),
             is_bias=False,
             default_initializer=paddle.nn.initializer.Constant(0),
@@ -199,15 +142,10 @@ class Linear(nn.Layer):
         self.linear_bias = None
         if self.with_bias:
             self.linear_bias = self.create_parameter(
-                shape=[self.embed_dim],
-                attr=paddle.ParamAttr(name=self.bias_name),
+                shape=[self.output_size],
                 dtype=self._dtype,
                 is_bias=True,
             )
-
-        if self.nranks > 0:
-            # row parallel
-            _set_var_distributed(self.linear_weight, split_axis=0)
 
         # smooth quant
         self.linear_shift = None
@@ -215,13 +153,11 @@ class Linear(nn.Layer):
         if self.use_smooth_quant:
             self.linear_shift = self.create_parameter(
                 shape=self.linear_shift_shape,
-                attr=paddle.ParamAttr(name=self.shift_name),
                 dtype=self._dtype,
                 is_bias=False,
             )
             self.linear_smooth = self.create_parameter(
                 shape=self.linear_smooth_shape,
-                attr=paddle.ParamAttr(name=self.smooth_name),
                 dtype=self._dtype,
                 is_bias=False,
             )
@@ -245,79 +181,9 @@ class Linear(nn.Layer):
             return "int8"
         # TODO(wangzhe24) create_parameter not support FP8
         if "float8" in self.weight_dtype:
-            return self._dtype
+            return "float8_e4m3fn"
+
         return self.weight_dtype
-
-    def init_weight_only_scale(self):
-        """
-        Initialize the weight scale.
-        """
-        self.linear_weight_scale = self.create_parameter(
-            shape=[self.embed_dim],
-            attr=paddle.ParamAttr(name=self.weight_only_scale_name),
-            dtype=self._dtype,
-            is_bias=False,
-        )
-
-    def set_ptq_scale(self):
-        """
-        Set the post-training quantization (PTQ) scale for the layer.
-
-        This method fetches weight and input activation scales from the inference arguments,
-        and computes the output scale for the layer.
-        It also handles skipping quantization for missing scales.
-
-        Args:
-            None (Method operates on the instance's attributes and arguments.)
-
-        Returns:
-            None (Modifies the instance's attributes.)
-
-        Raises:
-            None
-        """
-        if self.inference_args.weight_block_size[0] != -1:
-            return
-
-        weight_scale = self.inference_args.weight_scale_dict.get(
-            self.layer_name + ".weight_quanter"
-        )
-        in_scale = self.inference_args.act_scale_dict.get(
-            self.layer_name + ".activation_quanter"
-        )
-
-        if weight_scale is None or in_scale is None:
-            logger.debug(f"{self.layer_name} skip quant")
-            self.skip_quant = True
-            return
-
-        if "float8" in self.weight_dtype:
-            max_range = 448.0
-            self.scalar_scale_name = self.layer_name + ".scalar_weight_quanter"
-            self.scalar_scale = self.create_parameter(
-                shape=([1]),
-                attr=paddle.ParamAttr(name=self.scalar_scale_name),
-                dtype="float32",
-            )
-            self.scalar_scale.set_value(
-                paddle.to_tensor([1.0 / (max_range * in_scale)], dtype="float32")
-            )
-            linear_out_scale = paddle.to_tensor(weight_scale / max_range).astype(
-                "float32"
-            )
-        else:
-            max_range = 127.0
-            linear_out_scale = paddle.to_tensor(
-                weight_scale / (max_range * max_range * in_scale)
-            ).astype("float32")
-        self.linear_out_scale = self.create_parameter(
-            shape=[self.embed_dim],
-            attr=paddle.ParamAttr(name=self.out_scale_name),
-            dtype="float32",
-            is_bias=False,
-            default_initializer=paddle.nn.initializer.Constant(0),
-        )
-        self.linear_out_scale.set_value(convert_to_npu_dequant_scale(linear_out_scale))
 
     def load_offline_quant_state_dict(self, quant_weight, quant_scale=None):
         """
@@ -330,7 +196,8 @@ class Linear(nn.Layer):
                 self.linear_weight.set_value(quant_weight)
         else:
             if self.inference_args.weight_block_size[0] != -1:
-                self.linear_weight.copy_(quant_weight.view(paddle.float8_e4m3fn), False)
+                self.linear_weight.copy_(
+                    quant_weight.view(paddle.float8_e4m3fn), False)
             else:
                 self.linear_weight.set_value(quant_weight)
             self.linear_weight_scale.set_value(quant_scale)
@@ -342,402 +209,34 @@ class Linear(nn.Layer):
         Args:
             state_dict (dict): A dictionary containing the checkpoint weights and biases.
         """
-        # weight
-        if self.set_prequant_weight:
+        if self.use_offline_quant:
             self.load_offline_quant_state_dict(
                 quant_weight=get_tensor(
-                    state_dict.pop(self.weight_key + ".quant_weight")
-                ),
+                    state_dict.pop(self.weight_key + ".quant_weight")),
                 quant_scale=get_tensor(
-                    state_dict.pop(self.weight_key + ".weight_quanter")
-                ),
-            )
-        else:
-            weight_tensor = get_tensor(state_dict.pop(self.weight_key))
-            if self.skip_quant:
-                weight_tensor = weight_tensor.cast(self._dtype)
-            else:
-                if self.inference_args.weight_block_size[0] != -1:
-                    weight_tensor = weight_tensor.transpose([1, 0])
-                    quanted_weight_tensor, weight_block_scale_tensor = (
-                        per_block_cast_to_fp8(weight_tensor)
-                    )
-                    self.linear_weight.copy_(quanted_weight_tensor, False)
-                    self.linear_weight_scale.set_value(weight_block_scale_tensor)
-                elif self.weight_dtype == "int8" and self.act_dtype in [
-                    "bfloat16",
-                    "float16",
-                    "float32",
-                ]:  # WINT8
-                    if paddle.is_compiled_with_cuda():
-                        quanted_weight_tensor, weight_scale_tensor = weight_quantize(
-                            weight_tensor,
-                            algo="weight_only_int8",
-                            arch=self.inference_args.weight_only_linear_arch,
-                        )
-                    elif paddle.is_compiled_with_xpu():
-                        quanted_weight_tensor, weight_scale_tensor = xpu_quant_weight(
-                            weight_tensor.cpu().numpy()
-                        )
-                    else:
-                        raise ValueError("Not supported platform.")
-                    self.linear_weight.set_value(quanted_weight_tensor)
-                    self.linear_weight_scale.set_value(
-                        weight_scale_tensor.astype(paddle.get_default_dtype())
-                    )
-                elif self.weight_dtype == "int4" and self.act_dtype in [
-                    "bfloat16",
-                    "float16",
-                    "float32",
-                ]:  # WINT4
-                    quanted_weight_tensor, weight_scale_tensor = weight_quantize(
-                        weight_tensor.cpu(),
-                        algo="weight_only_int4",
-                        arch=self.inference_args.weight_only_linear_arch,
-                    )
-                    self.linear_weight.set_value(quanted_weight_tensor)
-                    self.linear_weight_scale.set_value(weight_scale_tensor)
-                elif (
-                    self.weight_dtype == "int4" and self.act_dtype == "float8_e4m3fn"
-                ):  # W4Afp8
-                    quanted_weight_tensor, weight_scale_tensor = (
-                        fastdeploy.model_executor.ops.gpu.scaled_gemm_f8_i4_f16_weight_quantize(
-                            paddle.cast(weight_tensor, "float32").cpu(),
-                            groupsize=-1,
-                            scale_dtype="float16",
-                        )
-                    )
-                    weight_scale_tensor = paddle.view(weight_scale_tensor, self._dtype)
-                    self.linear_weight.set_value(quanted_weight_tensor)
-                    self.linear_weight_scale.set_value(weight_scale_tensor)
-                else:  # bf16/fp16/fp32, A8W8, FP8
-                    if self.is_y_transposed():
-                        weight_tensor = weight_tensor.transpose([1, 0])
-                    weight_tensor = paddle.cast(weight_tensor, self.weight_dtype)
-                    if (
-                        "float8" in self.weight_dtype
-                    ):  # TODO(wangzhe24) FP8 cannot use set_value now
-                        self.linear_weight.copy_(weight_tensor, False)
-                    else:
-                        self.linear_weight.set_value(weight_tensor)
-
-        # bias
-        if self.with_bias:
-            bias_tensor = paddle.to_tensor(get_tensor(state_dict.pop(self.bias_key)))
-            self.linear_bias.set_value(bias_tensor)
-
-        # smooth quant
-        if self.use_smooth_quant:
-            if self.shift_key in state_dict:
-                shift_tensor = get_tensor(state_dict.pop(self.shift_key)).astype(
-                    paddle.get_default_dtype()
-                )
-            else:
-                shift_tensor = paddle.zeros(
-                    shape=[
-                        (
-                            self.inference_args.num_attention_heads
-                            // self.inference_args.mp_size
-                        )
-                        * (
-                            self.inference_args.hidden_size
-                            // self.inference_args.num_attention_heads
-                        )
-                    ],
-                    dtype=paddle.get_default_dtype(),
-                )
-            self.linear_shift.set_value(shift_tensor)
-            if self.smooth_key in state_dict:
-                smooth_tensor = get_tensor(state_dict.pop(self.smooth_key)).astype(
-                    paddle.get_default_dtype()
-                )
-            else:
-                smooth_tensor = paddle.ones(
-                    shape=[
-                        (
-                            self.inference_args.num_attention_heads
-                            // self.inference_args.mp_size
-                        )
-                        * (
-                            self.inference_args.hidden_size
-                            // self.inference_args.num_attention_heads
-                        )
-                    ],
-                    dtype=paddle.get_default_dtype(),
-                )
-            self.linear_smooth.set_value(smooth_tensor)
-
-    def forward(self, x):
-        """
-        Forward function for FFN1Split.
-
-        Args:
-            x (Tensor): Input tensor to the FFN1Split layer.
-
-        Returns:
-            Tensor: Output tensor.
-
-        Raises:
-            NotImplementedError: If the weight dtype is not float8 or act dtype is not equal to weight dtype.
-        """
-        if self.skip_quant:
-            linear_out = paddle.matmul(x, self.linear_weight, False, True)
-            return linear_out
-        if self.inference_args.weight_block_size[0] != -1:
-            x, x_scale_tensor = fastdeploy.model_executor.ops.gpu.per_token_quant_padding(
-                x, self.inference_args.weight_block_size[0]
-            )
-            linear_out = paddle.empty(
-                (x.shape[0], self.inference_args.hidden_size), dtype=paddle.bfloat16
-            )
-            deep_gemm.gemm_fp8_fp8_bf16_nt(
-                (x, x_scale_tensor),
-                (self.linear_weight, self.linear_weight_scale),
-                linear_out,
-            )
-        elif self.inference_args.use_weight_only and self.act_dtype in [
-            "bfloat16",
-            "float16",
-            "float32",
-        ]:
-            linear_out = weight_only_linear(
-                x,
-                weight=self.linear_weight,
-                weight_scale=self.linear_weight_scale,
-                weight_dtype=self.weight_dtype,
-                arch=self.inference_args.weight_only_linear_arch,
-            )
-        elif self.weight_dtype == "int8" and self.act_dtype == self.weight_dtype:
-            if self.use_gemm_dequant:
-                linear_out = fastdeploy.model_executor.ops.gpu.gemm_dequant(
-                    x, self.linear_weight, self.linear_out_scale, self._dtype
-                )
-            else:
-                linear_out = paddle.matmul(x, self.linear_weight, False, True)
-                linear_out = fastdeploy.model_executor.ops.gpu.dequant_int8(
-                    linear_out, self.linear_out_scale, self._dtype
-                )
-        elif self.weight_dtype == "int4" and self.act_dtype == "float8_e4m3fn":
-            linear_out = fastdeploy.model_executor.ops.gpu.scaled_gemm_f8_i4_f16(
-                x,
-                self.linear_weight,
-                self.linear_weight_scale,
-                zero_points=None,
-                bias=None,
-                out_scale=self.inference_args.weight_scale_dict.get(
-                    self.layer_name + ".weight_quanter"
-                )
-                / (
-                    self.inference_args.act_scale_dict.get(
-                        self.layer_name + ".activation_quanter"
-                    )
-                    * 448
-                    * 448
-                ),
-                groupsize=0,
-                out_dtype=self._dtype,
-            )
-        elif "float8" in self.weight_dtype and self.act_dtype == self.weight_dtype:
-            linear_out = fastdeploy.model_executor.ops.gpu.per_channel_fp8_fp8_half_gemm_fused(
-                x,
-                self.linear_weight,
-                bias=None,
-                scalar_scale=self.scalar_scale,
-                channel_scale=self.linear_out_scale,
-                transpose_x=False,
-                transpose_y=True,
-                output_dtype=self._dtype,
-            )
-        elif (
-            self.weight_dtype in ["bfloat16", "float16", "float32"]
-            and self.act_dtype == self.weight_dtype
-        ):
-            linear_out = paddle.matmul(x, self.linear_weight)
-        else:
-            raise ValueError(
-                f"Linear is not implemented for W[{self.weight_dtype}]A[{self.act_dtype}] yet."
-            )
-        return linear_out
-
-
-class FFN2(Linear):
-    """
-    FFN2 is a Linear layer with different weight dimensions.
-    """
-
-    def __init__(
-        self,
-        inference_args,
-        layer_name,
-        weight_key,
-        bias_key=None,
-        dim_feedforward=None,
-        skip_quant=False,
-        use_smooth_quant=True,
-        shift_key=None,
-        smooth_key=None,
-    ):
-        """
-        Initialize a linear layer with additional parameters for inference and quantization.
-
-        Args:
-            inference_args (dict or object): Arguments related to inference, containing
-                attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
-                num_attention_heads, and ffn_hidden_size.
-            layer_name (str): Name of the layer, used for naming internal attributes.
-            with_bias (bool, optional): Whether to include a bias term in the layer.
-                Defaults to True.
-            dim_feedforward (int, optional): Size of intermediate layer. Defaults to None.
-            skip_quant (bool, optional): Whether to skip quantization for this layer.
-                Defaults to False.
-            use_smooth_quant (bool, optional): Whether to use smooth quantization for this
-                layer. Smooth quantization introduces additional parameters to improve
-                quantization accuracy. Defaults to True.
-        """
-        super(FFN2, self).__init__(
-            inference_args,
-            layer_name,
-            weight_key,
-            bias_key,
-            dim_feedforward,
-            skip_quant,
-            use_smooth_quant,
-            shift_key,
-            smooth_key,
-        )
-
-    def init_weight_block_scale(self):
-        """init_weight_block_scale for fp8"""
-        self.linear_weight_scale = self.create_parameter(
-            shape=[(self.embed_dim + 127) // 128, (self.dim_feedforward + 127) // 128],
-            attr=paddle.ParamAttr(name=self.layer_name + ".weight_block_scale"),
-            dtype="float32",
-            is_bias=False,
-        )
-
-    def init_weight_shape(self, trans=False):
-        """
-        Initialize the weight shape for the first feedforward network layer.
-
-        Args:
-            trans (bool, optional): Whether to transpose the weight shape.
-                Defaults to False. If True, the shape will be reversed.
-
-        Returns:
-            None.
-        """
-        self.linear_weight_shape = [self.dim_feedforward, self.embed_dim]
-        if trans:
-            self.linear_weight_shape.reverse()
-        if self.use_smooth_quant:
-            self.linear_shift_shape = [self.dim_feedforward]
-            self.linear_smooth_shape = [self.dim_feedforward]
-        if self.weight_dtype == "int4":
-            self.linear_weight_shape[0] //= 2
-     
-    def load_state_dict(self, state_dict):
-        """
-        Load the checkpoint state dictionary into the layer.
-
-        Args:
-            state_dict (dict): A dictionary containing the checkpoint weights and biases.
-        """
-        if self.set_prequant_weight:
-            self.load_offline_quant_state_dict(
-                quant_weight=get_tensor(
-                    state_dict.pop(self.weight_key + ".quant_weight")
-                ),
-                quant_scale=get_tensor(
-                    state_dict.pop(self.weight_key + ".weight_quanter")
-                ),
+                    state_dict.pop(self.weight_key + ".quant_scale")),
             )
         else:
             # weight
+            assert self.weight_key is not None, 'weight_key should not be None.'
             weight_tensor = get_tensor(state_dict.pop(self.weight_key))
-            if self.skip_quant:
-                if self.is_y_transposed():
-                    weight_tensor = weight_tensor.transpose([1, 0])
-                weight_tensor = weight_tensor.cast(self._dtype)
-                self.linear_weight.set_value(weight_tensor)
+
+            if self.fd_config.quant_config:
+                self.quant_method.process_loaded_weights(self, weight_tensor)
             else:
-                if self.inference_args.weight_block_size[0] != -1:
-                    weight_tensor = weight_tensor.transpose([1, 0])
-                    quanted_weight_tensor, weight_block_scale_tensor = (
-                        per_block_cast_to_fp8(weight_tensor)
-                    )
-                    self.linear_weight.copy_(quanted_weight_tensor, False)
-                    self.linear_weight_scale.set_value(
-                        weight_block_scale_tensor)
-                elif self.weight_dtype == "int8" and self.act_dtype in [
-                    "bfloat16",
-                    "float16",
-                    "float32",
-                ]:  # WINT8
-                    if paddle.is_compiled_with_cuda():
-                        quanted_weight_tensor, weight_scale_tensor = weight_quantize(
-                            weight_tensor,
-                            algo="weight_only_int8",
-                            arch=self.inference_args.weight_only_linear_arch,
-                        )
-                    elif paddle.is_compiled_with_xpu():
-                        quanted_weight_tensor, weight_scale_tensor = xpu_quant_weight(
-                            weight_tensor.cpu().numpy()
-                        )
-                    else:
-                        raise ValueError("Not supported platform.")
-                    self.linear_weight.set_value(quanted_weight_tensor)
-                    self.linear_weight_scale.set_value(
-                        weight_scale_tensor.astype(paddle.get_default_dtype())
-                    )
-                elif self.weight_dtype == "int4" and self.act_dtype in [
-                    "bfloat16",
-                    "float16",
-                    "float32",
-                ]:  # WINT4
-                    quanted_weight_tensor, weight_scale_tensor = weight_quantize(
-                        weight_tensor.cpu(),
-                        algo="weight_only_int4",
-                        arch=self.inference_args.weight_only_linear_arch,
-                    )
-                    self.linear_weight.set_value(quanted_weight_tensor)
-                    self.linear_weight_scale.set_value(weight_scale_tensor)
-                elif (
-                    self.weight_dtype == "int4" and self.act_dtype == "float8_e4m3fn"
-                ):  # W4Afp8
-                    quanted_weight_tensor, weight_scale_tensor = (
-                        fastdeploy.model_executor.ops.gpu.scaled_gemm_f8_i4_f16_weight_quantize(
-                            paddle.cast(weight_tensor, "float32").cpu(),
-                            groupsize=-1,
-                            scale_dtype="float16",
-                        )
-                    )
-                    weight_scale_tensor = paddle.view(
-                        weight_scale_tensor, self._dtype)
-                    self.linear_weight.set_value(quanted_weight_tensor)
-                    self.linear_weight_scale.set_value(weight_scale_tensor)
-                else:  # bf16/fp16/fp32, A8W8, FP8
-                    if self.is_y_transposed():
-                        weight_tensor = weight_tensor.transpose([1, 0])
-                    weight_tensor = paddle.cast(
-                        weight_tensor, self.weight_dtype)
-                    if (
-                        "float8" in self.weight_dtype
-                    ):  # TODO(wangzhe24) FP8 cannot use set_value now
-                        self.linear_weight.copy_(weight_tensor, False)
-                    else:
-                        self.linear_weight.set_value(weight_tensor)
+                self.linear_weight.set_value(weight_tensor)
 
         # bias
         if self.with_bias:
-            bias_tensor = get_tensor(state_dict.pop(self.bias_key))
+            bias_tensor = paddle.to_tensor(
+                get_tensor(state_dict.pop(self.bias_key)))
             self.linear_bias.set_value(bias_tensor)
 
         # smooth quant
         if self.use_smooth_quant:
             if self.shift_key in state_dict:
-                shift_tensor = get_tensor(state_dict.pop(self.shift_key)).astype(
-                    paddle.get_default_dtype()
-                )
+                shift_tensor = get_tensor(state_dict.pop(
+                    self.shift_key)).astype(paddle.get_default_dtype())
             else:
                 shift_tensor = paddle.zeros(
                     shape=self.linear_shift_shape,
@@ -745,12 +244,512 @@ class FFN2(Linear):
                 )
             self.linear_shift.set_value(shift_tensor)
             if self.smooth_key in state_dict:
-                smooth_tensor = get_tensor(state_dict.pop(self.smooth_key)).astype(
-                    paddle.get_default_dtype()
-                )
+                smooth_tensor = get_tensor(state_dict.pop(
+                    self.smooth_key)).astype(paddle.get_default_dtype())
             else:
                 smooth_tensor = paddle.ones(
-                    shape=self.linear_smooth_shape,
+                    shape=[self.linear_smooth_shape],
                     dtype=paddle.get_default_dtype(),
                 )
             self.linear_smooth.set_value(smooth_tensor)
+
+    def forward_cuda(self, x):
+        """
+        Forward function for ColumnParallelLinear.
+
+        Args:
+            x (Tensor): Input tensor to the ColumnParallelLinear layer.
+
+        Returns:
+            Tensor: Output tensor.
+
+        Raises:
+            NotImplementedError: If the weight dtype is not float8 or act dtype is not equal to weight dtype.
+        """
+        if self.fd_config.quant_config:
+            linear_out = self.quant_method.apply(self, x)
+        else:
+            linear_out = paddle.matmul(x, self.linear_weight)
+
+        return linear_out
+
+
+class ReplicatedLinear(LinearBase):
+    """
+    ReplicatedLinear Layer
+    """
+
+    def __init__(
+        self,
+        fd_config,
+        prefix: str = "",
+        input_size: int = None,
+        output_size: int = None,
+        with_bias: bool = False,
+        add_bias: bool = False,
+        skip_quant: bool = False,
+    ):
+        """
+        Initialize a linear layer with additional parameters for inference and quantization.
+
+        Args:
+            fd_config (FDConfig): Arguments related to inference, containing
+                attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
+                num_attention_heads, and ffn_hidden_size.
+            prefix (str): Unique name of the layer, used for naming internal attributes,
+                you can give it any name you like.
+            layer_index (int): The index of the linear layer in the model
+
+        """
+        super().__init__(fd_config=fd_config,
+                         prefix=prefix,
+                         input_size=input_size,
+                         output_size=output_size,
+                         with_bias=with_bias,
+                         add_bias=add_bias,
+                         skip_quant=skip_quant)
+        self.nranks = fd_config.parallel_config.mp_size
+        self.input_size = input_size
+        self.init_weight()
+        if fd_config.quant_config:
+            self.quant_method.create_weights(self)
+
+    def init_weight(self):
+        """
+        Initialize the weights and biases.
+        """
+        self.init_weight_shape(self.is_y_transposed())
+
+        self.linear_weight = self.create_parameter(
+            shape=self.linear_weight_shape,
+            dtype=self.get_weight_create_dtype(),
+            is_bias=False,
+            default_initializer=paddle.nn.initializer.Constant(0),
+        )
+
+        self.linear_bias = None
+        if self.with_bias:
+            self.linear_bias = self.create_parameter(
+                shape=[self.output_size],
+                dtype=self._dtype,
+                is_bias=True,
+            )
+
+        # smooth quant
+        self.linear_shift = None
+        self.linear_smooth = None
+        if self.use_smooth_quant:
+            self.linear_shift = self.create_parameter(
+                shape=self.linear_shift_shape,
+                dtype=self._dtype,
+                is_bias=False,
+            )
+            self.linear_smooth = self.create_parameter(
+                shape=self.linear_smooth_shape,
+                dtype=self._dtype,
+                is_bias=False,
+            )
+
+
+class ColumnParallelLinear(LinearBase):
+    """
+    ColumnParallelLinear Layer
+    """
+
+    def __init__(
+        self,
+        fd_config,
+        prefix: str = "",
+        input_size: int = None,
+        output_size: int = None,
+        with_bias: bool = False,
+        add_bias: bool = False,
+        skip_quant: bool = False,
+    ):
+        """
+        Initialize a linear layer with additional parameters for inference and quantization.
+
+        Args:
+            fd_config (FDConfig): Arguments related to inference, containing
+                attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
+                num_attention_heads, and ffn_hidden_size.
+            prefix (str): Unique name of the layer, used for naming internal attributes,
+                you can give it any name you like.
+            layer_index (int): The index of the linear layer in the model
+
+        """
+        super().__init__(fd_config=fd_config,
+                         prefix=prefix,
+                         input_size=input_size,
+                         output_size=output_size,
+                         with_bias=with_bias,
+                         add_bias=add_bias,
+                         skip_quant=skip_quant)
+        self.nranks = fd_config.parallel_config.mp_size
+        self.input_size = input_size
+        self.output_size = divide(output_size, self.nranks)
+        self.init_weight()
+        if fd_config.quant_config:
+            self.quant_method.create_weights(self)
+
+    def init_weight(self):
+        """
+        Initialize the weights and biases.
+        """
+        self.init_weight_shape(self.is_y_transposed())
+
+        self.linear_weight = self.create_parameter(
+            shape=self.linear_weight_shape,
+            dtype=self.get_weight_create_dtype(),
+            is_bias=False,
+            default_initializer=paddle.nn.initializer.Constant(0),
+        )
+        if self.nranks > 0:
+            # col parallel
+            _set_var_distributed(self.linear_weight, split_axis=-1)
+
+        self.linear_bias = None
+        if self.with_bias:
+            self.linear_bias = self.create_parameter(
+                shape=[self.output_size],
+                dtype=self._dtype,
+                is_bias=True,
+            )
+            if self.nranks > 0:
+                # col parallel
+                _set_var_distributed(self.linear_bias, split_axis=-1)
+
+        # smooth quant
+        self.linear_shift = None
+        self.linear_smooth = None
+        if self.use_smooth_quant:
+            self.linear_shift = self.create_parameter(
+                shape=self.linear_shift_shape,
+                dtype=self._dtype,
+                is_bias=False,
+            )
+            self.linear_smooth = self.create_parameter(
+                shape=self.linear_smooth_shape,
+                dtype=self._dtype,
+                is_bias=False,
+            )
+
+
+class MergedColumnParallelLinear(ColumnParallelLinear):
+    """
+    MergedColumnParallelLinear Layer.
+    """
+
+    def __init__(self,
+                 fd_config,
+                 prefix,
+                 with_bias=False,
+                 add_bias=False,
+                 activation="gelu",
+                 use_fast_ffn=False,
+                 skip_quant=False,
+                 ffn_hidden_size=None):
+        """Packed linear layers with column parallelism.
+
+        Initialize the fused ffn1 Linear layer with given parameters.
+
+        Args:
+            fd_config (FDConfig): Arguments related to inference, containing
+                attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
+                num_attention_heads, and ffn_hidden_size.
+
+            prefix (str): Unique name of the layer, used for naming weights and biases.
+            weight_key (str): Key name of weight in the pdparams state dict.
+            bias_key (str): Key name of bias in the pdparams state dict. Defaults to None, means no bias.
+            with_bias (bool, optional): Whether to include bias term. Defaults to True.
+            activation (str, optional): Activation function to use. Defaults to "gelu".
+            use_fast_ffn (bool, optional): Whether to use a faster FFN implementation.
+                Defaults to False.
+            skip_quant (bool, optional): Whether to skip quantization steps. Defaults to False.
+        """
+        self.use_fast_ffn = use_fast_ffn
+        self.activation = activation
+        self.embed_dim = fd_config.model_config.hidden_size
+        self.ffn_hidden_size = ffn_hidden_size if ffn_hidden_size is not None else fd_config.model_config.ffn_hidden_size
+        self.nranks = fd_config.parallel_config.mp_size
+        self.ffn_hidden_size_per_rank = divide(self.ffn_hidden_size,
+                                               self.nranks)
+        input_size = self.embed_dim
+        output_size = self.ffn_hidden_size * 2
+        super().__init__(fd_config=fd_config,
+                         prefix=prefix,
+                         input_size=input_size,
+                         output_size=output_size,
+                         with_bias=with_bias,
+                         add_bias=add_bias,
+                         skip_quant=skip_quant)
+
+    def load_state_dict(self, state_dict):
+        """
+        Load the checkpoint state dictionary into the layer.
+
+        Args:
+            state_dict (dict): A dictionary containing the checkpoint weights and biases.
+        """
+        # weight
+        assert self.weight_key is not None, 'weight_key should not be None.'
+        if self.weight_key in state_dict.keys():
+            weight_tensor = get_tensor(state_dict.pop(self.weight_key))
+        else:
+            gate_weight_key = self.weight_key.replace("up_gate_proj",
+                                                      "gate_proj")
+            up_weight_key = self.weight_key.replace("up_gate_proj", "up_proj")
+            gate_tensor = get_tensor(state_dict.pop(gate_weight_key))
+            up_tensor = get_tensor(state_dict.pop(up_weight_key))
+            weight_tensor = paddle.concat([gate_tensor, up_tensor], axis=-1)
+
+            if self.with_bias:
+                gate_bias_key = self.bias_key.replace("up_gate_proj",
+                                                      "gate_proj")
+                bias_tensor = get_tensor(state_dict.pop(gate_bias_key)).astype(
+                    paddle.get_default_dtype())
+                converted_bias_tensor = paddle.zeros(shape=list(
+                    bias_tensor.shape),
+                                                     dtype=bias_tensor.dtype)
+                if not self.use_fast_ffn:
+                    converted_bias_tensor = paddle.concat(
+                        [bias_tensor[::2], bias_tensor[1::2]], axis=0)
+                else:
+                    converted_bias_tensor = bias_tensor
+                state_dict[self.bias_key] = converted_bias_tensor
+
+        if not self.use_fast_ffn:
+            converted_weight_tensor = paddle.concat(
+                [weight_tensor[:, ::2], weight_tensor[:, 1::2]], axis=1)
+        else:
+            converted_weight_tensor = weight_tensor
+
+        state_dict[self.weight_key] = converted_weight_tensor
+
+        super().load_state_dict(state_dict)
+
+
+class QKVParallelLinear(ColumnParallelLinear):
+    """
+    QKVParallelLinear Layer.
+    """
+
+    def __init__(self, fd_config, prefix, with_bias=False, add_bias=True):
+        """
+        Initialize the QKV Linear layer with given parameters.
+
+        Args:
+            fd_config (FDConfig): Arguments related to inference, containing
+                attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
+                num_attention_heads, and ffn_hidden_size.
+
+            prefix (str): Unique name of the layer, used for naming weights and biases.
+            weight_key (str): Key name of weight in the pdparams state dict.
+            bias_key (str): Key name of bias in the pdparams state dict. Defaults to None, means no bias.
+            with_bias (bool, optional): Whether to include bias term. Defaults to True.
+            skip_quant (bool, optional): Whether to skip quantization steps. Defaults to False.
+        """
+        self.num_heads = fd_config.model_config.num_attention_heads
+        self.kv_num_heads = fd_config.model_config.num_key_value_heads
+        self.embed_dim = fd_config.model_config.hidden_size
+        self.head_dim = fd_config.model_config.head_dim
+        self.nranks = fd_config.parallel_config.mp_size
+        self.num_heads_per_rank = divide(self.num_heads, self.nranks)
+        self.kv_num_heads_per_rank = divide(self.kv_num_heads, self.nranks)
+        input_size = self.embed_dim
+        output_size = (self.num_heads + 2 * self.kv_num_heads) * self.head_dim
+        super().__init__(fd_config=fd_config,
+                         prefix=prefix,
+                         input_size=input_size,
+                         output_size=output_size,
+                         with_bias=with_bias,
+                         add_bias=add_bias)
+
+    def load_state_dict(self, state_dict):
+        """
+        Load the checkpoint state dictionary into the layer.
+
+        Args:
+            state_dict (dict): A dictionary containing the checkpoint weights and biases.
+        """
+        # weight
+        assert self.weight_key is not None, 'weight_key should not be None.'
+        # qkv fused in disk
+
+        if self.weight_key in state_dict.keys():
+            weight_tensor = get_tensor(state_dict.pop(self.weight_key))
+        else:
+            q_weight_key = self.weight_key.replace("qkv_proj", "q_proj")
+            k_weight_key = self.weight_key.replace("qkv_proj", "k_proj")
+            v_weight_key = self.weight_key.replace("qkv_proj", "v_proj")
+            q_tensor = get_tensor(state_dict.pop(q_weight_key))
+            k_tensor = get_tensor(state_dict.pop(k_weight_key))
+            v_tensor = get_tensor(state_dict.pop(v_weight_key))
+            weight_tensor = paddle.concat([q_tensor, k_tensor, v_tensor],
+                                          axis=-1).transpose([1, 0])
+            weight_tensor = weight_tensor.reshape([
+                (self.num_heads_per_rank + 2 * self.kv_num_heads_per_rank) *
+                (self.head_dim),
+                self.embed_dim,
+            ])
+            weight_tensor = paddle.transpose(weight_tensor, perm=[1, 0])
+
+        if self.fd_config.quant_config:
+            self.quant_method.process_loaded_weights(self, weight_tensor)
+        else:
+            self.linear_weight.set_value(weight_tensor)
+
+        # bias
+        if self.with_bias:
+            if self.bias_key in state_dict.keys():
+                bias_tensor = paddle.to_tensor(
+                    get_tensor(state_dict.pop(self.bias_key)))
+                self.linear_bias.set_value(bias_tensor)
+            else:
+                q_bias_key = self.bias_key.replace("qkv_proj", "q_proj")
+                k_bias_key = self.bias_key.replace("qkv_proj", "k_proj")
+                v_bias_key = self.bias_key.replace("qkv_proj", "v_proj")
+                q_bias = get_tensor(state_dict.pop(q_bias_key))
+                k_bias = get_tensor(state_dict.pop(k_bias_key))
+                v_bias = get_tensor(state_dict.pop(v_bias_key))
+                qkv_bias = paddle.concat([q_bias, k_bias, v_bias], axis=-1)
+            self.linear_bias.set_value(qkv_bias)
+
+        # smooth quant
+        if self.use_smooth_quant:
+            if self.shift_key in state_dict:
+                shift_tensor = get_tensor(state_dict.pop(
+                    self.shift_key)).astype(paddle.get_default_dtype())
+            else:
+                shift_tensor = paddle.zeros(
+                    shape=self.linear_shift_shape,
+                    dtype=paddle.get_default_dtype(),
+                )
+            self.linear_shift.set_value(shift_tensor)
+            if self.smooth_key in state_dict:
+                smooth_tensor = get_tensor(state_dict.pop(
+                    self.smooth_key)).astype(paddle.get_default_dtype())
+            else:
+                smooth_tensor = paddle.ones(
+                    shape=[self.linear_smooth_shape],
+                    dtype=paddle.get_default_dtype(),
+                )
+            self.linear_smooth.set_value(smooth_tensor)
+
+
+class RowParallelLinear(LinearBase):
+    """
+    RowParallelLinear Layer
+    """
+
+    def __init__(
+        self,
+        fd_config,
+        prefix: str = "",
+        input_size: int = None,
+        output_size: int = None,
+        with_bias: bool = False,
+        add_bias: bool = False,
+        skip_quant: bool = False,
+        ffn_hidden_size: int = None,
+    ):
+        """
+        Initialize a linear layer with additional parameters for inference and quantization.
+
+        Args:
+            fd_config (FDConfig): Arguments related to inference, containing
+                attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
+                num_attention_heads, and ffn_hidden_size.
+            prefix (str): Unique name of the layer, used for naming internal attributes,
+                you can give it any name you like.
+            layer_index (int): The index of the linear layer in the model
+
+        """
+        super().__init__(fd_config=fd_config,
+                         prefix=prefix,
+                         input_size=input_size,
+                         output_size=output_size,
+                         with_bias=with_bias,
+                         add_bias=add_bias,
+                         skip_quant=skip_quant)
+        self.fd_config = fd_config
+        self.skip_quant = False
+        self.use_smooth_quant = fd_config.model_config.use_smooth_quant if hasattr(
+            fd_config.model_config, "use_smooth_quant") else False
+        self.weight_dtype = fd_config.model_config.weight_dtype
+        self.act_dtype = fd_config.model_config.act_dtype
+        self.nranks = fd_config.parallel_config.mp_size
+        self.embed_dim = fd_config.model_config.hidden_size
+        self.head_dim = fd_config.model_config.head_dim
+        self.num_heads = fd_config.model_config.num_attention_heads // self.nranks
+        self.ffn_hidden_size = ffn_hidden_size if ffn_hidden_size is not None else fd_config.model_config.ffn_hidden_size // self.nranks
+
+        self.with_bias = with_bias
+        self.prefix = prefix
+        self.shift_key = f"{prefix}.shift_bias"
+        self.smooth_key = f"{prefix}.smooth_weight"
+        self.weight_key = f"{prefix}.weight"
+        self.bias_key = f"{prefix}.bias"
+        self.weight_only_scale_key = f"{prefix}.weight_only_scale"
+        self.out_scale_key = f"{prefix}.out_scale"
+
+        self._dtype = self._helper.get_default_dtype()
+
+        if fd_config.quant_config:
+            self.quant_method = fd_config.quant_config.get_quant_method(self)
+            self.quant_method.create_weights(self)
+
+        self.init_weight()
+
+    def init_weight(self):
+        """
+        Initialize the weights and biases.
+        """
+        self.init_weight_shape(self.is_y_transposed())
+
+        self.linear_weight = self.create_parameter(
+            shape=self.linear_weight_shape,
+            dtype=self.get_weight_create_dtype(),
+            is_bias=False,
+            default_initializer=paddle.nn.initializer.Constant(0),
+        )
+
+        self.linear_bias = None
+        if self.with_bias:
+            self.linear_bias = self.create_parameter(
+                shape=[self.embed_dim],
+                dtype=self._dtype,
+                is_bias=True,
+            )
+
+        if self.nranks > 0:
+            # row parallel
+            _set_var_distributed(self.linear_weight, split_axis=0)
+
+        # smooth quant
+        self.linear_shift = None
+        self.linear_smooth = None
+        if self.use_smooth_quant:
+            self.linear_shift = self.create_parameter(
+                shape=self.linear_shift_shape,
+                dtype=self._dtype,
+                is_bias=False,
+            )
+            self.linear_smooth = self.create_parameter(
+                shape=self.linear_smooth_shape,
+                dtype=self._dtype,
+                is_bias=False,
+            )
+
+    def forward_cuda(self, x):
+        if self.fd_config.quant_config:
+            out = self.quant_method.apply(self, x)
+        else:
+            out = paddle.matmul(x, self.linear_weight)
+
+        if self.nranks > 1:
+            from fastdeploy.distributed.communication_op import \
+                tensor_model_parallel_all_reduce
+            tensor_model_parallel_all_reduce(out)
+
+        return out

@@ -18,7 +18,6 @@ import redis
 from fastdeploy.utils import llm_logger
 from .global_scheduler import GlobalScheduler
 from .local_scheduler import LocalScheduler
-from .splitwise_scheduler import SplitWiseScheduler, SplitWiseSchedulerConfig
 
 
 class LocalSchedulerConfig:
@@ -32,7 +31,7 @@ class LocalSchedulerConfig:
 
     def __init__(self,
                  max_size: int = -1,
-                 ttl: float = 900,
+                 ttl: int = 900,
                  max_model_len: int = 8192,
                  enable_chunked_prefill: bool = False,
                  max_num_partial_prefills: int = 1,
@@ -44,9 +43,18 @@ class LocalSchedulerConfig:
         Initialize LocalScheduler configuration.
 
         Args:
-            max_size: Maximum concurrent requests (-1 for unlimited)
-            ttl: Time-to-live in seconds for requests
-            **kwargs: Additional unused arguments
+            max_size: Maximum concurrent requests (-1 for unlimited, 0 for disabled)
+            ttl: Time-to-live in seconds for request expiration (default 900s)
+            max_model_len: Maximum model context length in tokens
+            enable_chunked_prefill: Whether to enable chunked prefill processing
+            max_num_partial_prefills: Max partial prefill operations allowed
+            max_long_partial_prefills: Max long-running partial prefill ops
+            long_prefill_token_threshold: Token count threshold for long prefill
+            **kwargs: Additional unused arguments (for forward compatibility)
+
+        Note:
+            - If long_prefill_token_threshold is 0, it's auto-calculated as 4% of max_model_len
+            - See LocalScheduler class for implementation details
         """
         self.max_size = max_size
         self.ttl = ttl
@@ -97,9 +105,10 @@ class GlobalSchedulerConfig:
                  db: int = 0,
                  password=None,
                  topic: str = "default",
-                 ttl: float = 900,
+                 ttl: int = 900,
                  min_load_score: float = 3,
                  max_model_len: int = 8192,
+                 load_shrads_num: int = 1,
                  enable_chunked_prefill: bool = False,
                  max_num_partial_prefills: int = 1,
                  max_long_partial_prefills: int = 1,
@@ -107,17 +116,27 @@ class GlobalSchedulerConfig:
                  **kwargs
                  ):
         """
-        Initialize GlobalScheduler configuration.
+        Initialize GlobalScheduler (Redis-based) configuration.
 
         Args:
-            host: Redis server hostname
-            port: Redis server port
-            db: Redis database number
+            host: Redis server hostname (default "127.0.0.1")
+            port: Redis server port (default 6379)
+            db: Redis database number (default 0)
             password: Optional Redis password
-            topic: Namespace prefix for queues
-            ttl: Time-to-live in seconds for Redis keys
-            min_load_score: Minimum load score for task assignment
-            **kwargs: Additional unused arguments
+            topic: Namespace prefix for queues (default "default")
+            ttl: Time-to-live in seconds for Redis keys (default 900s)
+            min_load_score: Minimum load score for task assignment (default 3)
+            max_model_len: Maximum model context length in tokens
+            load_shrads_num: Number of load balancing shards
+            enable_chunked_prefill: Whether to enable chunked prefill processing
+            max_num_partial_prefills: Max partial prefill operations allowed
+            max_long_partial_prefills: Max long-running partial prefill ops
+            long_prefill_token_threshold: Token count threshold for long prefill
+            **kwargs: Additional unused arguments (for forward compatibility)
+
+        Note:
+            - If long_prefill_token_threshold is 0, it's auto-calculated as 4% of max_model_len
+            - See GlobalScheduler class for implementation details
         """
         self.host = host
         self.port = port
@@ -126,6 +145,7 @@ class GlobalSchedulerConfig:
         self.topic = topic
         self.ttl = ttl
         self.min_load_score = min_load_score
+        self.load_shrads_num = load_shrads_num
 
         self.max_model_len = max_model_len
         self.enable_chunked_prefill = enable_chunked_prefill
@@ -144,9 +164,11 @@ class GlobalSchedulerConfig:
         """
 
         if self.ttl <= 0:
-            raise Exception("ttl should be greater than 60")
+            raise ValueError("ttl should be greater than 60")
         if self.min_load_score < 1:
-            raise Exception("min_load_score should be greater than 0")
+            raise ValueError("min_load_score should be greater than 0")
+        if self.load_shrads_num < 1:
+            raise ValueError("load_shrads_num should be greater than 0")
 
         r = redis.Redis(self.host, self.port, self.db, self.password)
         try:
@@ -182,8 +204,15 @@ class SchedulerConfig:
         Initialize scheduler configuration factory.
 
         Args:
-            name: Scheduler type ("local" or "global")
-            **kwargs: Configuration parameters for the specific scheduler
+            name: Scheduler type ("local" for LocalScheduler or "global" for GlobalScheduler)
+            **kwargs: Configuration parameters for the specific scheduler type
+
+        Initializes:
+            - Appropriate config object based on scheduler type
+            - Validates configuration parameters
+
+        Raises:
+            Exception: If invalid scheduler type is specified
         """
         self.name = name
         self.config = None
@@ -194,9 +223,6 @@ class SchedulerConfig:
         if name == "global":
             self.config = GlobalSchedulerConfig(**kwargs)
 
-        if name == "splitwise":
-            self.config = SplitWiseSchedulerConfig(**kwargs)
-
     def check(self):
         """
         Validate the configuration.
@@ -204,7 +230,7 @@ class SchedulerConfig:
         Raises:
             Exception: If invalid scheduler type is specified
         """
-        if self.name not in ["local", "global", "splitwise"]:
+        if self.name not in ["local", "global"]:
             raise Exception(f'Unknown scheduler type {self.name}')
 
         self.config.check()
@@ -231,13 +257,11 @@ class SchedulerConfig:
                                    topic=self.config.topic,
                                    ttl=self.config.ttl,
                                    min_load_score=self.config.min_load_score,
+                                   load_shrads_num=self.config.load_shrads_num,
                                    enable_chunked_prefill=self.config.enable_chunked_prefill,
                                    max_num_partial_prefills=self.config.max_num_partial_prefills,
                                    max_long_partial_prefills=self.config.max_long_partial_prefills,
                                    long_prefill_token_threshold=self.config.long_prefill_token_threshold,)
-
-        if self.name == "splitwise":
-            return SplitWiseScheduler(self.config)
 
         return LocalScheduler(max_size=self.config.max_size,
                               ttl=self.config.ttl,
