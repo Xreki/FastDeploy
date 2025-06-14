@@ -164,7 +164,6 @@ class Qwen3Attention(nn.Layer):
             qkv=qkv_out,
             forward_meta=forward_meta,
         )
-
         output = self.o_proj(atten_out)
         return output
 
@@ -226,7 +225,6 @@ class Qwen3DecoderLayer(nn.Layer):
             fd_config,
             hidden_size=fd_config.model_config.hidden_size,
             eps=1e-6,
-            prefix=f"{prefix}.post_attention_layernorm",
         )
 
     def load_state_dict(self, state_dict):
@@ -336,7 +334,6 @@ class Qwen3MoeModel(nn.Layer):
         for i in range(self.num_layers):
             hidden_states, residual = self.layers[i](forward_meta,
                                                      hidden_states, residual)
-
         hidden_states = hidden_states + residual
 
         out = self.norm(hidden_states)

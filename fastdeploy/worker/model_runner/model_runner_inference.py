@@ -172,6 +172,7 @@ class ModelRunner(ModelRunnerBase):
             self._init_kvcache()
 
     def init_rotary_position_embedding(self, max_model_len):
+        use_ernie_rotray = (os.getenv("USE_ERNIE_ROTRAY", default="1") == "1")
         tmp_position_ids = paddle.arange(max_model_len).reshape((1, -1))
         self.share_inputs["rope_emb"] = get_rope(
             rotary_dim=self.model_cfg.head_dim,
@@ -431,7 +432,6 @@ class ModelRunner(ModelRunnerBase):
         self.pre_process()
         hiddden_states = self.model(self.share_inputs["ids_remove_padding"],
                                     self.forward_meta)
-
         # rebuild_padding
         hiddden_states = rebuild_padding(
             hiddden_states,

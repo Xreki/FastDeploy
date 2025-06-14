@@ -67,7 +67,6 @@ class SiluAndMul(nn.Layer):
             raise NotImplementedError
 
         self.bias = bias
-        self.fd_config = fd_config
         act_method = act_method.lower()
         if act_method == "silu":
             act_method = "swiglu"
@@ -117,10 +116,7 @@ class SiluAndMul(nn.Layer):
             shift=self.shift,
             smooth=self.smooth,
             quant_scale=self.quant_scale,
-            quant_round_type=self.quant_round_type
-            if self.fd_config.quant_config else 0,
-            quant_max_bound=self.quant_max_bound
-            if self.fd_config.quant_config else 0,
-            quant_min_bound=self.quant_min_bound
-            if self.fd_config.quant_config else 0,
+            quant_round_type=self.quant_round_type,
+            quant_max_bound=self.quant_max_bound,
+            quant_min_bound=self.quant_min_bound,
         )

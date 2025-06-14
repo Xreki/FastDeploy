@@ -46,7 +46,6 @@ class ParallelLMHead(nn.Layer):
             prefix (str): full name of the layer in the state dict
         """
         super(ParallelLMHead, self).__init__()
-
         self.linear_weight_key = prefix + ".weight"
         if with_bias:
             self.linear_bias_key = prefix + ".bias"

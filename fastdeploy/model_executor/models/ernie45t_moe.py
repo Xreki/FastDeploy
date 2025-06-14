@@ -395,7 +395,6 @@ class Ernie45TAttention(nn.Layer):
                         fd_config.model_config.num_attention_heads // nranks),
             output_size=fd_config.model_config.hidden_size,
         )
-
         self.attn = Attention(
             fd_config=fd_config,
             layer_id=layer_id,

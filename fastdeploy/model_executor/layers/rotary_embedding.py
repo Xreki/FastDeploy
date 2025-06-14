@@ -14,7 +14,7 @@
 # limitations under the License.
 """
 
-from typing import Optional
+from typing import Any, Optional
 
 import paddle
 

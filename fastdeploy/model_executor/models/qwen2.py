@@ -95,7 +95,6 @@ class Qwen2Attention(nn.Layer):
                  prefix: str = "") -> None:
         super().__init__()
 
-        self.fd_config = fd_config
         nranks = fd_config.parallel_config.mp_size
 
         self.qkv_proj = QKVParallelLinear(fd_config=fd_config,
