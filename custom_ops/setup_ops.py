@@ -287,6 +287,7 @@ elif paddle.is_compiled_with_cuda():
     nvcc_compile_args += [
         "-Igpu_ops/cutlass_kernels",
         "-Ithird_party/cutlass/include",
+        "-Ithird_party/cutlass/tools/util/include",
         "-Igpu_ops/fp8_gemm_with_cutlass",
         "-Igpu_ops",
         "-Ithird_party/nlohmann_json/include",
@@ -297,6 +298,10 @@ elif paddle.is_compiled_with_cuda():
         sources += ["gpu_ops/sample_kernels/air_top_p_sampling.cu"]
     cc = max(get_sm_version(archs))
     print(f"cc = {cc}")
+    fp8_auto_gen_directory = "gpu_ops/cutlass_kernels/fp8_gemm_fused/autogen"
+    if os.path.isdir(fp8_auto_gen_directory):
+        shutil.rmtree(fp8_auto_gen_directory)
+
     if cc >= 80:
         # append_attention
         sources += ["gpu_ops/append_attention.cu"]
@@ -316,19 +321,36 @@ elif paddle.is_compiled_with_cuda():
     if cc >= 89:
         # Running generate fp8 gemm codes.
         nvcc_compile_args += ["-DENABLE_FP8"]
-        os.system("python auto_gen_fp8_fp8_gemm_fused_kernels.py")
-        os.system("python auto_gen_fp8_fp8_dual_gemm_fused_kernels.py")
-        os.system("python auto_gen_visitor_fp8_gemm_fused_kernels.py")
-
         nvcc_compile_args += [
             "-Igpu_ops/cutlass_kernels/fp8_gemm_fused/autogen"
         ]
+        os.system("python utils/auto_gen_visitor_fp8_gemm_fused_kernels.py")
+        if cc < 90:
+            os.system("python utils/auto_gen_fp8_fp8_gemm_fused_kernels.py")
+            os.system(
+                "python utils/auto_gen_fp8_fp8_dual_gemm_fused_kernels.py")
+        else:
+            nvcc_compile_args += [
+                "-gencode",
+                "arch=compute_90a,code=compute_90a",
+                "-O3",
+                "-DNDEBUG",
+            ]
+            os.system(
+                "python utils/auto_gen_fp8_fp8_gemm_fused_kernels_sm90.py")
+            os.system(
+                "python utils/auto_gen_fp8_fp8_dual_gemm_fused_kernels_sm90.py"
+            )
+            os.system(
+                "python utils/auto_gen_fp8_fp8_block_gemm_fused_kernels_sm90.py"
+            )
+            sources += [
+                "gpu_ops/fp8_gemm_with_cutlass/fp8_fp8_half_block_gemm.cu"
+            ]
 
         sources += [
             "gpu_ops/fp8_gemm_with_cutlass/fp8_fp8_half_gemm.cu",
-            "gpu_ops/cutlass_kernels/fp8_gemm_fused/fp8_fp8_gemm_scale_bias_act.cu",
             "gpu_ops/fp8_gemm_with_cutlass/fp8_fp8_fp8_dual_gemm.cu",
-            "gpu_ops/cutlass_kernels/fp8_gemm_fused/fp8_fp8_dual_gemm_scale_bias_act.cu",
             "gpu_ops/fp8_gemm_with_cutlass/fp8_fp8_half_cuda_core_gemm.cu",
             "gpu_ops/fp8_gemm_with_cutlass/per_channel_fp8_fp8_half_gemm.cu",
             "gpu_ops/cutlass_kernels/fp8_gemm_fused/visitor_fp8_gemm_fused.cu",
@@ -337,20 +359,9 @@ elif paddle.is_compiled_with_cuda():
             "gpu_ops/cutlass_kernels/cutlass_heuristic.cu",
             "gpu_ops/cutlass_kernels/cutlass_preprocessors.cu",
         ]
-    if cc >= 90:
-        nvcc_compile_args += [
-            "-gencode",
-            "arch=compute_90a,code=compute_90a",
-            "-O3",
-            "-DNDEBUG",
-        ]
-        os.system("python auto_gen_fp8_fp8_block_gemm_fused_kernels_sm90.py")
-        sources += ["gpu_ops/fp8_gemm_with_cutlass/fp8_fp8_half_block_gemm.cu"]
 
-    # for fp8 autogen *.cu
-    if cc >= 89:
-        sources += find_end_files(
-            "gpu_ops/cutlass_kernels/fp8_gemm_fused/autogen", ".cu")
+        sources += find_end_files(fp8_auto_gen_directory, ".cu")
+
     setup(
         name="fastdeploy_ops",
         ext_modules=CUDAExtension(
