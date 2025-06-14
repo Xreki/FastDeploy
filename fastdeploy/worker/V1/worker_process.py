@@ -531,6 +531,7 @@ def initialize_fd_config(args) -> FDConfig:
     parallel_config.attention_backend = args.attention_backend
     parallel_config.speculate_max_draft_tokens = args.speculate_max_draft_tokens
     parallel_config.max_num_batched_tokens = args.max_num_batched_tokens
+    parallel_config.enable_prefix_caching = args.enable_prefix_caching
 
     fd_config = FDConfig(model_config=model_config,
                          parallel_config=parallel_config,
