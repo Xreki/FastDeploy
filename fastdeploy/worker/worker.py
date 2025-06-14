@@ -111,8 +111,6 @@ class Worker:
 
         from fastdeploy.model_executor.models import \
             inference_runner_supported_models
-        print("arc: ", self.model_cfg.architectures)
-        print("support: ", inference_runner_supported_models)
 
         if any(self.model_cfg.architectures.startswith(model) for model in inference_runner_supported_models):
             from fastdeploy.worker.model_runner.model_runner_inference import \
@@ -464,9 +462,8 @@ class Worker:
         ) / GiB
         logger.info(
             f"current max peak gpu memory: {current_max_peak_gpu_memory} GiB.")
-        # per_block_memory_used = self.infer_engine._cal_theortical_kvcache(
-        # ) / GiB
-        per_block_memory_used = 0.006
+        per_block_memory_used = self.infer_engine._cal_theortical_kvcache(
+        ) / GiB
         logger.info(f"each kv cache block takes {per_block_memory_used} GiB.")
         used_cache_gpu_memory = self.args.total_block_num * per_block_memory_used
         logger.info(f"used cache gpu memory: {used_cache_gpu_memory} GiB.")
