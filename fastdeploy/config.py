@@ -149,10 +149,8 @@ class ModelConfig(PretrainedConfig):
             self.num_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
         self.num_key_value_heads = num_key_value_heads
-        print("before set dim: ", kwargs)
         self.head_dim = hidden_size // num_attention_heads if kwargs.get(
             "head_dim", None) is None else kwargs.get("head_dim")
-        print("set dim: ", self.head_dim)
         self.hidden_act = hidden_act
         self.hidden_dropout_prob = hidden_dropout_prob
         self.max_position_embeddings = max_position_embeddings
