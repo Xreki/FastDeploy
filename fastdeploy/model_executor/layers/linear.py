@@ -440,15 +440,18 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
     MergedColumnParallelLinear Layer.
     """
 
-    def __init__(self,
-                 fd_config,
-                 prefix,
-                 with_bias=False,
-                 add_bias=False,
-                 activation="gelu",
-                 use_fast_ffn=False,
-                 skip_quant=False,
-                 ffn_hidden_size=None):
+    def __init__(
+        self,
+        fd_config,
+        prefix,
+        input_size: int = None,
+        output_size: int = None,
+        with_bias: bool = False,
+        add_bias: bool = False,
+        activation: str = "gelu",
+        use_fast_ffn: bool = False,
+        skip_quant: bool = False,
+    ):
         """Packed linear layers with column parallelism.
 
         Initialize the fused ffn1 Linear layer with given parameters.
@@ -470,12 +473,7 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         self.use_fast_ffn = use_fast_ffn
         self.activation = activation
         self.embed_dim = fd_config.model_config.hidden_size
-        self.ffn_hidden_size = ffn_hidden_size if ffn_hidden_size is not None else fd_config.model_config.ffn_hidden_size
         self.nranks = fd_config.parallel_config.mp_size
-        self.ffn_hidden_size_per_rank = divide(self.ffn_hidden_size,
-                                               self.nranks)
-        input_size = self.embed_dim
-        output_size = self.ffn_hidden_size * 2
         super().__init__(fd_config=fd_config,
                          prefix=prefix,
                          input_size=input_size,
@@ -650,7 +648,6 @@ class RowParallelLinear(LinearBase):
         with_bias: bool = False,
         add_bias: bool = False,
         skip_quant: bool = False,
-        ffn_hidden_size: int = None,
     ):
         """
         Initialize a linear layer with additional parameters for inference and quantization.
@@ -681,7 +678,6 @@ class RowParallelLinear(LinearBase):
         self.embed_dim = fd_config.model_config.hidden_size
         self.head_dim = fd_config.model_config.head_dim
         self.num_heads = fd_config.model_config.num_attention_heads // self.nranks
-        self.ffn_hidden_size = ffn_hidden_size if ffn_hidden_size is not None else fd_config.model_config.ffn_hidden_size // self.nranks
 
         self.with_bias = with_bias
         self.prefix = prefix

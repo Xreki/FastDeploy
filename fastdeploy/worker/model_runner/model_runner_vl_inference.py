@@ -387,6 +387,8 @@ class ModelRunner(ModelRunnerBase):
                 for file in files:
                     if file == f"model_state.tp0{self.tensor_parallel_rank}.pdparams":
                         rank_model_paths.append(os.path.join(root, file))
+                    elif file == "model_state.pdparams":
+                        rank_model_paths.append(os.path.join(root, file))
             state_dict = {}
             for path in rank_model_paths:
                 loaded_dict = paddle.load(path, return_numpy=True)
@@ -402,6 +404,11 @@ class ModelRunner(ModelRunnerBase):
                     value = value.numpy()
                     resampler_state[
                         key[len("ernie.resampler_model."):]] = value
+                elif key.startswith("resampler_model."):
+                    value = state_dict.pop(key)
+                    value = paddle.to_tensor(value).cast("bfloat16")
+                    value = value.numpy()
+                    resampler_state[key[len("resampler_model."):]] = value
             self.model.set_state_dict(state_dict)
             self.resampler_model.set_state_dict(resampler_state)
         else:
@@ -412,16 +419,22 @@ class ModelRunner(ModelRunnerBase):
                 return_numpy=True,
             )
             for key in list(state_dict.keys()):
-                if key.startswith("vision_model.") or key.startswith("ernie.resampler_model."):
+                if key.startswith("vision_model.") or key.startswith(
+                        "ernie.resampler_model."):
                     state_dict.pop(key)
             self.model.set_state_dict(state_dict)
 
     @paddle.no_grad()
-    def vit_load(self, model_path, tensor_parallel_degree, tensor_parallel_rank):
+    def vit_load(self, model_path, tensor_parallel_degree,
+                 tensor_parallel_rank):
         """
         vit_load tp参数
         """
-        rank_model_path = os.path.join(model_path, f"model_state_tp0{tensor_parallel_rank}.pdparams")
+        if tensor_parallel_degree == 1:
+            rank_model_path = os.path.join(model_path, "model_state.pdparams")
+        else:
+            rank_model_path = os.path.join(
+                model_path, f"model_state_tp0{tensor_parallel_rank}.pdparams")
         if os.path.exists(rank_model_path):
             print(f"Load from mp{tensor_parallel_rank}")
             return paddle.load(rank_model_path, return_numpy=True)
@@ -456,25 +469,39 @@ class ModelRunner(ModelRunnerBase):
                             if tensor_parallel_degree > 1:
                                 if name == "ernie.resampler_model." and new_k == "spatial_linear.0.weight":
                                     tensor = np.split(
-                                        tensor, tensor_parallel_degree, axis=0)[tensor_parallel_rank]
+                                        tensor, tensor_parallel_degree,
+                                        axis=0)[tensor_parallel_rank]
                                 elif name == "vision_model.":
                                     if "attn.proj.weight" in new_k or "fc2.weight" in new_k:
-                                        tensor = np.split(tensor, tensor_parallel_degree, axis=0)[tensor_parallel_rank]
+                                        tensor = np.split(
+                                            tensor,
+                                            tensor_parallel_degree,
+                                            axis=0)[tensor_parallel_rank]
                                     elif "fc1.weight" in new_k or "fc1.bias" in new_k:
-                                        tensor = np.split(tensor, tensor_parallel_degree, axis=-1)[tensor_parallel_rank]
+                                        tensor = np.split(
+                                            tensor,
+                                            tensor_parallel_degree,
+                                            axis=-1)[tensor_parallel_rank]
                                     elif "qkv.weight" in new_k:
                                         head_dim = self.vision_config.hidden_size // self.vision_config.num_heads
-                                        tensor = tensor.reshape([self.vision_config.hidden_size, 3,
-                                                                self.vision_config.num_heads, head_dim])
+                                        tensor = tensor.reshape([
+                                            self.vision_config.hidden_size, 3,
+                                            self.vision_config.num_heads,
+                                            head_dim
+                                        ])
                                         tensor = np.split(
                                             tensor,
                                             tensor_parallel_degree,
                                             axis=-2
-                                        )[tensor_parallel_rank].reshape(
-                                            [self.vision_config.hidden_size, -1])
+                                        )[tensor_parallel_rank].reshape([
+                                            self.vision_config.hidden_size, -1
+                                        ])
                                     elif "qkv.bias" in new_k:
                                         head_dim = self.vision_config.hidden_size // self.vision_config.num_heads
-                                        tensor = tensor.reshape([3, self.vision_config.num_heads, head_dim])
+                                        tensor = tensor.reshape([
+                                            3, self.vision_config.num_heads,
+                                            head_dim
+                                        ])
                                         tensor = np.split(
                                             tensor,
                                             tensor_parallel_degree,
@@ -490,13 +517,10 @@ class ModelRunner(ModelRunnerBase):
                                            dtype="bfloat16")
         vision_model.eval()
         if not self.is_safetensors_model:
-            if self.tensor_parallel_degree > 1:
-                vit_state_dict = self.vit_load(
-                    args.vision_model_name_or_path,
-                    self.tensor_parallel_degree,
-                    self.tensor_parallel_rank
-                )
-                vision_model.set_state_dict(vit_state_dict)
+            vit_state_dict = self.vit_load(args.vision_model_name_or_path,
+                                           self.tensor_parallel_degree,
+                                           self.tensor_parallel_rank)
+            vision_model.set_state_dict(vit_state_dict)
         else:
             set_vision_state_dict(
                 vision_model,
@@ -880,7 +904,7 @@ class ModelRunner(ModelRunnerBase):
 
     def _preprocess_task(self, one):
         """process batch"""
-        
+
         input_ids = one["input_ids"][np.newaxis, :]
         input_ids = paddle.to_tensor(input_ids, dtype=paddle.int64)
         token_type_ids = one["token_type_ids"][np.newaxis, :]

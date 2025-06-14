@@ -316,10 +316,10 @@ def build_stream_line_model(
     elif isinstance(remove_tail_layer, int):
         num_layers -= remove_tail_layer
 
-    # use_moe = config.get(
-    #     "moe_layer_start_index",
-    #     num_layers) < num_layers or draft_type in ["mtp", "eagle"]
-    use_moe = config.get("moe_num_experts", 0) > 0 or draft_type in ["mtp", "eagle"]
+    moe_num_experts = config.get("moe_num_experts", 0)
+    if isinstance(moe_num_experts, list):
+        moe_num_experts = max(moe_num_experts)
+    use_moe = moe_num_experts > 0 or draft_type in ["mtp", "eagle"]
 
     if not sharing_state_dicts:
         if use_empty_parameter:
@@ -548,6 +548,7 @@ def build_stream_line_model(
             "moe_num_shared_experts", 0)
         moe_config.moe_layer_start_index = config.get("moe_layer_start_index",
                                                       0)
+        moe_config.moe_layer_end_index = config.get("moe_layer_end_index", 0)
         moe_config.moe_use_ffn_shared_weight_and_bias = config.get(
             "moe_use_ffn_shared_weight_and_bias", False)
         moe_config.use_moe = use_moe
