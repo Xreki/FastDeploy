@@ -97,7 +97,7 @@ class ModelConfig(PretrainedConfig):
         intermediate_size: Optional[int] = None,
         num_layers: int = 48,
         num_attention_heads: int = 32,
-        head_dim = -1,
+        head_dim: int = -1,
         num_key_value_heads: Optional[int] = None,
         hidden_act: str = "swiglu",
         hidden_dropout_prob: float = 0.0,
