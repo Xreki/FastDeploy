@@ -17,12 +17,19 @@
 from fastdeploy.engine.sampling_params import SamplingParams
 from fastdeploy.entrypoints.llm import LLM
 
-model_name_or_path = "./models/llama-7b"
+model_name_or_path = "/home/zexuli/Models/Qwen3-0.6B"
+
+prompts = [
+    "北京天安门在哪里?",
+    "解释温故而知新",
+]
 
 # 超参设置
-sampling_params = SamplingParams(temperature=0.1, max_tokens=30)
+sampling_params = SamplingParams(temperature=1, top_p=0, max_tokens=500)
 llm = LLM(model=model_name_or_path, tensor_parallel_size=1)
-output = llm.generate(prompts="who are you？", use_tqdm=True)
+output = llm.generate(prompts=prompts,
+                      use_tqdm=True,
+                      sampling_params=sampling_params)
 print(output)
 
 # output = llm.generate(prompts=["who are you？", "what can you do？"], use_tqdm=True)
