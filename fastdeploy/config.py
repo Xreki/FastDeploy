@@ -123,6 +123,7 @@ class ModelConfig(PretrainedConfig):
         tools_version="4.10.0.dev",
         system_prompt_version="V1",
         moe_layer_start_index: int | None = None,
+        moe_layer_end_index: int | None = None,
         moe_use_gate_correction_bias: bool | None = None,
         num_hidden_layers: int | None = None,
         prefix_name="",
@@ -180,6 +181,8 @@ class ModelConfig(PretrainedConfig):
         self.base_model_prefix = base_model_prefix
         if moe_layer_start_index is not None:
             self.moe_layer_start_index = moe_layer_start_index
+        if moe_layer_end_index is not None:
+            self.moe_layer_end_index = moe_layer_end_index
         elif moe_use_gate_correction_bias is not None:
             self.moe_use_gate_correction_bias = moe_use_gate_correction_bias
         self.ffn_hidden_size = ffn_hidden_size
@@ -280,6 +283,7 @@ class MoEConfig:
     moe_every2 = (False, )
     moe_num_shared_experts = (0, )
     moe_layer_start_index = 0
+    moe_layer_end_index = None
     moe_use_ffn_shared_weight_and_bias = (False, )
     moe_group = (False, )
     moe_quant_type = "weight_only_int4"

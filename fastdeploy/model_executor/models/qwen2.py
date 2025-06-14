@@ -49,6 +49,8 @@ class Qwen2MLP(nn.Layer):
         self.gate_up_proj = MergedColumnParallelLinear(
             fd_config=fd_config,
             prefix=f"{prefix}.up_gate_proj",
+            input_size=fd_config.model_config.hidden_size,
+            output_size=fd_config.model_config.ffn_hidden_size * 2,
             with_bias=False,
             activation=fd_config.model_config.hidden_act,
             use_fast_ffn=True,
@@ -57,8 +59,7 @@ class Qwen2MLP(nn.Layer):
         self.down_proj = RowParallelLinear(
             fd_config=fd_config,
             prefix=f"{prefix}.down_proj",
-            input_size=(fd_config.model_config.ffn_hidden_size //
-                        self.nranks),
+            input_size=(fd_config.model_config.ffn_hidden_size // self.nranks),
             output_size=fd_config.model_config.hidden_size,
             with_bias=False,
         )

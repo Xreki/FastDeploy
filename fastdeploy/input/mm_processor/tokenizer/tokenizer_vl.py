@@ -37,7 +37,7 @@ class ErnieVLTokenizer(PretrainedTokenizer):
     """doc"""
 
     resource_files_names = {
-        "vocab_file": "tokenizer.model",
+        "vocab_file": "spm.model",
     }
     pretrained_resource_files_map = {"vocab_file": {"ernie-bot-10b": None}}
     pretrained_init_configuration = {
