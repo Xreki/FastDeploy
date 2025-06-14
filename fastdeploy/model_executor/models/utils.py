@@ -1488,11 +1488,10 @@ def apply_quant(name_action_quant_mappings, key, tensor, state_dict):
     if key in name_action_quant_mappings:
         action = name_action_quant_mappings.pop(key)
         quant_weight_tensor, weight_quanter_tensor = action(tensor)
-        if quant_weight_tensor is not None and weight_quanter_tensor is not None:
+        if quant_weight_tensor._is_initialized():
             state_dict[key + ".quant_weight"] = quant_weight_tensor
+        if weight_quanter_tensor._is_initialized():
             state_dict[key + ".weight_quanter"] = weight_quanter_tensor
-        else:
-            state_dict[key] = quant_weight_tensor
     else:
         state_dict[key] = tensor
 
