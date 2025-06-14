@@ -89,7 +89,7 @@ class GPUModelRunner(ModelRunnerBase):
         """
         # ?
         if "caches" not in self.share_inputs:
-            self._init_kvcache()
+            self.initialize_kv_cache()
 
         # NOTE(luotingdan): Set environment variable of prefill node
         if req_dicts[-1].disaggregate_info is not None and req_dicts[
@@ -290,6 +290,8 @@ class GPUModelRunner(ModelRunnerBase):
                                                             0,
                                                             dtype='int32')
         self.share_inputs["step_seq_lens_encoder"] = paddle.full(
+            [max_num_seqs, 1], 0, dtype='int32')
+        self.share_inputs["step_seq_lens_decoder"] = paddle.full(
             [max_num_seqs, 1], 0, dtype='int32')
         self.share_inputs["step_idx"] = paddle.full([max_num_seqs, 1],
                                                     0,
