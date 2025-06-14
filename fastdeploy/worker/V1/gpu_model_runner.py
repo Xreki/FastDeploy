@@ -52,6 +52,7 @@ class GPUModelRunner(ModelRunnerBase):
         super().__init__(fd_config=fd_config, device=device)
         self.rank = rank
         self.local_rank = local_rank
+        self.device_id = self.device.split(":")[1]
 
         #  Sampler
         self.sampler = Sampler()
@@ -479,8 +480,8 @@ class GPUModelRunner(ModelRunnerBase):
             cache_kvs_list = []
             for i in range(self.model_config.num_layers):
                 key_cache = paddle.empty(shape=[], dtype=cache_type)
-                key_cache_name = f"key_caches_{i}_rank{self.rank}.device{self.device_ids_list[self.rank]}"
-                val_cache_name = f"value_caches_{i}_rank{self.rank}.device{self.device_ids_list[self.rank]}"
+                key_cache_name = f"key_caches_{i}_rank{self.local_rank}.device{self.device_id}"
+                val_cache_name = f"value_caches_{i}_rank{self.local_rank}.device{self.device_id}"
                 key_cache = share_external_data(key_cache, key_cache_name,
                                                 kv_cache_shape)
                 cache_kvs_list.append(key_cache)
