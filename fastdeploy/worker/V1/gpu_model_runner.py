@@ -88,7 +88,7 @@ class GPUModelRunner(ModelRunnerBase):
         Process inputs for prefill tasks and insert it to share_inputs buffer
         TODO(gongshaotian): Refactor this func
         """
-        # ?
+        # NOTE(luotingdan): Lazy initialize kv cache
         if "caches" not in self.share_inputs:
             self.initialize_kv_cache()
 
@@ -476,7 +476,9 @@ class GPUModelRunner(ModelRunnerBase):
         kv_cache_shape = self.attn_backends[0].get_kv_cache_shape(
             max_num_blocks=max_block_num)
 
-        if self.parallel_config.enable_prefix_caching or self.parallel_config.splitwise_role != "mixed":
+        if not self.parallel_config.do_profile and (
+                self.parallel_config.enable_prefix_caching
+                or self.parallel_config.splitwise_role != "mixed"):
             cache_kvs_list = []
             for i in range(self.model_config.num_layers):
                 key_cache = paddle.empty(shape=[], dtype=cache_type)
