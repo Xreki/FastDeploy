@@ -25,8 +25,7 @@ from fastdeploy.model_executor.models.model_base import ModelRegistry
 from fastdeploy.model_executor.models.qwen2 import Qwen2PretrainedModel
 from fastdeploy.model_executor.models.qwen3 import Qwen3PretrainedModel
 from fastdeploy.model_executor.models.qwen3moe import Qwen3MoePretrainedModel
-from fastdeploy.model_executor.models.utils import (convert_ndarray_dtype,
-                                                    load_checkpoint)
+from fastdeploy.model_executor.models.utils import load_checkpoint
 
 MODEL_CLASSES = {
     "ErnieForCausalLM": ErniePretrainedModel,

@@ -24,65 +24,21 @@ from paddlenlp.transformers import PretrainedModel
 from paddlenlp.utils.log import logger
 
 from fastdeploy.config import FDConfig, ModelConfig
-from fastdeploy.model_executor.layers.activation import SiluAndMul
 from fastdeploy.model_executor.layers.attention import Attention
 from fastdeploy.model_executor.layers.embeddings import VocabParallelEmbedding
-from fastdeploy.model_executor.layers.linear import (
-    MergedColumnParallelLinear, QKVParallelLinear, RowParallelLinear)
+from fastdeploy.model_executor.layers.linear import (QKVParallelLinear,
+                                                     RowParallelLinear)
 from fastdeploy.model_executor.layers.lm_head import ParallelLMHead
 from fastdeploy.model_executor.layers.normalization import RMSNorm
 from fastdeploy.model_executor.models.model_base import ModelForCasualLM
+from fastdeploy.model_executor.models.qwen2 import Qwen2DecoderLayer, Qwen2MLP
 from fastdeploy.worker.model_runner import ForwardMeta
 
 
-class Qwen3MLP(nn.Layer):
+class Qwen3MLP(Qwen2MLP):
     """
     """
-
-    def __init__(
-        self,
-        fd_config: FDConfig,
-        prefix: str = "",
-    ) -> None:
-        super().__init__()
-        self.nranks = fd_config.parallel_config.mp_size
-        self.gate_up_proj = MergedColumnParallelLinear(
-            fd_config=fd_config,
-            prefix=f"{prefix}.up_gate_proj",
-            input_size=fd_config.model_config.hidden_size,
-            output_size=fd_config.model_config.ffn_hidden_size * 2,
-            with_bias=False,
-            activation=fd_config.model_config.hidden_act,
-            use_fast_ffn=True,
-        )
-
-        self.down_proj = RowParallelLinear(
-            fd_config=fd_config,
-            prefix=f"{prefix}.down_proj",
-            input_size=(fd_config.model_config.ffn_hidden_size // self.nranks),
-            output_size=fd_config.model_config.hidden_size,
-            with_bias=False,
-        )
-
-        self.act_fn = SiluAndMul(
-            fd_config=fd_config,
-            bias=getattr(self.gate_up_proj, "linear_bias", None),
-            act_method=fd_config.model_config.hidden_act,
-        )
-
-    def load_state_dict(self, state_dict):
-        """
-        """
-        self.gate_up_proj.load_state_dict(state_dict)
-        self.down_proj.load_state_dict(state_dict)
-
-    def forward(self, x):
-        """
-        """
-        gate_up_out = self.gate_up_proj(x)
-        act_out = self.act_fn(gate_up_out)
-        down_out = self.down_proj(act_out)
-        return down_out
+    pass
 
 
 class Qwen3Attention(nn.Layer):
@@ -170,7 +126,7 @@ class Qwen3Attention(nn.Layer):
         return output
 
 
-class Qwen3DecoderLayer(nn.Layer):
+class Qwen3DecoderLayer(Qwen2DecoderLayer):
     """
     """
 
@@ -179,70 +135,11 @@ class Qwen3DecoderLayer(nn.Layer):
         fd_config: FDConfig,
         prefix: str = "",
     ) -> None:
-        super().__init__()
+        super().__init__(fd_config, prefix)
         layer_id = int(prefix.split(sep='.')[-1])
-
-        self.self_attn = Qwen3Attention(
-            fd_config=fd_config,
-            layer_id=layer_id,
-            prefix=f"{prefix}.self_attn",
-        )
-
-        self.mlp = Qwen3MLP(
-            fd_config=fd_config,
-            prefix=f"{prefix}.mlp",
-        )
-
-        self.input_layernorm = RMSNorm(
-            fd_config,
-            hidden_size=fd_config.model_config.hidden_size,
-            eps=1e-6,
-            prefix=f"{prefix}.input_layernorm",
-        )
-
-        self.post_attention_layernorm = RMSNorm(
-            fd_config,
-            hidden_size=fd_config.model_config.hidden_size,
-            eps=1e-6,
-            prefix=f"{prefix}.post_attention_layernorm",
-        )
-
-    def load_state_dict(self, state_dict):
-        """
-        """
-        self.self_attn.load_state_dict(state_dict)
-        self.mlp.load_state_dict(state_dict)
-        self.input_layernorm.load_state_dict(state_dict)
-        self.post_attention_layernorm.load_state_dict(state_dict)
-
-    def forward(
-        self,
-        forward_meta: ForwardMeta,
-        hidden_states: paddle.Tensor,
-        residual: paddle.Tensor = None,
-    ):
-        """
-        """
-        # Self Attention
-        if residual is None:
-            residual = hidden_states
-            hidden_states = self.input_layernorm(hidden_states)
-        else:
-            hidden_states, residual = self.input_layernorm(
-                hidden_states, residual)
-
-        hidden_states = self.self_attn(
-            hidden_states=hidden_states,
-            forward_meta=forward_meta,
-        )
-
-        # Fully Connected
-        hidden_states, residual = self.post_attention_layernorm(
-            hidden_states, residual)
-
-        hidden_states = self.mlp(hidden_states)
-
-        return hidden_states, residual
+        self.self_attn = Qwen3Attention(fd_config=fd_config,
+                                        layer_id=layer_id,
+                                        prefix=f"{prefix}.self_attn")
 
 
 class Qwen3Model(nn.Layer):
