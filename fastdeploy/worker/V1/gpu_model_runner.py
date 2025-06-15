@@ -47,12 +47,17 @@ logger = get_logger("gpu_model_runner", "gpu_model_runner.log")
 class GPUModelRunner(ModelRunnerBase):
     """ """
 
-    def __init__(self, fd_config: FDConfig, device: str, rank: int,
-                 local_rank: int):
+    def __init__(
+            self,
+            fd_config: FDConfig,
+            device: str,  # logic device
+            device_id: int,  # physical device id
+            rank: int,
+            local_rank: int):
         super().__init__(fd_config=fd_config, device=device)
         self.rank = rank
         self.local_rank = local_rank
-        self.device_id = self.device.split(":")[1]
+        self.device_id = device_id
 
         #  Sampler
         self.sampler = Sampler()
@@ -722,7 +727,8 @@ class GPUModelRunner(ModelRunnerBase):
         self.num_gpu_blocks = num_gpu_blocks
 
         # Reset block table and kv cache with global block num
-        if not (self.parallel_config.enable_prefix_caching or self.parallel_config.splitwise_role != "mixed"):
+        if not (self.parallel_config.enable_prefix_caching
+                or self.parallel_config.splitwise_role != "mixed"):
             self.initialize_kv_cache()
 
         self.share_inputs["block_tables"] = paddle.full(
