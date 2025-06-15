@@ -49,6 +49,8 @@ class Qwen3MLP(nn.Layer):
         self.gate_up_proj = MergedColumnParallelLinear(
             fd_config=fd_config,
             prefix=f"{prefix}.up_gate_proj",
+            input_size=fd_config.model_config.hidden_size,
+            output_size=fd_config.model_config.ffn_hidden_size * 2,
             with_bias=False,
             activation=fd_config.model_config.hidden_act,
             use_fast_ffn=True,
@@ -262,6 +264,7 @@ class Qwen3Model(nn.Layer):
         self.num_layers = fd_config.model_config.num_layers
         fd_config.model_config.prefix_name = "model"
         fd_config.model_config.weight_sharing = True
+        fd_config.model_config.tie_word_embeddings = True
 
         self.embeddings = VocabParallelEmbedding(
             fd_config=fd_config,
@@ -344,6 +347,7 @@ class Qwen3ForCausalLM(ModelForCasualLM):
             num_embeddings=fd_config.model_config.vocab_size,
             prefix=(f"{fd_config.model_config.prefix_name}.embed_tokens"),
         )
+        self.tie_word_embeddings = fd_config.model_config.tie_word_embeddings
 
     @classmethod
     def name(self):
@@ -362,6 +366,9 @@ class Qwen3ForCausalLM(ModelForCasualLM):
                 and values are NumPy arrays or PaddlePaddle tensors.
         """
         self.model.load_state_dict(state_dict)
+        if self.tie_word_embeddings:
+            self.lm_head.out_linear.weight.set_value(
+                self.model.embeddings.word_embeddings.weight.transpose([1, 0]))
         self.lm_head.load_state_dict(state_dict)
 
     def compute_logits(self, hidden_states: paddle.Tensor):

@@ -80,6 +80,7 @@ class RMSNorm(nn.Layer):
         Initialize the weights and biases.
         """
 
+        self.ln_weight = None
         if self.with_weight:
             self.ln_weight = self.create_parameter(
                 shape=[self.hidden_size],
@@ -249,7 +250,7 @@ class LayerNorm(nn.Layer):
                   The `residual_output` is the result of applying the normalization and possibly other
                   operations (like linear transformation) on the `residual_input`.
         """
-        
+
         norm_out = self.norm_func(
             x,
             norm_weight=self.ln_weight,

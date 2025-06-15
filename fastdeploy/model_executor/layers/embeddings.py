@@ -64,7 +64,8 @@ class VocabParallelEmbedding(nn.Layer):
         self.weight_sharing_add_bias = fd_config.model_config.weight_sharing_add_bias
         self.max_position_embeddings = fd_config.model_config.max_position_embeddings
         self.freeze_embedding = fd_config.model_config.freeze_embedding
-        
+        self.tie_word_embeddings = fd_config.model_config.tie_word_embeddings
+
         if self.use_ep:
             self.word_embeddings = nn.Embedding(
                 num_embeddings,
@@ -138,7 +139,7 @@ class VocabParallelEmbedding(nn.Layer):
         Args:
             state_dict (dict): A dictionary containing the checkpoint weights and biases.
         """
-        if self.weight_sharing:
+        if self.tie_word_embeddings:
             self.word_embeddings.weight.set_value(
                 get_tensor(state_dict[self.prefix + ".weight"]).astype(
                     paddle.get_default_dtype()))

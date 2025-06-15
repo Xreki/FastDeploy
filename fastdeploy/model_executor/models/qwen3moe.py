@@ -50,6 +50,8 @@ class Qwen3MLP(nn.Layer):
         self.gate_up_proj = MergedColumnParallelLinear(
             fd_config,
             prefix=f"{prefix}.up_gate_proj",
+            input_size=fd_config.model_config.hidden_size,
+            output_size=fd_config.model_config.ffn_hidden_size * 2,
             with_bias=False,
             activation=fd_config.model_config.hidden_act,
             use_fast_ffn=True,
@@ -225,6 +227,7 @@ class Qwen3DecoderLayer(nn.Layer):
             fd_config,
             hidden_size=fd_config.model_config.hidden_size,
             eps=1e-6,
+            prefix=f"{prefix}.post_attention_layernorm",
         )
 
     def load_state_dict(self, state_dict):
