@@ -143,6 +143,7 @@ class FusedMoE(nn.Layer):
         """
         load_gate_state_dict function.
         """
+
         # gate_correction_bias
         if self.moe_use_gate_correction_bias:
             gate_correction_bias_tensor = get_tensor(
@@ -152,7 +153,6 @@ class FusedMoE(nn.Layer):
 
         up_gate_proj_weight = []
         down_proj_weight = []
-        down_proj_weight_scale = []
         is_ffn_merged = self.ffn1_expert_weight_key.format(0) in state_dict
         if is_ffn_merged:
             for j in range(self.num_experts):
@@ -163,13 +163,15 @@ class FusedMoE(nn.Layer):
                     get_tensor(
                         state_dict.pop(self.ffn2_expert_weight_key.format(j))))
         else:
-            self.gate_expert_weight_key = self.ffn1_expert_weight_key.replace("up_gate_proj", "gate_proj")
-            self.up_expert_weight_key = self.ffn1_expert_weight_key.replace("up_gate_proj", "up_proj")
+            self.gate_expert_weight_key = self.ffn1_expert_weight_key.replace(
+                "up_gate_proj", "gate_proj")
+            self.up_expert_weight_key = self.ffn1_expert_weight_key.replace(
+                "up_gate_proj", "up_proj")
             for j in range(self.num_experts):
                 gate = get_tensor(
-                        state_dict.pop(self.gate_expert_weight_key.format(j)))
+                    state_dict.pop(self.gate_expert_weight_key.format(j)))
                 up = get_tensor(
-                        state_dict.pop(self.up_expert_weight_key.format(j)))
+                    state_dict.pop(self.up_expert_weight_key.format(j)))
                 up_gate_proj_weight.append(paddle.concat([gate, up], axis=-1))
                 down_proj_weight.append(
                     get_tensor(
@@ -185,24 +187,8 @@ class FusedMoE(nn.Layer):
             gate_weight_tensor = get_tensor(
                 state_dict.pop(self.gate_weight_key))
             self.gate_weight = self.create_parameter(
-                shape=gate_weight_tensor.shape,
-                dtype="float32"
-            )
+                shape=gate_weight_tensor.shape, dtype="float32")
             self.gate_weight.set_value(gate_weight_tensor.astype("float32"))
-
-        # gate_correction_bias
-        if self.moe_use_gate_correction_bias:
-            gate_correction_bias_tensor = get_tensor(
-                state_dict.pop(self.gate_correction_bias_key))
-
-            self.gate_correction_bias = self.create_parameter(
-                shape=gate_correction_bias_tensor.shape,
-                dtype="float32",
-            )
-
-            self.gate_correction_bias.set_value(gate_correction_bias_tensor)
-        else:
-            self.gate_correction_bias = None
 
         up_gate_proj_weight, down_proj_weight = self.load_gate_state_dict(
             state_dict)
