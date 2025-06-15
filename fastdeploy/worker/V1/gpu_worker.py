@@ -53,10 +53,10 @@ class GpuWorker(WorkerBase):
         if self.device_config.device_type == "cuda" and paddle.device.is_compiled_with_cuda(
         ):
             # Set evironment variable
+            self.device_ids = self.parallel_config.device_ids.split(",")
             self.device = f"gpu:{self.local_rank}"
             paddle.device.set_device(self.device)
             paddle.set_default_dtype(self.parallel_config.dtype)
-            self.device_ids = self.parallel_config.device_ids.split(",")
 
             gc.collect()
             paddle.device.cuda.empty_cache()
@@ -68,6 +68,7 @@ class GpuWorker(WorkerBase):
         self.model_runner: GPUModelRunner = GPUModelRunner(
             fd_config=self.fd_config,
             device=self.device,
+            device_id=self.device_ids[self.local_rank],
             rank=self.rank,
             local_rank=self.local_rank)
 
