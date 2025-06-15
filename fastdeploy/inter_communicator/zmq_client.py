@@ -49,6 +49,7 @@ class ZmqClient:
         """
         Start the server using the file name specified in the constructor.
         """
+
         self.socket.bind(f"ipc://{self.file_name}")
         self.poller = zmq.Poller()
         self.poller.register(self.socket, zmq.POLLIN)
@@ -58,6 +59,8 @@ class ZmqClient:
         Create a ROUTER socket and bind it to the specified router path.
         """
         self.router = self.context.socket(zmq.ROUTER)
+        self.router.setsockopt(zmq.SNDHWM, 10000)
+        self.router.setsockopt(zmq.SNDTIMEO, -1)
         self.router.bind(f"ipc://{self.router_path}")
 
     def send_json(self, data):
@@ -105,7 +108,7 @@ class ZmqClient:
         
         try:
             result = json.dumps(data.to_dict()).encode('utf-8')
-            self.router.send_multipart([self.req_dict[req_id], b'', result], zmq.DONTWAIT)
+            self.router.send_multipart([self.req_dict[req_id], b'', result])
         except Exception as e:
             llm_logger.error(f"Send result to zmq client failed: {e}")
         
@@ -147,7 +150,7 @@ class ZmqClient:
 
                 result = json.dumps(data).encode('utf-8')
                 try:
-                    self.router.send_multipart([client, b'', result], zmq.DONTWAIT)
+                    self.router.send_multipart([client, b'', result])
                 except Exception as e:
                     llm_logger.error(f"Send result to zmq client2 failed: {e}")
         
@@ -225,4 +228,3 @@ class ZmqClient:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
-
