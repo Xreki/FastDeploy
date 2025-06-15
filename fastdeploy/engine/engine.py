@@ -852,7 +852,7 @@ class LLMEngine(object):
             f" --engine_pid {self.engine_pid}"
             f" --max_num_batched_tokens {self.cfg.max_num_batched_tokens}"
             f" --splitwise_role {self.cfg.splitwise_role}"
-            f" --kv_cache_ratio {self.cfg.cache_config.kv_cache_ratio} --dtype {self.cfg.cache_config.cache_dtype}"
+            f" --kv_cache_ratio {self.cfg.cache_config.kv_cache_ratio}"
             f" --ori_vocab_size {len(self.data_processor.tokenizer)}")
 
         worker_append_flag = {

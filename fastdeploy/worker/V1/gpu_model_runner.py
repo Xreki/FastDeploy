@@ -482,7 +482,7 @@ class GPUModelRunner(ModelRunnerBase):
             max_num_blocks=max_block_num)
 
         if not self.parallel_config.do_profile and (
-                self.parallel_config.enable_prefix_caching
+                self.parallel_config.enable_prefix_caching \
                 or self.parallel_config.splitwise_role != "mixed"):
             cache_kvs_list = []
             for i in range(self.model_config.num_layers):
@@ -727,7 +727,7 @@ class GPUModelRunner(ModelRunnerBase):
         self.num_gpu_blocks = num_gpu_blocks
 
         # Reset block table and kv cache with global block num
-        if not (self.parallel_config.enable_prefix_caching
+        if not (self.parallel_config.enable_prefix_caching \
                 or self.parallel_config.splitwise_role != "mixed"):
             self.initialize_kv_cache()
 
