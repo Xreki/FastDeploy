@@ -706,7 +706,7 @@ class GPUModelRunner(ModelRunnerBase):
         # 1. Profile with multimodal encoder & encoder cache
 
         # 2. Dummy run
-        self._dummy_run(num_tokens=self.parallel_config.max_model_len,
+        self._dummy_run(num_tokens=self.parallel_config.max_num_batched_tokens,
                         batch_size=self.parallel_config.max_num_seqs)
 
         # 3. gc
