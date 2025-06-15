@@ -47,13 +47,15 @@ from ..layers.quantization import get_quantization_config
 from .ernie45t_moe import ErniePretrainedModel
 from .model_base import ModelRegistry
 from .qwen2 import Qwen2PretrainedModel
-from .qwen3moe import Qwen3PretrainedModel
+from .qwen3 import Qwen3PretrainedModel
+from .qwen3moe import Qwen3MoePretrainedModel
 from .tokenizer import ErnieBotTokenizer
 
 model_classes_mapping = {
     "ErnieForCausalLM": ErniePretrainedModel,
     "Qwen2ForCausalLM": Qwen2PretrainedModel,
-    "Qwen3MoeForCausalLM": Qwen3PretrainedModel,
+    "Qwen3ForCausalLM": Qwen3PretrainedModel,
+    "Qwen3MoeForCausalLM": Qwen3MoePretrainedModel,
     "ErnieBotLMHeadModel": ErniePretrainedModel,
 }
 
@@ -114,7 +116,7 @@ def build_stream_line_model(
     model_path,
     dtype,
     block_size,
-    max_len,
+    max_model_len,
     stage_flag,
     min_dec_len=1,
     max_dec_len=128,
@@ -158,6 +160,7 @@ def build_stream_line_model(
     return_fd_config: bool = False,
     use_empty_parameter: bool = False,
     embeddings_column_cut: bool = False,
+    rope_theta: float = 10000.0,
 ):
     """
     Build a fused inference model
@@ -167,7 +170,7 @@ def build_stream_line_model(
         model_path (str): Path to the model file
         dtype (str): Data type of the model
         block_size (int): Block size
-        max_len (int): Maximum sequence length
+        max_model_len (int): Maximum sequence length
         stage_flag (str): Qianfan requirement, stage flag, used to identify different stages in \
             time-consuming statistics logs, such as prediction ("msgid-1 predict") or export ("convert").
         min_dec_len (int, optional): Minimum decoding length. Default is 1.
@@ -209,11 +212,9 @@ def build_stream_line_model(
     config, _ = PretrainedConfig.get_config_dict(model_path)
     config["head_dim"] = config.get(
         "head_dim", config["hidden_size"] // config["num_attention_heads"])
-
+    config["rope_theta"] = config.get("rope_theta", 10000.0)
     model_config = ModelConfig.from_dict(config)
-    # TODO very circuitous to set `head_dim` again. 
-    # Because `ModelConfig` class doesn't support feeding head_dim at all!
-    model_config.head_dim = config["head_dim"] 
+    model_config.head_dim = config["head_dim"]
 
     parallel_config = ParallelConfig()
     speculative_config = SpeculativeConfig()
@@ -514,7 +515,7 @@ def build_stream_line_model(
     if config["hidden_act"].lower() == "swiglu":
         model_config.hidden_act = "swiglu"
     model_config.ffn_hidden_size = ffn_hidden_size
-    model_config.max_seq_len = max_len
+    model_config.max_seq_len = max_model_len
     model_config.num_layers = num_layers
     model_config.dtype = dtype
     model_config.export_model_type = export_model_type
@@ -582,6 +583,8 @@ def build_stream_line_model(
     model_config.weight_dtype = weight_dtype
     model_config.act_dtype = act_dtype
 
+    quant_config = None
+
     if weight_dtype == "int8" and act_dtype in ["bfloat16", "float16"]:
         quant_cls = get_quantization_config("weight_only")
         quant_config = quant_cls.from_config({
@@ -642,7 +645,7 @@ def build_stream_line_model(
         quant_config.quant_round_type = 1
         model_config.use_smooth_quant = False
     else:
-        quant_config = None
+        model_config.use_smooth_quant = False
 
     fd_config = FDConfig(
         model_config=model_config,
@@ -657,6 +660,8 @@ def build_stream_line_model(
         quant_config=quant_config,
         kv_cache_config=kv_cache_config,
     )
+    fd_config.parallel_config.max_model_len = max_model_len
+    fd_config.model_config.rope_theta = rope_theta
 
     with context:
         model_cls = ModelRegistry.get_class(model_config.architectures[0])

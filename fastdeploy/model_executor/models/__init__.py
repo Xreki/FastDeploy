@@ -26,6 +26,7 @@ inference_runner_supported_models = [
     "Qwen3MoeForCausalLM",
     "ErnieBotLMHeadModel",
     "ErnieMoEForCausalLM",
+    "Qwen3ForCausalLM",
 ]
 
 

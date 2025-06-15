@@ -137,9 +137,9 @@ class ModelRunner(ModelRunnerBase):
                 self.args.model_name_or_path,
                 self.args.dtype,
                 block_size=self.args.block_size,
-                max_len=self.args.max_model_len,
+                max_model_len=self.args.max_model_len,
                 stage_flag="msgid-1 predict",
-                export_model_type=getattr(self.model_cfg, "predict_model_type",
+                export_model_type=getattr(self.model_cfg, "export_model_type",
                                           "weight_only_int8"),
                 use_fake_parameter=False,
                 use_stop_seqs=self.model_cfg.ellm_dynamic_use_stop_seqs,
@@ -148,12 +148,14 @@ class ModelRunner(ModelRunnerBase):
                 speculate_max_draft_token_num=self.args.
                 speculate_max_draft_tokens,
                 return_all_hidden_states=False,
+                rope_theta=self.rope_theta,
                 moe_quant_type=getattr(self.model_cfg, "moe_quant_type",
                                        "weight_only_int8"),
                 use_safetensors=self.model_cfg.is_unified_ckpt,
-                return_fd_config=True)
+                return_fd_config=True,
+            )
             model.eval()
-            fd_config.parallel_config.max_model_len = fd_config.model_config.max_seq_len
+
             self.fd_config = fd_config
             self.model = model
             attn_backend_cls = get_attention_backend(
@@ -172,20 +174,11 @@ class ModelRunner(ModelRunnerBase):
     def init_rotary_position_embedding(self, max_model_len):
         use_ernie_rotray = (os.getenv("USE_ERNIE_ROTRAY", default="1") == "1")
         tmp_position_ids = paddle.arange(max_model_len).reshape((1, -1))
-        # TODO(lizexu) to refactor the rotray embedding in the next PR!
-        if use_ernie_rotray:
-            self.share_inputs["rope_emb"] = get_rope(
-                rotary_dim=self.model_cfg.head_dim,
-                position_ids=tmp_position_ids,
-                base=self.rope_theta,
-                model_config=self.config)
-        else:
-            # it's the only choise to run Qwen3-MoE!
-            from fastdeploy.model_executor.layers.rotary_embedding import RopeEmbedding
-
-            self.share_inputs["rope_emb"] = RopeEmbedding.get_neox_style_position_embedding(
-                tmp_position_ids, head_dim=self.model_cfg.head_dim, base=1e6
-            )
+        self.share_inputs["rope_emb"] = get_rope(
+            rotary_dim=self.model_cfg.head_dim,
+            position_ids=tmp_position_ids,
+            base=self.rope_theta,
+            model_config=self.config)
 
     def _init_kvcache(self):
         """
@@ -305,9 +298,7 @@ class ModelRunner(ModelRunnerBase):
                 self.share_inputs["input_ids"][idx:idx +
                                                1, :length] = np.array(
                                                    task.prompt_token_ids)
-
                 if self.args.enable_chunked_prefill:
-                    # print(f"chunked_prefill, {task} {length}, {task.token_chunk_size}")
                     task.set("chunk_idx", 1)
                     token_chunk_size = task.prefill_chunk_info[0]
                     self.share_inputs["seq_lens_this_time"][
@@ -411,6 +402,7 @@ class ModelRunner(ModelRunnerBase):
                     max_len=self.args.max_model_len,
                     input_ids=self.share_inputs["input_ids"],
                     seq_lens_this_time=self.share_inputs["seq_lens_this_time"])
+
         self.share_inputs["ids_remove_padding"] = ids_remove_padding
         self.share_inputs["padding_offset"] = padding_offset
         self.share_inputs["cum_offsets"] = cum_offsets

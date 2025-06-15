@@ -100,6 +100,7 @@ class FusedMoE(nn.Layer):
         self.moe_intermediate_size = moe_intermediate_size // self.tp_size
 
         self.gate_weight_key = gate_weight_key
+
         self.gate_correction_bias_key = gate_correction_bias_key
 
         self.ffn1_expert_weight_key = ffn1_expert_weight_key

@@ -385,6 +385,7 @@ def initialize_fd_config(args) -> FDConfig:
     config, _ = ModelConfig.get_config_dict(args.model_name_or_path)
     config["head_dim"] = config.get(
         "head_dim", config["hidden_size"] // config["num_attention_heads"])
+    config["rope_theta"] = config.get("rope_theta", 10000.0)
     model_config = ModelConfig.from_dict(config)
     # TODO Set `head_dim` again. Because `ModelConfig` class doesn't support feeding head_dim at all!
     model_config.head_dim = config["head_dim"] 

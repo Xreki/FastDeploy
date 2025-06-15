@@ -71,6 +71,7 @@ class RMSNorm(nn.Layer):
         self.quant_round_type = self.fd_config.quant_config.quant_round_type if fd_config.quant_config else 0
         self.quant_max_bound = self.fd_config.quant_config.quant_max_bound if fd_config.quant_config else 0
         self.quant_min_bound = self.fd_config.quant_config.quant_min_bound if fd_config.quant_config else 0
+        self.begin_norm_axis = begin_norm_axis
 
         self.init_weight()
 
@@ -249,7 +250,7 @@ class LayerNorm(nn.Layer):
                   The `residual_output` is the result of applying the normalization and possibly other
                   operations (like linear transformation) on the `residual_input`.
         """
-        
+
         norm_out = self.norm_func(
             x,
             norm_weight=self.ln_weight,

@@ -97,7 +97,6 @@ class ModelConfig(PretrainedConfig):
         intermediate_size: Optional[int] = None,
         num_layers: int = 48,
         num_attention_heads: int = 32,
-        head_dim: int = -1,
         num_key_value_heads: Optional[int] = None,
         hidden_act: str = "swiglu",
         hidden_dropout_prob: float = 0.0,
@@ -138,6 +137,7 @@ class ModelConfig(PretrainedConfig):
         start_layer_index: int = 0,
         output_via_mq: bool = True,
         generation_phase: GenerationPhase = GenerationPhase.PREFILL,
+        head_dim: Optional[int] = None,
         tie_word_embeddings: bool = False,
         **kwargs,
     ):
@@ -150,8 +150,7 @@ class ModelConfig(PretrainedConfig):
             self.num_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
         self.num_key_value_heads = num_key_value_heads
-        self.head_dim = hidden_size // num_attention_heads if kwargs.get(
-            "head_dim", None) is None else kwargs.get("head_dim")
+        self.head_dim = head_dim
         self.hidden_act = hidden_act
         self.hidden_dropout_prob = hidden_dropout_prob
         self.max_position_embeddings = max_position_embeddings

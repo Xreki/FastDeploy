@@ -30,7 +30,6 @@ from fastdeploy.model_executor.layers.embeddings import VocabParallelEmbedding
 from fastdeploy.model_executor.layers.linear import (
     MergedColumnParallelLinear, QKVParallelLinear, RowParallelLinear)
 from fastdeploy.model_executor.layers.lm_head import ParallelLMHead
-from fastdeploy.model_executor.layers.moe.moe import FusedMoE
 from fastdeploy.model_executor.layers.normalization import RMSNorm
 from fastdeploy.model_executor.models.model_base import ModelForCasualLM
 from fastdeploy.worker.model_runner import ForwardMeta
@@ -48,7 +47,7 @@ class Qwen3MLP(nn.Layer):
         super().__init__()
         self.nranks = fd_config.parallel_config.mp_size
         self.gate_up_proj = MergedColumnParallelLinear(
-            fd_config,
+            fd_config=fd_config,
             prefix=f"{prefix}.up_gate_proj",
             input_size=fd_config.model_config.hidden_size,
             output_size=fd_config.model_config.ffn_hidden_size * 2,
@@ -58,7 +57,7 @@ class Qwen3MLP(nn.Layer):
         )
 
         self.down_proj = RowParallelLinear(
-            fd_config,
+            fd_config=fd_config,
             prefix=f"{prefix}.down_proj",
             input_size=(fd_config.model_config.ffn_hidden_size // self.nranks),
             output_size=fd_config.model_config.hidden_size,
@@ -66,7 +65,7 @@ class Qwen3MLP(nn.Layer):
         )
 
         self.act_fn = SiluAndMul(
-            fd_config,
+            fd_config=fd_config,
             bias=getattr(self.gate_up_proj, "linear_bias", None),
             act_method=fd_config.model_config.hidden_act,
         )
@@ -97,38 +96,38 @@ class Qwen3Attention(nn.Layer):
         super().__init__()
 
         self.fd_config = fd_config
-        self.head_dim = fd_config.model_config.head_dim
 
-        self.qkv_proj = QKVParallelLinear(fd_config,
+        self.head_dim = fd_config.model_config.head_dim
+        self.q_size = fd_config.model_config.num_attention_heads * self.head_dim
+        self.kv_size = fd_config.model_config.num_key_value_heads * self.head_dim
+
+        self.qkv_proj = QKVParallelLinear(fd_config=fd_config,
                                           prefix=f"{prefix}.qkv_proj",
                                           with_bias=False)
 
         self.o_proj = RowParallelLinear(
-            fd_config,
+            fd_config=fd_config,
             prefix=f"{prefix}.o_proj",
             input_size=fd_config.model_config.head_dim *
             fd_config.model_config.num_attention_heads,
             output_size=fd_config.model_config.hidden_size,
         )
 
-        self.attn = Attention(fd_config,
+        self.attn = Attention(fd_config=fd_config,
                               layer_id=layer_id,
                               prefix=prefix,
                               use_neox_rotary_style=True)
 
-        self.q_norm = RMSNorm(fd_config,
-                              hidden_size=self.head_dim,
+        self.q_norm = RMSNorm(fd_config=fd_config,
+                              hidden_size=fd_config.model_config.head_dim,
                               eps=1e-6,
                               prefix=f"{prefix}.q_norm",
                               begin_norm_axis=2)
-        self.k_norm = RMSNorm(fd_config,
-                              hidden_size=self.head_dim,
+        self.k_norm = RMSNorm(fd_config=fd_config,
+                              hidden_size=fd_config.model_config.head_dim,
                               eps=1e-6,
                               prefix=f"{prefix}.k_norm",
                               begin_norm_axis=2)
-
-        self.q_size = fd_config.model_config.num_attention_heads * self.head_dim
-        self.kv_size = fd_config.model_config.num_key_value_heads * self.head_dim
 
     def load_state_dict(self, state_dict):
         """
@@ -146,6 +145,7 @@ class Qwen3Attention(nn.Layer):
         """
         """
         qkv_out = self.qkv_proj(hidden_states)
+
         # origin_qkv_out = qkv_out
         q, k, v = qkv_out.split([self.q_size, self.kv_size, self.kv_size],
                                 axis=-1)
@@ -187,34 +187,11 @@ class Qwen3DecoderLayer(nn.Layer):
             layer_id=layer_id,
             prefix=f"{prefix}.self_attn",
         )
-        fd_config.moe_config.use_moe = True
-        assert fd_config.moe_config.moe_quant_type in [
-            "weight_only_int8", "weight_only_int4"
-        ]
 
-        if (fd_config.moe_config.num_experts is not None
-                and layer_id >= fd_config.moe_config.moe_layer_start_index):
-            self.mlp = FusedMoE(
-                fd_config,
-                moe_intermediate_size=fd_config.moe_config.
-                moe_intermediate_size,
-                num_experts=fd_config.moe_config.num_experts,
-                top_k=fd_config.moe_config.top_k,
-                moe_use_gate_correction_bias=fd_config.moe_config.
-                moe_use_gate_correction_bias,
-                moe_quant_type=fd_config.moe_config.moe_quant_type,
-                layer_idx=layer_id,
-                gate_weight_key=f"{prefix}.mlp.gate.weight",
-                ffn1_expert_weight_key=
-                f"{prefix}.mlp.experts.{{}}.up_gate_proj.weight",
-                ffn2_expert_weight_key=
-                f"{prefix}.mlp.experts.{{}}.down_proj.weight",
-            )
-        else:
-            self.mlp = Qwen3MLP(
-                fd_config,
-                prefix=f"{prefix}.mlp",
-            )
+        self.mlp = Qwen3MLP(
+            fd_config=fd_config,
+            prefix=f"{prefix}.mlp",
+        )
 
         self.input_layernorm = RMSNorm(
             fd_config,
@@ -246,6 +223,7 @@ class Qwen3DecoderLayer(nn.Layer):
     ):
         """
         """
+        # Self Attention
         if residual is None:
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)
@@ -267,7 +245,7 @@ class Qwen3DecoderLayer(nn.Layer):
         return hidden_states, residual
 
 
-class Qwen3MoeModel(nn.Layer):
+class Qwen3Model(nn.Layer):
     """
     """
 
@@ -276,7 +254,7 @@ class Qwen3MoeModel(nn.Layer):
         fd_config: FDConfig = None,
     ):
         """
-        Initializer for the Qwen2Model class.
+        Initializer for the Qwen3Model class.
 
         Args:
 
@@ -285,9 +263,11 @@ class Qwen3MoeModel(nn.Layer):
 
         self.num_layers = fd_config.model_config.num_layers
         fd_config.model_config.prefix_name = "model"
+        fd_config.model_config.weight_sharing = True
+        fd_config.model_config.tie_word_embeddings = True
 
         self.embeddings = VocabParallelEmbedding(
-            fd_config,
+            fd_config=fd_config,
             num_embeddings=fd_config.model_config.vocab_size,
             embedding_dim=fd_config.model_config.hidden_size,
             params_dtype=paddle.get_default_dtype,
@@ -296,7 +276,7 @@ class Qwen3MoeModel(nn.Layer):
 
         self.layers = nn.LayerList([
             Qwen3DecoderLayer(
-                fd_config,
+                fd_config=fd_config,
                 prefix=f"{fd_config.model_config.prefix_name}.layers.{i}")
             for i in range(self.num_layers)
         ])
@@ -304,7 +284,7 @@ class Qwen3MoeModel(nn.Layer):
         self.norm = RMSNorm(
             fd_config,
             hidden_size=fd_config.model_config.hidden_size,
-            eps=1e-5,
+            eps=1e-6,
             prefix=f"{fd_config.model_config.prefix_name}.norm",
         )
 
@@ -337,6 +317,7 @@ class Qwen3MoeModel(nn.Layer):
         for i in range(self.num_layers):
             hidden_states, residual = self.layers[i](forward_meta,
                                                      hidden_states, residual)
+
         hidden_states = hidden_states + residual
 
         out = self.norm(hidden_states)
@@ -344,9 +325,9 @@ class Qwen3MoeModel(nn.Layer):
         return out
 
 
-class Qwen3MoeForCausalLM(ModelForCasualLM):
+class Qwen3ForCausalLM(ModelForCasualLM):
     """
-    Qwen3MoeForCausalLM
+    Qwen3ForCausalLM
     """
 
     def __init__(self, fd_config: FDConfig):
@@ -354,24 +335,25 @@ class Qwen3MoeForCausalLM(ModelForCasualLM):
         Args:
             fd_config (FDConfig): Configurations for the LLM model.
         """
-        super(Qwen3MoeForCausalLM, self).__init__(fd_config)
+        super(Qwen3ForCausalLM, self).__init__(fd_config)
 
-        self.model = Qwen3MoeModel(fd_config)
+        self.model = Qwen3Model(fd_config=fd_config)
 
         self.ori_vocab_size = fd_config.model_config.ori_vocab_size
 
         self.lm_head = ParallelLMHead(
-            fd_config,
+            fd_config=fd_config,
             embedding_dim=fd_config.model_config.hidden_size,
             num_embeddings=fd_config.model_config.vocab_size,
-            prefix="lm_head",
+            prefix=(f"{fd_config.model_config.prefix_name}.embed_tokens"),
         )
+        self.tie_word_embeddings = fd_config.model_config.tie_word_embeddings
 
     @classmethod
     def name(self):
         """
         """
-        return "Qwen3MoeForCausalLM"
+        return "Qwen3ForCausalLM"
 
     @paddle.no_grad()
     def set_state_dict(self, state_dict):
@@ -384,6 +366,9 @@ class Qwen3MoeForCausalLM(ModelForCasualLM):
                 and values are NumPy arrays or PaddlePaddle tensors.
         """
         self.model.load_state_dict(state_dict)
+        if self.tie_word_embeddings:
+            self.lm_head.out_linear.weight.set_value(
+                self.model.embeddings.word_embeddings.weight.transpose([1, 0]))
         self.lm_head.load_state_dict(state_dict)
 
     def compute_logits(self, hidden_states: paddle.Tensor):
@@ -407,9 +392,9 @@ class Qwen3MoeForCausalLM(ModelForCasualLM):
         return hidden_states
 
 
-class Qwen3MoePretrainedModel(PretrainedModel):
+class Qwen3PretrainedModel(PretrainedModel):
     """
-    Qwen3MoePretrainedModel
+    Qwen3PretrainedModel
     """
 
     config_class = FDConfig
@@ -422,7 +407,6 @@ class Qwen3MoePretrainedModel(PretrainedModel):
 
     @classmethod
     def _get_tensor_parallel_mappings(cls, config: ModelConfig, is_split=True):
-        # TODO not support TP split now, next PR will support TP.
 
         from paddlenlp.transformers.conversion_utils import split_or_merge_func
 
@@ -437,7 +421,6 @@ class Qwen3MoePretrainedModel(PretrainedModel):
             final_actions = {}
 
             base_actions = {
-                "lm_head.weight": partial(fn, is_column=True),
                 # Row Linear
                 "embed_tokens.weight": partial(fn, is_column=False),
                 "layers.0.self_attn.o_proj.weight": partial(fn,
@@ -446,25 +429,17 @@ class Qwen3MoePretrainedModel(PretrainedModel):
             }
 
             # Column Linear
-            config.fuse_attention_qkv = False
-            if config.fuse_attention_qkv:
-                base_actions["layers.0.self_attn.qkv_proj.weight"] = partial(
+
+            base_actions["layers.0.self_attn.q_proj.weight"] = partial(
+                fn, is_column=True)
+            base_actions["layers.0.self_attn.q_proj.bias"] = partial(
+                fn, is_column=True)
+            # if we have enough num_key_value_heads to split, then split it.
+            if config.num_key_value_heads % config.tensor_parallel_degree == 0:
+                base_actions["layers.0.self_attn.k_proj.weight"] = partial(
                     fn, is_column=True)
-            else:
-                base_actions["layers.0.self_attn.q_proj.weight"] = partial(
+                base_actions["layers.0.self_attn.v_proj.weight"] = partial(
                     fn, is_column=True)
-                base_actions["layers.0.self_attn.q_proj.bias"] = partial(
-                    fn, is_column=True)
-                # if we have enough num_key_value_heads to split, then split it.
-                if config.num_key_value_heads % config.tensor_parallel_degree == 0:
-                    base_actions["layers.0.self_attn.k_proj.weight"] = partial(
-                        fn, is_column=True)
-                    base_actions["layers.0.self_attn.v_proj.weight"] = partial(
-                        fn, is_column=True)
-                    base_actions["layers.0.self_attn.k_proj.bias"] = partial(
-                        fn, is_column=True)
-                    base_actions["layers.0.self_attn.v_proj.bias"] = partial(
-                        fn, is_column=True)
 
             base_actions["layers.0.mlp.gate_proj.weight"] = partial(
                 fn, is_column=True)
@@ -481,5 +456,4 @@ class Qwen3MoePretrainedModel(PretrainedModel):
             return final_actions
 
         mappings = get_tensor_parallel_split_mappings(config.num_layers)
-
         return mappings

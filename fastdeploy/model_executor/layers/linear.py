@@ -474,6 +474,7 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         self.activation = activation
         self.embed_dim = fd_config.model_config.hidden_size
         self.nranks = fd_config.parallel_config.mp_size
+
         super().__init__(fd_config=fd_config,
                          prefix=prefix,
                          input_size=input_size,
@@ -573,6 +574,7 @@ class QKVParallelLinear(ColumnParallelLinear):
         # weight
         assert self.weight_key is not None, 'weight_key should not be None.'
         # qkv fused in disk
+
         if self.weight_key in state_dict.keys():
             weight_tensor = get_tensor(state_dict.pop(self.weight_key))
         else:

@@ -23,13 +23,16 @@ from fastdeploy.config import FDConfig, LoadConfig, ModelConfig
 from fastdeploy.model_executor.models.ernie45t_moe import ErniePretrainedModel
 from fastdeploy.model_executor.models.model_base import ModelRegistry
 from fastdeploy.model_executor.models.qwen2 import Qwen2PretrainedModel
-from fastdeploy.model_executor.models.qwen3moe import Qwen3PretrainedModel
-from fastdeploy.model_executor.models.utils import load_checkpoint
+from fastdeploy.model_executor.models.qwen3 import Qwen3PretrainedModel
+from fastdeploy.model_executor.models.qwen3moe import Qwen3MoePretrainedModel
+from fastdeploy.model_executor.models.utils import (convert_ndarray_dtype,
+                                                    load_checkpoint)
 
 MODEL_CLASSES = {
     "ErnieForCausalLM": ErniePretrainedModel,
     "Qwen2ForCausalLM": Qwen2PretrainedModel,
-    "Qwen3MoeForCausalLM": Qwen3PretrainedModel,
+    "Qwen3ForCausalLM": Qwen3PretrainedModel,
+    "Qwen3MoeForCausalLM": Qwen3MoePretrainedModel,
     "ErnieBotLMHeadModel": ErniePretrainedModel
 }
 

@@ -1460,6 +1460,8 @@ def parser_quant_type(quant_type):
         AssertionError: If the custom quantization type string format is incorrect.
     """
     default_type = paddle.get_default_dtype()
+    if quant_type == "default" or quant_type is None:
+        return default_type, default_type, default_type
     conver_dict = {
         "8": "int8",
         "4": "int4",

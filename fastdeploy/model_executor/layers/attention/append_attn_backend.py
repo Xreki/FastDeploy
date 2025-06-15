@@ -95,7 +95,7 @@ class AppendAttentionBackend(AttentionBackend):
 
         self.kv_num_heads = kv_num_heads
         self.num_heads = num_heads
-        self.head_dim = head_dim
+        self.head_dim = fd_config.model_config.head_dim
         self.num_layers = fd_config.model_config.num_layers
 
         # pd_disaggregation
@@ -156,7 +156,6 @@ class AppendAttentionBackend(AttentionBackend):
             metadata.kv_signal_metadata = open_shm_and_get_meta_signal(
                 self.rank, int(self.device_id), self.keep_pd_step_flag)
         self.attention_metadata = metadata
-        
 
     def get_attntion_meta(self):
         """get_attntion_meta"""
@@ -244,19 +243,17 @@ class AppendAttentionBackend(AttentionBackend):
         )[0]
         return res
 
-    def native_attention_impl(
-        self,
-        query,
-        key,
-        value,
-        cache_k=None,
-        cache_v=None,
-        mask=None,
-        scale=1.0
-    ):
+    def native_attention_impl(self,
+                              query,
+                              key,
+                              value,
+                              cache_k=None,
+                              cache_v=None,
+                              mask=None,
+                              scale=1.0):
         """
         """
-        
+
         batch = query.shape[0]
         heads = query.shape[1]
         seq_len = query.shape[2]
@@ -288,10 +285,10 @@ class AppendAttentionBackend(AttentionBackend):
         if mask is not None:
             attention = attention + mask
         softmax_result = paddle.nn.functional.softmax(attention, -1)
-        result = paddle.matmul(paddle.cast(
-            softmax_result, dtype=value.dtype), value)
+        result = paddle.matmul(paddle.cast(softmax_result, dtype=value.dtype),
+                               value)
         return result
-    
+
     def forward_native_backend(
         self,
         q,
@@ -302,8 +299,7 @@ class AppendAttentionBackend(AttentionBackend):
         forward_meta: ForwardMeta,
     ):
         """
-        forward_mixed 
+        forward_mixed
         TODO(vivienfanghuagood) WIP
         """
         raise NotImplementedError("this function not supported now")
-        

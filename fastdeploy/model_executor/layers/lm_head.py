@@ -58,6 +58,7 @@ class ParallelLMHead(nn.Layer):
         ColumnParallelLinear = fleet.meta_parallel.ColumnParallelLinear
         RowParallelLinear = fleet.meta_parallel.RowParallelLinear
 
+        self.weight_sharing = fd_config.model_config.weight_sharing
         self.tie_word_embeddings = fd_config.model_config.tie_word_embeddings
 
         if self.use_ep:
@@ -106,11 +107,17 @@ class ParallelLMHead(nn.Layer):
                 get_tensor(state_dict.pop(self.linear_weight_key)).astype(
                     paddle.get_default_dtype()))
         else:
-            weight_tensor = get_tensor(state_dict.pop(
-                self.linear_weight_key)).astype(paddle.get_default_dtype())
-            if self.out_linear.weight.shape != weight_tensor.shape:
-                weight_tensor = weight_tensor.transpose([1, 0])
-            self.out_linear.weight.set_value(weight_tensor)
+            if self.tie_word_embeddings:
+                self.out_linear.weight.set_value(
+                    get_tensor(state_dict.pop(self.linear_weight_key)).astype(
+                        paddle.get_default_dtype()).transpose([1, 0]))
+            else:
+                weight_tensor = get_tensor(
+                    state_dict.pop(self.linear_weight_key)).astype(
+                        paddle.get_default_dtype())
+                if self.out_linear.weight.shape != weight_tensor.shape:
+                    weight_tensor = weight_tensor.transpose([1, 0])
+                self.out_linear.weight.set_value(weight_tensor)
 
             if self.linear_bias_key is not None:
                 bias = get_tensor(state_dict.pop(self.linear_bias_key)).astype(
