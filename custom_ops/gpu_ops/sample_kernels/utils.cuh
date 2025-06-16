@@ -28,6 +28,9 @@
 #include <sstream>
 #include <stdexcept>
 #include <vector>
+#include <curand.h>
+#include <curand_kernel.h>
+#include <curand_philox4x32_x.h>
 
 /******************* utils *******************/
 #define STR_HELPER(x) #x
@@ -98,7 +101,6 @@
   }
 
 /******************* vec_t<float> *******************/
-
 #define SAMPLING_INLINE inline __attribute__((always_inline)) __device__
 template <typename float_t, size_t vec_size> struct vec_t {
   SAMPLING_INLINE float_t &operator[](size_t i);
@@ -232,6 +234,18 @@ template <size_t vec_size> struct vec_t<float, vec_size> {
     }
   }
 };
+
+template <typename src_float_t, typename tgt_float_t, size_t vec_size>
+SAMPLING_INLINE void cast_load_impl(vec_t<tgt_float_t, vec_size>& dst,
+                                      const src_float_t* src_ptr) {
+  if constexpr (std::is_same_v<src_float_t, tgt_float_t>) {
+    dst.load(src_ptr);
+  } else {
+    vec_t<src_float_t, vec_size> tmp;
+    tmp.load(src_ptr);
+    dst.cast_from(tmp);
+  }
+}
 
 inline std::pair<int, int> GetCudaComputeCapability() {
   int device_id = 0;
