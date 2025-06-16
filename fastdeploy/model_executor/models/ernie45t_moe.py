@@ -356,10 +356,10 @@ class Ernie45TMoE(nn.Layer):
         self.num_shared_experts = fd_config.moe_config.moe_num_shared_experts
         if self.num_shared_experts > 0:
             shared_experts_hidden_dim = self.num_shared_experts * fd_config.moe_config.moe_intermediate_size
-            self.share_experts = Ernie45TMLP(
+            self.shared_experts = Ernie45TMLP(
                 fd_config=fd_config,
                 intermediate_size=shared_experts_hidden_dim,
-                prefix=f"{prefix}.mlp.shared_experts",
+                prefix=f"{prefix}.shared_experts",
             )
 
     def load_state_dict(self, state_dict):
