@@ -1,4 +1,4 @@
-# Copyright (c) 2023 PaddlePaddle Authors. All Rights Reserved.
+# Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,14 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """ setup for FASTDEPLOY custom cpu ops """
+import glob
 import os
 import subprocess
-from paddle.utils.cpp_extension import setup, CppExtension
-from setuptools import find_namespace_packages
-import glob
 import tarfile
+
+from paddle.utils.cpp_extension import CppExtension, setup
+from setuptools import find_namespace_packages
 
 BUILDING_ARCS = []
 use_bf16 = os.getenv("CPU_USE_BF16", "False") == "True"

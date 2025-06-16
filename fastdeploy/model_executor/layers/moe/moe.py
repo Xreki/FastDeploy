@@ -1,5 +1,5 @@
 """
-# Copyright (c) 2024 PaddlePaddle Authors. All Rights Reserved.
+# Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,8 +22,7 @@ from paddlenlp.utils.log import logger
 
 from fastdeploy.config import MoEPhase
 from fastdeploy.model_executor.layers.utils import get_tensor
-
-from .fused_moe_method_tp import TPFusedMoeMethod
+from fastdeploy.platforms import current_platform
 
 
 @dataclass
@@ -43,6 +42,20 @@ class MoEComputeParams:
     dp_size: int = -1
 
     moe_quant_type: str = ""
+
+
+def get_moe_method(moe_compute_params: MoEComputeParams):
+    """
+    get moe method based on platform and moe compute params
+    """
+    if current_platform.is_xpu():
+        from .xpu_fused_moe import XPUFusedMoeMethod
+        return XPUFusedMoeMethod(moe_compute_params)
+    elif current_platform.is_cuda():
+        from .fused_moe_method_tp import TPFusedMoeMethod
+        return TPFusedMoeMethod(moe_compute_params)
+    else:
+        raise NotImplementedError("unsupported platform")
 
 
 class FusedMoE(nn.Layer):
@@ -133,7 +146,7 @@ class FusedMoE(nn.Layer):
                 self.compute_method = EPDecoderFusedMoeMethod(
                     moe_compute_params)
         else:
-            self.compute_method = TPFusedMoeMethod(moe_compute_params)
+            self.compute_method = get_moe_method(moe_compute_params)
 
     def extract_gate_correction_bias(self, gate_correction_bias_key,
                                      state_dict):

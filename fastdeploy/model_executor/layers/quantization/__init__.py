@@ -16,6 +16,8 @@ quantization module
 """
 from typing import Dict, List, Type
 
+from fastdeploy.platforms import current_platform
+
 from .quant_base import QuantConfigBase
 
 QUANTIZATION_METHODS: List[str] = [
@@ -34,20 +36,22 @@ def get_quantization_config(quantization: str) -> Type[QuantConfigBase]:
     if quantization not in QUANTIZATION_METHODS:
         raise ValueError(f"Invalid quantization method: {quantization}")
 
-    from .block_wise import BlockWiseConfig
+    from .kv_cache import KvCacheQuantConfig
     from .w4afp8 import W4AFP8Config
     from .w8a8 import W8A8Config
     from .weight_only import WeightOnlyConfig
     from .wfp8afp8 import WFP8AFP8Config
-    from .kv_cache import KvCacheQuantConfig
-    
+
     method_to_config: Dict[str, Type[QuantConfigBase]] = {
         "weight_only": WeightOnlyConfig,
-        "block_wise": BlockWiseConfig,
         "w4afp8": W4AFP8Config,
         "w8a8": W8A8Config,
         "wfp8afp8": WFP8AFP8Config,
         "kvcache": KvCacheQuantConfig
     }
+
+    if not current_platform.is_xpu():
+        from .block_wise import BlockWiseConfig
+        method_to_config["block_wise"] = BlockWiseConfig
 
     return method_to_config[quantization]

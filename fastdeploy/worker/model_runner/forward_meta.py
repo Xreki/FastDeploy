@@ -346,3 +346,63 @@ class ForwardMeta():
                   cu_seqlens_k=share_inputs["cu_seqlens_k"],
                   caches=share_inputs["caches"])
         return ret
+
+
+@dataclass
+class XPUForwardMeta(ForwardMeta):
+    """
+    XPUForwardMeta is used to store the global meta information of the forward, and some XPU specific meta info.
+    """
+    #
+    encoder_batch_map: Optional[paddle.Tensor] = None
+
+    #
+    decoder_batch_map: Optional[paddle.Tensor] = None
+
+    #
+    encoder_batch_idx: Optional[paddle.Tensor] = None
+
+    #
+    decoder_batch_idx: Optional[paddle.Tensor] = None
+
+    #
+    encoder_seq_lod: Optional[paddle.Tensor] = None
+
+    #
+    decoder_context_len: Optional[paddle.Tensor] = None
+
+    #
+    decoder_context_len_cache: Optional[paddle.Tensor] = None
+
+    #
+    encoder_batch_map_cpu: Optional[paddle.Tensor] = None
+
+    #
+    decoder_batch_map_cpu: Optional[paddle.Tensor] = None
+
+    #
+    encoder_batch_idx_cpu: Optional[paddle.Tensor] = None
+
+    #
+    decoder_batch_idx_cpu: Optional[paddle.Tensor] = None
+
+    #
+    encoder_seq_lod_cpu: Optional[paddle.Tensor] = None
+
+    #
+    decoder_context_len_cpu: Optional[paddle.Tensor] = None
+
+    #
+    decoder_context_len_cache_cpu: Optional[paddle.Tensor] = None
+
+    #
+    batch_tensor: Optional[paddle.Tensor] = None
+
+    #
+    enc_batch: Optional[paddle.Tensor] = None
+
+    #
+    dec_batch: Optional[paddle.Tensor] = None
+
+    #
+    total_enc_len: Optional[paddle.Tensor] = None

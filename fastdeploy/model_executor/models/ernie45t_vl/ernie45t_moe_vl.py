@@ -33,9 +33,13 @@ from fastdeploy.model_executor.layers.utils import get_tensor
 from fastdeploy.model_executor.models.ernie45t_moe import (Ernie45TAttention,
                                                            Ernie45TMLP)
 from fastdeploy.model_executor.models.model_base import ModelForCasualLM
-from fastdeploy.model_executor.ops.gpu import (extract_text_token_output,
-                                               text_image_gather_scatter,
-                                               text_image_index_out)
+from fastdeploy.platforms import current_platform
+
+if current_platform.is_cuda():
+    from fastdeploy.model_executor.ops.gpu import (extract_text_token_output,
+                                                   text_image_gather_scatter,
+                                                   text_image_index_out)
+
 from fastdeploy.worker.model_runner import ForwardMeta
 
 

@@ -13,15 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-from abc import abstractmethod
-from typing import Optional
 
 import paddle
 
-from .utils import xpu_quant_weight
+from fastdeploy.model_executor.layers.quantization.weight_only import (
+    WeightOnlyConfig, WeightOnlyLinearMethod)
+from fastdeploy.model_executor.ops.xpu import weight_quantize_xpu
 
-from fastdeploy.model_executor.layers.quantization.quant_base import QuantConfigBase
-from fastdeploy.model_executor.layers.quantization.weight_only import WeightOnlyConfig, WeightOnlyLinearMethod
 
 class XPUWeightOnlyLinearMethod(WeightOnlyLinearMethod):
     """
@@ -34,12 +32,28 @@ class XPUWeightOnlyLinearMethod(WeightOnlyLinearMethod):
     ) -> None:
         super().__init__(quant_config)
 
+    def create_weights(self, layer):
+        """
+        Create weights for linear layer on XPU
+        """
+        linear_weight_scale_shape = [layer.embed_dim]
+        if hasattr(layer, "linear_weight_shape"):
+            if isinstance(layer.linear_weight_shape, list):
+                layer_weight_shape = layer.linear_weight_shape
+                linear_weight_scale_shape = layer_weight_shape[:1]
+
+        layer.linear_weight_scale = layer.create_parameter(
+            shape=linear_weight_scale_shape,
+            dtype="float32",
+            is_bias=False,
+        )
+
     def process_loaded_weights(self, layer, weight) -> None:
         """
         loaded_weights using xpu special quantization
         """
-        quanted_weight_tensor, weight_scale_tensor = xpu_quant_weight(
-            weight.cpu().numpy())
-        layer.linear_weight.set_value(quanted_weight_tensor)
-        layer.linear_weight_scale.set_value(
-            weight_scale_tensor.astype(paddle.get_default_dtype()))
+        quanted_weight_tensor, weight_scale_tensor = weight_quantize_xpu(
+            weight, self.quant_config.algo, -1, -1)
+        layer.linear_weight.set_value(
+            paddle.transpose(quanted_weight_tensor, [1, 0]))
+        layer.linear_weight_scale.set_value(weight_scale_tensor)
