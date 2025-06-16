@@ -51,9 +51,8 @@ class TPFusedMoeMethod(CutlassFusedMoeMethod, DeepGemmFusedMoeMethod,
         ) = moe_expert_dispatch(
             x,
             gate_out,
-            layer.gate_correction_bias,
-            (layer.moe_ffn1_in_scale if hasattr(layer, "moe_ffn1_in_scale")
-             else None),  # if set, permute_input will be int8_t
+            getattr(layer, "gate_correction_bias", None),
+            getattr(layer, "moe_ffn1_in_scale", None), # if set, permute_input will be int8_t
             self.top_k,
             False,
             topk_only_mode=False,

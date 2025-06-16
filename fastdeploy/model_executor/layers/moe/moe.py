@@ -80,7 +80,7 @@ class FusedMoE(nn.Layer):
         self.ep_size = fd_config.parallel_config.expert_parallel_degree
         self.ep_rank = fd_config.parallel_config.expert_parallel_rank
 
-        assert (self.tp_size > 1 and self.ep_size == 1) or \
+        assert (self.tp_size >= 1 and self.ep_size == 1) or \
                 (self.tp_size == 1 and self.ep_size > 1), \
             'MoE only support parallelism on TP or EP dimension.'
 
