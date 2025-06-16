@@ -1,4 +1,4 @@
-# Copyright (c) 2023 PaddlePaddle Authors. All Rights Reserved.
+# Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -379,19 +379,6 @@ elif paddle.is_compiled_with_cuda():
             ]
         },
         include_package_data=True,
-    )
-elif paddle.is_compiled_with_xpu():
-    # TODO zhangsishuai@baidu.com to add xpu ops
-    setup(
-        name="fastdeploy_ops",
-        ext_modules=CUDAExtension(sources=[
-            "xpu_ops/set_mask_value.cu",
-            "xpu_ops/set_value_by_flags.cu",
-            "xpu_ops/ngram_mask.cu",
-            "xpu_ops/gather_idx.cu",
-            "xpu_ops/token_penalty_multi_scores.cu",
-            "xpu_ops/token_penalty_only_once.cu",
-        ]),
     )
 else:
     use_bf16 = os.getenv("CPU_USE_BF16", "False") == "True"

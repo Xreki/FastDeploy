@@ -28,6 +28,7 @@ from fastdeploy.engine.request import (CompletionOutput, RequestMetrics,
                                        RequestOutput)
 from fastdeploy.inter_communicator import IPCSignal
 from fastdeploy.metrics.metrics import main_process_metrics
+from fastdeploy.platforms import current_platform
 from fastdeploy.utils import llm_logger
 
 
@@ -117,8 +118,11 @@ class TokenProcessor(object):
             and "ErnieBotLMHeadModel" not in self.cfg.model_config.architectures:
             from paddlenlp_ops import get_output, speculate_get_output
         else:
-            from fastdeploy.model_executor.ops.gpu import (
-                get_output, speculate_get_output)
+            if current_platform.is_xpu():
+                from fastdeploy.model_executor.ops.xpu import get_output
+            else:
+                from fastdeploy.model_executor.ops.gpu import (
+                    get_output, speculate_get_output)
 
         while True:
             try:
@@ -362,8 +366,11 @@ class WarmUpTokenProcessor(TokenProcessor):
             and not self.cfg.model_config.architectures.startswith("ErnieMoEVLForCausalLM"):
             from paddlenlp_ops import get_output, speculate_get_output
         else:
-            from fastdeploy.model_executor.ops.gpu import (
-                get_output, speculate_get_output)
+            if current_platform.is_xpu():
+                from fastdeploy.model_executor.ops.xpu import get_output
+            else:
+                from fastdeploy.model_executor.ops.gpu import (
+                    get_output, speculate_get_output)
 
         while self._is_running:
             try:

@@ -56,7 +56,7 @@ class LinearBase(nn.Layer):
             NotImplementedError: Raised if the current platform is not a CUDA platform.
         """
         super().__init__()
-        if current_platform.is_cuda():
+        if current_platform.is_cuda() or current_platform.is_xpu():
             self.forward = self.forward_cuda
         else:
             raise NotImplementedError

@@ -14,11 +14,14 @@
 # limitations under the License.
 """
 
-from typing import Any, Optional
+from typing import Optional
 
 import paddle
 
 from fastdeploy.config import ModelConfig
+from fastdeploy.platforms import current_platform
+
+from .utils import CpuGuard
 
 
 class ErnieRotaryEmbedding:
@@ -96,16 +99,20 @@ class QwenRotaryEmbedding:
         return rot_emb
 
 
-def get_rope(
+def get_rope_impl(
     rotary_dim: int,
     base: 10000.0,
     position_ids,
     model_config: Optional[ModelConfig] = None,
     partial_rotary_factor=1,
 ):
+    """
+    The real implementation of get_rope
+    """
 
     architecture = model_config.architectures[0]
-    if model_config is None or architecture.startswith("Qwen"):
+    if model_config is not None and model_config is None or architecture.startswith(
+            "Qwen"):
         rotary_emb_layer = QwenRotaryEmbedding(rotary_dim, base,
                                                partial_rotary_factor)
         rotary_emb = rotary_emb_layer(position_ids)
@@ -114,6 +121,41 @@ def get_rope(
                                                 partial_rotary_factor)
         rotary_emb = rotary_emb_layer(position_ids)
     return rotary_emb
+
+
+def get_rope_xpu(
+    rotary_dim: int,
+    base: 10000.0,
+    position_ids,
+    model_config: ModelConfig,
+    partial_rotary_factor=1,
+):
+    """
+    In XPU, cos and sin compute must be done on cpu
+    """
+    with CpuGuard():
+        position_ids = position_ids.cpu()
+        rotary_emb = get_rope_impl(rotary_dim, base, position_ids,
+                                   model_config, partial_rotary_factor)
+        return rotary_emb.to('xpu')
+
+
+def get_rope(
+    rotary_dim: int,
+    base: 10000.0,
+    position_ids,
+    model_config: ModelConfig,
+    partial_rotary_factor=1,
+):
+    """
+    The warpper of get_rope
+    """
+    if current_platform.is_xpu():
+        return get_rope_xpu(rotary_dim, base, position_ids, model_config,
+                            partial_rotary_factor)
+    else:
+        return get_rope_impl(rotary_dim, base, position_ids, model_config,
+                             partial_rotary_factor)
 
 
 class ErnieVlRotaryEmbedding3D:

@@ -31,10 +31,23 @@ from fastdeploy.inter_communicator import IPCSignal
 from fastdeploy.model_executor.layers.quantization import \
     get_quantization_config
 from fastdeploy.model_executor.models.utils import parser_quant_type
+from fastdeploy.platforms import current_platform
 from fastdeploy.utils import get_logger
-from fastdeploy.worker.V1.gpu_worker import GpuWorker
+from fastdeploy.worker.V1.worker_base import WorkerBase
 
 logger = get_logger("worker_process", "worker_process.log")
+
+
+def get_worker(fd_config: FDConfig, local_rank: int, rank: int) -> WorkerBase:
+    """
+    get worker of different device
+    """
+    if current_platform.is_cuda():
+        from fastdeploy.worker.V1.gpu_worker import GpuWorker
+        return GpuWorker(fd_config=fd_config, local_rank=local_rank, rank=rank)
+    if current_platform.is_xpu():
+        from fastdeploy.worker.V1.xpu_worker import XpuWorker
+        return XpuWorker(fd_config=fd_config, local_rank=local_rank, rank=rank)
 
 
 class PaddleDisWorkerProc():
@@ -79,9 +92,9 @@ class PaddleDisWorkerProc():
         self.fd_config.model_config.is_mtp = self.fd_config.speculative_config.is_mtp
 
         # TODO(gongshaotian): Use worker factory to get worker
-        self.worker = GpuWorker(fd_config=fd_config,
-                                local_rank=self.local_rank,
-                                rank=self.rank)
+        self.worker = get_worker(fd_config=fd_config,
+                                 local_rank=self.local_rank,
+                                 rank=self.rank)
 
         # Initialize task queue
         task_address = ('0.0.0.0',
@@ -270,7 +283,7 @@ class PaddleDisWorkerProc():
         """
         # 1. Get available memory(bytes)
         available_kv_cache_memory = self.worker.determine_available_memory()
-        print(
+        logger.info(
             f"------- available_kv_cache_memory:{available_kv_cache_memory / 1024**3} GB --------"
         )
 
@@ -278,10 +291,14 @@ class PaddleDisWorkerProc():
         model_block_memory_used = self.worker.cal_theortical_kvcache()
         num_blocks_local = int(available_kv_cache_memory //
                                model_block_memory_used)
-        print(
+        logger.info(
             f"------- model_block_memory_used:{model_block_memory_used} --------"
         )
-        print(f"------- num_blocks_local:{num_blocks_local} --------")
+        logger.info(f"------- num_blocks_local:{num_blocks_local} --------")
+
+        logger.info(
+            f"self.fd_config.parallel_config.do_profile:{self.fd_config.parallel_config.do_profile}"
+        )
 
         # 3. Send IPCSignal
         if self.fd_config.parallel_config.do_profile:
@@ -305,8 +322,10 @@ class PaddleDisWorkerProc():
         else:
             num_blocks_global = num_blocks_local
 
+        logger.info(f"num_blocks_global {num_blocks_global}")
         # 4. Updata share inputs
         self.worker.reinitialize_kv_cache(num_gpu_blocks=num_blocks_global)
+        logger.info("------- reinitialize_kv_cache done -------")
 
     def init_device(self):
         """ """
@@ -638,8 +657,13 @@ def run_worker_proc():
     worker_proc.init_device()
     logger.info("load_model")
     worker_proc.load_model()
-    logger.info("determine_num_available_blocks")
-    worker_proc.determine_num_available_blocks()
+    if current_platform.is_xpu():
+        # TODO(wanghaitao09): XPU 当前库有问题，使用下面的方式分配 block 会卡住，后续会修复保持一致
+        worker_proc.worker.reinitialize_kv_cache(
+            num_gpu_blocks=fd_config.parallel_config.max_block_num)
+    else:
+        logger.info("determine_num_available_blocks")
+        worker_proc.determine_num_available_blocks()
     if fd_config.parallel_config.use_ep:
         worker_proc.event_loop_ep()
     else:

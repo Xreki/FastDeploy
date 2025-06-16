@@ -158,3 +158,5 @@ custom_ops/gpu_ops/fp8_deep_gemm/deep_gemm/include/cute
 
 # buff
 custom_ops/tmp*
+
+build

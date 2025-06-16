@@ -20,24 +20,25 @@ import numpy as np
 import paddle
 from paddle import Tensor
 from paddle.framework import in_dynamic_mode
+
 from fastdeploy.platforms import current_platform
+
 if current_platform.is_cuda() and current_platform.available():
     try:
         from fastdeploy.model_executor.ops.gpu import (
-            get_padding_offset,
-            speculate_get_padding_offset,
-        )
+            get_padding_offset, speculate_get_padding_offset)
     except Exception:
         raise ImportError(
-            f"Verify environment consistency between compilation and FastDeploy installation. "
-            f"And ensure the Paddle version supports FastDeploy's custom operators"
+            "Verify environment consistency between compilation and FastDeploy installation. "
+            "And ensure the Paddle version supports FastDeploy's custom operators"
         )
+import os
 import re
 
-import os
 cache_params = os.getenv("CACHE_PARAMS", "none")
 if cache_params != "none":
     c8_state_dict = paddle.load(cache_params, return_numpy=True)
+
 
 def per_block_cast_to_fp8(x: Tensor) -> Tuple[Tensor, Tensor]:
     """
@@ -116,12 +117,11 @@ def get_tensor(input):
                     weight = f.get_tensor(key_name)
                     weight = paddle.Tensor(weight, zero_copy=True)
                     weight = weight._copy_to(
-                        paddle.framework._current_expected_place(), False
-                    )
+                        paddle.framework._current_expected_place(), False)
                     return weight
                 else:
                     return None
-        else:   
+        else:
             if cache_params != "none":
                 tmp_key = input.split("/")[-1]
                 if tmp_key in c8_state_dict:
@@ -145,6 +145,7 @@ def divide(numerator, denominator):
     ensure_divisibility(numerator, denominator)
     return numerator // denominator
 
+
 def remove_padding(max_len, input_ids, seq_lens_this_time):
     """
     remove_padding
@@ -159,7 +160,7 @@ def remove_padding(max_len, input_ids, seq_lens_this_time):
             cu_seqlens_q,
             cu_seqlens_k,
         ) = get_padding_offset(input_ids, cum_offsets_now, token_num,
-                                seq_lens_this_time)
+                               seq_lens_this_time)
         return (
             ids_remove_padding,
             padding_offset,
@@ -168,8 +169,9 @@ def remove_padding(max_len, input_ids, seq_lens_this_time):
             cu_seqlens_k,
         )
 
+
 def speculate_remove_padding(max_len, input_ids, seq_lens_this_time,
-                                    draft_tokens, seq_lens_encoder):
+                             draft_tokens, seq_lens_encoder):
     """
     remove_padding
     """
@@ -197,3 +199,20 @@ def speculate_remove_padding(max_len, input_ids, seq_lens_this_time,
             cu_seqlens_q,
             cu_seqlens_k,
         )
+
+
+class CpuGuard:
+    """CpuGuard"""
+
+    def __init__(self):
+        """init"""
+        pass
+
+    def __enter__(self):
+        """enter"""
+        self.ori_device = paddle.device.get_device()
+        paddle.device.set_device("cpu")
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """exit"""
+        paddle.device.set_device(self.ori_device)
