@@ -149,7 +149,10 @@ class ModelConfig(PretrainedConfig):
             self.num_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
         self.num_key_value_heads = num_key_value_heads
-        self.head_dim = head_dim
+        if head_dim is None:
+            self.head_dim = self.hidden_size // self.num_attention_heads
+        else:
+            self.head_dim = head_dim
         self.hidden_act = hidden_act
         self.hidden_dropout_prob = hidden_dropout_prob
         self.max_position_embeddings = max_position_embeddings
@@ -648,19 +651,6 @@ class TmpConfig:
 
 
 @dataclass
-class DecodingConfig:
-    """
-    Configuration for decoding
-    """
-    max_dec_len = 20
-    min_dec_len = 0
-    decode_strategy = "sampling"
-    bos_token_id = None
-    pad_token_id = None
-    num_return_sequences: int = 1
-
-
-@dataclass
 class FDConfig:
     """
     The configuration class which contains all fastdeploy-related configuration. This
@@ -680,7 +670,5 @@ class FDConfig:
     graph_opt_config: Optional[GraphOptimizationConfig] = None
     tmp_config: TmpConfig = field(default=None, init=True)
     moe_config: MoEConfig = field(default=None, init=True)  # type: ignore
-    decoding_config: DecodingConfig = field(default=None,
-                                            init=True)  # type: ignore
     kv_cache_config: KVCacheConfig = field(default=None,
                                            init=True)  # type: ignore

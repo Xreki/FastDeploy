@@ -652,6 +652,14 @@ def parse_args():
                         default="mixed",
                         help="splitwise role")
     parser.add_argument("--ori_vocab_size", type=int, default=None)
+    parser.add_argument("--tensor_parallel_size",
+                        type=int,
+                        default=1,
+                        help="tensor parallel size")
+    parser.add_argument("--expert_parallel_size",
+                        type=int,
+                        default=1,
+                        help="expert parallel size")
     args = parser.parse_args()
     return args
 
