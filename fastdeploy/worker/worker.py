@@ -14,7 +14,6 @@
 # limitations under the License.
 """
 import argparse
-import os
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -232,16 +231,10 @@ class Worker:
         if any(
                 self.model_cfg.architectures.startswith(model)
                 for model in inference_runner_supported_models):
-            if os.getenv('USE_PIP_EFF_LLM'):
-                from efficientllm.gpu import step_paddle, step_system_cache
-            else:
-                from fastdeploy.model_executor.ops.gpu import (
-                    step_paddle, step_system_cache)
+            from fastdeploy.model_executor.ops.gpu import (step_paddle,
+                                                           step_system_cache)
         elif self.model_cfg.architectures.startswith("ErnieMoEVLForCausalLM"):
-            if os.getenv('USE_PIP_EFF_LLM'):
-                from efficientllm.ops.gpu import step_paddle
-            else:
-                from fastdeploy.model_executor.ops.gpu import step_paddle
+            from fastdeploy.model_executor.ops.gpu import step_paddle
         else:
             from paddlenlp_ops import step_paddle
 

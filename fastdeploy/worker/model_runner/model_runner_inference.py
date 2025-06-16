@@ -71,54 +71,30 @@ class ModelRunner(ModelRunnerBase):
             )
 
     def _load_model(self, model_name, dynamic_load_weight):
-        use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
-
         local_test = False
         if os.getenv("RUN_MODE", "") == "test":
             local_test = True
 
         if dynamic_load_weight:
-            if use_pip_eff_llm:
-                from efficientllm.models.efficientllm_model import \
-                    EfficientModel
-                dynamic_load_model = EfficientModel(
-                    model_name_or_path=self.args.model_name_or_path,
-                    dtype=self.args.dtype,
-                    block_size=self.args.block_size,
-                    max_len=self.args.max_model_len,
-                    gemm_method="weight_only_int8",
-                    moe_quant_type="weight_only_int8",
-                    load_model_from_ipc=dynamic_load_weight,
-                    embeddings_column_cut=False,
-                    nranks=self.nranks,
-                    rank=self.rank,
-                    local_test=local_test,
-                )
-            else:
-                from fastdeploy.model_executor.models.dynamic_load_model import \
-                    DynamicLoadModel
-                dynamic_load_model = DynamicLoadModel(
-                    model_name_or_path=self.args.model_name_or_path,
-                    dtype=self.args.dtype,
-                    block_size=self.args.block_size,
-                    max_len=self.args.max_model_len,
-                    moe_quant_type="weight_only_int8",
-                    load_model_from_ipc=dynamic_load_weight,
-                    nranks=self.nranks,
-                    rank=self.rank,
-                    embeddings_column_cut=False,
-                    local_test=local_test)
+            from fastdeploy.model_executor.models.dynamic_load_model import \
+                DynamicLoadModel
+            dynamic_load_model = DynamicLoadModel(
+                model_name_or_path=self.args.model_name_or_path,
+                dtype=self.args.dtype,
+                block_size=self.args.block_size,
+                max_len=self.args.max_model_len,
+                moe_quant_type="weight_only_int8",
+                load_model_from_ipc=dynamic_load_weight,
+                nranks=self.nranks,
+                rank=self.rank,
+                embeddings_column_cut=False,
+                local_test=local_test)
             self.model = dynamic_load_model
         else:
-            if use_pip_eff_llm is None:
-                from fastdeploy.model_executor.models.export_model import \
-                    build_stream_line_model
-                from fastdeploy.model_executor.models.tokenizer import \
-                    ErnieBotTokenizer
-            else:
-                from efficientllm.models.export_model import \
-                    build_stream_line_model
-                from efficientllm.models.tokenizer import ErnieBotTokenizer
+            from fastdeploy.model_executor.models.export_model import \
+                build_stream_line_model
+            from fastdeploy.model_executor.models.tokenizer import \
+                ErnieBotTokenizer
             vocab_file_names = [
                 "tokenizer.model", "spm.model", "ernie_token_100k.model"
             ]
@@ -208,12 +184,7 @@ class ModelRunner(ModelRunnerBase):
         # TODO infer 进程初始化cache
         if not self.args.do_profile and (self.args.enable_prefix_caching or
                                          self.args.splitwise_role != "mixed"):
-            use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
-            if use_pip_eff_llm is None:
-                from fastdeploy.model_executor.ops.gpu import \
-                    share_external_data
-            else:
-                from efficientllm.gpu import share_external_data
+            from fastdeploy.model_executor.ops.gpu import share_external_data
 
             for i in range(self.model_cfg.num_layers):
                 key_cache = paddle.empty(shape=[], dtype=cache_type)

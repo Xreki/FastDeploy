@@ -22,15 +22,11 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
-from paddlenlp.utils.env import MAX_BSZ
-from paddlenlp.utils.env import MAX_DRAFT_TOKENS
-from paddlenlp.utils.env import SPECULATE_MAX_BSZ
+from paddlenlp.utils.env import MAX_BSZ, MAX_DRAFT_TOKENS, SPECULATE_MAX_BSZ
 
-from fastdeploy.engine.request import CompletionOutput
-from fastdeploy.engine.request import RequestMetrics
-from fastdeploy.engine.request import RequestOutput
+from fastdeploy.engine.request import (CompletionOutput, RequestMetrics,
+                                       RequestOutput)
 from fastdeploy.inter_communicator import IPCSignal
-
 from fastdeploy.metrics.metrics import main_process_metrics
 from fastdeploy.utils import llm_logger
 
@@ -71,12 +67,11 @@ class TokenProcessor(object):
         self.number_of_output_tokens = 0
         self.total_step = 0
         prefill_time_data = np.zeros([100], dtype=np.float32)
-        self.prefill_time_signal = IPCSignal(
-            name="prefill_time_signal",
-            array=prefill_time_data,
-            dtype=np.float32,
-            suffix=os.getpid(),
-            create=True)
+        self.prefill_time_signal = IPCSignal(name="prefill_time_signal",
+                                             array=prefill_time_data,
+                                             dtype=np.float32,
+                                             suffix=os.getpid(),
+                                             create=True)
         self.executor = ThreadPoolExecutor(max_workers=1)
         self._finalizer = weakref.finalize(self, self._cleanup_resources)
 
@@ -122,14 +117,8 @@ class TokenProcessor(object):
             and "ErnieBotLMHeadModel" not in self.cfg.model_config.architectures:
             from paddlenlp_ops import get_output, speculate_get_output
         else:
-            os.environ["ELLM_LOG_LEVEL"] = "3"
-            use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
-            if use_pip_eff_llm is None:
-                from fastdeploy.model_executor.ops.gpu import (
-                    get_output, speculate_get_output)
-            else:
-                from efficientllm.ops.gpu import (get_output,
-                                                  speculate_get_output)
+            from fastdeploy.model_executor.ops.gpu import (
+                get_output, speculate_get_output)
 
         while True:
             try:
@@ -148,21 +137,25 @@ class TokenProcessor(object):
                 llm_logger.info("while get input_data error: {0} {1}".format(
                     e, str(traceback.format_exc())))
 
-
     def _process_prefill_metrics(self):
         """Asynchronous processing prefill time indicators"""
+
         def process_metrics():
             try:
                 current_index = 0
                 while current_index < len(self.prefill_time_signal.value):
-                    prefill_time = self.prefill_time_signal.value[current_index]
+                    prefill_time = self.prefill_time_signal.value[
+                        current_index]
                     if prefill_time > 0:
-                        main_process_metrics.request_prefill_time.observe(prefill_time)
+                        main_process_metrics.request_prefill_time.observe(
+                            prefill_time)
                         self.prefill_time_signal.value[current_index] = 0
                     current_index += 1
             except Exception as e:
                 llm_logger.error(f"Error processing prefill metrics: {e}")
+
         self.executor.submit(process_metrics)
+
     def postprocess(self, batch_result):
         """
         single post-processing function
@@ -240,7 +233,7 @@ class TokenProcessor(object):
             if task.get("prefill_chunk_info", None) is not None:
                 prefill_chunk_num = task.get("prefill_chunk_num", 0)
                 task.prefill_chunk_num = prefill_chunk_num + 1
-                
+
                 if task.prefill_chunk_num < len(task.prefill_chunk_info):
                     continue
 
@@ -315,7 +308,8 @@ class TokenProcessor(object):
 
     def _record_metrics(self, task, current_time, token_ids):
         """Record all metrics for a task"""
-        if hasattr(task, 'last_token_time') and task.last_token_time is not None:
+        if hasattr(task,
+                   'last_token_time') and task.last_token_time is not None:
             token_gen_time = current_time - task.last_token_time
             main_process_metrics.time_per_output_token.observe(token_gen_time)
         task.last_token_time = current_time
@@ -326,8 +320,10 @@ class TokenProcessor(object):
     def _record_first_token_metrics(self, task, current_time):
         """Record metrics for first token"""
         task.first_token_time = current_time
-        main_process_metrics.time_to_first_token.observe(current_time - task.inference_start_time)
-        main_process_metrics.request_queue_time.observe(task.schedule_start_time - task.preprocess_end_time)
+        main_process_metrics.time_to_first_token.observe(
+            current_time - task.inference_start_time)
+        main_process_metrics.request_queue_time.observe(
+            task.schedule_start_time - task.preprocess_end_time)
 
     def _record_completion_metrics(self, task, current_time):
         """Record metrics when request completes"""
@@ -337,8 +333,11 @@ class TokenProcessor(object):
 
         main_process_metrics.num_requests_running.dec(1)
         main_process_metrics.request_success_total.inc()
-        main_process_metrics.request_inference_time.observe(current_time - task.inference_start_time)
-        main_process_metrics.request_generation_tokens.observe(self.tokens_counter[task.request_id])
+        main_process_metrics.request_inference_time.observe(
+            current_time - task.inference_start_time)
+        main_process_metrics.request_generation_tokens.observe(
+            self.tokens_counter[task.request_id])
+
 
 class WarmUpTokenProcessor(TokenProcessor):
     """
@@ -363,14 +362,8 @@ class WarmUpTokenProcessor(TokenProcessor):
             and not self.cfg.model_config.architectures.startswith("ErnieMoEVLForCausalLM"):
             from paddlenlp_ops import get_output, speculate_get_output
         else:
-            os.environ["ELLM_LOG_LEVEL"] = "3"
-            use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
-            if use_pip_eff_llm is None:
-                from fastdeploy.model_executor.ops.gpu import (
-                    get_output, speculate_get_output)
-            else:
-                from efficientllm.ops.gpu import (get_output,
-                                                  speculate_get_output)
+            from fastdeploy.model_executor.ops.gpu import (
+                get_output, speculate_get_output)
 
         while self._is_running:
             try:
