@@ -145,6 +145,7 @@ class DataProcessor(BaseDataProcessor):
         """
 
         self.model_name_or_path = model_name_or_path
+
         self._init_config()
 
         self.decode_status = dict()
@@ -360,6 +361,7 @@ class DataProcessor(BaseDataProcessor):
                     for sentence in text
                 ]
                 chat_template = True
+
             tokens = self.tokenizer(
                 text,
                 return_tensors="np",
@@ -368,6 +370,7 @@ class DataProcessor(BaseDataProcessor):
                 max_length=max_model_len,
                 add_special_tokens=chat_template,
             )
+
         return tokens["input_ids"][0]
 
     def messages2ids(self, messages):
@@ -437,7 +440,6 @@ class DataProcessor(BaseDataProcessor):
         Returns:
             tokenizer (AutoTokenizer)
         """
-
         if self.use_hf_tokenizer:
             from transformers import AutoTokenizer
             return AutoTokenizer.from_pretrained(self.model_name_or_path,

@@ -88,6 +88,7 @@ class VocabParallelEmbedding(nn.Layer):
                     num_embeddings,
                     embedding_dim // self.world_size,
                 )
+
                 self.word_embeddings.weight.is_distributed = True
                 self.word_embeddings.weight.split_axis = 1
 
@@ -100,8 +101,9 @@ class VocabParallelEmbedding(nn.Layer):
             )
 
         self.prefix = prefix
-
         if self.weight_sharing and self.weight_sharing_add_bias:
+            mask_lm_out_bias_attr = paddle.ParamAttr(
+                initializer=paddle.nn.initializer.Constant(value=0.0))
             assert num_embeddings % self.world_size == 0
             if self.use_ep:
                 self.bias = self.create_parameter(
@@ -137,9 +139,14 @@ class VocabParallelEmbedding(nn.Layer):
         Args:
             state_dict (dict): A dictionary containing the checkpoint weights and biases.
         """
-        self.word_embeddings.weight.set_value(
-            get_tensor(state_dict.pop(self.prefix + ".weight")).astype(
-                paddle.get_default_dtype()))
+        if self.tie_word_embeddings:
+            self.word_embeddings.weight.set_value(
+                get_tensor(state_dict[self.prefix + ".weight"]).astype(
+                    paddle.get_default_dtype()))
+        else:
+            self.word_embeddings.weight.set_value(
+                get_tensor(state_dict.pop(self.prefix + ".weight")).astype(
+                    paddle.get_default_dtype()))
 
     def forward(self, ids_remove_padding=None):
         """

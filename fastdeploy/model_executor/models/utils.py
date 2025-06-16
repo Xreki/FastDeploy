@@ -1387,7 +1387,7 @@ def load_checkpoint(model_path, cls, config, return_numpy=True, load_gpu=True):
     """
     load checkpoint
     """
-    if config.parallel_config.use_ep:
+    if getattr(config, "use_ep", False):
         state_dict = load_ep_checkpoint(model_path,
                                         config,
                                         return_numpy=True,
@@ -1443,6 +1443,8 @@ def parser_quant_type(quant_type):
         AssertionError: If the custom quantization type string format is incorrect.
     """
     default_type = paddle.get_default_dtype()
+    if quant_type == "default" or quant_type is None:
+        return default_type, default_type, default_type
     conver_dict = {
         "8": "int8",
         "4": "int4",

@@ -340,3 +340,9 @@ class EngineWorkerQueue:
         llm_logger.info(f"get tasks from queue success")
         return item
 
+    def cleanup(self):
+        """
+        Exit the worker queue gracefully.
+        """
+        if self.manager is not None:
+            self.manager.shutdown()

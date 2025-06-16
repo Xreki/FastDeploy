@@ -137,9 +137,9 @@ class ModelRunner(ModelRunnerBase):
                 self.args.model_name_or_path,
                 self.args.dtype,
                 block_size=self.args.block_size,
-                max_len=self.args.max_model_len,
+                max_model_len=self.args.max_model_len,
                 stage_flag="msgid-1 predict",
-                export_model_type=getattr(self.model_cfg, "predict_model_type",
+                export_model_type=getattr(self.model_cfg, "export_model_type",
                                           "weight_only_int8"),
                 use_fake_parameter=False,
                 use_stop_seqs=self.model_cfg.ellm_dynamic_use_stop_seqs,
@@ -148,12 +148,14 @@ class ModelRunner(ModelRunnerBase):
                 speculate_max_draft_token_num=self.args.
                 speculate_max_draft_tokens,
                 return_all_hidden_states=False,
+                rope_theta=self.rope_theta,
                 moe_quant_type=getattr(self.model_cfg, "moe_quant_type",
-                                       "weight_only_int4"),
+                                       "weight_only_int8"),
                 use_safetensors=self.model_cfg.is_unified_ckpt,
-                return_fd_config=True)
+                return_fd_config=True,
+            )
             model.eval()
-            fd_config.parallel_config.max_model_len = fd_config.model_config.max_seq_len
+
             self.fd_config = fd_config
             self.model = model
             attn_backend_cls = get_attention_backend(
@@ -163,12 +165,11 @@ class ModelRunner(ModelRunnerBase):
             self.fd_config.model_config.kv_num_heads = int(
                 self.fd_config.model_config.num_key_value_heads
             ) // self.fd_config.parallel_config.tensor_parallel_degree
-            head_dim = self.fd_config.model_config.hidden_size // self.fd_config.model_config.num_attention_heads
             self.attn_backend = attn_backend_cls(
                 self.fd_config,
                 kv_num_heads=self.fd_config.model_config.kv_num_heads,
                 num_heads=num_heads,
-                head_dim=head_dim)
+                head_dim=self.fd_config.model_config.head_dim)
             self._init_kvcache()
 
     def init_rotary_position_embedding(self, max_model_len):
@@ -297,9 +298,7 @@ class ModelRunner(ModelRunnerBase):
                 self.share_inputs["input_ids"][idx:idx +
                                                1, :length] = np.array(
                                                    task.prompt_token_ids)
-
                 if self.args.enable_chunked_prefill:
-                    # print(f"chunked_prefill, {task} {length}, {task.token_chunk_size}")
                     task.set("chunk_idx", 1)
                     token_chunk_size = task.prefill_chunk_info[0]
                     self.share_inputs["seq_lens_this_time"][
@@ -343,7 +342,6 @@ class ModelRunner(ModelRunnerBase):
 
             self.share_inputs["min_dec_len"][idx:idx + 1] = task.get(
                 "min_tokens", 1)
-
             self.share_inputs["max_dec_len"][idx:idx + 1] = task.get(
                 "max_tokens", self.max_length)
             self.share_inputs["stop_flags"][idx:idx + 1] = False
@@ -404,6 +402,7 @@ class ModelRunner(ModelRunnerBase):
                     max_len=self.args.max_model_len,
                     input_ids=self.share_inputs["input_ids"],
                     seq_lens_this_time=self.share_inputs["seq_lens_this_time"])
+
         self.share_inputs["ids_remove_padding"] = ids_remove_padding
         self.share_inputs["padding_offset"] = padding_offset
         self.share_inputs["cum_offsets"] = cum_offsets
@@ -593,8 +592,8 @@ class ModelRunner(ModelRunnerBase):
         """
         fake input to profile
         """
-        full_length = num_total_tokens // number_of_tasks
-        input_length = int(full_length * self.args.kv_cache_ratio)
+        input_length = num_total_tokens // number_of_tasks
+
         block_num = (input_length + self.args.block_size - 1 +
                      self.args.enc_dec_block_num) // self.args.block_size
 

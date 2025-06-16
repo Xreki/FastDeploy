@@ -37,6 +37,7 @@ class ZmqClient:
         self.req_dict = dict()
         self.router = None
         self.poller = None
+        self.running = True
 
     def connect(self):
         """
@@ -48,6 +49,7 @@ class ZmqClient:
         """
         Start the server using the file name specified in the constructor.
         """
+
         self.socket.bind(f"ipc://{self.file_name}")
         self.poller = zmq.Poller()
         self.poller.register(self.socket, zmq.POLLIN)
@@ -57,6 +59,8 @@ class ZmqClient:
         Create a ROUTER socket and bind it to the specified router path.
         """
         self.router = self.context.socket(zmq.ROUTER)
+        self.router.setsockopt(zmq.SNDHWM, 10000)
+        self.router.setsockopt(zmq.SNDTIMEO, -1)
         self.router.bind(f"ipc://{self.router_path}")
 
     def send_json(self, data):
@@ -90,7 +94,7 @@ class ZmqClient:
         if self.router is None:
             raise RuntimeError("Router socket not created. Call create_router() first.")
 
-        while True:
+        while self.running:
             with self.mutex:
                 if req_id not in self.req_dict:
                     try:
@@ -104,7 +108,7 @@ class ZmqClient:
         
         try:
             result = json.dumps(data.to_dict()).encode('utf-8')
-            self.router.send_multipart([self.req_dict[req_id], b'', result], zmq.DONTWAIT)
+            self.router.send_multipart([self.req_dict[req_id], b'', result])
         except Exception as e:
             llm_logger.error(f"Send result to zmq client failed: {e}")
         
@@ -119,7 +123,7 @@ class ZmqClient:
         if self.router is None:
             raise RuntimeError("Router socket not created. Call create_router() first.")
         
-        while True:
+        while self.running:
             with self.mutex:
                 try:
                     flags = 0 if len(self.req_dict) == 0 else zmq.NOBLOCK
@@ -146,7 +150,7 @@ class ZmqClient:
 
                 result = json.dumps(data).encode('utf-8')
                 try:
-                    self.router.send_multipart([client, b'', result], zmq.DONTWAIT)
+                    self.router.send_multipart([client, b'', result])
                 except Exception as e:
                     llm_logger.error(f"Send result to zmq client2 failed: {e}")
         
@@ -201,18 +205,26 @@ class ZmqClient:
         """
         Close the socket and context, and remove the IPC files.
         """
-        if hasattr(self, 'socket') and not self.socket.closed:
-            self.socket.close()
+        if not self.running:
+            return
 
-        if self.router is not None and not self.router.closed:
-            self.router.close()
+        self.running = False
+        llm_logger.info(f"Closing ZMQ connection...")
+        try:
+            if hasattr(self, 'socket') and not self.socket.closed:
+                self.socket.close()
 
-        if not self.context.closed:
-            self.context.term()
+            if self.router is not None and not self.router.closed:
+                self.router.close()
 
-        self._clear_ipc(self.file_name)
-        self._clear_ipc(self.router_path)
+            if not self.context.closed:
+                self.context.term()
+
+            self._clear_ipc(self.file_name)
+            self._clear_ipc(self.router_path)
+        except Exception as e:
+            llm_logger.warning(f"Failed to close ZMQ connection - {e}")
+            return
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
-

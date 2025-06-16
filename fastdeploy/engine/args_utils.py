@@ -167,6 +167,10 @@ class EngineArgs:
     """
     For chunked prefill, a request is considered long if the prompt is longer than this number of tokens.
     """
+    static_decode_blocks: int = 2
+    """
+    additional decode block num
+    """
     scheduler_name: str = "local"
     """
     Scheduler name to be used
@@ -175,7 +179,7 @@ class EngineArgs:
     """
     Size of scheduler
     """
-    scheduler_ttl: float = 900
+    scheduler_ttl: int = 900
     """
     TTL of request
     """
@@ -202,6 +206,10 @@ class EngineArgs:
     scheduler_min_load_score: float = 1
     """
     Minimum load score for task assignment
+    """
+    scheduler_load_shards_num: int = 1
+    """
+    Number of shards for load balancing table
     """
 
     def __post_init__(self):
@@ -333,6 +341,10 @@ class EngineArgs:
                                  type=int,
                                  default=8003,
                                  help="port for cache queue")
+        cache_group.add_argument("--static-decode-blocks",
+                                 type=int,
+                                 default=EngineArgs.static_decode_blocks,
+                                 help="Static decoding blocks num.")
 
         # Cluster system parameters group
         system_group = parser.add_argument_group("System Configuration")
@@ -378,9 +390,9 @@ class EngineArgs:
             "--max-long-partial-prefills",
             type=int,
             default=EngineArgs.max_long_partial_prefills,
-            help="For chunked prefill, the maximum number of prompts \
-            longer than long-prefill-token-threshold that will be prefilled concurrently."
-        )
+            help=
+            ("For chunked prefill, the maximum number of prompts longer than long-prefill-token-threshold"
+             "that will be prefilled concurrently."))
         perf_group.add_argument(
             "--long-prefill-token-threshold",
             type=int,
@@ -405,7 +417,7 @@ class EngineArgs:
         )
         scheduler_group.add_argument(
             "--scheduler-ttl",
-            type=float,
+            type=int,
             default=EngineArgs.scheduler_ttl,
             help=
             f"TTL of request. Default is {EngineArgs.scheduler_ttl} seconds. (local,global)"
@@ -444,8 +456,15 @@ class EngineArgs:
             "--scheduler-min-load-score",
             type=float,
             default=EngineArgs.scheduler_min_load_score,
-            help=f"Minimum load score for task assignment. \
-            Default is {EngineArgs.scheduler_min_load_score} (global)")
+            help=
+            f"Minimum load score for task assignment. Default is {EngineArgs.scheduler_min_load_score} (global)"
+        )
+        scheduler_group.add_argument(
+            "--scheduler-load-shards-num",
+            type=int,
+            default=EngineArgs.scheduler_load_shards_num,
+            help=("Number of shards for load balancing table. Default is "
+                  f"{EngineArgs.scheduler_load_shards_num} (global)"))
 
         return parser
 
@@ -482,7 +501,9 @@ class EngineArgs:
             cpu_offload_gb=self.cpu_offload_gb,
             cache_queue_port=self.cache_queue_port,
             model_cfg=model_cfg,
-            enable_chunked_prefill=self.enable_chunked_prefill)
+            enable_chunked_prefill=self.enable_chunked_prefill,
+            enc_dec_block_num=self.static_decode_blocks,
+        )
 
     def create_scheduler_config(self) -> SchedulerConfig:
         """

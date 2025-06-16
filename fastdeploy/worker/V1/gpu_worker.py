@@ -53,10 +53,10 @@ class GpuWorker(WorkerBase):
         if self.device_config.device_type == "cuda" and paddle.device.is_compiled_with_cuda(
         ):
             # Set evironment variable
+            self.device_ids = self.parallel_config.device_ids.split(",")
             self.device = f"gpu:{self.local_rank}"
             paddle.device.set_device(self.device)
             paddle.set_default_dtype(self.parallel_config.dtype)
-            self.device_ids = self.parallel_config.device_ids.split(",")
 
             gc.collect()
             paddle.device.cuda.empty_cache()
@@ -68,6 +68,7 @@ class GpuWorker(WorkerBase):
         self.model_runner: GPUModelRunner = GPUModelRunner(
             fd_config=self.fd_config,
             device=self.device,
+            device_id=self.device_ids[self.local_rank],
             rank=self.rank,
             local_rank=self.local_rank)
 
@@ -162,7 +163,7 @@ class GpuWorker(WorkerBase):
         TODO(gongshaotian):The scheduler should schedule the handling of prefill,
         and workers and modelrunners should not perceive it.
         """
-        self.model_runner.process_prefill_inputs(req_dicts=req_dicts)
+        self.model_runner.insert_prefill_inputs(req_dicts=req_dicts)
 
     def graph_optimize_and_warm_up_model(self) -> None:
         """ """

@@ -14,6 +14,8 @@
 # limitations under the License.
 """
 
+from functools import partial
+
 import numpy as np
 import paddle
 import paddle.distributed as dist
@@ -25,8 +27,10 @@ from paddle.nn.functional.flash_attention import \
     flash_attn_unpadded as flash_attn_varlen_func
 from paddlenlp.transformers.model_utils import PretrainedModel
 
+from fastdeploy.model_executor.models.ernie45t_moe import ErniePretrainedModel
 from .activation import ACT2FN
 from .configuration import DFNRopeVisionTransformerConfig
+from paddle.distributed.fleet.meta_parallel import ColumnParallelLinear, RowParallelLinear
 
 
 def get_hcg():
@@ -168,11 +172,36 @@ class VisionFlashAttention2(nn.Layer):
         nn (_type_): _description_
     """
 
-    def __init__(self, dim: int, num_heads: int = 16) -> None:
+    def __init__(
+        self, dim: int,
+        num_heads: int = 16,
+        tensor_parallel_degree: int = 1
+    ) -> None:
         super().__init__()
         self.num_heads = num_heads
-        self.qkv = nn.Linear(dim, dim * 3, bias_attr=True)
-        self.proj = nn.Linear(dim, dim)
+        self.tensor_parallel_degree = tensor_parallel_degree
+
+        if tensor_parallel_degree > 1:
+            self.qkv = ColumnParallelLinear(
+                dim,
+                dim * 3,
+                mp_group=fleet.get_hybrid_communicate_group().get_model_parallel_group(),
+                weight_attr=None,
+                has_bias=True,
+                fuse_matmul_bias=True,
+                gather_output=False,
+            )
+            self.proj = RowParallelLinear(
+                dim,
+                dim,
+                mp_group=fleet.get_hybrid_communicate_group().get_model_parallel_group(),
+                input_is_parallel=True,
+                has_bias=True
+            )
+        else:
+            self.qkv = nn.Linear(dim, dim * 3, bias_attr=True)
+            self.proj = nn.Linear(dim, dim)
+
         self.head_dim = dim // num_heads  # must added
 
     def forward(
@@ -194,7 +223,8 @@ class VisionFlashAttention2(nn.Layer):
         """
         seq_length = hidden_states.shape[0]
         qkv = self.qkv(hidden_states).reshape(
-            [seq_length, 3, self.num_heads, -1]).transpose(perm=[1, 0, 2, 3])
+            [seq_length, 3, self.num_heads // self.tensor_parallel_degree, -1]
+        ).transpose(perm=[1, 0, 2, 3])
         q, k, v = qkv.unbind(axis=0)
 
         if attn_sep:
@@ -215,9 +245,9 @@ class VisionFlashAttention2(nn.Layer):
 
         attn_output = (
             flash_attn_varlen_func(  # flash_attn_unpadded
-                q.astype("bfloat16"),  # 不支持float32
-                k.astype("bfloat16"),
-                v.astype("bfloat16"),
+                q,  # 不支持float32
+                k,
+                v,
                 cu_seqlens,
                 cu_seqlens,
                 max_seqlen,
@@ -278,11 +308,35 @@ class VisionMlp(nn.Layer):
         nn (_type_): _description_
     """
 
-    def __init__(self, dim: int, hidden_dim: int, hidden_act: str) -> None:
+    def __init__(
+        self,
+        dim: int,
+        hidden_dim: int,
+        hidden_act: str,
+        tensor_parallel_degree: int = 1
+    ) -> None:
         super().__init__()
-        self.fc1 = nn.Linear(dim, hidden_dim)
+        self.tensor_parallel_degree = tensor_parallel_degree
+
+        if self.tensor_parallel_degree > 1:
+            self.fc1 = ColumnParallelLinear(
+                dim,
+                hidden_dim,
+                mp_group=fleet.get_hybrid_communicate_group().get_model_parallel_group(),
+                gather_output=False,
+                has_bias=True
+            )
+            self.fc2 = RowParallelLinear(
+                hidden_dim,
+                dim,
+                mp_group=fleet.get_hybrid_communicate_group().get_model_parallel_group(),
+                input_is_parallel=True,
+                has_bias=True
+            )
+        else:
+            self.fc1 = nn.Linear(dim, hidden_dim)
+            self.fc2 = nn.Linear(hidden_dim, dim)
         self.act = ACT2FN[hidden_act]
-        self.fc2 = nn.Linear(hidden_dim, dim)
 
     def forward(self, x) -> paddle.Tensor:
         """_summary_
@@ -347,11 +401,17 @@ class DFNRopeVisionBlock(nn.Layer):
         self.norm2 = nn.LayerNorm(config.embed_dim, epsilon=1e-6)
         mlp_hidden_dim = int(config.embed_dim * config.mlp_ratio)
 
-        self.attn = VisionFlashAttention2(config.embed_dim,
-                                          num_heads=config.num_heads)
-        self.mlp = VisionMlp(dim=config.embed_dim,
-                             hidden_dim=mlp_hidden_dim,
-                             hidden_act=config.hidden_act)
+        self.attn = VisionFlashAttention2(
+            config.embed_dim,
+            num_heads=config.num_heads,
+            tensor_parallel_degree=config.tensor_parallel_degree
+        )
+        self.mlp = VisionMlp(
+            dim=config.embed_dim,
+            hidden_dim=mlp_hidden_dim,
+            hidden_act=config.hidden_act,
+            tensor_parallel_degree=config.tensor_parallel_degree
+        )
         self.config = config
 
     def forward(self,
@@ -612,7 +672,49 @@ class DFNRopeVisionTransformerPretrainedModel(PretrainedModel):
         """
         dummy
         """
-        return {}
+
+        from paddlenlp.transformers.conversion_utils import split_or_merge_func
+        fn = split_or_merge_func(
+            is_split=is_split,
+            tensor_parallel_degree=config.tensor_parallel_degree,
+            tensor_parallel_rank=config.tensor_parallel_rank,
+        )
+        vision_config = config.vision_config
+
+        def split_qkv_weight(x):
+            head_dim = vision_config.hidden_size // vision_config.num_heads
+            x = x.reshape([vision_config.hidden_size, 3, vision_config.num_heads, head_dim])
+            x = np.split(x, vision_config.tensor_parallel_degree, axis=-2)[vision_config.tensor_parallel_rank]
+            x = x.reshape([vision_config.hidden_size, -1])
+            return x
+
+        def split_qkv_bias(x):
+            head_dim = vision_config.hidden_size // vision_config.num_heads
+            x = x.reshape([3, vision_config.num_heads, head_dim])
+            x = np.split(x, vision_config.tensor_parallel_degree, axis=-2)[vision_config.tensor_parallel_rank]
+            x = x.reshape([-1])
+            return x
+
+        def get_tensor_parallel_split_mappings(depth):
+            final_actions = {}
+            base_actions = {
+                "vision_model.blocks.0.attn.proj.weight": partial(fn, is_column=False),
+                "vision_model.blocks.0.fc1.weight": partial(fn, is_column=True),
+                "vision_model.blocks.0.fc1.bias": partial(fn, is_column=True),
+                "vision_model.blocks.0.fc2.weight": partial(fn, is_column=False),
+                "vision_model.blocks.0.qkv.weight": split_qkv_weight,
+                "vision_model.blocks.0.qkv.bias": split_qkv_bias,
+            }
+
+            for key, action in base_actions.items(): 
+                if "blocks.0." in key:
+                    for i in range(depth):
+                        newkey = key.replace("blocks.0.", f"blocks.{i}.")
+                        final_actions[newkey] = action
+            return final_actions
+
+        mappings = get_tensor_parallel_split_mappings(vision_config.depth)
+        return mappings
 
     def set_state_dict(self, state_dict, *args, **kwargs):
         """_summary_

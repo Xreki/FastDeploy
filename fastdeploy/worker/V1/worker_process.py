@@ -438,7 +438,12 @@ def initialize_fd_config(args) -> FDConfig:
     """
     # NOTE(gongshaotian): From build stream line model
     config, _ = ModelConfig.get_config_dict(args.model_name_or_path)
+    config["head_dim"] = config.get(
+        "head_dim", config["hidden_size"] // config["num_attention_heads"])
+    config["rope_theta"] = config.get("rope_theta", 10000.0)
     model_config = ModelConfig.from_dict(config)
+    # TODO Set `head_dim` again. Because `ModelConfig` class doesn't support feeding head_dim at all!
+    model_config.head_dim = config["head_dim"]
     paddle.set_default_dtype(args.dtype)
 
     device_config = DeviceConfig()
@@ -487,6 +492,7 @@ def initialize_fd_config(args) -> FDConfig:
     parallel_config.attention_backend = args.attention_backend
     parallel_config.speculate_max_draft_tokens = args.speculate_max_draft_tokens
     parallel_config.max_num_batched_tokens = args.max_num_batched_tokens
+    parallel_config.enable_prefix_caching = args.enable_prefix_caching
 
     parallel_config.use_ep = args.expert_parallel_size > 1
     parallel_config.tensor_parallel_degree = args.tensor_parallel_size

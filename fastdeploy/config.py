@@ -122,6 +122,7 @@ class ModelConfig(PretrainedConfig):
         tools_version="4.10.0.dev",
         system_prompt_version="V1",
         moe_layer_start_index: int | None = None,
+        moe_layer_end_index: int | None = None,
         moe_use_gate_correction_bias: bool | None = None,
         num_hidden_layers: int | None = None,
         prefix_name="",
@@ -135,6 +136,7 @@ class ModelConfig(PretrainedConfig):
         return_all_hidden_states: bool = False,
         start_layer_index: int = 0,
         output_via_mq: bool = True,
+        head_dim: Optional[int] = None,
         tie_word_embeddings: bool = False,
         **kwargs,
     ):
@@ -147,8 +149,7 @@ class ModelConfig(PretrainedConfig):
             self.num_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
         self.num_key_value_heads = num_key_value_heads
-        self.head_dim = hidden_size // num_attention_heads if kwargs.get(
-            "head_dim", None) is None else kwargs.get("head_dim")
+        self.head_dim = head_dim
         self.hidden_act = hidden_act
         self.hidden_dropout_prob = hidden_dropout_prob
         self.max_position_embeddings = max_position_embeddings
@@ -178,6 +179,8 @@ class ModelConfig(PretrainedConfig):
         self.base_model_prefix = base_model_prefix
         if moe_layer_start_index is not None:
             self.moe_layer_start_index = moe_layer_start_index
+        if moe_layer_end_index is not None:
+            self.moe_layer_end_index = moe_layer_end_index
         elif moe_use_gate_correction_bias is not None:
             self.moe_use_gate_correction_bias = moe_use_gate_correction_bias
         self.ffn_hidden_size = ffn_hidden_size
@@ -278,6 +281,7 @@ class MoEConfig:
     moe_every2 = (False, )
     moe_num_shared_experts = (0, )
     moe_layer_start_index = 0
+    moe_layer_end_index = None
     moe_use_ffn_shared_weight_and_bias = (False, )
     moe_group = (False, )
     moe_quant_type = "weight_only_int8"
@@ -362,6 +366,10 @@ class ParallelConfig:
     # speculate_max_draft_tokens
     speculate_max_draft_tokens: int = 1
     max_num_batched_tokens: int = 2048
+    # enable prefix cache
+    enable_prefix_caching = None
+    # splitwise role
+    splitwise_role: str = "mixed"
 
 
 @dataclass
