@@ -15,17 +15,14 @@
 """
 
 from __future__ import annotations
-import time
-from typing import Any, ClassVar, Literal, Optional, Union, List, Dict
 
-from fastapi import UploadFile
-from pydantic import (BaseModel, ConfigDict, Field, TypeAdapter,
-                      ValidationInfo, field_validator, model_validator)
-from typing_extensions import TypeAlias
+import time
+from typing import List, Literal, Optional, Union
+
+from pydantic import BaseModel, Field, model_validator
 
 #from openai.types.chat import ChatCompletionMessageParam
-from fastdeploy.entrypoints.chat_utils import ChatCompletionMessageParam, parse_chat_messages
-from fastdeploy.engine.sampling_params import SamplingParams
+from fastdeploy.entrypoints.chat_utils import ChatCompletionMessageParam
 
 
 class ErrorResponse(BaseModel):
@@ -174,7 +171,6 @@ class StreamOptions(BaseModel):
     continuous_usage_stats: Optional[bool] = False
 
 
-
 class CompletionRequest(BaseModel):
     """
     Completion request to the engine.
@@ -187,7 +183,7 @@ class CompletionRequest(BaseModel):
     echo: Optional[bool] = False
     frequency_penalty: Optional[float] = 0.0
     logprobs: Optional[int] = None
-    max_tokens: Optional[int] = 16
+    max_tokens: Optional[int] = None
     n: int = 1
     presence_penalty: Optional[float] = 0.0
     seed: Optional[int] = None
@@ -199,12 +195,11 @@ class CompletionRequest(BaseModel):
     top_p: Optional[float] = None
     user: Optional[str] = None
 
-
     # doc: begin-completion-sampling-params
     repetition_penalty: Optional[float] = None
     stop_token_ids: Optional[List[int]] = Field(default_factory=list)
-    # doc: end-completion-sampling-params
 
+    # doc: end-completion-sampling-params
 
     def to_dict_for_infer(self, request_id=None, prompt=None):
         """
@@ -231,7 +226,6 @@ class CompletionRequest(BaseModel):
 
         return req_dict
 
-
     @model_validator(mode="before")
     @classmethod
     def validate_stream_options(cls, data):
@@ -257,7 +251,8 @@ class ChatCompletionRequest(BaseModel):
     # remove max_tokens when field is removed from OpenAI API
     max_tokens: Optional[int] = Field(
         default=None,
-        deprecated='max_tokens is deprecated in favor of the max_completion_tokens field')
+        deprecated=
+        'max_tokens is deprecated in favor of the max_completion_tokens field')
     max_completion_tokens: Optional[int] = None
     n: Optional[int] = 1
     presence_penalty: Optional[float] = 0.0
@@ -273,6 +268,7 @@ class ChatCompletionRequest(BaseModel):
     # doc: begin-chat-completion-sampling-params
     repetition_penalty: Optional[float] = None
     stop_token_ids: Optional[List[int]] = Field(default_factory=list)
+
     # doc: end-chat-completion-sampling-params
 
     def to_dict_for_infer(self, request_id=None):
