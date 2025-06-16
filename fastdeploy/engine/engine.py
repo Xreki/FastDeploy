@@ -398,7 +398,7 @@ class LLMEngine(object):
             )
             llm_logger.error(error_msg)
             raise EngineError(error_msg, error_code=400)
-        
+
         request.preprocess_end_time = time.time()
         self.scheduler.put_requests([request])
         llm_logger.info(
@@ -701,8 +701,10 @@ class LLMEngine(object):
         """
         # worker_ready_signal 用于engine感知各worker进程是否Ready
 
-        worker_ready_signal_data = np.zeros(
-            shape=[self.cfg.tensor_parallel_size], dtype=np.int32)
+        worker_ready_signal_data = np.zeros(shape=[
+            self.cfg.tensor_parallel_size * self.cfg.expert_parallel_size
+        ],
+                                            dtype=np.int32)
         self.worker_ready_signal = IPCSignal(name="worker_ready_singnal",
                                              array=worker_ready_signal_data,
                                              dtype=np.int32,
@@ -727,8 +729,10 @@ class LLMEngine(object):
             create=True)
 
         # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
-        worker_healthy_live_recorded_time_array = np.zeros(
-            shape=[self.cfg.tensor_parallel_size], dtype=np.int32)
+        worker_healthy_live_recorded_time_array = np.zeros(shape=[
+            self.cfg.tensor_parallel_size * self.cfg.expert_parallel_size
+        ],
+                                                           dtype=np.int32)
         self.worker_healthy_live_signal = IPCSignal(
             name="worker_healthy_live_signal",
             array=worker_healthy_live_recorded_time_array,
@@ -737,7 +741,9 @@ class LLMEngine(object):
             create=True)
 
         if self.do_profile:
-            get_profile_block_num = np.zeros([self.cfg.tensor_parallel_size],
+            get_profile_block_num = np.zeros([
+                self.cfg.tensor_parallel_size * self.cfg.expert_parallel_size
+            ],
                                              dtype=np.int32)
             self.get_profile_block_num_signal = IPCSignal(
                 name="get_profile_block_num",
@@ -853,6 +859,8 @@ class LLMEngine(object):
             f" --max_num_batched_tokens {self.cfg.max_num_batched_tokens}"
             f" --splitwise_role {self.cfg.splitwise_role}"
             f" --kv_cache_ratio {self.cfg.cache_config.kv_cache_ratio}"
+            f" --tensor_parallel_size {self.cfg.tensor_parallel_size}"
+            f" --expert_parallel_size {self.cfg.expert_parallel_size}"
             f" --ori_vocab_size {len(self.data_processor.tokenizer)}")
 
         worker_append_flag = {

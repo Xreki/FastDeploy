@@ -25,8 +25,8 @@ import paddle.distributed.fleet as fleet
 from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
                                FDConfig, GraphOptimizationConfig,
                                KVCacheConfig, LoadConfig, ModelConfig,
-                               MoEConfig, ParallelConfig, SpeculativeConfig,
-                               TmpConfig)
+                               MoEConfig, MoEPhase, ParallelConfig,
+                               SpeculativeConfig, TmpConfig)
 from fastdeploy.inter_communicator import EngineWorkerQueue as TaskQueue
 from fastdeploy.inter_communicator import IPCSignal
 from fastdeploy.model_executor.layers.quantization import \
@@ -55,13 +55,29 @@ class PaddleDisWorkerProc():
 
         # Initialize distributed enviroment
         (self.rank, self.local_rank) = self.init_distributed_enviroment()
-        self.fd_config.parallel_config.tensor_parallel_rank = self.local_rank
-        self.fd_config.model_config.tensor_parallel_rank = self.local_rank
-        self.fd_config.parallel_config.tensor_parallel_degree = self.rank
-        self.fd_config.model_config.tensor_parallel_degree = self.rank
-        self.fd_config.parallel_config.mp_size = self.rank
-        self.fd_config.parallel_config.ep_size = 1
+
+        assert self.parallel_config.tensor_parallel_degree * self.parallel_config.expert_parallel_degree == self.rank
+
+        self.fd_config.parallel_config.tensor_parallel_rank = \
+            self.local_rank % self.parallel_config.tensor_parallel_degree
+        self.fd_config.parallel_config.expert_parallel_rank = self.local_rank
+
+        if self.fd_config.parallel_config.use_ep:
+            self.fd_config.moe_config.num_experts_per_rank = \
+                self.fd_config.moe_config.num_experts // self.parallel_config.expert_parallel_degree
+            self.fd_config.moe_config.num_experts_start_offset = \
+                self.fd_config.parallel_config.expert_parallel_rank * self.fd_config.moe_config.num_experts_per_rank
+
         self.fd_config.parallel_config.column_cut = False
+
+        if self.local_rank == 0:
+            logger.info(
+                f"moe_quant_type {self.fd_config.moe_config.moe_quant_type}")
+
+        # For auto TP split
+        self.fd_config.model_config.tensor_parallel_degree = self.parallel_config.tensor_parallel_degree
+        self.fd_config.model_config.tensor_parallel_rank = self.parallel_config.tensor_parallel_rank
+        self.fd_config.model_config.is_mtp = self.fd_config.speculative_config.is_mtp
 
         # TODO(gongshaotian): Use worker factory to get worker
         self.worker = GpuWorker(fd_config=fd_config,
@@ -71,10 +87,11 @@ class PaddleDisWorkerProc():
         # Initialize task queue
         task_address = ('0.0.0.0',
                         self.parallel_config.engine_worker_queue_port)
-        self.task_queue = TaskQueue(address=task_address,
-                                    is_server=False,
-                                    num_client=self.rank,
-                                    client_id=self.local_rank)
+        self.task_queue = TaskQueue(
+            address=task_address,
+            is_server=False,
+            num_client=self.parallel_config.tensor_parallel_degree,
+            client_id=self.parallel_config.tensor_parallel_rank)
         # Initialize health status
         self.init_health_status()
 
@@ -89,14 +106,17 @@ class PaddleDisWorkerProc():
             model_weights_status:
         """
         # init worker_ready_singnal
-        workers_ready = np.zeros(shape=[self.rank], dtype=np.int32)
+        workers_ready = np.zeros(
+            shape=[self.parallel_config.tensor_parallel_degree],
+            dtype=np.int32)
         self.worker_ready_singnal = IPCSignal(
             name="worker_ready_singnal",
             array=workers_ready,
             dtype=np.int32,
             suffix=self.parallel_config.engine_pid,
             create=False)
-        self.worker_ready_singnal.value[self.local_rank] = 1
+        self.worker_ready_singnal.value[
+            self.parallel_config.tensor_parallel_rank] = 1
 
         # init worker_healthy_live_signal
         workers_alive = np.zeros(shape=[self.rank], dtype=np.int32)
@@ -136,6 +156,31 @@ class PaddleDisWorkerProc():
             suffix=self.parallel_config.engine_pid,
             create=False)
 
+    def event_loop_ep(self):
+        """
+        Tmp loop function for ep utill DP is supported
+        """
+        while True:
+            self.worker_healthy_live_signal.value[self.local_rank] = int(
+                time.time())
+
+            if self.parallel_config.expert_parallel_rank == 0 and self.task_queue.num_tasks(
+            ) > 0:
+                tasks, read_finish = self.task_queue.get_tasks()
+
+                req_dicts = []
+                for req_dict, bsz in tasks:
+                    num_running_requests = int(bsz)
+                    req_dicts.extend(req_dict)
+                logger.info(f"Rank: {self.local_rank}, num_running_requests: {num_running_requests}, " \
+                            f"num_insert_requests: {len(req_dicts)}")
+                # Process prefill inputs
+                self.worker.preprocess_new_task(req_dicts)
+
+            # Execute model to generate token. The generated token will be written to the buffer.
+            # These generated tokens can be obtained through get_output op.
+            self.worker.execute_model()
+
     def event_loop_normal(self):
         """ Main event loop for Paddle Distrubuted Workers.
         TODO(gongshaotian): support remote calling of functions that control worker.
@@ -144,7 +189,7 @@ class PaddleDisWorkerProc():
         self.nnode = 1
 
         while True:
-            if self.rank > 1:
+            if self.parallel_config.tensor_parallel_degree > 1:
                 # Synchronize before updating weights
                 paddle.distributed.barrier()
 
@@ -161,8 +206,9 @@ class PaddleDisWorkerProc():
                     else:
                         self.exist_task_signal.value[0] = 1
 
-            if self.rank > 1:
+            if self.parallel_config.tensor_parallel_degree > 1:
                 # Synchronize the signal for other workers
+                # TODO(@wufeisheng): Split TP group and EP group
                 paddle.distributed.barrier()
 
             if self.exist_task_signal.value[
@@ -364,6 +410,7 @@ def parse_args():
                         type=int,
                         default=2048,
                         help="max num batched tokens")
+
     parser.add_argument("--enable_prefix_caching",
                         action='store_true',
                         help="enable prefix cache")
@@ -371,6 +418,14 @@ def parse_args():
                         type=str,
                         default="mixed",
                         help="splitwise role")
+    parser.add_argument("--tensor_parallel_size",
+                        type=int,
+                        default=1,
+                        help="tensor parallel size")
+    parser.add_argument("--expert_parallel_size",
+                        type=int,
+                        default=1,
+                        help="expert parallel size")
     parser.add_argument("--ori_vocab_size", type=int, default=None)
 
     args = parser.parse_args()
@@ -388,7 +443,7 @@ def initialize_fd_config(args) -> FDConfig:
     config["rope_theta"] = config.get("rope_theta", 10000.0)
     model_config = ModelConfig.from_dict(config)
     # TODO Set `head_dim` again. Because `ModelConfig` class doesn't support feeding head_dim at all!
-    model_config.head_dim = config["head_dim"] 
+    model_config.head_dim = config["head_dim"]
     paddle.set_default_dtype(args.dtype)
 
     device_config = DeviceConfig()
@@ -411,10 +466,46 @@ def initialize_fd_config(args) -> FDConfig:
     moe_config = MoEConfig()
     graph_opt_config = GraphOptimizationConfig()
 
-    # Note(tangbinhan): used for load_checkpoint
-    model_config.tensor_parallel_rank = parallel_config.tensor_parallel_rank
-    model_config.use_ep = parallel_config.use_ep
-    model_config.is_mtp = speculative_config.is_mtp
+    # Update parallel config
+    parallel_config.engine_pid = args.engine_pid
+    parallel_config.model_name_or_path = args.model_name_or_path
+    parallel_config.max_num_seqs = args.max_num_seqs
+    parallel_config.max_block_num = args.total_block_num
+    parallel_config.block_size = args.block_size
+    parallel_config.engine_worker_queue_port = args.engine_worker_queue_port
+    parallel_config.max_model_len = args.max_model_len
+    model_config.max_seq_len = args.max_model_len
+    model_config.max_length = args.max_model_len
+    parallel_config.device_ids = args.device_ids
+    parallel_config.dtype = args.dtype
+    parallel_config.enc_dec_block_num = args.enc_dec_block_num
+    parallel_config.kv_cache_ratio = args.kv_cache_ratio
+    parallel_config.first_token_id = args.first_token_id
+    parallel_config.gpu_memory_utilization = args.gpu_memory_utilization
+    parallel_config.engine_pid = args.engine_pid
+    parallel_config.do_profile = args.do_profile
+    parallel_config.dynamic_load_weight = args.dynamic_load_weight
+    parallel_config.pad_token_id = args.pad_token_id
+    parallel_config.eos_tokens_lens = args.eos_tokens_lens
+    parallel_config.enable_chunked_prefill = args.enable_chunked_prefill
+    parallel_config.speculate_method = args.speculate_method
+    parallel_config.attention_backend = args.attention_backend
+    parallel_config.speculate_max_draft_tokens = args.speculate_max_draft_tokens
+    parallel_config.max_num_batched_tokens = args.max_num_batched_tokens
+    parallel_config.enable_prefix_caching = args.enable_prefix_caching
+
+    parallel_config.use_ep = args.expert_parallel_size > 1
+    parallel_config.tensor_parallel_degree = args.tensor_parallel_size
+    parallel_config.expert_parallel_degree = args.expert_parallel_size
+
+    logger.info(f"parallel_config.use_ep {parallel_config.use_ep}")
+
+    if args.splitwise_role == "mixed":
+        parallel_config.moe_phase = MoEPhase.PREFILL
+    elif args.splitwise_role == "prefill":
+        parallel_config.moe_phase = MoEPhase.PREFILL
+    elif args.splitwise_role == "decoder":
+        parallel_config.moe_phase = MoEPhase.DECODER
 
     group_size = config.get("group_size", -1)
     num_key_value_heads = config.get("num_key_value_heads", -1)
@@ -469,6 +560,13 @@ def initialize_fd_config(args) -> FDConfig:
     moe_config.moe_group = config.get("moe_group", False)
     moe_config.moe_quant_type = config.get("moe_quant_type",
                                            "weight_only_int4")
+
+    moe_config.num_max_dispatch_tokens_per_rank = config.get(
+        "num_max_dispatch_tokens_per_rank", 256)
+    moe_config.enable_redundant_experts = config.get(
+        "enable_redundant_experts", False)
+    moe_config.redundant_experts_num = config.get("redundant_experts_num", 0)
+
     tmp_config.weight_block_size = config.get("weight_block_size", [-1, -1])
     model_config.ori_vocab_size = config.get("vocab_size", -1)
     if "ErnieBotLMHeadModel" in config.get("architectures"):
@@ -508,34 +606,6 @@ def initialize_fd_config(args) -> FDConfig:
 
     model_config.architectures = config.get("architectures")
 
-    # Update parallel config
-    parallel_config.engine_pid = args.engine_pid
-    parallel_config.model_name_or_path = args.model_name_or_path
-    parallel_config.max_num_seqs = args.max_num_seqs
-    parallel_config.max_block_num = args.total_block_num
-    parallel_config.block_size = args.block_size
-    parallel_config.engine_worker_queue_port = args.engine_worker_queue_port
-    parallel_config.max_model_len = args.max_model_len
-    model_config.max_seq_len = args.max_model_len
-    model_config.max_length = args.max_model_len
-    parallel_config.device_ids = args.device_ids
-    parallel_config.dtype = args.dtype
-    parallel_config.enc_dec_block_num = args.enc_dec_block_num
-    parallel_config.kv_cache_ratio = args.kv_cache_ratio
-    parallel_config.first_token_id = args.first_token_id
-    parallel_config.gpu_memory_utilization = args.gpu_memory_utilization
-    parallel_config.engine_pid = args.engine_pid
-    parallel_config.do_profile = args.do_profile
-    parallel_config.dynamic_load_weight = args.dynamic_load_weight
-    parallel_config.pad_token_id = args.pad_token_id
-    parallel_config.eos_tokens_lens = args.eos_tokens_lens
-    parallel_config.enable_chunked_prefill = args.enable_chunked_prefill
-    parallel_config.speculate_method = args.speculate_method
-    parallel_config.attention_backend = args.attention_backend
-    parallel_config.speculate_max_draft_tokens = args.speculate_max_draft_tokens
-    parallel_config.max_num_batched_tokens = args.max_num_batched_tokens
-    parallel_config.enable_prefix_caching = args.enable_prefix_caching
-
     fd_config = FDConfig(model_config=model_config,
                          parallel_config=parallel_config,
                          speculative_config=speculative_config,
@@ -564,10 +634,16 @@ def run_worker_proc():
 
     # Start event loop
     worker_proc = PaddleDisWorkerProc(fd_config)
+    logger.info("init_device")
     worker_proc.init_device()
+    logger.info("load_model")
     worker_proc.load_model()
+    logger.info("determine_num_available_blocks")
     worker_proc.determine_num_available_blocks()
-    worker_proc.event_loop_normal()
+    if fd_config.parallel_config.use_ep:
+        worker_proc.event_loop_ep()
+    else:
+        worker_proc.event_loop_normal()
 
 
 if __name__ == "__main__":

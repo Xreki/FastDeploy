@@ -45,7 +45,7 @@ class Qwen2MLP(nn.Layer):
         prefix: str = "",
     ) -> None:
         super().__init__()
-        self.nranks = fd_config.parallel_config.mp_size
+        self.nranks = fd_config.parallel_config.tensor_parallel_degree
         self.gate_up_proj = MergedColumnParallelLinear(
             fd_config=fd_config,
             prefix=f"{prefix}.up_gate_proj",
@@ -95,7 +95,7 @@ class Qwen2Attention(nn.Layer):
                  prefix: str = "") -> None:
         super().__init__()
 
-        nranks = fd_config.parallel_config.mp_size
+        nranks = fd_config.parallel_config.tensor_parallel_degree
 
         self.qkv_proj = QKVParallelLinear(fd_config=fd_config,
                                           prefix=f"{prefix}.qkv_proj",

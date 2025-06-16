@@ -308,7 +308,7 @@ class ReplicatedLinear(LinearBase):
                          with_bias=with_bias,
                          add_bias=add_bias,
                          skip_quant=skip_quant)
-        self.nranks = fd_config.parallel_config.mp_size
+        self.nranks = fd_config.parallel_config.tensor_parallel_degree
         self.input_size = input_size
         self.init_weight()
         if fd_config.quant_config:
@@ -385,7 +385,7 @@ class ColumnParallelLinear(LinearBase):
                          with_bias=with_bias,
                          add_bias=add_bias,
                          skip_quant=skip_quant)
-        self.nranks = fd_config.parallel_config.mp_size
+        self.nranks = fd_config.parallel_config.tensor_parallel_degree
         self.input_size = input_size
         self.output_size = divide(output_size, self.nranks)
         self.init_weight()
@@ -473,7 +473,7 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         self.use_fast_ffn = use_fast_ffn
         self.activation = activation
         self.embed_dim = fd_config.model_config.hidden_size
-        self.nranks = fd_config.parallel_config.mp_size
+        self.nranks = fd_config.parallel_config.tensor_parallel_degree
 
         super().__init__(fd_config=fd_config,
                          prefix=prefix,
@@ -552,7 +552,7 @@ class QKVParallelLinear(ColumnParallelLinear):
         self.kv_num_heads = fd_config.model_config.num_key_value_heads
         self.embed_dim = fd_config.model_config.hidden_size
         self.head_dim = fd_config.model_config.head_dim
-        self.nranks = fd_config.parallel_config.mp_size
+        self.nranks = fd_config.parallel_config.tensor_parallel_degree
         self.num_heads_per_rank = divide(self.num_heads, self.nranks)
         self.kv_num_heads_per_rank = divide(self.kv_num_heads, self.nranks)
         input_size = self.embed_dim
@@ -676,7 +676,7 @@ class RowParallelLinear(LinearBase):
             fd_config.model_config, "use_smooth_quant") else False
         self.weight_dtype = fd_config.model_config.weight_dtype
         self.act_dtype = fd_config.model_config.act_dtype
-        self.nranks = fd_config.parallel_config.mp_size
+        self.nranks = fd_config.parallel_config.tensor_parallel_degree
         self.embed_dim = fd_config.model_config.hidden_size
         self.head_dim = fd_config.model_config.head_dim
         self.num_heads = fd_config.model_config.num_attention_heads // self.nranks

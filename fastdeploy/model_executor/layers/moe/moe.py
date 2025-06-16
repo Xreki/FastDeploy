@@ -18,9 +18,11 @@ from dataclasses import dataclass
 
 import paddle
 from paddle import nn
-from paddlenlp.utils.log import logger
 
+from fastdeploy.config import MoEPhase
 from fastdeploy.model_executor.layers.utils import get_tensor
+
+from .fused_moe_method_tp import TPFusedMoeMethod
 
 
 @dataclass
@@ -56,17 +58,7 @@ class FusedMoE(nn.Layer):
         moe_use_gate_correction_bias: bool = False,
         moe_quant_type: str = "weight_only_int4",
         layer_idx: int = -1,
-        moe_tag: str = "",
-        gate_weight_key=None,
-        gate_correction_bias_key=None,
-        ffn1_expert_weight_key=None,
-        ffn2_expert_weight_key=None,
-        moe_ffn1_bias_keys=None,
-        moe_ffn2_bias_keys=None,
-        moe_ffn1_weight_scale_keys=None,
-        moe_ffn2_weight_scale_keys=None,
-        moe_ffn1_in_scale_keys=None,
-        moe_ffn2_in_scale_keys=None,
+        weight_key_map: dict = {},
         use_method="cutlass",
     ):
         """
@@ -80,8 +72,14 @@ class FusedMoE(nn.Layer):
 
         self.fd_config = fd_config
         self.layer_idx = layer_idx
-        self.tp_size = fd_config.parallel_config.mp_size
-        self.ep_size = fd_config.parallel_config.ep_size
+
+        self.tp_size = fd_config.parallel_config.tensor_parallel_degree
+        self.ep_size = fd_config.parallel_config.expert_parallel_degree
+        self.ep_rank = fd_config.parallel_config.expert_parallel_rank
+
+        assert (self.tp_size > 1 and self.ep_size == 1) or \
+                (self.tp_size == 1 and self.ep_size > 1), \
+            'MoE only support parallelism on TP or EP dimension.'
 
         self.moe_use_gate_correction_bias = moe_use_gate_correction_bias
 
@@ -93,29 +91,12 @@ class FusedMoE(nn.Layer):
         self.num_experts = num_experts
         self.num_local_experts = self.num_experts // self.ep_size
 
-        logger.info(
-            f"{moe_tag}MoE config is {num_experts=}, {top_k=}, hidden_size={self.hidden_size}, {moe_intermediate_size=}, moe_quant_type={self.moe_quant_type}, ep_size={self.ep_size}, tp_size={self.tp_size}."
-        )
-
         self.moe_intermediate_size = moe_intermediate_size // self.tp_size
-
-        self.gate_weight_key = gate_weight_key
-
-        self.gate_correction_bias_key = gate_correction_bias_key
-
-        self.ffn1_expert_weight_key = ffn1_expert_weight_key
-        self.ffn2_expert_weight_key = ffn2_expert_weight_key
-        self.ffn1_bias_key = moe_ffn1_bias_keys
-        self.ffn2_bias_key = moe_ffn2_bias_keys
-
-        if self.moe_quant_type == "w4a8":
-            # below keys are only used in MoE W4A8!
-            self.ffn1_expert_weight_scale_key = moe_ffn1_weight_scale_keys
-            self.ffn2_expert_weight_scale_key = moe_ffn2_weight_scale_keys
-            self.ffn1_expert_in_scale_key = moe_ffn1_in_scale_keys
-            self.ffn2_expert_in_scale_key = moe_ffn2_in_scale_keys
+        self.weight_key_map = weight_key_map
+        self.use_method = use_method
 
         moe_compute_params = MoEComputeParams()
+        moe_compute_params.layer_idx = self.layer_idx
         moe_compute_params.global_num_experts = self.num_experts
         moe_compute_params.top_k = top_k
         moe_compute_params.hidden_size = self.hidden_size
@@ -124,60 +105,23 @@ class FusedMoE(nn.Layer):
         moe_compute_params.moe_intermediate_size = self.moe_intermediate_size
         moe_compute_params.ep_size = self.ep_size
         moe_compute_params.tp_size = self.tp_size
+        moe_compute_params.ep_rank = self.ep_rank
+        moe_compute_params.num_max_dispatch_tokens_per_rank = fd_config.moe_config.num_max_dispatch_tokens_per_rank
+        moe_compute_params.use_method = self.use_method
 
-        if use_method == "cutlass":
-            from .cutlass_fused_moe import CutlassFusedMoeMethod
-            self.compute_method = CutlassFusedMoeMethod(moe_compute_params)
+        if self.ep_size > 1:
+            # Lazy import
+            from .fused_moe_method_ep import (EPDecoderFusedMoeMethod,
+                                              EPPrefillFusedMoeMethod)
+
+            if fd_config.parallel_config.moe_phase == MoEPhase.PREFILL:
+                self.compute_method = EPPrefillFusedMoeMethod(
+                    moe_compute_params)
+            else:
+                self.compute_method = EPDecoderFusedMoeMethod(
+                    moe_compute_params)
         else:
-            from .triton_fused_moe import TritonFusedMoeMethod
-            self.compute_method = TritonFusedMoeMethod(moe_compute_params)
-
-        if self.moe_use_gate_correction_bias:
-            self.gate_correction_bias = self.create_parameter(
-                shape=[1, self.num_experts],
-                dtype="float32",
-            )
-        else:
-            self.gate_correction_bias = None
-
-    def load_gate_state_dict(self, state_dict):
-        """
-        load_gate_state_dict function.
-        """
-
-        # gate_correction_bias
-        if self.moe_use_gate_correction_bias:
-            gate_correction_bias_tensor = get_tensor(
-                state_dict.pop(
-                    self.gate_correction_bias_key).astype("float32"))
-            self.gate_correction_bias.set_value(gate_correction_bias_tensor)
-
-        up_gate_proj_weight = []
-        down_proj_weight = []
-        is_ffn_merged = self.ffn1_expert_weight_key.format(0) in state_dict
-        if is_ffn_merged:
-            for j in range(self.num_experts):
-                up_gate_proj_weight.append(
-                    get_tensor(
-                        state_dict.pop(self.ffn1_expert_weight_key.format(j))))
-                down_proj_weight.append(
-                    get_tensor(
-                        state_dict.pop(self.ffn2_expert_weight_key.format(j))))
-        else:
-            self.gate_expert_weight_key = self.ffn1_expert_weight_key.replace(
-                "up_gate_proj", "gate_proj")
-            self.up_expert_weight_key = self.ffn1_expert_weight_key.replace(
-                "up_gate_proj", "up_proj")
-            for j in range(self.num_experts):
-                gate = get_tensor(
-                    state_dict.pop(self.gate_expert_weight_key.format(j)))
-                up = get_tensor(
-                    state_dict.pop(self.up_expert_weight_key.format(j)))
-                up_gate_proj_weight.append(paddle.concat([gate, up], axis=-1))
-                down_proj_weight.append(
-                    get_tensor(
-                        state_dict.pop(self.ffn2_expert_weight_key.format(j))))
-        return up_gate_proj_weight, down_proj_weight
+            self.compute_method = TPFusedMoeMethod(moe_compute_params)
 
     def load_state_dict(self, state_dict, is_update: bool = False):
         """
@@ -185,49 +129,38 @@ class FusedMoE(nn.Layer):
         """
         # gate
         if not is_update:
-            gate_weight_tensor = get_tensor(
-                state_dict.pop(self.gate_weight_key))
+            gate_weight_key = self.weight_key_map.get("gate_weight_key", None)
+            assert gate_weight_key is not None, "gate_weight_key should not be None, please check model checkpoints"
+
+            gate_weight_tensor = get_tensor(state_dict.pop(gate_weight_key))
+
             self.gate_weight = self.create_parameter(
-                shape=gate_weight_tensor.shape, dtype="float32")
-            self.gate_weight.set_value(gate_weight_tensor.astype("float32"))
+                shape=gate_weight_tensor.shape,
+                dtype="float32",
+            )
+            self.gate_weight.set_value(gate_weight_tensor)
 
-        up_gate_proj_weight, down_proj_weight = self.load_gate_state_dict(
-            state_dict)
+        # gate_correction_bias
+        if self.moe_use_gate_correction_bias:
+            gate_correction_bias_key = self.weight_key_map.get(
+                "gate_correction_bias_key", None)
+            assert gate_weight_key is not None, "gate_correction_bias_key should \
+                not be None when moe_use_gate_correction_bias is True, please check model checkpoints"
 
-        weight1_scale = None
-        weight2_scale = None
-        ffn1_in_scale = None
-        ffn2_in_scale = None
-        if self.moe_quant_type == "w4a8":
-            weight1_scale = []
-            weight2_scale = []
-            ffn1_in_scale = []
-            ffn2_in_scale = []
+            gate_correction_bias_tensor = get_tensor(
+                state_dict.pop(gate_correction_bias_key).astype("float32"))
 
-            for j in range(self.num_experts):
-                weight1_scale.append(
-                    get_tensor(
-                        state_dict.pop(
-                            self.ffn1_expert_weight_scale_key.format(j))))
-                weight2_scale.append(
-                    get_tensor(
-                        state_dict.pop(
-                            self.ffn2_expert_weight_scale_key.format(j))))
-                ffn1_in_scale.append(
-                    get_tensor(
-                        state_dict.pop(
-                            self.ffn1_expert_in_scale_key.format(j))))
-                ffn2_in_scale.append(
-                    get_tensor(
-                        state_dict.pop(
-                            self.ffn2_expert_in_scale_key.format(j))))
+            self.gate_correction_bias = self.create_parameter(
+                shape=gate_correction_bias_tensor.shape,
+                dtype="float32",
+            )
+
+            self.gate_correction_bias.set_value(gate_correction_bias_tensor)
 
         # other weight is with compute_method
         # different method may have different way to create weights
-        self.compute_method.create_weights(self, up_gate_proj_weight,
-                                           down_proj_weight, None, None,
-                                           weight1_scale, weight2_scale,
-                                           ffn1_in_scale, ffn2_in_scale)
+        self.compute_method.create_weights(self, self.weight_key_map,
+                                           state_dict)
 
     def forward(self, x: paddle.Tensor):
         """
@@ -240,12 +173,6 @@ class FusedMoE(nn.Layer):
             Tensor: Output tensor.
 
         """
-
-        out = self.compute_method.apply(self, x)
-
-        if self.tp_size > 1:
-            from fastdeploy.distributed.communication_op import \
-                tensor_model_parallel_all_reduce
-            tensor_model_parallel_all_reduce(out)
-
+        gate_out = paddle.matmul(x.cast("float32"), self.gate_weight)
+        out = self.compute_method.apply(self, x, gate_out)
         return out

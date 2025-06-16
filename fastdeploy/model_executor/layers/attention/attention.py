@@ -65,9 +65,10 @@ class Attention(nn.Layer):
             ValueError: If the `v_head_dim` is less than 0.
         """
         super().__init__()
-        self.num_heads = fd_config.model_config.num_attention_heads // fd_config.parallel_config.mp_size
+        self.num_heads = fd_config.model_config.num_attention_heads // fd_config.parallel_config.tensor_parallel_degree
         self.head_dim = fd_config.model_config.head_dim
-        self.kv_num_heads = fd_config.model_config.num_key_value_heads // fd_config.parallel_config.mp_size
+        self.kv_num_heads = \
+            fd_config.model_config.num_key_value_heads // fd_config.parallel_config.tensor_parallel_degree
         self.layer_id = layer_id
         self.logit_cap = logit_cap
         self.v_head_dim = v_head_dim if v_head_dim > 0 else self.head_dim

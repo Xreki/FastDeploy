@@ -528,10 +528,10 @@ class GPUModelRunner(ModelRunnerBase):
         assert len(self.attn_backends) == 0
 
         # TODO(gongshaotian): Get rank from config
-        num_heads = self.model_config.num_attention_heads // self.parallel_config.mp_size
+        num_heads = self.model_config.num_attention_heads // self.parallel_config.tensor_parallel_degree
         self.model_config.kv_num_heads = int(
             self.model_config.num_key_value_heads
-        ) // self.parallel_config.mp_size
+        ) // self.parallel_config.tensor_parallel_degree
         head_dim = self.model_config.head_dim
 
         # Get the attention backend
@@ -582,6 +582,9 @@ class GPUModelRunner(ModelRunnerBase):
             # 5. Execute spec decode
             logits = self.model.compute_logits(hiddden_states)
             sampled_token_ids = self.sampler(logits, self.sampling_metadata)
+
+            if self.parallel_config.tensor_parallel_degree > 1:
+                paddle.distributed.broadcast(sampled_token_ids, 0)
             # self._dummy_sampler_run()
 
             # 6. post process
@@ -640,6 +643,14 @@ class GPUModelRunner(ModelRunnerBase):
             We plan to replace it with 'ModelForwardBatch'.
             intermediate_tensors:
         """
+
+        # Note(@wufeisheng): If `not_need_stop`` is False, it means the current worker is in an idle state.
+        # This logic is not used in TP (Tensor Parallelism) mode. However, in EP (Expert Parallelism) mode,
+        # when there is data on other runner, the current runner is required to execute part of the model.
+        if not self.not_need_stop():
+            self._execute_empty_input()
+            return None
+
         # 1. Prepare inputs of model and decoder.
         self._prepare_inputs()
 
@@ -662,6 +673,9 @@ class GPUModelRunner(ModelRunnerBase):
         logits = self.model.compute_logits(hiddden_states)
 
         sampled_token_ids = self.sampler(logits, self.sampling_metadata)
+
+        if self.parallel_config.tensor_parallel_degree > 1:
+            paddle.distributed.broadcast(sampled_token_ids, 0)
 
         # 5. Speculative decode
 
@@ -686,7 +700,6 @@ class GPUModelRunner(ModelRunnerBase):
             use_ep=self.parallel_config.use_ep)
         post_process(sampled_token_ids=sampled_token_ids,
                      model_output=model_output_data)
-
         # 7. Updata 'infer_seed' and step_cuda()
         self.share_inputs["infer_seed"].add_(self.infer_seed_increment)
         self.share_inputs["infer_seed"][:] %= self.MAX_INFER_SEED
@@ -694,6 +707,18 @@ class GPUModelRunner(ModelRunnerBase):
                   self.parallel_config.enc_dec_block_num)
 
         return None
+
+    def _execute_empty_input(self) -> None:
+        """
+        In certain scenarios, such as during EP,
+        the runner needs to execute partial modules of the model without input data.
+        This requires the model to implement the `empty_input_forward` method.
+        """
+        if hasattr(self.model, "empty_input_forward"):
+            self.model.empty_input_forward()
+        else:
+            raise ValueError(
+                f"{type(self.model)} has no attribute 'empty_input_forward")
 
     def profile_run(self) -> None:
         """Execute a forward pass with dummy inputs to profile the memory usage of the model."""

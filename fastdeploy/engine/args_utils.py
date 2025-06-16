@@ -54,6 +54,10 @@ class EngineArgs:
     """
     Degree of tensor parallelism.
     """
+    expert_parallel_size: int = 1
+    """
+    Degree of experts parallelism.
+    """
     block_size: int = 64
     """
     Number of tokens in one processing block.
@@ -146,7 +150,6 @@ class EngineArgs:
     """
     Port for innode dispatch request.
     """
-
     enable_chunked_prefill: bool = False
     """
     Flag to enable chunked prefilling.
@@ -157,8 +160,8 @@ class EngineArgs:
     """
     max_long_partial_prefills: int = 1
     """
-    For chunked prefill, the maximum number of prompts longer than –long-prefill-token-threshold 
-    that will be prefilled concurrently. 
+    For chunked prefill, the maximum number of prompts longer than –long-prefill-token-threshold
+    that will be prefilled concurrently.
     """
     long_prefill_token_threshold: int = 0
     """
@@ -235,7 +238,8 @@ class EngineArgs:
             "--tokenizer",
             type=nullable_str,
             default=EngineArgs.tokenizer,
-            help="Tokenizer name or path (defaults to model path if not specified)."
+            help=
+            "Tokenizer name or path (defaults to model path if not specified)."
         )
         model_group.add_argument(
             "--max-model-len",
@@ -260,20 +264,16 @@ class EngineArgs:
             "--limit-mm-per-prompt",
             default=EngineArgs.limit_mm_per_prompt,
             type=json.loads,
-            help="Limitation of numbers of multi-modal data."
-        )
+            help="Limitation of numbers of multi-modal data.")
         model_group.add_argument(
             "--mm-processor-kwargs",
             default=EngineArgs.mm_processor_kwargs,
             type=json.loads,
-            help="Additional keyword arguments for the multi-modal processor."
-        )
-        model_group.add_argument(
-            "--enable-mm",
-            action='store_true',
-            default=EngineArgs.enable_mm,
-            help="Flag to enable multi-modal model."
-        )
+            help="Additional keyword arguments for the multi-modal processor.")
+        model_group.add_argument("--enable-mm",
+                                 action='store_true',
+                                 default=EngineArgs.enable_mm,
+                                 help="Flag to enable multi-modal model.")
         model_group.add_argument(
             "--speculative_config",
             default=None,
@@ -297,6 +297,11 @@ class EngineArgs:
                                     type=int,
                                     default=EngineArgs.tensor_parallel_size,
                                     help="Degree of tensor parallelism.")
+        parallel_group.add_argument("--expert-parallel-size",
+                                    "-ep",
+                                    type=int,
+                                    default=EngineArgs.expert_parallel_size,
+                                    help="Degree of expert parallelism.")
         parallel_group.add_argument(
             "--max-num-seqs",
             type=int,
@@ -316,38 +321,30 @@ class EngineArgs:
             "--gpu-memory-utilization",
             type=float,
             default=EngineArgs.gpu_memory_utilization,
-            help="Fraction of GPU memory to be utilized."
-        )
+            help="Fraction of GPU memory to be utilized.")
 
         # CacheConfig parameters group
         cache_group = parser.add_argument_group("Cache Configuration")
 
-        cache_group.add_argument(
-            "--kv-cache-ratio",
-            type=float,
-            default=EngineArgs.kv_cache_ratio,
-            help="Ratio of tokens to process in a block.")
+        cache_group.add_argument("--kv-cache-ratio",
+                                 type=float,
+                                 default=EngineArgs.kv_cache_ratio,
+                                 help="Ratio of tokens to process in a block.")
 
         cache_group.add_argument(
             "--cpu-offload-gb",
             type=float,
             default=EngineArgs.cpu_offload_gb,
-            help="The amount of CPU memory to offload to."
-        )
+            help="The amount of CPU memory to offload to.")
 
-        cache_group.add_argument(
-            "--cache-queue-port",
-            type=int,
-            default=8003,
-            help="port for cache queue"
-        )
-
-        cache_group.add_argument(
-            "--static-decode-blocks",
-            type=int,
-            default=EngineArgs.static_decode_blocks,
-            help="Static decoding blocks num."
-        )
+        cache_group.add_argument("--cache-queue-port",
+                                 type=int,
+                                 default=8003,
+                                 help="port for cache queue")
+        cache_group.add_argument("--static-decode-blocks",
+                                 type=int,
+                                 default=EngineArgs.static_decode_blocks,
+                                 help="Static decoding blocks num.")
 
         # Cluster system parameters group
         system_group = parser.add_argument_group("System Configuration")
@@ -355,7 +352,8 @@ class EngineArgs:
             "--pod-ips",
             type=lambda s: s.split(",") if s else None,
             default=EngineArgs.pod_ips,
-            help="List of IP addresses for nodes in the cluster (comma-separated).")
+            help=
+            "List of IP addresses for nodes in the cluster (comma-separated).")
         system_group.add_argument("--nnode",
                                   type=int,
                                   default=EngineArgs.nnode,
@@ -363,82 +361,79 @@ class EngineArgs:
 
         # Performance tuning parameters group
         perf_group = parser.add_argument_group("Performance Tuning")
-        perf_group.add_argument(
-            "--enable-prefix-caching",
-            action='store_true',
-            default=EngineArgs.enable_prefix_caching,
-            help="Flag to enable prefix caching."
-        )
+        perf_group.add_argument("--enable-prefix-caching",
+                                action='store_true',
+                                default=EngineArgs.enable_prefix_caching,
+                                help="Flag to enable prefix caching.")
 
-        perf_group.add_argument(
-            "--splitwise-role",
-            type=str,
-            default=EngineArgs.splitwise_role,
-            help="Role of splitwise. Default is 'mixed'. (prefill, decode, mixed)"
-        )
+        perf_group.add_argument("--splitwise-role",
+                                type=str,
+                                default=EngineArgs.splitwise_role,
+                                help="Role of splitwise. Default is \
+            'mixed'. (prefill, decode, mixed)")
 
-        perf_group.add_argument(
-            "--innode-prefill-ports",
-            type=lambda s: s.split(",") if s else None,
-            default=EngineArgs.innode_prefill_ports,
-            help="port for innode prefill"
-        )
+        perf_group.add_argument("--innode-prefill-ports",
+                                type=lambda s: s.split(",") if s else None,
+                                default=EngineArgs.innode_prefill_ports,
+                                help="port for innode prefill")
 
-        perf_group.add_argument(
-            "--enable-chunked-prefill",
-            action='store_true',
-            default=EngineArgs.enable_chunked_prefill,
-            help="Flag to enable chunked prefill."
-        )
-        perf_group.add_argument(
-            "--max-num-partial-prefills",
-            type=int,
-            default=EngineArgs.max_num_partial_prefills,
-            help="For chunked prefill, Maximum number of concurrent partial prefill requests."
-        )
+        perf_group.add_argument("--enable-chunked-prefill",
+                                action='store_true',
+                                default=EngineArgs.enable_chunked_prefill,
+                                help="Flag to enable chunked prefill.")
+        perf_group.add_argument("--max-num-partial-prefills",
+                                type=int,
+                                default=EngineArgs.max_num_partial_prefills,
+                                help="For chunked prefill, Maximum number \
+            of concurrent partial prefill requests.")
         perf_group.add_argument(
             "--max-long-partial-prefills",
             type=int,
             default=EngineArgs.max_long_partial_prefills,
-            help=("For chunked prefill, the maximum number of prompts longer than long-prefill-token-threshold"
-                  "that will be prefilled concurrently.")
-        )
+            help=
+            ("For chunked prefill, the maximum number of prompts longer than long-prefill-token-threshold"
+             "that will be prefilled concurrently."))
         perf_group.add_argument(
             "--long-prefill-token-threshold",
             type=int,
             default=EngineArgs.long_prefill_token_threshold,
-            help="For chunked prefill, the threshold number of tokens for a prompt to be considered long."
-        )
+            help=("For chunked prefill, the threshold number of"
+                  " tokens for a prompt to be considered long."))
 
         # Scheduler parameters group
         scheduler_group = parser.add_argument_group("Scheduler")
         scheduler_group.add_argument(
             "--scheduler-name",
             default=EngineArgs.scheduler_name,
-            help=f"Scheduler name to be used. Default is {EngineArgs.scheduler_name}. (local,global)"
+            help=
+            f"Scheduler name to be used. Default is {EngineArgs.scheduler_name}. (local,global)"
         )
         scheduler_group.add_argument(
             "--scheduler-max-size",
             type=int,
             default=EngineArgs.scheduler_max_size,
-            help=f"Size of scheduler. Default is {EngineArgs.scheduler_max_size}. (Local)"
+            help=
+            f"Size of scheduler. Default is {EngineArgs.scheduler_max_size}. (Local)"
         )
         scheduler_group.add_argument(
             "--scheduler-ttl",
             type=int,
             default=EngineArgs.scheduler_ttl,
-            help=f"TTL of request. Default is {EngineArgs.scheduler_ttl} seconds. (local,global)"
+            help=
+            f"TTL of request. Default is {EngineArgs.scheduler_ttl} seconds. (local,global)"
         )
         scheduler_group.add_argument(
             "--scheduler-host",
             default=EngineArgs.scheduler_host,
-            help=f"Host address of redis. Default is {EngineArgs.scheduler_host}. (global)"
+            help=
+            f"Host address of redis. Default is {EngineArgs.scheduler_host}. (global)"
         )
         scheduler_group.add_argument(
             "--scheduler-port",
             type=int,
             default=EngineArgs.scheduler_port,
-            help=f"Port of redis. Default is {EngineArgs.scheduler_port}. (global)")
+            help=
+            f"Port of redis. Default is {EngineArgs.scheduler_port}. (global)")
         scheduler_group.add_argument(
             "--scheduler-db",
             type=int,
@@ -448,26 +443,28 @@ class EngineArgs:
         scheduler_group.add_argument(
             "--scheduler-password",
             default=EngineArgs.scheduler_password,
-            help=f"Password of redis. Default is {EngineArgs.scheduler_password}. (global)"
+            help=
+            f"Password of redis. Default is {EngineArgs.scheduler_password}. (global)"
         )
         scheduler_group.add_argument(
             "--scheduler-topic",
             default=EngineArgs.scheduler_topic,
-            help=f"Topic of scheduler. Defaule is {EngineArgs.scheduler_topic}. (global)"
+            help=
+            f"Topic of scheduler. Defaule is {EngineArgs.scheduler_topic}. (global)"
         )
         scheduler_group.add_argument(
             "--scheduler-min-load-score",
             type=float,
             default=EngineArgs.scheduler_min_load_score,
-            help=f"Minimum load score for task assignment. Default is {EngineArgs.scheduler_min_load_score} (global)"
+            help=
+            f"Minimum load score for task assignment. Default is {EngineArgs.scheduler_min_load_score} (global)"
         )
         scheduler_group.add_argument(
             "--scheduler-load-shards-num",
             type=int,
             default=EngineArgs.scheduler_load_shards_num,
             help=("Number of shards for load balancing table. Default is "
-                  f"{EngineArgs.scheduler_load_shards_num} (global)")
-        )
+                  f"{EngineArgs.scheduler_load_shards_num} (global)"))
 
         return parser
 
@@ -514,9 +511,11 @@ class EngineArgs:
         """
         prefix = "scheduler_"
         prefix_len = len(prefix)
-        extra_params = ["max_model_len", "enable_chunked_prefill",
-                        "max_num_partial_prefills", "max_long_partial_prefills",
-                        "long_prefill_token_threshold"]
+        extra_params = [
+            "max_model_len", "enable_chunked_prefill",
+            "max_num_partial_prefills", "max_long_partial_prefills",
+            "long_prefill_token_threshold"
+        ]
 
         all = asdict(self)
         params = dict()
@@ -550,6 +549,7 @@ class EngineArgs:
             cache_config=self.create_cache_config(model_cfg),
             max_model_len=self.max_model_len,
             tensor_parallel_size=self.tensor_parallel_size,
+            expert_parallel_size=self.expert_parallel_size,
             max_num_seqs=self.max_num_seqs,
             speculative_config=self.speculative_config,
             max_num_batched_tokens=self.max_num_batched_tokens,
@@ -564,5 +564,4 @@ class EngineArgs:
             innode_prefill_ports=self.innode_prefill_ports,
             max_num_partial_prefills=self.max_num_partial_prefills,
             max_long_partial_prefills=self.max_long_partial_prefills,
-            long_prefill_token_threshold=self.long_prefill_token_threshold
-        )
+            long_prefill_token_threshold=self.long_prefill_token_threshold)
