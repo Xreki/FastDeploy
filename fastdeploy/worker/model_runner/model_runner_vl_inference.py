@@ -271,7 +271,7 @@ class ModelRunner(ModelRunnerBase):
                 self.args.model_name_or_path,
                 self.args.dtype,
                 self.args.block_size,
-                max_len=self.args.max_model_len,
+                max_model_len=self.args.max_model_len,
                 stage_flag=None,
                 use_fake_parameter=True,
                 pad_vocab=False,
@@ -437,7 +437,6 @@ class ModelRunner(ModelRunnerBase):
             rank_model_path = os.path.join(
                 model_path, f"model_state_tp0{tensor_parallel_rank}.pdparams")
         if os.path.exists(rank_model_path):
-            print(f"Load from mp{tensor_parallel_rank}")
             return paddle.load(rank_model_path, return_numpy=True)
         else:
             raise ValueError(f"No such a file {rank_model_path}")

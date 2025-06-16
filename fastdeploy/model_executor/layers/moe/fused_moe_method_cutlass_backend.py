@@ -141,13 +141,9 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
                     f"scale {name} should not be none in w4a8 mode.")
 
         # 2. Extract scale tensor from state dict
-        if layer.ep_size > 1:
-            expert_id_offset = self.ep_rank * self.local_num_experts
-        else:
-            expert_id_offset = 0
 
         for local_expert_idx in range(self.local_num_experts):
-            expert_idx = local_expert_idx + expert_id_offset * self.local_num_experts
+            expert_idx = local_expert_idx + self.expert_id_offset * self.local_num_experts
             for name, scale_key_template in scale_key_map.items():
                 scale_tensor = _extract_scale_tensor(state_dict,
                                                      scale_key_template,

@@ -22,11 +22,10 @@ import paddle
 import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
 
-from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
-                               FDConfig, GraphOptimizationConfig,
-                               KVCacheConfig, LoadConfig, ModelConfig,
-                               MoEConfig, MoEPhase, ParallelConfig,
-                               SpeculativeConfig, TmpConfig)
+from fastdeploy.config import (AdditionalConfig, DeviceConfig, FDConfig,
+                               GraphOptimizationConfig, KVCacheConfig,
+                               LoadConfig, ModelConfig, MoEConfig, MoEPhase,
+                               ParallelConfig, SpeculativeConfig, TmpConfig)
 from fastdeploy.inter_communicator import EngineWorkerQueue as TaskQueue
 from fastdeploy.inter_communicator import IPCSignal
 from fastdeploy.model_executor.layers.quantization import \
@@ -456,8 +455,7 @@ def initialize_fd_config(args) -> FDConfig:
             f"cachekv is set to [{cachekv_dtype}] according to your config file's cache_quant_type field"
         )
         kv_cache_config.cache_quant_dtype = config["cache_quant_type"]
-    decoding_config = DecodingConfig()
-    decoding_config = MoEConfig()
+
     tmp_config = TmpConfig()
     additional_config = AdditionalConfig()
     speculative_config = SpeculativeConfig()
@@ -614,7 +612,6 @@ def initialize_fd_config(args) -> FDConfig:
                          load_config=load_config,
                          tmp_config=tmp_config,
                          moe_config=moe_config,
-                         decoding_config=decoding_config,
                          quant_config=quant_config,
                          kv_cache_config=kv_cache_config,
                          graph_opt_config=graph_opt_config)

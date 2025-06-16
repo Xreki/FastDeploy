@@ -33,10 +33,10 @@ from paddlenlp.trl import llm_utils
 from paddlenlp.utils.env import USE_FAST_TOKENIZER
 from paddlenlp.utils.log import logger
 
-from fastdeploy.config import (AdditionalConfig, DecodingConfig, DeviceConfig,
-                               FDConfig, KVCacheConfig, LoadConfig,
-                               ModelConfig, MoEConfig, ParallelConfig,
-                               SpeculativeConfig, TmpConfig)
+from fastdeploy.config import (AdditionalConfig, DeviceConfig, FDConfig,
+                               KVCacheConfig, LoadConfig, ModelConfig,
+                               MoEConfig, ParallelConfig, SpeculativeConfig,
+                               TmpConfig)
 from fastdeploy.inference_args import MoEPhase
 from fastdeploy.model_executor.models.utils import (_vocab_size_with_padding,
                                                     convert_ndarray_dtype,
@@ -223,7 +223,6 @@ def build_stream_line_model(
     load_config = LoadConfig()
     tmp_config = TmpConfig()
     moe_config = MoEConfig()
-    decoding_config = DecodingConfig()
     kv_cache_config = KVCacheConfig()
     kv_cache_config.cache_quant_dtype = cache_quant_dtype
 
@@ -499,16 +498,6 @@ def build_stream_line_model(
     else:
         use_rmsnorm = config.get("use_rmsnorm", True)
 
-    if use_beam_search:
-        decode_strategy = "beam_search"
-    elif speculate_method is not None:
-        if draft_type in ["draft_model", "eagle", "mtp"]:
-            decode_strategy = "draft_model_sampling"
-        else:
-            decode_strategy = "speculate_decoding"
-    else:
-        decode_strategy = "sampling"
-
     logger.info(f"{runtime_timer.log()}")
     runtime_timer.start(f"{stage_flag} stage set parameters time")
 
@@ -548,8 +537,9 @@ def build_stream_line_model(
         moe_config.moe_num_shared_experts = config.get(
             "moe_num_shared_experts", 0)
         moe_config.moe_layer_start_index = config.get("moe_layer_start_index",
-                                                      0)
-        moe_config.moe_layer_end_index = config.get("moe_layer_end_index", 0)
+                                                      None)
+        moe_config.moe_layer_end_index = config.get("moe_layer_end_index",
+                                                    None)
         moe_config.moe_use_ffn_shared_weight_and_bias = config.get(
             "moe_use_ffn_shared_weight_and_bias", False)
         moe_config.use_moe = use_moe
@@ -563,15 +553,9 @@ def build_stream_line_model(
     load_config.scale_dir = scale_dir
     model_config.output_via_mq = output_via_mq
 
-    decoding_config.bos_token_id = tokenizer.bos_token_id
-    decoding_config.pad_token_id = tokenizer.pad_token_id
-    decoding_config.temperature = temperature
-    decoding_config.forced_eos_token_id = tokenizer.eos_token_id
     model_config.ori_vocab_size = ori_vocab_size
-    decoding_config.max_dec_len = max_dec_len
-    decoding_config.min_dec_len = min_dec_len
+
     additional_config.fake_server_p = fake_server_p
-    decoding_config.decode_strategy = decode_strategy
     speculative_config.speculate_max_candidate_len = speculate_max_candidate_len
     speculative_config.speculate_verify_window = speculate_verify_window
 
@@ -656,7 +640,6 @@ def build_stream_line_model(
         load_config=load_config,
         tmp_config=tmp_config,
         moe_config=moe_config,
-        decoding_config=decoding_config,
         quant_config=quant_config,
         kv_cache_config=kv_cache_config,
     )

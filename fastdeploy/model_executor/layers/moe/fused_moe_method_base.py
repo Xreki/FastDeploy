@@ -25,8 +25,8 @@ from fastdeploy.model_executor.layers.utils import get_tensor
 
 
 def load_experts_weight(state_dict: dict, ffn1_expert_weight_key: str,
-                        ffn2_expert_weight_key: str, num_experts: int,
-                        ep_size: int, ep_rank: int):
+                        ffn2_expert_weight_key: str, expert_id_offset: int,
+                        num_experts: int, ep_size: int, ep_rank: int):
     """
     Load experts weight from state_dict.
     Args:
@@ -37,10 +37,6 @@ def load_experts_weight(state_dict: dict, ffn1_expert_weight_key: str,
     ffn1_weights = []
     ffn2_weights = []
 
-    if ep_size > 1:
-        expert_id_offset = ep_rank * num_experts
-    else:
-        expert_id_offset = 0
     for i in range(num_experts):
         expert_idx = expert_id_offset + i
         ffn1_weights.append(
@@ -77,6 +73,7 @@ class FusedMoEMethodBase(QuantMethodBase):
     def __init__(self, moe_compute_params):
         self.layer_idx = moe_compute_params.layer_idx
         self.num_local_experts = moe_compute_params.num_local_experts
+        self.expert_id_offset = moe_compute_params.expert_id_offset
         self.moe_quant_type = moe_compute_params.moe_quant_type
         self.hidden_size = moe_compute_params.hidden_size
         self.moe_intermediate_size = moe_compute_params.moe_intermediate_size
@@ -116,7 +113,8 @@ class FusedMoEMethodBase(QuantMethodBase):
 
         ffn1_weights, ffn2_weights = load_experts_weight(
             state_dict, ffn1_expert_weight_key, ffn2_expert_weight_key,
-            self.local_num_experts, self.ep_size, self.ep_rank)
+            self.expert_id_offset, self.local_num_experts, self.ep_size,
+            self.ep_rank)
         assert len(
             ffn1_weights
         ) == self.num_local_experts, "ffn1_weights length should be equal to num_local_experts."
