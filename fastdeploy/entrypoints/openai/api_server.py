@@ -13,43 +13,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-import shutil
+import os
+import threading
+import time
+from contextlib import asynccontextmanager
+from multiprocessing import current_process
+
 import uvicorn
 import zmq
-import os
-import sys
-import time
-import ctypes
-import signal
-from fastapi import FastAPI, APIRouter, Request
-import threading
 from fastapi import FastAPI, Request
-from multiprocessing import current_process
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from contextlib import asynccontextmanager
 from prometheus_client import CONTENT_TYPE_LATEST
-from fastdeploy.metrics.metrics import cleanup_prometheus_files, main_process_metrics, EXCLUDE_LABELS, \
-    get_filtered_metrics
-from fastdeploy.utils import FlexibleArgumentParser, api_server_logger, is_port_available
+
 from fastdeploy.engine.args_utils import EngineArgs
 from fastdeploy.engine.engine import LLMEngine
-from fastdeploy.entrypoints.openai.protocol import (
-    CompletionRequest,
-    ChatCompletionRequest,
-    ErrorResponse,
-    ChatCompletionResponse,
-    CompletionResponse
-)
-
-from fastdeploy.entrypoints.openai.serving_chat import OpenAIServingChat
-from fastdeploy.entrypoints.openai.serving_completion import OpenAIServingCompletion
 from fastdeploy.entrypoints.engine_client import EngineClient
+from fastdeploy.entrypoints.openai.protocol import (ChatCompletionRequest,
+                                                    ChatCompletionResponse,
+                                                    CompletionRequest,
+                                                    CompletionResponse,
+                                                    ErrorResponse)
+from fastdeploy.entrypoints.openai.serving_chat import OpenAIServingChat
+from fastdeploy.entrypoints.openai.serving_completion import \
+    OpenAIServingCompletion
+from fastdeploy.metrics.metrics import (EXCLUDE_LABELS,
+                                        cleanup_prometheus_files,
+                                        get_filtered_metrics,
+                                        main_process_metrics)
+from fastdeploy.utils import (FlexibleArgumentParser, api_server_logger,
+                              console_logger, is_port_available)
 
 parser = FlexibleArgumentParser()
-parser.add_argument("--port", default=9904, type=int, help="port to the http server")
-parser.add_argument("--host", default="0.0.0.0", type=str, help="host to the http server")
+parser.add_argument("--port",
+                    default=9904,
+                    type=int,
+                    help="port to the http server")
+parser.add_argument("--host",
+                    default="0.0.0.0",
+                    type=str,
+                    help="host to the http server")
 parser.add_argument("--workers", default=1, type=int, help="number of workers")
-parser.add_argument("--metrics-port", default=8000, type=int, help="port for metrics server")
+parser.add_argument("--metrics-port",
+                    default=8000,
+                    type=int,
+                    help="port for metrics server")
 parser = EngineArgs.add_cli_args(parser)
 args = parser.parse_args()
 
@@ -58,15 +65,26 @@ def load_engine():
     """
     load engine
     """
-    api_server_logger.info(f"FastDeploy LLM API server starting... {os.getpid()}")
+    api_server_logger.info(
+        f"FastDeploy LLM API server starting... {os.getpid()}")
     engine_args = EngineArgs.from_cli_args(args)
     llm_engine = LLMEngine.from_engine_args(engine_args)
 
     if not llm_engine.start(api_server_pid=os.getpid()):
-        api_server_logger.error("Failed to initialize FastDeploy LLM engine, service exit now!")
+        api_server_logger.error(
+            "Failed to initialize FastDeploy LLM engine, service exit now!")
         exit(-1)
     else:
-        api_server_logger.info(f"FastDeploy LLM engine initialized!\n")
+        api_server_logger.info("FastDeploy LLM engine initialized!\n")
+        console_logger.info(
+            f"Launching metrics service at http://{args.host}:{args.metrics_port}/metrics"
+        )
+        console_logger.info(
+            f"Launching chat completion service at http://{args.host}:{args.port}/v1/chat/completions"
+        )
+        console_logger.info(
+            f"Launching completion service at http://{args.host}:{args.port}/v1/completions"
+        )
 
 
 @asynccontextmanager
@@ -82,8 +100,10 @@ async def lifespan(app: FastAPI):
     else:
         pid = os.getpid()
     api_server_logger.info(f"{pid}")
-    engine_client = EngineClient(args.tokenizer, args.max_model_len, args.tensor_parallel_size, pid,
-                                 args.limit_mm_per_prompt, args.mm_processor_kwargs, args.enable_mm)
+    engine_client = EngineClient(args.tokenizer, args.max_model_len,
+                                 args.tensor_parallel_size, pid,
+                                 args.limit_mm_per_prompt,
+                                 args.mm_processor_kwargs, args.enable_mm)
     app.state.dynamic_load_weight = args.dynamic_load_weight
     chat_handler = OpenAIServingChat(engine_client, pid)
     completion_handler = OpenAIServingCompletion(engine_client, pid)
@@ -171,7 +191,9 @@ async def create_chat_completion(request: ChatCompletionRequest):
     if app.state.dynamic_load_weight:
         status, msg = app.state.engine_client.is_workers_alive()
         if not status:
-            return JSONResponse(content={"error": "Worker Service Not Healthy"}, status_code=304)
+            return JSONResponse(
+                content={"error": "Worker Service Not Healthy"},
+                status_code=304)
     generator = await app.state.chat_handler.create_chat_completion(request)
 
     if isinstance(generator, ErrorResponse):
@@ -192,7 +214,9 @@ async def create_completion(request: CompletionRequest):
     if app.state.dynamic_load_weight:
         status, msg = app.state.engine_client.is_workers_alive()
         if not status:
-            return JSONResponse(content={"error": "Worker Service Not Healthy"}, status_code=304)
+            return JSONResponse(
+                content={"error": "Worker Service Not Healthy"},
+                status_code=304)
 
     generator = await app.state.completion_handler.create_completion(request)
     if isinstance(generator, ErrorResponse):
@@ -215,7 +239,9 @@ def update_model_weight(request: Request) -> Response:
             return Response(content=msg, status_code=404)
         return Response(status_code=200)
     else:
-        return Response(content="Dynamic Load Weight Disabled.", status_code=404)
+        return Response(content="Dynamic Load Weight Disabled.",
+                        status_code=404)
+
 
 @app.get("/clear_load_weight")
 def clear_load_weight(request: Request) -> Response:
@@ -223,18 +249,21 @@ def clear_load_weight(request: Request) -> Response:
     clear model weight
     """
     if app.state.dynamic_load_weight:
-        status, msg =  app.state.engine_client.clear_load_weight()
+        status, msg = app.state.engine_client.clear_load_weight()
         if not status:
             return Response(content=msg, status_code=404)
         return Response(status_code=200)
     else:
-        return Response(content="Dynamic Load Weight Disabled.", status_code=404)
+        return Response(content="Dynamic Load Weight Disabled.",
+                        status_code=404)
+
 
 def launch_api_server(args) -> None:
     """
     启动http服务
     """
-    api_server_logger.info(f"launch Fastdeploy api server... port: {args.port}")
+    api_server_logger.info(
+        f"launch Fastdeploy api server... port: {args.port}")
     api_server_logger.info(f"args: {args.__dict__}")
 
     try:
@@ -257,27 +286,26 @@ async def metrics():
     """
     metrics_text = get_filtered_metrics(
         EXCLUDE_LABELS,
-        extra_register_func=lambda reg: main_process_metrics.register_all(reg, workers=args.workers)
-    )
+        extra_register_func=lambda reg: main_process_metrics.register_all(
+            reg, workers=args.workers))
     return Response(metrics_text, media_type=CONTENT_TYPE_LATEST)
 
 
 def run_main_metrics_server():
     """Metrics server running the main process"""
 
-    uvicorn.run(
-        main_app,
-        host="0.0.0.0",
-        port=args.metrics_port,
-        log_level="error"
-    )
+    uvicorn.run(main_app,
+                host="0.0.0.0",
+                port=args.metrics_port,
+                log_level="error")
 
 
 def launch_metrics_server():
     """Metrics server running the sub thread"""
     prom_dir = cleanup_prometheus_files(True)
     os.environ["PROMETHEUS_MULTIPROC_DIR"] = prom_dir
-    metrics_server_thread = threading.Thread(target=run_main_metrics_server, daemon=True)
+    metrics_server_thread = threading.Thread(target=run_main_metrics_server,
+                                             daemon=True)
     metrics_server_thread.start()
     time.sleep(1)
 
@@ -287,7 +315,9 @@ def main():
     if not is_port_available(args.host, args.port):
         raise Exception(f"The parameter `port`:{args.port} is already in use.")
     if not is_port_available(args.host, args.metrics_port):
-        raise Exception(f"The parameter `metrics_port`:{args.metrics_port} is already in use.")
+        raise Exception(
+            f"The parameter `metrics_port`:{args.metrics_port} is already in use."
+        )
     load_engine()
     launch_metrics_server()
     launch_api_server(args)
