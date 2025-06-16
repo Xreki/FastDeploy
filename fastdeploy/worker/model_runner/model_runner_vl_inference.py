@@ -467,7 +467,7 @@ class ModelRunner(ModelRunnerBase):
                             new_k = k.replace(name, "")
                             tensor = f.get_tensor(k)
                             if tensor_parallel_degree > 1:
-                                if name == "ernie.resampler_model." and new_k == "spatial_linear.0.weight":
+                                if "resampler_model" in name and new_k == "spatial_linear.0.weight":
                                     tensor = np.split(
                                         tensor, tensor_parallel_degree,
                                         axis=0)[tensor_parallel_rank]
@@ -541,11 +541,15 @@ class ModelRunner(ModelRunnerBase):
                                               dtype="bfloat16")
         resampler_model.eval()
         if self.is_safetensors_model:
+            is_ernie_begin = False
+            for k in self.weight_map.keys():
+                if k.startswith("ernie.resampler_model."):
+                    is_ernie_begin = True
             set_vision_state_dict(
                 resampler_model,
                 tensor_parallel_degree=self.tensor_parallel_degree,
                 tensor_parallel_rank=self.tensor_parallel_rank,
-                name="ernie.resampler_model.",
+                name="ernie.resampler_model." if is_ernie_begin else "resampler_model.",
             )
         return vision_model, resampler_model
 
