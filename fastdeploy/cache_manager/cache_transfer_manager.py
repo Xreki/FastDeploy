@@ -15,33 +15,18 @@
 """
 
 import argparse
-import os
 import concurrent.futures
-from multiprocessing import shared_memory
-import json
 import queue
 import time
-import threading
-import paddle
+
 import numpy as np
+import paddle
 
-
-from fastdeploy.utils import get_logger
 from fastdeploy.cache_manager.data import CacheStatus
-from fastdeploy.inter_communicator import IPCSignal
-from fastdeploy.inter_communicator import EngineCacheQueue
-
-
-
-use_pip_eff_llm = os.getenv('USE_PIP_EFF_LLM')
-if use_pip_eff_llm is None:
-    from fastdeploy.model_executor.ops.gpu import set_data_ipc
-    from fastdeploy.model_executor.ops.gpu import swap_cache_all_layers
-    from fastdeploy.model_executor.ops.gpu import cuda_host_alloc
-else:
-    from efficientllm.ops.gpu import set_data_ipc
-    from efficientllm.ops.gpu import swap_cache_all_layers
-    from efficientllm.ops.gpu import cuda_host_alloc
+from fastdeploy.inter_communicator import EngineCacheQueue, IPCSignal
+from fastdeploy.model_executor.ops.gpu import (cuda_host_alloc, set_data_ipc,
+                                               swap_cache_all_layers)
+from fastdeploy.utils import get_logger
 
 
 def parse_args():
@@ -51,35 +36,68 @@ def parse_args():
     parser = argparse.ArgumentParser("Cache transfer manager")
     parser.add_argument("--rank", type=int, default=0, help="current rank")
     parser.add_argument("--device_id", type=int, default=0, help="device id")
-    parser.add_argument("--num_layers", type=int, default=1, help="model num layers")
-    parser.add_argument("--head_dim", type=int, default=1, help="model head dim")
-    parser.add_argument("--kv_num_head", type=int, default=1, help="model kv num head")
-    parser.add_argument("--mp_num", type=int, default=1, help="number of model parallel")
-    parser.add_argument("--protocol", type=str, default="ipc", 
-                       help="cache transfer protocol, only surport ipc now")
-    parser.add_argument("--enable_splitwise", type=int, default=0, help="enable splitwise ")
-    parser.add_argument("--cache_queue_port", type=int, default=9923,
-                       help="cache queue port")
-    parser.add_argument("--engine_worker_queue_port", type=int, default=9923,
-                       help="engine worker queue port")
-    parser.add_argument("--engine_pid", type=int, default=None,
-                       help="engine pid")
-    
+    parser.add_argument("--num_layers",
+                        type=int,
+                        default=1,
+                        help="model num layers")
+    parser.add_argument("--head_dim",
+                        type=int,
+                        default=1,
+                        help="model head dim")
+    parser.add_argument("--kv_num_head",
+                        type=int,
+                        default=1,
+                        help="model kv num head")
+    parser.add_argument("--mp_num",
+                        type=int,
+                        default=1,
+                        help="number of model parallel")
+    parser.add_argument("--protocol",
+                        type=str,
+                        default="ipc",
+                        help="cache transfer protocol, only surport ipc now")
+    parser.add_argument("--enable_splitwise",
+                        type=int,
+                        default=0,
+                        help="enable splitwise ")
+    parser.add_argument("--cache_queue_port",
+                        type=int,
+                        default=9923,
+                        help="cache queue port")
+    parser.add_argument("--engine_worker_queue_port",
+                        type=int,
+                        default=9923,
+                        help="engine worker queue port")
+    parser.add_argument("--engine_pid",
+                        type=int,
+                        default=None,
+                        help="engine pid")
 
-    parser.add_argument("--num_gpu_blocks", type=int, default=1,
-                       help="gpu cache block number")
-    parser.add_argument("--num_cpu_blocks", type=int, default=4,
-                       help="cpu cache block number")
-    parser.add_argument("--block_size", type=int, default=64,
-                       help="cache block size(tokens)")
-    parser.add_argument("--bytes_per_layer_per_block", type=int, default=1024,
-                       help="per layer per block bytes")
-    parser.add_argument("--cache_dtype", type=str, default="bfloat16",
-                       choices=["uint8", "bfloat16"],
-                       help="cache dtype")
-    
+    parser.add_argument("--num_gpu_blocks",
+                        type=int,
+                        default=1,
+                        help="gpu cache block number")
+    parser.add_argument("--num_cpu_blocks",
+                        type=int,
+                        default=4,
+                        help="cpu cache block number")
+    parser.add_argument("--block_size",
+                        type=int,
+                        default=64,
+                        help="cache block size(tokens)")
+    parser.add_argument("--bytes_per_layer_per_block",
+                        type=int,
+                        default=1024,
+                        help="per layer per block bytes")
+    parser.add_argument("--cache_dtype",
+                        type=str,
+                        default="bfloat16",
+                        choices=["uint8", "bfloat16"],
+                        help="cache dtype")
+
     args = parser.parse_args()
     return args
+
 
 class CacheTransferManager:
     """
@@ -94,17 +112,15 @@ class CacheTransferManager:
         device = args.device_id
         rank = args.rank
         paddle.set_device(f"gpu:{device}")
-        self.gpu_cache_kvs = {}  
-        self.cpu_cache_kvs = {}  
+        self.gpu_cache_kvs = {}
+        self.cpu_cache_kvs = {}
         self.gpu_cache_k_tensors = []
         self.gpu_cache_v_tensors = []
 
         self.swap_to_cpu_thread_pool = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1
-        )
+            max_workers=1)
         self.swap_to_gpu_thread_pool = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1
-        )
+            max_workers=1)
         self.transfer_task_queue = queue.Queue()  # 用来接收传输任务
         self.tansfer_done_queue = queue.Queue()  # 用来告知任务执行完毕
         self.n_ranks = args.mp_num
@@ -112,90 +128,84 @@ class CacheTransferManager:
         self.device = device
 
         address = ('0.0.0.0', args.cache_queue_port)
-        self.cache_task_queue = EngineCacheQueue(
-            address=address, is_server=False, num_client=args.mp_num, client_id=rank)
-
+        self.cache_task_queue = EngineCacheQueue(address=address,
+                                                 is_server=False,
+                                                 num_client=args.mp_num,
+                                                 client_id=rank)
 
         self.num_cpu_blocks = args.num_cpu_blocks
 
         cache_type = args.cache_dtype
 
         for i in range(args.num_layers):
-            self.gpu_cache_kvs[
-                "key_caches_{}_rank{}_device{}".format(i, rank, device)
-            ] = paddle.full(
-                shape=[
-                    args.num_gpu_blocks,
-                    args.kv_num_head,
-                    args.block_size,
-                    args.head_dim,
-                ],
-                fill_value=0,
-                dtype=cache_type,
-            )
+            self.gpu_cache_kvs["key_caches_{}_rank{}_device{}".format(
+                i, rank, device)] = paddle.full(
+                    shape=[
+                        args.num_gpu_blocks,
+                        args.kv_num_head,
+                        args.block_size,
+                        args.head_dim,
+                    ],
+                    fill_value=0,
+                    dtype=cache_type,
+                )
             self.gpu_cache_k_tensors.append(
-                self.gpu_cache_kvs["key_caches_{}_rank{}_device{}".format(i, rank, device)]
-            )
-            self.gpu_cache_kvs[
-                "value_caches_{}_rank{}_device{}".format(i, rank, device)
-            ] = paddle.full(
-                shape=[
-                    args.num_gpu_blocks,
-                    args.kv_num_head,
-                    args.block_size,
-                    args.head_dim,
-                ],
-                fill_value=0,
-                dtype=cache_type,
-            )
+                self.gpu_cache_kvs["key_caches_{}_rank{}_device{}".format(
+                    i, rank, device)])
+            self.gpu_cache_kvs["value_caches_{}_rank{}_device{}".format(
+                i, rank, device)] = paddle.full(
+                    shape=[
+                        args.num_gpu_blocks,
+                        args.kv_num_head,
+                        args.block_size,
+                        args.head_dim,
+                    ],
+                    fill_value=0,
+                    dtype=cache_type,
+                )
             self.gpu_cache_v_tensors.append(
-                self.gpu_cache_kvs["value_caches_{}_rank{}_device{}".format(i, rank, device)]
-            )
-            
+                self.gpu_cache_kvs["value_caches_{}_rank{}_device{}".format(
+                    i, rank, device)])
+
             set_data_ipc(
-                self.gpu_cache_kvs["key_caches_{}_rank{}_device{}".format(i, rank, device)],
-                "key_caches_{}_rank{}.device{}".format(i, rank, device)
-            )
+                self.gpu_cache_kvs["key_caches_{}_rank{}_device{}".format(
+                    i, rank, device)],
+                "key_caches_{}_rank{}.device{}".format(i, rank, device))
             set_data_ipc(
-                self.gpu_cache_kvs["value_caches_{}_rank{}_device{}".format(i, rank, device)],
-                "value_caches_{}_rank{}.device{}".format(i, rank, device)
-            )
-        cache_kv_size_byte = sum([tmp.numel() * 1 for key, tmp in self.gpu_cache_kvs.items()])
+                self.gpu_cache_kvs["value_caches_{}_rank{}_device{}".format(
+                    i, rank, device)],
+                "value_caches_{}_rank{}.device{}".format(i, rank, device))
+        cache_kv_size_byte = sum(
+            [tmp.numel() * 1 for key, tmp in self.gpu_cache_kvs.items()])
         logger.info(f"device :{self.device}")
         logger.info(f"cache_kv_size_byte : {cache_kv_size_byte}")
-        logger.info(f"done init cache (full) gmem alloc : {paddle.device.cuda.memory_allocated()}")
+        logger.info(
+            f"done init cache (full) gmem alloc : {paddle.device.cuda.memory_allocated()}"
+        )
 
         paddle.set_device("cpu")
         self.k_dst_ptrs = []
         self.v_dst_ptrs = []
         for i in range(args.num_layers):
 
-            self.cpu_cache_kvs[
-                "key_caches_{}_rank{}".format(i, rank)
-            ] = cuda_host_alloc(
-                args.num_cpu_blocks * args.bytes_per_layer_per_block
-            )
+            self.cpu_cache_kvs["key_caches_{}_rank{}".format(
+                i, rank)] = cuda_host_alloc(args.num_cpu_blocks *
+                                            args.bytes_per_layer_per_block)
             self.k_dst_ptrs.append(
-                self.cpu_cache_kvs["key_caches_{}_rank{}".format(i, rank)]
-            )
-            self.cpu_cache_kvs[
-                "value_caches_{}_rank{}".format(i, rank)
-            ] = cuda_host_alloc(
-                args.num_cpu_blocks * args.bytes_per_layer_per_block
-            )
+                self.cpu_cache_kvs["key_caches_{}_rank{}".format(i, rank)])
+            self.cpu_cache_kvs["value_caches_{}_rank{}".format(
+                i, rank)] = cuda_host_alloc(args.num_cpu_blocks *
+                                            args.bytes_per_layer_per_block)
             self.v_dst_ptrs.append(
-                self.cpu_cache_kvs["value_caches_{}_rank{}".format(i, rank)]
-            )
+                self.cpu_cache_kvs["value_caches_{}_rank{}".format(i, rank)])
 
-        cache_ready_signal_data = np.zeros(
-            shape=[args.mp_num], dtype=np.int32)
+        cache_ready_signal_data = np.zeros(shape=[args.mp_num], dtype=np.int32)
         self.cache_ready_signal = IPCSignal(name="cache_ready_signal",
-                                             array=cache_ready_signal_data,
-                                             dtype=np.int32,
-                                             suffix=args.engine_pid,
-                                             create=False)
+                                            array=cache_ready_signal_data,
+                                            dtype=np.int32,
+                                            suffix=args.engine_pid,
+                                            create=False)
         self.cache_ready_signal.value[self.rank] = 1
-
 
         paddle.set_device(f"gpu:{device}")
         if args.enable_splitwise:
@@ -203,30 +213,34 @@ class CacheTransferManager:
 
             commu_protocol = args.protocol.split(",")
             assert len(commu_protocol) == 1
-            assert commu_protocol[0] in ["ipc"], f"not support protocol: {args.protocol}"
+            assert commu_protocol[0] in [
+                "ipc"
+            ], f"not support protocol: {args.protocol}"
             logger.info(f"{args}")
-            from fastdeploy.cache_manager.transfer_factory.ipc_cache_transfer import IPCCacheTransfer
-            self.cache_messager = IPCCacheTransfer(engine_worker_queue_port=args.engine_worker_queue_port, 
-                        gpu_cache_kvs=self.gpu_cache_kvs,
-                        rank=self.rank, 
-                        nranks=args.mp_num, 
-                        num_layers=args.num_layers, 
-                        gpu_id=self.device)
+            from fastdeploy.cache_manager.transfer_factory.ipc_cache_transfer import \
+                IPCCacheTransfer
+            self.cache_messager = IPCCacheTransfer(
+                engine_worker_queue_port=args.engine_worker_queue_port,
+                gpu_cache_kvs=self.gpu_cache_kvs,
+                rank=self.rank,
+                nranks=args.mp_num,
+                num_layers=args.num_layers,
+                gpu_id=self.device)
             logger.info("successfully create cache messager")
-        logger.info(f"done init CacheMessager gmem alloc : {paddle.device.cuda.memory_allocated()}")
+        logger.info(
+            f"done init CacheMessager gmem alloc : {paddle.device.cuda.memory_allocated()}"
+        )
 
-        cache_task_broadcast_data = np.zeros(
-            shape=[1], dtype=np.int32)
-        self.cache_task_broadcast_signal = IPCSignal(name="cache_task_broadcast_signal",
-                                             array=cache_task_broadcast_data,
-                                             dtype=np.int32,
-                                             suffix=args.engine_pid,
-                                             create=False)
+        cache_task_broadcast_data = np.zeros(shape=[1], dtype=np.int32)
+        self.cache_task_broadcast_signal = IPCSignal(
+            name="cache_task_broadcast_signal",
+            array=cache_task_broadcast_data,
+            dtype=np.int32,
+            suffix=args.engine_pid,
+            create=False)
 
-
-    def _do_swap_to_cpu_task(
-        self, swap_node_ids, gpu_block_id, cpu_block_id, event_type, transfer_task_id
-    ):
+    def _do_swap_to_cpu_task(self, swap_node_ids, gpu_block_id, cpu_block_id,
+                             event_type, transfer_task_id):
         """
         swap cache GPU->CPU
         """
@@ -244,14 +258,14 @@ class CacheTransferManager:
         if self.rank == 0:
             self.cache_task_queue.swap_to_cpu_barrier2.reset()
             self.cache_task_queue.put_transfer_done_signal(result)
-            logger.debug(f"_do_swap_to_cpu_task: put_transfer_done_signal {result}")
+            logger.debug(
+                f"_do_swap_to_cpu_task: put_transfer_done_signal {result}")
             logger.info(
                 f"_do_swap_to_cpu_task: put_transfer_done_signal for transfer_task_id {transfer_task_id}"
             )
 
-    def _do_swap_to_gpu_task(
-        self, swap_node_ids, gpu_block_id, cpu_block_id, event_type, transfer_task_id
-    ):
+    def _do_swap_to_gpu_task(self, swap_node_ids, gpu_block_id, cpu_block_id,
+                             event_type, transfer_task_id):
         """
         swap cache CPU->GPU
         """
@@ -269,7 +283,8 @@ class CacheTransferManager:
         if self.rank == 0:
             self.cache_task_queue.swap_to_gpu_barrier2.reset()
             self.cache_task_queue.put_transfer_done_signal(result)
-            logger.debug(f"_do_swap_to_gpu_task: put_transfer_done_signal {result}")
+            logger.debug(
+                f"_do_swap_to_gpu_task: put_transfer_done_signal {result}")
             logger.info(
                 f"_do_swap_to_gpu_task: put_transfer_done_signal for transfer_task_id {transfer_task_id}"
             )
@@ -288,7 +303,8 @@ class CacheTransferManager:
                     if self.rank == 0:
                         self.cache_task_queue.barrier1.reset()
                 if self.cache_task_broadcast_signal.value[0] == 1:
-                    data, read_finish = self.cache_task_queue.get_transfer_task()
+                    data, read_finish = self.cache_task_queue.get_transfer_task(
+                    )
                     logger.debug(f"transfer data: get_transfer_task {data}")
                     if read_finish:
                         self.cache_task_broadcast_signal.value[0] = 0
@@ -340,13 +356,14 @@ class CacheTransferManager:
         transfer_task_id,
     ):
         """
-        transfer data 
+        transfer data
         task_gpu_block_id format: [[block_id0, [fold_block_id0, fold_block_id1]],
             [block_id1, [fold_block_id0, fold_block_id1]], ...]
         """
         logger.debug(
             f"transfer data: transfer_task_id {transfer_task_id}: swap_node_ids {swap_node_ids}"
-            + f"task_gpu_block_id {task_gpu_block_id} task_cpu_block_id {task_cpu_block_id} event_type {event_type}"
+            +
+            f"task_gpu_block_id {task_gpu_block_id} task_cpu_block_id {task_cpu_block_id} event_type {event_type}"
         )
         start_time = time.time()
         try:
@@ -405,7 +422,8 @@ class CacheTransferManager:
         elasped_time = end_time - start_time
         logger.info(
             f"transfer data: transfer_task_id {transfer_task_id} event_type {event_type}: "
-            + f"transfer {len(gpu_block_ids)} blocks done  elapsed_time {elasped_time:.4f}"
+            +
+            f"transfer {len(gpu_block_ids)} blocks done  elapsed_time {elasped_time:.4f}"
         )
         return (
             swap_node_ids,
@@ -422,16 +440,12 @@ def main():
     """
 
     cache_manager = CacheTransferManager(args)
-    
+
     cache_manager.do_data_transfer()
-
-
 
 
 if __name__ == "__main__":
 
     args = parse_args()
-    logger = get_logger(
-        f"cache_transfer_manager", f"cache_transfer_manager.log"
-    )
+    logger = get_logger("cache_transfer_manager", "cache_transfer_manager.log")
     main()
