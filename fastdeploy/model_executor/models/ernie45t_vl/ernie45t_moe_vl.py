@@ -183,7 +183,8 @@ class Ernie45TVLMoE(nn.Layer):
     def load_state_dict(self, state_dict):
         self.mlp_text.load_state_dict(state_dict)
         self.mlp_image.load_state_dict(state_dict)
-        state_dict.pop(self.mlp_text.gate_correction_bias_key)
+        if self.mlp_text.moe_use_gate_correction_bias:
+            state_dict.pop(self.mlp_text.gate_correction_bias_key)
         if self.num_shared_experts > 0:
             self.share_experts.load_state_dict(state_dict)
 
