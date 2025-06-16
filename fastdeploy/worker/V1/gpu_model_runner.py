@@ -106,7 +106,7 @@ class GPUModelRunner(ModelRunnerBase):
         for i in range(req_len):
             request = req_dicts[i]
             idx = request.idx
-            length = request.prompt_token_ids_len
+            length = len(request.prompt_token_ids)
 
             # Is Decode Node
             if req_dicts[i].disaggregate_info is not None and req_dicts[
