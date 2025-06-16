@@ -66,7 +66,7 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
                 weight_scale_list = []
                 for i in range(self.num_local_experts):
                     quant_weight, scale = weight_quantize(
-                        weight_tensor[i], algo=self.moe_quant_type, arch=80)
+                        weight_tensor[i], algo=self.moe_quant_type)
                     weight_list.append(quant_weight)
                     if self.moe_quant_type != "w4a8":
                         # scale holds no memory in w4a8, don't touch it!
@@ -80,6 +80,20 @@ class CutlassFusedMoeMethod(FusedMoEMethodBase):
                                                         axis=0)
                     create_and_set_parameter(layer, scale_name,
                                              quanted_weight_scale)
+        else:
+            stacked_ffn1_weights = paddle.stack(ffn1_weights, axis=0)
+            stacked_ffn2_weights = paddle.stack(ffn2_weights, axis=0)
+            for idx, weight_tensor in enumerate(
+                [stacked_ffn1_weights, stacked_ffn2_weights]):
+                weight_name = added_weight_attrs[idx]
+                setattr(
+                    layer, weight_name,
+                    layer.create_parameter(
+                        shape=weight_tensor.shape,
+                        dtype=weight_tensor.dtype,
+                        default_initializer=paddle.nn.initializer.Constant(0),
+                    ))
+                getattr(layer, weight_name).set_value(weight_tensor)
 
         if self.moe_quant_type == "w4a8":
             self.create_w4a8_scale_weights(layer, weight_key_map, state_dict)

@@ -52,7 +52,8 @@ class TPFusedMoeMethod(CutlassFusedMoeMethod, DeepGemmFusedMoeMethod,
             x,
             gate_out,
             getattr(layer, "gate_correction_bias", None),
-            getattr(layer, "moe_ffn1_in_scale", None), # if set, permute_input will be int8_t
+            getattr(layer, "moe_ffn1_in_scale",
+                    None),  # if set, permute_input will be int8_t
             self.top_k,
             False,
             topk_only_mode=False,
@@ -68,7 +69,7 @@ class TPFusedMoeMethod(CutlassFusedMoeMethod, DeepGemmFusedMoeMethod,
         if self.moe_quant_type == "fp8":
             raise NotImplementedError
         elif self.moe_quant_type in [
-                "weight_only_int4", "weight_only_int8", "w4a8"
+                "weight_only_int4", "weight_only_int8", "w4a8", "w16a16"
         ]:
             ffn_out = self.compute_ffn(layer, permute_input,
                                        token_nums_per_expert,
