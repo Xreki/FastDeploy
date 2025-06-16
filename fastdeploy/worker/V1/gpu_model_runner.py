@@ -81,12 +81,19 @@ class GPUModelRunner(ModelRunnerBase):
         # Note(gonshaotian): Currently, all attention layers share one attention backend instance.
         # In the future, we will expand it as a list.
         self.attn_backends: list[AttentionBackend] = []
-        self.forward_meta: ForwardMeta = None
         # self.attn_metadatas: list[AttentionMetadata] = []
         self.initialize_attn_backend()
 
         # Forward meta store the global meta information of the forward
         self.forward_meta: ForwardMeta = None
+
+    def prefill_finished(self):
+        """
+        check whether prefill stage finished
+        """
+        prefill_statue = (self.share_inputs["seq_lens_this_time"] != 0) & (
+            self.share_inputs["seq_lens_this_time"] != 1)
+        return not paddle.any(prefill_statue).numpy()
 
     def insert_prefill_inputs(self, req_dicts: List[Request]):
         """
@@ -618,6 +625,44 @@ class GPUModelRunner(ModelRunnerBase):
             if int((self.share_inputs['seq_lens_this_time'] > 0).sum()) == 0:
                 break
 
+    def _update_chunked_prefill(self, tasks):
+        """
+        更新chunked prefill相关参数
+        """
+        if not self.parallel_config.enable_chunked_prefill:
+            return
+
+        for task in tasks:
+            if task.get("prefill_chunk_info", None) is None:
+                continue
+
+            if task.chunk_idx > len(task.prefill_chunk_info):
+                continue
+
+            idx = task.idx
+            start_idx = sum(task.prefill_chunk_info[:task.chunk_idx])
+            if task.chunk_idx == len(task.prefill_chunk_info):
+                self.share_inputs["seq_lens_this_time"][idx:idx + 1] = 1
+                self.share_inputs['seq_lens_encoder'][idx:idx + 1] = 0
+                self.share_inputs["step_idx"][idx:idx + 1] = 1
+                self.share_inputs["seq_lens_decoder"][
+                    idx:idx + 1] = start_idx + task.get("seq_lens_decoder", 0)
+            else:
+                token_chunk_size = task.prefill_chunk_info[task.chunk_idx]
+
+                self.share_inputs["seq_lens_this_time"][idx:idx +
+                                                        1] = token_chunk_size
+                self.share_inputs['input_ids'][
+                    idx, :token_chunk_size] = np.array(
+                        task.prompt_token_ids[start_idx:start_idx +
+                                              token_chunk_size])
+                self.share_inputs['seq_lens_encoder'][idx:idx +
+                                                      1] = token_chunk_size
+                self.share_inputs["step_idx"][idx:idx + 1] = 0
+                self.share_inputs["seq_lens_decoder"][
+                    idx:idx + 1] = start_idx + task.get("seq_lens_decoder", 0)
+            task.chunk_idx += 1
+
     def _dummy_sampler_run(self) -> paddle.Tensor:
         """ """
         pass
@@ -693,6 +738,7 @@ class GPUModelRunner(ModelRunnerBase):
         step_cuda(self.share_inputs, self.parallel_config.block_size,
                   self.parallel_config.enc_dec_block_num)
 
+        self._update_chunked_prefill(model_forward_batch)
         return None
 
     def profile_run(self) -> None:

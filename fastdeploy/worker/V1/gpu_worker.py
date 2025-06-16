@@ -72,6 +72,12 @@ class GpuWorker(WorkerBase):
             rank=self.rank,
             local_rank=self.local_rank)
 
+    def prefill_finished(self):
+        """
+        check whether prefill stage finished
+        """
+        return self.model_runner.prefill_finished()
+
     def determine_available_memory(self) -> int:
         """
         Profiles the peak memory usage of the model to determine how much

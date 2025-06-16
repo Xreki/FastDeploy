@@ -155,7 +155,7 @@ class PaddleDisWorkerProc():
             # The first worker detects whether there are tasks in the task queue
             mp_num_per_node = self.rank / self.nnode
             if self.local_rank % mp_num_per_node == 0:
-                if self.task_queue.num_tasks() > 0:
+                if self.task_queue.num_tasks() > 0 and self.worker.prefill_finished():
                     if self.nnode > 1:
                         self.task_queue.read_finish_flag.set(1)
                     else:
@@ -195,7 +195,7 @@ class PaddleDisWorkerProc():
 
             # Execute model to generate token. The generated token will be written to the buffer.
             # These generated tokens can be obtained through get_output op.
-            self.worker.execute_model()
+            self.worker.execute_model(req_dicts)
 
     def init_distributed_enviroment(self, seed=20) -> List[int]:
         """ Initialize Paddle Fleet and get rank of worker """

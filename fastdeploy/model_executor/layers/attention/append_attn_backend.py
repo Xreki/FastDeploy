@@ -114,7 +114,7 @@ class AppendAttentionBackend(AttentionBackend):
         metadata.encoder_block_shape_q = 64
         metadata.decoder_block_shape_q = 16
         metadata.max_partition_size = 32768
-        metadata.encoder_max_partition_size = 32768
+        metadata.encoder_max_partition_size = self.max_seq_len
         metadata._dtype = paddle.get_default_dtype()
         if metadata._dtype == "bfloat16":
             metadata._fuse_kernel_compute_dtype = "bf16"
