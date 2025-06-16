@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "helper.h"
+#include "paddle/phi/backends/context_pool.h"
 #include "sample_kernels/sampling.cuh"
 
 std::vector<paddle::Tensor> TopPSamplingReject(const paddle::Tensor &probs,
@@ -21,15 +22,18 @@ std::vector<paddle::Tensor> TopPSamplingReject(const paddle::Tensor &probs,
   std::vector<int64_t> probs_shape = probs.shape();
   unsigned int batch_size = probs_shape[0];
   unsigned int vocab_size = probs_shape[1];
-
-  // default is 32
-  unsigned int max_top_p_rounds = 32;
-  std::vector<int64_t> uniform_samples_shape = {batch_size, max_top_p_rounds};
-  paddle::Tensor uniform_samples = paddle::experimental::uniform(
-      uniform_samples_shape, paddle::DataType::FLOAT32, 0, 1, seed,
-      probs.place());
-
+  uint64_t philox_seed = seed;
+  uint64_t philox_offset = 0;
   auto cu_stream = probs.stream();
+
+  // need_batch_random
+  if (seed == -1) {
+    phi::GPUContext* dev_ctx = static_cast<phi::GPUContext*>(phi::DeviceContextPool::Instance().Get(probs.place()));
+    auto gen_cuda = dev_ctx->GetGenerator();
+    auto seed_offset = gen_cuda->IncrementOffset(32 * batch_size);
+    philox_seed = seed_offset.first;
+    philox_offset = seed_offset.second;
+  }
 
   auto samples =
       paddle::empty({batch_size, 1}, paddle::DataType::INT64, probs.place());
@@ -37,9 +41,9 @@ std::vector<paddle::Tensor> TopPSamplingReject(const paddle::Tensor &probs,
   cudaError_t status;
 
   status = sampling::TopPSamplingFromProb<float, int64_t>(
-      const_cast<float *>(probs.data<float>()), uniform_samples.data<float>(),
-      samples.data<int64_t>(), batch_size, top_p.data<float>(), vocab_size,
-      max_top_p_rounds, true, cu_stream);
+      const_cast<float *>(probs.data<float>()), samples.data<int64_t>(), 
+      batch_size, top_p.data<float>(), vocab_size,
+      true, philox_seed, philox_offset, cu_stream);
 
   PD_CHECK(status == cudaSuccess, "SamplingFromProbs failed with error code " +
                                       std::string(cudaGetErrorString(status)));
