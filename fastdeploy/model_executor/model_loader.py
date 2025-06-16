@@ -83,16 +83,18 @@ class DefaultModelLoader(BaseModelLoader):
             model = model_cls(fd_config)
 
         model.eval()
-        for k, v in state_dict.items():
-            if convert_dtype(v.dtype) == fd_config.parallel_config.dtype:
-                continue
-            elif convert_dtype(v.dtype) == "float32":
-                continue
-            elif convert_dtype(v.dtype) in ["int8", "uint8"]:
-                # this is for quantization, we don't need to convert it
-                continue
-            state_dict[k] = convert_ndarray_dtype(
-                v, fd_config.parallel_config.dtype)
+
+        if "gpu" not in paddle.device.get_device():
+            for k, v in state_dict.items():
+                if convert_dtype(v.dtype) == fd_config.parallel_config.dtype:
+                    continue
+                elif convert_dtype(v.dtype) == "float32":
+                    continue
+                elif convert_dtype(v.dtype) in ["int8", "uint8"]:
+                    # this is for quantization, we don't need to convert it
+                    continue
+                state_dict[k] = convert_ndarray_dtype(
+                    v, fd_config.parallel_config.dtype)
         model.set_state_dict(state_dict)
 
         return model
