@@ -866,6 +866,8 @@ class LLMEngine(object):
         worker_append_flag = {
             "enable_chunked_prefill":
             self.cfg.cache_config.enable_chunked_prefill,
+            "enable_prefix_caching":
+            self.cfg.cache_config.enable_prefix_caching,
             "do_profile": self.do_profile,
             "dynamic_load_weight": self.cfg.model_config.dynamic_load_weight,
         }

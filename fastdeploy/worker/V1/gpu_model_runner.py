@@ -785,8 +785,8 @@ class GPUModelRunner(ModelRunnerBase):
         if self.forward_meta is not None:
             del self.forward_meta.caches
         del self.share_inputs["block_tables"]
-        # paddle.device.cuda.synchronize()
-        paddle.device.cuda.empty_cache()
+        # # paddle.device.cuda.synchronize()
+        # paddle.device.cuda.empty_cache()
         # gc.collect()
 
     def update_share_input_block_num(self, num_gpu_blocks: int) -> None:

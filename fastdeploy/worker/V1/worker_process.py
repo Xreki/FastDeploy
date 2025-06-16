@@ -199,7 +199,8 @@ class PaddleDisWorkerProc():
             # The first worker detects whether there are tasks in the task queue
             mp_num_per_node = self.rank / self.nnode
             if self.local_rank % mp_num_per_node == 0:
-                if self.task_queue.num_tasks() > 0 and self.worker.prefill_finished():
+                if self.task_queue.num_tasks(
+                ) > 0 and self.worker.prefill_finished():
                     if self.nnode > 1:
                         self.task_queue.read_finish_flag.set(1)
                     else:
@@ -491,6 +492,8 @@ def initialize_fd_config(args) -> FDConfig:
     parallel_config.speculate_max_draft_tokens = args.speculate_max_draft_tokens
     parallel_config.max_num_batched_tokens = args.max_num_batched_tokens
     parallel_config.enable_prefix_caching = args.enable_prefix_caching
+    parallel_config.splitwise_role = args.splitwise_role
+
 
     parallel_config.use_ep = args.expert_parallel_size > 1
     parallel_config.tensor_parallel_degree = args.tensor_parallel_size

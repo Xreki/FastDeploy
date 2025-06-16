@@ -125,10 +125,19 @@ class GpuWorker(WorkerBase):
         after_run_meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
         pynvml.nvmlShutdown()
 
-        not_paddle_use_mem = after_run_meminfo.used - paddle_reserved_mem_after_run
-        peak_memory = paddle_allocated_mem_after_run + not_paddle_use_mem
+        # NOTE(gongshaotian): v1 worker
+        # not_paddle_use_mem = after_run_meminfo.used - paddle_reserved_mem_after_run
+        # peak_memory = paddle_allocated_mem_after_run + not_paddle_use_mem
+        # available_kv_cache_memory = after_run_meminfo.total * \
+        #    self.parallel_config.gpu_memory_utilization - peak_memory
 
-        available_kv_cache_memory = after_run_meminfo.total * self.parallel_config.gpu_memory_utilization - peak_memory
+        # v0 worker
+        model_block_memory_used = self.cal_theortical_kvcache()
+        paddle_peak_increase = paddle_reserved_mem_after_run - paddle_allocated_mem_before_run
+        available_kv_cache_memory = after_run_meminfo.total * \
+            self.parallel_config.gpu_memory_utilization - before_run_meminfo.used - paddle_peak_increase
+        available_kv_cache_memory += model_block_memory_used * self.parallel_config.max_block_num
+        paddle.device.cuda.empty_cache()
 
         end_time = time.perf_counter()
         logger.info(
