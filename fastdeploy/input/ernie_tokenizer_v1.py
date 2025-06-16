@@ -24,7 +24,7 @@ from paddlenlp.utils import logger
 
 __all__ = ["ErnieBotTokenizer"]
 
-VOCAB_FILES_NAMES = {"vocab_file": "spm.model"}
+VOCAB_FILES_NAMES = {"vocab_file": "tokenizer.model"}
 
 PRETRAINED_VOCAB_FILES_MAP = {
     "vocab_file": {},
