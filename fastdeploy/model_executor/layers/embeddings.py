@@ -59,9 +59,7 @@ class VocabParallelEmbedding(nn.Layer):
         self.use_ep = fd_config.parallel_config.use_ep
         self.hidden_dropout_prob = fd_config.model_config.hidden_dropout_prob
         self.initializer_range = fd_config.model_config.initializer_range
-        self.weight_sharing = fd_config.model_config.weight_sharing
         self.sequence_parallel = fd_config.parallel_config.sequence_parallel
-        self.weight_sharing_add_bias = fd_config.model_config.weight_sharing_add_bias
         self.max_position_embeddings = fd_config.model_config.max_position_embeddings
         self.freeze_embedding = fd_config.model_config.freeze_embedding
         self.tie_word_embeddings = fd_config.model_config.tie_word_embeddings
@@ -101,27 +99,6 @@ class VocabParallelEmbedding(nn.Layer):
             )
 
         self.prefix = prefix
-        if self.weight_sharing and self.weight_sharing_add_bias:
-            mask_lm_out_bias_attr = paddle.ParamAttr(
-                initializer=paddle.nn.initializer.Constant(value=0.0))
-            assert num_embeddings % self.world_size == 0
-            if self.use_ep:
-                self.bias = self.create_parameter(
-                    shape=[num_embeddings],
-                    dtype=paddle.get_default_dtype(),
-                    attr=paddle.ParamAttr(
-                        initializer=paddle.nn.initializer.Constant(
-                            value=0.0), ),
-                    is_bias=True,
-                )
-            else:
-                self.bias = self.create_parameter(
-                    shape=[num_embeddings // self.world_size],
-                    dtype=paddle.get_default_dtype(),
-                    attr=mask_lm_out_bias_attr,
-                    is_bias=True,
-                )
-                self.bias.is_distributed = True
 
         if self.freeze_embedding:
             self.word_embeddings.weight.learning_rate = 0.0

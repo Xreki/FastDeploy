@@ -53,12 +53,10 @@ class ParallelLMHead(nn.Layer):
             self.linear_bias_key = None
         self.use_ep = fd_config.parallel_config.use_ep
         self.column_cut = True
-        self.fused_linear = True
 
         ColumnParallelLinear = fleet.meta_parallel.ColumnParallelLinear
         RowParallelLinear = fleet.meta_parallel.RowParallelLinear
 
-        self.weight_sharing = fd_config.model_config.weight_sharing
         self.tie_word_embeddings = fd_config.model_config.tie_word_embeddings
 
         if self.use_ep:
@@ -79,7 +77,7 @@ class ParallelLMHead(nn.Layer):
                     has_bias=True
                     if self.linear_bias_key is not None else False,
                     gather_output=need_gather,
-                    fuse_matmul_bias=self.fused_linear,  # False diff更小
+                    fuse_matmul_bias=False,  # False diff更小
                 )
             else:
                 self.out_linear = RowParallelLinear(
@@ -91,7 +89,7 @@ class ParallelLMHead(nn.Layer):
                     has_bias=True
                     if self.linear_bias_key is not None else False,
                     input_is_parallel=False,
-                    fuse_matmul_bias=self.fused_linear,  # False diff更小
+                    fuse_matmul_bias=False,  # False diff更小
                 )
 
     def load_state_dict(self, state_dict):
