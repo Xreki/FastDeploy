@@ -22,7 +22,7 @@ from paddle.nn.functional import scaled_dot_product_attention
 
 from fastdeploy.model_executor.layers.attention.base_attention_backend import \
     AttentionBackend
-from fastdeploy.worker.V1.forward_meta import ForwardMeta
+from fastdeploy.worker.forward_meta import ForwardMeta
 
 
 class PaddleNativeAttnBackend(AttentionBackend):

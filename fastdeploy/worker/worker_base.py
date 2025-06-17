@@ -19,8 +19,8 @@ from typing import Optional
 from paddle import nn
 
 from fastdeploy.config import FDConfig
-from fastdeploy.worker.V1.model_runner_base import ModelRunnerBase
-from fastdeploy.worker.V1.output import ModelRunnerOutput
+from fastdeploy.worker.model_runner_base import ModelRunnerBase
+from fastdeploy.worker.output import ModelRunnerOutput
 
 
 class WorkerBase(ABC):

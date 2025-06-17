@@ -39,9 +39,9 @@ from fastdeploy.model_executor.models.ernie45t_vl.modeling_resampler import (
     ScatterOp, VariableResolutionResamplerModel)
 from fastdeploy.model_executor.models.utils import load_checkpoint
 from fastdeploy.platforms import current_platform
-from fastdeploy.worker.model_runner_base import ModelRunnerBase
-from fastdeploy.worker.V1.forward_meta import ForwardMeta
-from fastdeploy.worker.V1.utils import check_safetensors_model
+from fastdeploy.worker.forward_meta import ForwardMeta
+from fastdeploy.worker.utils import check_safetensors_model
+from fastdeploy.worker.vl_model_runner_base import VLModelRunnerBase
 
 if current_platform.is_cuda() and current_platform.available():
     from fastdeploy.model_executor.layers.utils import (
@@ -52,7 +52,7 @@ from fastdeploy.model_executor.ops.gpu import (save_output,
                                                update_inputs)
 
 
-class ModelRunner(ModelRunnerBase):
+class GPUVLModelRunner(VLModelRunnerBase):
 
     def __init__(self, config, args, nranks, rank):
         self.nranks = nranks

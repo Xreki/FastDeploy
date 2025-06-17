@@ -21,8 +21,8 @@ import paddle
 
 from fastdeploy.model_executor.layers.attention import (
     Attention, PaddleNativeAttnBackend)
-from fastdeploy.worker.V1.forward_meta import (ForwardMeta, ForwardMode,
-                                               MHATokenToKVPool)
+from fastdeploy.worker.forward_meta import (ForwardMeta, ForwardMode,
+                                            MHATokenToKVPool)
 
 
 class MockModelRunner:
