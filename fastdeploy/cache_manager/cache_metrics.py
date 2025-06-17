@@ -114,3 +114,24 @@ class CacheMetrics:
             + f" total_match_ratio {total_match_ratio}"
         )
 
+    def reset_metrics(self):
+        """
+        reset metrics
+        """
+        self.total_match_time = 0.0
+        self.avg_match_time = 0.0
+        self.min_match_time = 1e9
+        self.max_match_time = 0.0
+
+        self.req_count = 0
+        self.hit_req_count = 0
+        self.hit_req_ratio = 0.0
+
+        self.total_gpu_matched_token_num = 0
+        self.total_cpu_matched_token_num = 0
+
+        self.matched_token_num = 0
+        self.total_token_num = 0
+        self.hit_token_ratio = 0.0
+        self.cpu_hit_token_ratio = 0.0
+        self.gpu_hit_token_ratio = 0.0

@@ -517,7 +517,7 @@ class PrefixCacheManager:
                 hit_info["cpu_cache_blocks"] = cpu_match_token_num // block_size
                 self.metrics._update_history_hit_metrics()
                 if self.metrics.req_count % 10000 == 0:
-                    self.metrics._init_histroy_hit_metrics()  
+                    self.metrics.reset_metrics()  
                 logger.info(
                     f"request_block_ids: request block for req_id {req_id}: common_block_ids "
                     + f"{common_block_ids}, unique_block_ids {unique_block_ids}"
