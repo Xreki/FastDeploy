@@ -33,7 +33,7 @@ python -m pip install -r requirements.txt
 --port 9812：服务HTTP端口，用于组url
 --dataset-name EBChat：指定数据集类，指定为"EBChat"可读取转存的FD格式数据集
 --dataset-path ./eb45t_spv4_dataserver_1w_waigua_fd：压测数据集路径
---hyperparameter-path EB45T.yaml：超参文件，请求时会更新进payload中
+--hyperparameter-path EB45T.yaml：(可选)超参文件，请求时会更新进payload中，默认不带任何超参
 --percentile-metrics ttft,tpot,itl,e2el,s_ttft,s_itl,s_e2el,s_decode,input_len,s_input_len,output_len：性能结果中展示的指标集合
 --metric-percentiles 80,95,99,99.9,99.95,99.99：性能结果中展示的性能指标分位值
 --num-prompts 1：总计发送多少条请求
@@ -101,5 +101,3 @@ python benchmark_serving.py \
   --max-concurrency 100 \
   --save-result > infer_log.txt 2>&1 &
 ```
-
-

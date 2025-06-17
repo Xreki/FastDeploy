@@ -184,7 +184,7 @@ def calculate_metrics(
                 # Note : this may inflate the output token count slightly
 
             actual_output_lens.append(output_len)
-            input_lens.append(outputs[i].prompt_tokens)
+            input_lens.append(outputs[i].prompt_len)
             infer_input_lens.append(outputs[i].prompt_tokens)
             total_input += outputs[i].prompt_tokens
             tpot = 0
@@ -502,6 +502,7 @@ async def benchmark(
         "output_throughput": metrics.output_throughput,
         "total_token_throughput": metrics.total_token_throughput,
         "input_lens": [output.prompt_len for output in outputs],
+        "infer_input_lens": [output.prompt_tokens for output in outputs],
         "output_lens": actual_output_lens,
         "ttfts": [output.ttft for output in outputs],
         "itls": [output.itl for output in outputs],
@@ -583,7 +584,7 @@ async def benchmark(
     process_one_metric("s_itl", "S_ITL", "Infer Inter-token Latency")
     process_one_metric("e2el", "E2EL", "End-to-end Latency")
     process_one_metric("s_e2el", "S_E2EL", "Infer End-to-end Latency")
-    process_one_length("input_len", "Input Length", "Input Length")
+    process_one_length("input_len", "Cached Tokens", "Cached Tokens")
     process_one_length("s_input_len", "Input Length", "Infer Input Length")
     process_one_length("output_len", "Output Length", "Output Length")
 
@@ -727,8 +728,11 @@ def main(args: argparse.Namespace):
     gc.freeze()
 
     # 超参由yaml传入
-    with open(args.hyperparameter_path, "r") as f:
-        hyper_parameters = yaml.safe_load(f)
+    if args.hyperparameter_path:
+        with open(args.hyperparameter_path, "r") as f:
+            hyper_parameters = yaml.safe_load(f)
+    else:
+        hyper_parameters = {}
 
     benchmark_result = asyncio.run(
         benchmark(

@@ -129,6 +129,8 @@ async def async_request_eb_openai_chat_completions(
                                 if ttft == 0.0:
                                     ttft = timestamp - st
                                     output.ttft = ttft
+                                    # cached_tokens
+                                    output.prompt_len = data["usage"]["prompt_tokens_details"]["cached_tokens"]
 
                                 # Decoding phase
                                 else:
@@ -153,7 +155,7 @@ async def async_request_eb_openai_chat_completions(
                         output.success = True
                     output.latency = most_recent_timestamp - st
                 else:
-                    print("####error response:", response.text)
+                    print("####error response:", response.text, "####payload:", payload)
                     output.error = response.reason or ""
                     output.success = False
         except Exception:
@@ -161,6 +163,10 @@ async def async_request_eb_openai_chat_completions(
             exc_info = sys.exc_info()
             output.error = "".join(traceback.format_exception(*exc_info))
 
+        # 保存失败请求结果
+        if not output.success:
+            with open("error_output.txt", "a") as f:
+                f.write(str(output) + "\n")
     if pbar:
         pbar.update(1)
     return output
