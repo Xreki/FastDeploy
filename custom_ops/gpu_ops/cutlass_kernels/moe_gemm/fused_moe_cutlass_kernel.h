@@ -43,9 +43,9 @@
 #include "cutlass/trace.h"
 
 #include "cutlass_extensions/gemm/kernel/gemm_moe_problem_visitor.h"
+#include "cutlass_extensions/tile_interleaved_layout.h"
 #include "cutlass_kernels/moe_gemm/tile_dequanter.h"
 #include "cutlass_kernels/moe_gemm/wint_type_traits.h"
-#include "paddle/phi/kernels/fusion/cutlass/cutlass_extensions/tile_interleaved_layout.h"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -511,6 +511,7 @@ struct MoeFCGemm {
       using ElementC = typename Epilogue::OutputTileIterator::Element;
       using LayoutC = typename Epilogue::OutputTileIterator::Layout;
       using QuantElementB = typename WeightQuantTraits::WeightType;
+      using MmaElementB = typename WeightQuantTraits::MmaWeightType;
 
       static constexpr int kInterleave =
           Mma::IteratorB::Shape::kRow / Mma::Shape::kK;
@@ -613,7 +614,7 @@ struct MoeFCGemm {
                                         weight_scale_ptr,
                                         tb_offset_scale,
                                         quant_args);
-        ElementB* ptr_B = tile_dequanter_B.GetOutPtr();
+        MmaElementB* ptr_B = tile_dequanter_B.GetOutPtr();
 
         // Compute position within threadblock
         int thread_idx = threadIdx.x;

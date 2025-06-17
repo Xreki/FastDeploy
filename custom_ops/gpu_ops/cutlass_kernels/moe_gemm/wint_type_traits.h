@@ -49,6 +49,7 @@ template <typename ElementT, WintQuantMethod Method> struct WintQuantTraits;
 template <typename ElementT>
 struct WintQuantTraits<ElementT, WintQuantMethod::kNone> {
   using WeightType = ElementT;
+  using MmaKernelType = typename CutlassDataType<ElementT>::Type;
   using MmaWeightType = typename CutlassDataType<ElementT>::Type;
 
   static constexpr WintQuantMethod kQuantMethod = WintQuantMethod::kNone;
@@ -62,6 +63,7 @@ struct WintQuantTraits<ElementT, WintQuantMethod::kNone> {
 template <typename ElementT>
 struct WintQuantTraits<ElementT, WintQuantMethod::kWeightOnlyInt8> {
   using WeightType = uint8_t;
+  using MmaKernelType = uint8_t;
   using MmaWeightType = uint8_t;
 
   static constexpr WintQuantMethod kQuantMethod =
@@ -76,6 +78,7 @@ struct WintQuantTraits<ElementT, WintQuantMethod::kWeightOnlyInt8> {
 template <typename ElementT>
 struct WintQuantTraits<ElementT, WintQuantMethod::kWeightOnlyInt4> {
   using WeightType = cutlass::uint4b_t;
+  using MmaKernelType = cutlass::uint4b_t;
   using MmaWeightType = cutlass::uint4b_t;
 
   static constexpr WintQuantMethod kQuantMethod =
@@ -90,8 +93,8 @@ struct WintQuantTraits<ElementT, WintQuantMethod::kWeightOnlyInt4> {
 template <typename ElementT>
 struct WintQuantTraits<ElementT, WintQuantMethod::kWeightOnlyInt25> {
   using WeightType = uint16_t;
+  using MmaKernelType = typename CutlassDataType<ElementT>::Type;
   using MmaWeightType = typename CutlassDataType<ElementT>::Type;
-  // using MmaWeightType = cutlass::uint4b_t;
 
   static constexpr WintQuantMethod kQuantMethod =
       WintQuantMethod::kWeightOnlyInt25;
@@ -111,8 +114,8 @@ struct WintQuantTraits<ElementT, WintQuantMethod::kWeightOnlyInt25> {
 template <typename ElementT>
 struct WintQuantTraits<ElementT, WintQuantMethod::kWeightOnlyInt2> {
   using WeightType = uint8_t;
+  using MmaKernelType = cutlass::uint2b_t;
   using MmaWeightType = typename CutlassDataType<ElementT>::Type;
-  // using MmaWeightType = cutlass::uint4b_t;
 
   static constexpr WintQuantMethod kQuantMethod =
       WintQuantMethod::kWeightOnlyInt2;
@@ -146,6 +149,8 @@ template <typename T> std::string GetCutlassDataTypeString() {
     return "uint8_t";
   } else if (std::is_same<T, cutlass::uint4b_t>::value) {
     return "cutlass::uint4b_t";
+  } else if (std::is_same<T, cutlass::uint2b_t>::value) {
+    return "cutlass::uint2b_t";
   }
   return "unknown";
 }

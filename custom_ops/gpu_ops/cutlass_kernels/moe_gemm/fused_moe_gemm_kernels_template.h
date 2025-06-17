@@ -36,8 +36,12 @@
 
 #include "paddle/phi/kernels/fusion/cutlass/cutlass_extensions/compute_occupancy.h"
 #include "paddle/phi/kernels/fusion/cutlass/cutlass_extensions/epilogue_helpers.h"
-#include "paddle/phi/kernels/fusion/cutlass/cutlass_extensions/gemm/kernel/default_fpA_intB_traits.h"
-#include "paddle/phi/kernels/fusion/cutlass/cutlass_extensions/gemm/threadblock/default_mma.h"
+//#include "paddle/phi/kernels/fusion/cutlass/cutlass_extensions/gemm/kernel/default_fpA_intB_traits.h"
+//#include "paddle/phi/kernels/fusion/cutlass/cutlass_extensions/gemm/threadblock/default_mma.h"
+
+#include "cutlass_extensions/gemm/kernel/default_fpA_intB_traits.h"
+#include "cutlass_extensions/gemm/threadblock/default_mma.h"
+
 #include "cutlass_kernels/moe_gemm/fused_moe_cutlass_kernel.h"
 #include "cutlass_kernels/moe_gemm/fused_moe_gemm_kernels.h"
 #include "cutlass_kernels/moe_gemm/wint_type_traits.h"
@@ -50,6 +54,22 @@
 #include "helper.h"
 
 namespace phi {
+
+template <typename MixedGemmArchTraits, WintQuantMethod Method>
+struct CutlassLayoutB {
+  using Type = cutlass::layout::RowMajor;
+};
+
+template <typename MixedGemmArchTraits>
+struct CutlassLayoutB<MixedGemmArchTraits, WintQuantMethod::kWeightOnlyInt4> {
+  using Type = typename MixedGemmArchTraits::LayoutB;
+};
+
+template <typename MixedGemmArchTraits>
+struct CutlassLayoutB<MixedGemmArchTraits, WintQuantMethod::kWeightOnlyInt8> {
+  using Type = typename MixedGemmArchTraits::LayoutB;
+};
+
 // ======================= Variable batched Gemm things =======================
 template <typename T,
           typename WeightQuantTraits,
@@ -102,15 +122,17 @@ void generic_moe_gemm_kernelLauncher(const T* A,
   using ElementType = typename CutlassDataType<T>::Type;
   using CutlassWeightType = typename CutlassDataType<typename WeightQuantTraits::WeightType>::Type;
   using CutlassMmaWeightType = typename WeightQuantTraits::MmaWeightType;
+  using CutlassMmaKernelType = typename WeightQuantTraits::MmaKernelType;
 
   CUTLASS_TRACE_HOST("A: " << A << ", ElementType: " << GetCutlassDataTypeString<ElementType>());
   CUTLASS_TRACE_HOST("B: " << reinterpret_cast<const void*>(B) << ", CutlassWeightType: " << GetCutlassDataTypeString<CutlassWeightType>());
   CUTLASS_TRACE_HOST("CutlassMmaWeightType: " << GetCutlassDataTypeString<CutlassMmaWeightType>());
+  CUTLASS_TRACE_HOST("CutlassMmaKernelType: " << GetCutlassDataTypeString<CutlassMmaKernelType>());
 
   // We need separate config for each architecture since we will target
   // different tensorcore instructions. For float, we do not target TCs.
   using MixedGemmArchTraits = cutlass::gemm::kernel::
-      MixedGemmArchTraits<ElementType, CutlassMmaWeightType, arch>;
+      MixedGemmArchTraits<ElementType, CutlassMmaKernelType, arch>;
   using ElementAccumulator = typename MixedGemmArchTraits::AccType;
 
   using EpilogueOp = typename Epilogue<ElementType,
@@ -126,8 +148,8 @@ void generic_moe_gemm_kernelLauncher(const T* A,
       cutlass::layout::RowMajor,
       cutlass::ComplexTransform::kNone,
       MixedGemmArchTraits::ElementsPerAccessA,
-      CutlassMmaWeightType,
-      typename MixedGemmArchTraits::LayoutB,
+      CutlassMmaKernelType,
+      typename CutlassLayoutB<MixedGemmArchTraits, WeightQuantTraits::kQuantMethod>::Type,
       cutlass::ComplexTransform::kNone,
       MixedGemmArchTraits::ElementsPerAccessB,
       ElementType,
@@ -473,7 +495,7 @@ void dispatch_moe_gemm_to_cutlass(const T* A,
                                   cudaStream_t stream,
                                   int* occupancy = nullptr) {
   switch (gemm_config.tile_config) {
-    //dispatch_gemm_config_macro(32, 128, 64, 32, 32, 64);
+    dispatch_gemm_config_macro(32, 128, 64, 32, 32, 64);
     //dispatch_gemm_config_macro(64, 128, 64, 32, 64, 64);
     //dispatch_gemm_config_macro(128, 128, 64, 64, 32, 64);
     case CutlassTileConfig::Undefined:
@@ -713,7 +735,8 @@ void MoeGemmRunner<T, WeightQuantTraits>::run_gemm<EpilogueTag>(
         std::min(gemmConfigManager.nextPowerOfTwo(actual_total_rows),
                  gemmConfigManager.getMaxProfileM());
     bool find_one = false;
-    // for (size_t ii = 0; ii < candidate_configs.size(); ++ii) 
+    size_t num_candidate_configs_size = candidate_configs.size() > 8 ? 8 : candidate_configs.size();
+    //for (size_t ii = 0; ii < num_candidate_configs_size; ++ii) 
     {
       size_t ii = 2;
       try {
