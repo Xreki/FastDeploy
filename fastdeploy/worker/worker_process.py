@@ -33,7 +33,7 @@ from fastdeploy.model_executor.layers.quantization import \
 from fastdeploy.model_executor.models.utils import parser_quant_type
 from fastdeploy.platforms import current_platform
 from fastdeploy.utils import get_logger
-from fastdeploy.worker.V1.worker_base import WorkerBase
+from fastdeploy.worker.worker_base import WorkerBase
 
 logger = get_logger("worker_process", "worker_process.log")
 
@@ -43,10 +43,10 @@ def get_worker(fd_config: FDConfig, local_rank: int, rank: int) -> WorkerBase:
     get worker of different device
     """
     if current_platform.is_cuda():
-        from fastdeploy.worker.V1.gpu_worker import GpuWorker
+        from fastdeploy.worker.gpu_worker import GpuWorker
         return GpuWorker(fd_config=fd_config, local_rank=local_rank, rank=rank)
     if current_platform.is_xpu():
-        from fastdeploy.worker.V1.xpu_worker import XpuWorker
+        from fastdeploy.worker.xpu_worker import XpuWorker
         return XpuWorker(fd_config=fd_config, local_rank=local_rank, rank=rank)
 
 

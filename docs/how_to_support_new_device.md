@@ -5,7 +5,7 @@
 
 ![](https://rte.weiyun.baidu.com/wiki/attach/image/api/imageDownloadAddress?attachId=9697ae90492d4a04a7cdcee739c017b1&docGuid=2U0kBiPiqYuQcP "")
 ## 步骤2 注册新的Worker
-参考代码路径：FastDeploy/fastdeploy/worker/V1/gpu_worker.py
+参考代码路径：FastDeploy/fastdeploy/worker/gpu_worker.py
 
 * Worker负责初始化设备，对应一个加速卡和一个进程，核心作用是启动一个ModelRunner负责模型推理。
 * 开发者需要：继承WorkerBase类并实现相应的接口，部分关键需要重点关注的子函数如下：
@@ -19,7 +19,7 @@ def run_profile
 如果改动逻辑过多，不可避免会出现if/else判断，硬件开发者亦可实现新的worker_xxxpu.py的实现。
 
 ## 步骤3 注册新的ModelRunner
-参考代码路径：FastDeploy/fastdeploy/worker/V1/gpu_model_runner.py
+参考代码路径：FastDeploy/fastdeploy/worker/gpu_model_runner.py
 
 * ModelRunner负责推理的全流程，包括模型加载、模型预热、前后处理等。
 * 开发者需要：继承ModelRunnerBase类并实现相应的接口，部分关键需要重点关注的函数如下：

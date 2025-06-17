@@ -21,7 +21,7 @@ from fastdeploy.model_executor.ops.gpu import (get_padding_offset, save_output,
                                                set_stop_value_multi_ends,
                                                speculate_get_padding_offset,
                                                step_paddle, update_inputs)
-from fastdeploy.worker.V1.output import ModelOutputData
+from fastdeploy.worker.output import ModelOutputData
 
 
 def pre_process(max_len: int,

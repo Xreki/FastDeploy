@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 import paddle
 
-from fastdeploy.worker.V1.forward_meta import ForwardMeta
+from fastdeploy.worker.forward_meta import ForwardMeta
 
 
 @dataclass

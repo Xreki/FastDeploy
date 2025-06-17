@@ -108,16 +108,16 @@ class Worker:
         self.device_ids = self.args.device_ids.split(",")
         self.model_cfg = ModelConfig(args.model_name_or_path)
 
-        from fastdeploy.worker.model_runner_vl_inference import ModelRunner
+        from fastdeploy.worker.vl_gpu_model_runner import GPUVLModelRunner
 
         self.init_dist_env()
         self.format_print_configuration()
         self.helper_tensors = {}
 
-        self.infer_engine = ModelRunner(config=self.model_cfg,
-                                        args=self.args,
-                                        nranks=self.nranks,
-                                        rank=self.rank)
+        self.infer_engine = GPUVLModelRunner(config=self.model_cfg,
+                                             args=self.args,
+                                             nranks=self.nranks,
+                                             rank=self.rank)
         self.prefill_tracker = PrefillTracker(args.engine_pid)
 
         # TODO 多机

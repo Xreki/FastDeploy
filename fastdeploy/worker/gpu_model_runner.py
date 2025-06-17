@@ -37,9 +37,9 @@ from fastdeploy.model_executor.pre_and_post_process import (post_process,
                                                             pre_process,
                                                             step_cuda)
 from fastdeploy.utils import get_logger
-from fastdeploy.worker.V1.forward_meta import ForwardMeta
-from fastdeploy.worker.V1.model_runner_base import ModelRunnerBase
-from fastdeploy.worker.V1.output import ModelOutputData, ModelRunnerOutput
+from fastdeploy.worker.forward_meta import ForwardMeta
+from fastdeploy.worker.model_runner_base import ModelRunnerBase
+from fastdeploy.worker.output import ModelOutputData, ModelRunnerOutput
 
 logger = get_logger("gpu_model_runner", "gpu_model_runner.log")
 

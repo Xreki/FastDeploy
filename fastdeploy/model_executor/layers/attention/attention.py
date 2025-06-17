@@ -21,7 +21,7 @@ from paddle import nn
 from paddlenlp.utils.log import logger
 
 from fastdeploy.model_executor.layers.utils import get_tensor
-from fastdeploy.worker.V1.forward_meta import ForwardMeta
+from fastdeploy.worker.forward_meta import ForwardMeta
 
 
 class Attention(nn.Layer):

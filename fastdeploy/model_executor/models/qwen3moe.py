@@ -33,7 +33,7 @@ from fastdeploy.model_executor.layers.lm_head import ParallelLMHead
 from fastdeploy.model_executor.layers.moe.moe import FusedMoE
 from fastdeploy.model_executor.layers.normalization import RMSNorm
 from fastdeploy.model_executor.models.model_base import ModelForCasualLM
-from fastdeploy.worker.V1.forward_meta import ForwardMeta
+from fastdeploy.worker.forward_meta import ForwardMeta
 
 
 class Qwen3MLP(nn.Layer):
@@ -443,7 +443,7 @@ class Qwen3MoePretrainedModel(PretrainedModel):
                 # Row Linear
                 "embed_tokens.weight": partial(fn, is_column=False),
                 "model.0.self_attn.o_proj.weight": partial(fn,
-                                                            is_column=False),
+                                                           is_column=False),
                 "model.0.mlp.down_proj.weight": partial(fn, is_column=False),
             }
 
