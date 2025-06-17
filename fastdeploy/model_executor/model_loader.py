@@ -78,7 +78,7 @@ class DefaultModelLoader(BaseModelLoader):
         state_dict = load_checkpoint(
             fd_config.parallel_config.model_name_or_path,
             model_class,
-            fd_config,
+            fd_config.model_config,
             return_numpy=True)
         with context:
             model_cls = ModelRegistry.get_class(architectures)
