@@ -21,150 +21,12 @@
 #include "cutlass_kernels/moe_gemm/wint_type_traits.h"
 #include "helper.h"
 
-#define UNZIP_ENABLE_VECTORIZE 0
-
 template <typename T, WintQuantMethod QuantMethod, int TileRows,
           int TileColumns, int NumThreads = 128>
 struct UnzipAndDequantFunctor {
   __device__ void operator()(const T *in_ptr, const T *supper_scale_ptr,
                              T *out_ptr, const int64_t in_stride) {}
 };
-
-#if UNZIP_ENABLE_VECTORIZE
-
-template <typename T, int N> using Array = AlignedVector<T, N>;
-
-template <typename T, int TileRows, int TileColumns, int NumThreads>
-struct UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt25, TileRows,
-                              TileColumns, NumThreads> {
-  using ZippedT = uint16_t;
-  using ScaleComputeT = float;
-
-  static constexpr int32_t kGroupSize = 64;
-  static constexpr int32_t kZippedGroupSize = 10;
-  static constexpr int32_t kNumPackedValues = 7;
-
-  static constexpr int32_t kWeightMask = 0x7;
-  static constexpr int32_t kLocalScaleMask = 0x1FFF;
-  static constexpr int32_t kBZP = 4;
-
-  static constexpr int N =
-      (TileColumns > NumThreads) ? (TileColumns / NumThreads) : 2;
-  static constexpr int RowStride =
-      (TileColumns > NumThreads) ? 1 : (NumThreads * N / TileColumns);
-  // using AccessType = cutlass::AlignedArray<ZippedT, ElementsPerAccess,
-  // (ElementsPerAccess * cutlass::sizeof_bits<ZippedT>::value / 8)>;
-
-  static_assert((TileRows > 0) && (TileRows % 64 == 0),
-                "TileRows must be a multiple of 64.");
-
-  __device__ inline Array<T, N> Compute(const Array<uint16_t, N> &zipped_values,
-                                        int32_t shift_bit,
-                                        const Array<ScaleComputeT, N> &scales) {
-    Array<T, N> values;
-#pragma unroll
-    for (int i = 0; i < N; ++i) {
-      int32_t shifted_value =
-          (static_cast<int32_t>(zipped_values[i]) >> shift_bit) &
-          WeightOnlyTraits::kWeightMask;
-      int32_t value = shifted_value - WeightOnlyTraits::kBZP;
-
-      ScaleComputeT scaled_value =
-          static_cast<ScaleComputeT>(value) * scales[i];
-      values[i] = static_cast<T>(scaled_value);
-    }
-    return values;
-  }
-
-  __device__ inline Array<ScaleComputeT, N>
-  ComputeScale(const uint16_t *group_in_ptr, const T *supper_scale_ptr,
-               const int begin_col_id, const int64_t in_stride) {
-    int zipped_offset_last = 9 * in_stride + begin_col_id;
-    Array<uint16_t, N> zipped_value_lasts =
-        *reinterpret_cast<const Array<uint16_t, N> *>(group_in_ptr +
-                                                      zipped_offset_last);
-
-    Array<T, N> super_scales =
-        *reinterpret_cast<const Array<T, N> *>(supper_scale_ptr + begin_col_id);
-
-    Array<ScaleComputeT, N> scales;
-#pragma unroll
-    for (int i = 0; i < N; ++i) {
-      int32_t zipped_value = static_cast<int32_t>(zipped_value_lasts[i]);
-
-      ScaleComputeT local_scale = static_cast<ScaleComputeT>(
-          zipped_value & WeightOnlyTraits::kLocalScaleMask);
-      scales[i] = local_scale * static_cast<ScaleComputeT>(super_scales[i]);
-    }
-    return scales;
-  }
-
-  __device__ inline void ApplySingleGroup(const uint16_t *group_in_ptr,
-                                          const T *supper_scale_ptr,
-                                          T *group_out_ptr,
-                                          const int64_t in_stride) {
-    int32_t shift_bits[7] = {13, 11, 9, 6, 4, 2, 0};
-
-    int tid = threadIdx.x;
-    int begin_col_id = (tid * N) % TileColumns;
-    int begin_row_id = (tid * N) / TileColumns;
-
-    Array<ScaleComputeT, N> scales =
-        ComputeScale(group_in_ptr, supper_scale_ptr, begin_col_id, in_stride);
-
-    int zipped_row = begin_row_id;
-
-#pragma unroll
-    for (; zipped_row < 9; zipped_row += RowStride) {
-      int zipped_offset = zipped_row * in_stride + begin_col_id;
-
-      Array<uint16_t, N> zipped_values =
-          *reinterpret_cast<const Array<uint16_t, N> *>(group_in_ptr +
-                                                        zipped_offset);
-
-      int row = zipped_row * 7;
-
-#pragma unroll
-      for (int shift_bit_id = 0; shift_bit_id < 7; ++shift_bit_id) {
-        int32_t shift_bit = shift_bits[shift_bit_id];
-        Array<T, N> values = Compute(zipped_values, shift_bit, scales);
-        Array<T, N> *tmp_out_ptr = reinterpret_cast<Array<T, N> *>(
-            group_out_ptr + (row + shift_bit_id) * TileColumns + begin_col_id);
-        *tmp_out_ptr = values;
-      }
-    }
-
-    if (zipped_row == 9) {
-      int zipped_offset = 9 * in_stride + begin_col_id;
-      Array<uint16_t, N> zipped_values =
-          *reinterpret_cast<const Array<uint16_t, N> *>(group_in_ptr +
-                                                        zipped_offset);
-      Array<T, N> values_last = Compute(zipped_values, shift_bits[0], scales);
-      Array<T, N> *tmp_out_ptr = reinterpret_cast<Array<T, N> *>(
-          group_out_ptr + 63 * TileColumns + begin_col_id);
-      *tmp_out_ptr = values_last;
-    }
-  }
-
-  __device__ void operator()(const uint16_t *in_ptr, const T *supper_scale_ptr,
-                             T *out_ptr, const int64_t in_stride) {
-    // if (blockIdx.x == 0 && threadIdx.x == 0) {
-    //   printf("N=%d\n", N);
-    // }
-
-#pragma unroll
-    for (int group_id = 0; group_id < TileRows / 64; ++group_id) {
-      const uint16_t *group_in_ptr = in_ptr + group_id * 10 * in_stride;
-      T *group_out_ptr = out_ptr + group_id * 64 * TileColumns;
-
-      ApplySingleGroup(group_in_ptr, supper_scale_ptr, group_out_ptr,
-                       in_stride);
-    }
-    __syncthreads();
-  }
-};
-
-#else
 
 template <typename T, int TileRows, int TileColumns, int NumThreads>
 struct UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt25, TileRows,
@@ -250,43 +112,101 @@ struct UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt2, TileRows,
   static constexpr int32_t kLocalScaleMask = 0xF;
   static constexpr int32_t kBZP = 32;
 
-  __device__ void operator()(const uint8_t *in_ptr,
-                             const uint8_t *local_scale_ptr,
-                             const float *code_scale_ptr,
-                             const float *code_zp_ptr, const T *super_scale_ptr,
-                             T *out_ptr, const int64_t block_start_row,
-                             const int64_t in_stride) {
-    int32_t shift_bits[4] = {9, 6, 3, 0};
+  static constexpr int32_t kSmemBytes =
+      (TileRows / 4 + (TileRows + 127) / 128 + 2 * sizeof(float) + sizeof(T)) *
+      TileColumns;
+
+  struct Arguments {
+    uint8_t *weight_ptr;
+    uint8_t *local_scale_ptr;
+    float *code_scale_ptr;
+    float *code_zp_ptr;
+    T *super_scale_ptr;
+
+    __device__ explicit Arguments(uint8_t *smem_ptr) {
+      weight_ptr = smem_ptr;
+      local_scale_ptr = smem_ptr + (TileRows / 4) * TileColumns;
+      code_scale_ptr = reinterpret_cast<float *>(
+          smem_ptr + (TileRows / 4 + (TileRows + 127) / 128) * TileColumns);
+      code_zp_ptr = reinterpret_cast<float *>(
+          smem_ptr + (TileRows / 4 + (TileRows + 127) / 128 + sizeof(float)) *
+                         TileColumns);
+      super_scale_ptr = reinterpret_cast<T *>(
+          smem_ptr +
+          (TileRows / 4 + (TileRows + 127) / 128 + 2 * sizeof(float)) *
+              TileColumns);
+    }
+  };
+
+  __device__ void Load(const uint8_t *g_weight_ptr,
+                       const uint8_t *g_local_scale_ptr,
+                       const float *g_code_scale_ptr,
+                       const float *g_code_zp_ptr, const T *g_super_scale_ptr,
+                       uint8_t *s_out_ptr, const int64_t in_stride) {
+    Arguments args(s_out_ptr);
 
     int tid = threadIdx.x;
 
 #pragma unroll
     for (int col = tid; col < TileColumns; col += NumThreads) {
-      ScaleComputeT super_scale =
-          super_scale_ptr ? static_cast<ScaleComputeT>(super_scale_ptr[col])
-                          : static_cast<ScaleComputeT>(1);
+      if (g_super_scale_ptr) {
+        args.super_scale_ptr[col] = g_super_scale_ptr[col];
+      } else {
+        args.super_scale_ptr[col] = static_cast<T>(1);
+      }
 
 #pragma unroll
       for (int group_id = 0; group_id < TileRows / 64; ++group_id) {
         int local_scale_offset = (group_id / 2) * in_stride + col;
-        int local_scale_shift =
-            ((block_start_row / kGroupSize + group_id) % 2) * 4;
+        args.local_scale_ptr[col] = g_local_scale_ptr[local_scale_offset];
+
+        args.code_scale_ptr[col] = g_code_scale_ptr[col];
+        args.code_zp_ptr[col] = g_code_zp_ptr[col];
+
+#pragma unroll
+        for (int zipped_row = 0; zipped_row < 16; ++zipped_row) {
+          int s_zipped_offset =
+              (group_id * 16 + zipped_row) * TileColumns + col;
+          int g_zipped_offset = (group_id * 16 + zipped_row) * in_stride + col;
+
+          args.weight_ptr[s_zipped_offset] = g_weight_ptr[g_zipped_offset];
+        }
+      }
+    }
+    __syncthreads();
+  }
+
+  __device__ void Compute(uint8_t *in_ptr, T *out_ptr,
+                          const int64_t block_start_row) {
+    int32_t shift_bits[4] = {9, 6, 3, 0};
+
+    int tid = threadIdx.x;
+    Arguments args(in_ptr);
+
+#pragma unroll
+    for (int col = tid; col < TileColumns; col += NumThreads) {
+      ScaleComputeT super_scale =
+          static_cast<ScaleComputeT>(args.super_scale_ptr[col]);
+      ScaleComputeT code_scale =
+          static_cast<ScaleComputeT>(args.code_scale_ptr[col]);
+      ScaleComputeT code_zp = static_cast<ScaleComputeT>(args.code_zp_ptr[col]);
+
+#pragma unroll
+      for (int group_id = 0; group_id < TileRows / 64; ++group_id) {
+        int local_scale_offset = (group_id / 2) * TileColumns + col;
+        int local_scale_shift = ((block_start_row / 64 + group_id) % 2) * 4;
         int32_t local_scale =
-            static_cast<int32_t>(local_scale_ptr[local_scale_offset]);
+            static_cast<int32_t>(args.local_scale_ptr[local_scale_offset]);
         int32_t shifted_local_scale =
             (local_scale >> local_scale_shift) & kLocalScaleMask;
         ScaleComputeT scale =
             static_cast<ScaleComputeT>(shifted_local_scale) * super_scale;
 
-        ScaleComputeT code_scale =
-            static_cast<ScaleComputeT>(code_scale_ptr[col]);
-        ScaleComputeT code_zp = static_cast<ScaleComputeT>(code_zp_ptr[col]);
-
 #pragma unroll
         for (int zipped_row = 0; zipped_row < 16; ++zipped_row) {
-          int zipped_offset = zipped_row * in_stride + col;
+          int zipped_offset = (group_id * 16 + zipped_row) * TileColumns + col;
           ScaleComputeT zipped_value =
-              static_cast<ScaleComputeT>(in_ptr[zipped_offset]);
+              static_cast<ScaleComputeT>(args.weight_ptr[zipped_offset]);
           int32_t decode_value =
               static_cast<int32_t>(floor(zipped_value * code_scale + code_zp +
                                          static_cast<ScaleComputeT>(0.5)));
@@ -309,8 +229,6 @@ struct UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt2, TileRows,
     __syncthreads();
   }
 };
-
-#endif
 
 template <typename T, int TileRows, int TileColumns, int NumThreads>
 __global__ void Wint25UnzipKernel(const uint16_t *zipped_weight_ptr,
@@ -357,10 +275,14 @@ Wint2UnzipKernel(const uint8_t *zipped_weight_ptr,
                  const float *code_zp_ptr, const T *super_scale_ptr,
                  T *weight_ptr, const int64_t batch, const int64_t num_rows,
                  const int64_t num_columns) {
+  using UnzipFunctor =
+      UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt2, TileRows,
+                             TileColumns, NumThreads>;
+
+  __shared__ uint8_t zipped_smem[UnzipFunctor::kSmemBytes];
   __shared__ T smem[TileRows * TileColumns];
 
   int64_t block_start_column = blockIdx.x * TileColumns;
-
   int64_t block_start_row = blockIdx.z * num_rows + blockIdx.y * TileRows;
 
   int64_t block_start_zipped_row = block_start_row / 4;
@@ -386,12 +308,11 @@ Wint2UnzipKernel(const uint8_t *zipped_weight_ptr,
           : nullptr;
 
   // unzip to shared memory
-  UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt2, TileRows,
-                         TileColumns, NumThreads>
-      unzip_functor;
-  unzip_functor(block_zipped_weight_ptr, block_local_scale_ptr,
-                block_code_scale_ptr, block_code_zp_ptr, block_super_scale_ptr,
-                smem, block_start_row, num_columns);
+  UnzipFunctor functor;
+  functor.Load(block_zipped_weight_ptr, block_local_scale_ptr,
+               block_code_scale_ptr, block_code_zp_ptr, block_super_scale_ptr,
+               zipped_smem, num_columns);
+  functor.Compute(zipped_smem, smem, block_start_row);
 
   // write back to global memory
   for (int row = 0; row < TileRows; ++row) {
