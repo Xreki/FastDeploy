@@ -32,7 +32,7 @@ from fastdeploy.config import FDConfig
 from fastdeploy.model_executor.layers.attention import Attention
 from fastdeploy.model_executor.layers.attention.base_attention_backend import (
     AttentionBackend, AttentionMetadata)
-from fastdeploy.worker.model_runner import ForwardMeta
+from fastdeploy.worker.V1.forward_meta import ForwardMeta
 
 
 @dataclass

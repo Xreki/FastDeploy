@@ -39,9 +39,9 @@ from fastdeploy.model_executor.models.ernie45t_vl.modeling_resampler import (
     ScatterOp, VariableResolutionResamplerModel)
 from fastdeploy.model_executor.models.utils import load_checkpoint
 from fastdeploy.platforms import current_platform
-from fastdeploy.worker.model_runner.forward_meta import ForwardMeta
-from fastdeploy.worker.model_runner.model_runner_base import ModelRunnerBase
-from fastdeploy.worker.utils import check_safetensors_model
+from fastdeploy.worker.model_runner_base import ModelRunnerBase
+from fastdeploy.worker.V1.forward_meta import ForwardMeta
+from fastdeploy.worker.V1.utils import check_safetensors_model
 
 if current_platform.is_cuda() and current_platform.available():
     from fastdeploy.model_executor.layers.utils import (
@@ -549,7 +549,8 @@ class ModelRunner(ModelRunnerBase):
                 resampler_model,
                 tensor_parallel_degree=self.tensor_parallel_degree,
                 tensor_parallel_rank=self.tensor_parallel_rank,
-                name="ernie.resampler_model." if is_ernie_begin else "resampler_model.",
+                name="ernie.resampler_model."
+                if is_ernie_begin else "resampler_model.",
             )
         return vision_model, resampler_model
 

@@ -108,20 +108,7 @@ class Worker:
         self.device_ids = self.args.device_ids.split(",")
         self.model_cfg = ModelConfig(args.model_name_or_path)
 
-        from fastdeploy.model_executor.models import \
-            inference_runner_supported_models
-
-        if any(
-                self.model_cfg.architectures.startswith(model)
-                for model in inference_runner_supported_models):
-            from fastdeploy.worker.model_runner.model_runner_inference import \
-                ModelRunner
-        elif self.model_cfg.architectures.startswith("ErnieMoEVLForCausalLM"):
-            from fastdeploy.worker.model_runner.model_runner_vl_inference import \
-                ModelRunner
-        else:
-            from fastdeploy.worker.model_runner.model_runner_paddlenlp import \
-                ModelRunner
+        from fastdeploy.worker.model_runner_vl_inference import ModelRunner
 
         self.init_dist_env()
         self.format_print_configuration()

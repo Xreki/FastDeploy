@@ -51,7 +51,6 @@ class ModelRunnerBase(ABC):
         self.init_rotary_position_embedding(args.max_model_len)
         self.num_gpu_blocks = args.total_block_num
 
-
         self._load_model(config.model_name_or_path, args.dynamic_load_weight)
 
     def _log_memory_usage(self, context: str = "") -> None:
@@ -148,35 +147,64 @@ class ModelRunnerBase(ABC):
             paddle.full([max_num_seqs, 1], self.presence_score,
                         **float32_config),
             # TODO 名称统一
-            "min_dec_len": paddle.full([max_num_seqs, 1], self.min_length, **int64_config),
-            "max_dec_len": paddle.full([max_num_seqs, 1], self.max_length, **int64_config),
-            "min_length": paddle.full([max_num_seqs, 1], self.min_length, **int64_config),
-            "max_length": paddle.full([max_num_seqs, 1], self.max_length, **int64_config),
-            "seq_lens_this_time": paddle.full(max_num_seqs, 0, **int32_config),
-            "seq_lens_encoder": paddle.full([max_num_seqs, 1], 0, **int32_config),
-            "step_seq_lens_encoder": paddle.full([max_num_seqs, 1], 0, **int32_config),
-            "step_seq_lens_decoder": paddle.full([max_num_seqs, 1], 0, **int32_config),
-            "seq_lens_decoder": paddle.full([max_num_seqs, 1], 0, **int32_config),
-            "step_idx": paddle.full([max_num_seqs, 1], 0, **int64_config),
-            "not_need_stop": paddle.full([1], False, **bool_config).cpu(),
-            "stop_flags": paddle.full([max_num_seqs, 1], True, **bool_config),
-            "stop_nums": paddle.full([1], max_num_seqs, **int64_config),
-            "bad_tokens": paddle.full([1], -1, **int64_config),
-            "next_tokens": paddle.full([max_num_seqs, 1], -1, **int64_config),
-            "is_block_step": paddle.full([max_num_seqs], False, **bool_config),
-            "encoder_block_lens": paddle.full([max_num_seqs], 0, **int32_config),
-            "step_block_list": paddle.full([max_num_seqs], -1, **int32_config),
-            "step_lens": paddle.full([1], 0, **int32_config),
-            "recover_block_list": paddle.full([max_num_seqs], -1, **int32_config),
-            "recover_lens": paddle.full([1], 0, **int32_config),
-            "need_block_list": paddle.full([max_num_seqs], -1, **int32_config),
-            "need_block_len": paddle.full([1], 0, **int32_config),
-            "used_list_len": paddle.full([max_num_seqs], 0, **int32_config),
-            "infer_seed": paddle.full([max_num_seqs, 1], 0, **int64_config),
-            "first_token_ids": paddle.full([max_num_seqs, 1], -1, **int64_config),
-            "ori_seq_lens_encoder": paddle.full([max_num_seqs, 1], 0, **int32_config),
-            "system_lens": paddle.full([max_num_seqs, 1], 0, **int32_config),
-            "system_ids": paddle.full([max_num_seqs, 1], -1, **int32_config),
+            "min_dec_len":
+            paddle.full([max_num_seqs, 1], self.min_length, **int64_config),
+            "max_dec_len":
+            paddle.full([max_num_seqs, 1], self.max_length, **int64_config),
+            "min_length":
+            paddle.full([max_num_seqs, 1], self.min_length, **int64_config),
+            "max_length":
+            paddle.full([max_num_seqs, 1], self.max_length, **int64_config),
+            "seq_lens_this_time":
+            paddle.full(max_num_seqs, 0, **int32_config),
+            "seq_lens_encoder":
+            paddle.full([max_num_seqs, 1], 0, **int32_config),
+            "step_seq_lens_encoder":
+            paddle.full([max_num_seqs, 1], 0, **int32_config),
+            "step_seq_lens_decoder":
+            paddle.full([max_num_seqs, 1], 0, **int32_config),
+            "seq_lens_decoder":
+            paddle.full([max_num_seqs, 1], 0, **int32_config),
+            "step_idx":
+            paddle.full([max_num_seqs, 1], 0, **int64_config),
+            "not_need_stop":
+            paddle.full([1], False, **bool_config).cpu(),
+            "stop_flags":
+            paddle.full([max_num_seqs, 1], True, **bool_config),
+            "stop_nums":
+            paddle.full([1], max_num_seqs, **int64_config),
+            "bad_tokens":
+            paddle.full([1], -1, **int64_config),
+            "next_tokens":
+            paddle.full([max_num_seqs, 1], -1, **int64_config),
+            "is_block_step":
+            paddle.full([max_num_seqs], False, **bool_config),
+            "encoder_block_lens":
+            paddle.full([max_num_seqs], 0, **int32_config),
+            "step_block_list":
+            paddle.full([max_num_seqs], -1, **int32_config),
+            "step_lens":
+            paddle.full([1], 0, **int32_config),
+            "recover_block_list":
+            paddle.full([max_num_seqs], -1, **int32_config),
+            "recover_lens":
+            paddle.full([1], 0, **int32_config),
+            "need_block_list":
+            paddle.full([max_num_seqs], -1, **int32_config),
+            "need_block_len":
+            paddle.full([1], 0, **int32_config),
+            "used_list_len":
+            paddle.full([max_num_seqs], 0, **int32_config),
+            "infer_seed":
+            paddle.full([max_num_seqs, 1], 0, **int64_config),
+            "first_token_ids":
+            paddle.full([max_num_seqs, 1], -1, **int64_config),
+            "ori_seq_lens_encoder":
+            paddle.full([max_num_seqs, 1], 0, **int32_config),
+            "system_lens":
+            paddle.full([max_num_seqs, 1], 0, **int32_config),
+            "system_ids":
+            paddle.full([max_num_seqs, 1], -1, **int32_config),
         })
 
         # 计算block tables相关参数
@@ -188,8 +216,10 @@ class ModelRunnerBase(ABC):
 
         # 初始化free list
         free_list = list(
-            range(self.args.total_block_num - 1, int(self.args.total_block_num * self.args.kv_cache_ratio) - 1, -1)
-        )
+            range(
+                self.args.total_block_num - 1,
+                int(self.args.total_block_num * self.args.kv_cache_ratio) - 1,
+                -1))
         self.free_list_len = len(free_list)
         self.share_inputs.update({
             "free_list":
@@ -208,16 +238,17 @@ class ModelRunnerBase(ABC):
                 self.model_cfg.stop_seqs_max_len
             ], -1, **int64_config),
         })
-    
+
     def update_chunked_prefill(self, tasks):
         """
         更新chunked prefill相关参数
         """
         if not self.args.enable_chunked_prefill:
             return
-        
-        raise NotImplementedError("currently chunked_prefill is not supported.")
-    
+
+        raise NotImplementedError(
+            "currently chunked_prefill is not supported.")
+
     def prefill_finished(self):
         """
         判断是否已经完成了prefill操作

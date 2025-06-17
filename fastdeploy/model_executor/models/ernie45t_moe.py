@@ -35,7 +35,7 @@ from fastdeploy.model_executor.layers.lm_head import ParallelLMHead
 from fastdeploy.model_executor.layers.moe.moe import FusedMoE
 from fastdeploy.model_executor.layers.normalization import RMSNorm
 from fastdeploy.model_executor.models.model_base import ModelForCasualLM
-from fastdeploy.worker.model_runner import ForwardMeta
+from fastdeploy.worker.V1.forward_meta import ForwardMeta
 
 
 class ErniePretrainedModel(PretrainedModel):

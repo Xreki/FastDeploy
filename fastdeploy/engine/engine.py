@@ -836,10 +836,9 @@ class LLMEngine(object):
         pd_cmd = f"{command_prefix} {sys.executable} {uncache_worker_stdout} -m paddle.distributed.launch"
         pd_cmd = pd_cmd + f" --log_dir {log_dir}"
 
-        # TODO(liuyuanle): vl model use v1 worker
-        use_worker_v1 = (os.getenv("USE_WORKER_V1", default="1") == "1")
         worker_path = "../worker/V1/worker_process.py"
-        if self.cfg.enable_mm or not use_worker_v1:
+        # TODO(liuyuanle): vl model use v1 worker
+        if self.cfg.enable_mm:
             worker_path = "../worker/worker.py"
         py_script = os.path.join(current_dir_path, worker_path)
         arguments = (
