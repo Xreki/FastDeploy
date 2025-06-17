@@ -14,9 +14,15 @@
 # limitations under the License.
 """
 
-import paddle
 from typing import Optional
+
+import paddle
+
 from fastdeploy.platforms import current_platform
+
+if current_platform.is_cuda():
+    from fastdeploy.model_executor.ops.gpu import \
+        append_attention as append_attention_gpu
 
 
 def append_attention(
@@ -74,8 +80,7 @@ def append_attention(
     Returns:
     """
     if current_platform.is_cuda():
-        from fastdeploy.model_executor.ops.gpu import append_attention
-        out = append_attention(
+        out = append_attention_gpu(
             qkv,
             key_cache,
             value_cache,
