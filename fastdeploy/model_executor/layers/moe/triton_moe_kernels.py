@@ -126,7 +126,8 @@ def fused_moe_kernel_paddle(
             offs_bsn = offs_bn // group_n
             b_scale_ptrs = b_scale_ptr + off_experts * stride_bse + offs_bsn * stride_bsn
         else:
-            a_scale = tl.load(a_scale_ptr)
+            # (Zkk): every expert has one activation scale and weight scale.
+            a_scale = tl.load(a_scale_ptr + off_experts)
             b_scale = tl.load(b_scale_ptr + off_experts)
 
     accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
