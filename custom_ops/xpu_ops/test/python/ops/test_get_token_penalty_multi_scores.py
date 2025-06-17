@@ -15,7 +15,7 @@
 import numpy as np
 import paddle
 
-from fastdeploy.model_executor.ops.gpu import get_token_penalty_multi_scores
+from fastdeploy.model_executor.ops.xpu import get_token_penalty_multi_scores
 
 paddle.seed(2023)
 

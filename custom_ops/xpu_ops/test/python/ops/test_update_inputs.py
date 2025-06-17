@@ -15,7 +15,7 @@
 import numpy as np
 import paddle
 
-from fastdeploy.model_executor.ops.gpu import update_inputs
+from fastdeploy.model_executor.ops.xpu import update_inputs
 
 np.random.seed(2023)
 

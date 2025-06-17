@@ -14,7 +14,7 @@
 
 import paddle
 
-from fastdeploy.model_executor.ops.gpu import get_token_penalty
+from fastdeploy.model_executor.ops.xpu import get_token_penalty
 
 paddle.seed(2023)
 

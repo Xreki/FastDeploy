@@ -15,7 +15,7 @@
 import numpy as np
 import paddle
 
-from fastdeploy.model_executor.ops.gpu import set_value_by_flags_and_idx
+from fastdeploy.model_executor.ops.xpu import set_value_by_flags_and_idx
 
 paddle.seed(2023)
 
