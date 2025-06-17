@@ -1,3 +1,4 @@
+
 """
 # Copyright (c) 2025  PaddlePaddle Authors. All Rights Reserved.
 #
@@ -195,6 +196,9 @@ class CacheConfig:
         model_cfg=None,
         cache_queue_port=None,
         enable_chunked_prefill=False,
+        rdma_comm_ports=None,
+        cache_transfer_protocol=None,
+        pd_comm_port=None,
     ):
         """
         Initialize the CacheConfig class.
@@ -219,6 +223,9 @@ class CacheConfig:
             self.cache_dtype = model_cfg.cache_quant_type
 
         self.enable_chunked_prefill = enable_chunked_prefill
+        self.rdma_comm_ports = rdma_comm_ports
+        self.cache_transfer_protocol = cache_transfer_protocol
+        self.pd_comm_port = pd_comm_port
 
         self.enable_prefix_caching = enable_prefix_caching
         if cpu_offload_gb is None:
@@ -418,7 +425,7 @@ class SpeculativeConfig:
             key: value
             for key, value in self.__dict__.items() if value is not None
         })
-
+    
     def print(self):
         """
         print all config
@@ -429,6 +436,49 @@ class SpeculativeConfig:
             llm_logger.info("{:<20}:{:<6}{}".format(k, "", v))
         llm_logger.info(
             "=============================================================")
+
+
+class ParallelConfig:
+    """
+    Configuration for parallelism.
+
+    Attributes:
+        tensor_parallel_size (int): Size of tensor parallelism.
+        data_parallel_size (int): Size of data parallelism.
+        local_data_parallel_id (int): ID of local data parallel.
+        enable_expert_parallel (bool): Whether to enable expert parallel.
+    """
+
+    def __init__(
+        self,
+        tensor_parallel_size: int = 1,
+        data_parallel_size: int = 1,
+        enable_expert_parallel: bool = False,
+    ):
+        """
+        Initialize the ParallelConfig class.
+
+        Args:
+            tensor_parallel_size (int): Size of tensor parallelism.
+            data_parallel_size (int): Size of data parallelism.
+            local_data_parallel_id (int): ID of local data parallel.
+            enable_expert_parallel (bool): Whether to enable expert parallel.
+        """
+        self.tensor_parallel_size = tensor_parallel_size
+        self.data_parallel_size = data_parallel_size
+        self.enable_expert_parallel = enable_expert_parallel
+        self.expert_parallel_size = data_parallel_size
+        self.local_data_parallel_id = 0
+
+    def print(self):
+        """
+        print all config
+
+        """
+        llm_logger.info("Parallel Configuration Information :")
+        for k, v in self.__dict__.items():
+            llm_logger.info("{:<20}:{:<6}{}".format(k, "", v))
+        llm_logger.info("==================")
 
 
 class Config:
@@ -442,7 +492,6 @@ class Config:
         tokenizer (Optional[str]): Default is the model.
         max_num_batched_tokens (Optional[int]): Maximum number of batched tokens.
         tensor_parallel_size (int): Tensor parallel size.
-        expert_parallel_size (int): Expert parallel size.
         nnode (int): Number of nodes.
         max_model_len (int): Maximum model length. Default is 8192.
         max_num_seqs (int): Maximum number of sequences. Default is 8.
@@ -461,10 +510,10 @@ class Config:
         model_config: ModelConfig,
         cache_config: CacheConfig,
         scheduler_config: SchedulerConfig,
+        parallel_config: ParallelConfig,
         model_name_or_path: str = None,
         tokenizer: str = None,
         tensor_parallel_size: int = 8,
-        expert_parallel_size: int = 1,
         nnode: int = 1,
         max_model_len: int = 8192,
         max_num_seqs: int = 8,
@@ -488,11 +537,11 @@ class Config:
         Args:
             model_config (ModelConfig): Model configuration object.
             cache_config (CacheConfig): Cache configuration object.
+            parallel_config (ParallelConfig): Parallel configuration object.
             scheduler_config (SchedulerConfig): Scheduler configuration object.
             model_name_or_path (str): Model directory path or model name.
             tokenizer (str): Default is the model.
             tensor_parallel_size (int): Tensor parallel size. Default is 8.
-            expert_parallel_size (int): Expert parallel size. Default is 1.
             nnode (int): Number of nodes. Default is 1.
             max_model_len (int): Maximum model length. Default is 8192.
             max_num_seqs (int): Maximum number of sequences. Default is 8.
@@ -509,11 +558,11 @@ class Config:
         self.model_config = model_config
         self.cache_config = cache_config
         self.scheduler_config = scheduler_config
+        self.parallel_config = parallel_config
         self.model_name_or_path = model_name_or_path
         self.tokenizer = tokenizer
         self.max_num_batched_tokens = max_num_batched_tokens
         self.tensor_parallel_size = tensor_parallel_size
-        self.expert_parallel_size = expert_parallel_size
         self.nnode = nnode
         self.pod_ips = pod_ips
         self.max_model_len = max_model_len
@@ -531,22 +580,18 @@ class Config:
 
         assert self.splitwise_role in ["mixed", "prefill", "decode"]
 
-        # TODO: Temporary configuration, will be removed in the future.
-        if innode_prefill_ports is None:
-            assert self.splitwise_role in ["mixed", "prefill"], \
-                " `innode_prefill_ports` can only support in decode mode"
         # TODO
         self.max_prefill_batch = 3
         if enable_mm:
             self.max_prefill_batch = 1  # TODO:当前多模prefill阶段只支持并行度为1,待优化
 
         # TODO(@wufeisheng): TP and EP need to be supported simultaneously.
-        assert (self.tensor_parallel_size == 1 and self.expert_parallel_size
+        assert (self.tensor_parallel_size == 1 and self.parallel_config.expert_parallel_size
                 >= 1) or (self.tensor_parallel_size >= 1
-                          and self.expert_parallel_size
+                          and self.parallel_config.expert_parallel_size
                           == 1), "TP and EP cannot be enabled at the same time"
 
-        num_ranks = self.tensor_parallel_size * self.expert_parallel_size
+        num_ranks = self.tensor_parallel_size * self.parallel_config.expert_parallel_size
         if num_ranks > 8:
             local_num_ranks = 8
             self.nnode = ceil_div(num_ranks, local_num_ranks)
@@ -554,8 +599,11 @@ class Config:
             local_num_ranks = num_ranks
 
         self.engine_worker_queue_port = engine_worker_queue_port
-        self.device_ids = ",".join([str(i) for i in range(local_num_ranks)])
+        self.device_ids = ",".join([str(i) for i in range(min((self.tensor_parallel_size * \
+                                        self.parallel_config.expert_parallel_size), 8))])
         self.device_ids = os.getenv("CUDA_VISIBLE_DEVICES", self.device_ids)
+
+
 
         self.read_from_config()
         self.postprocess()
@@ -566,9 +614,13 @@ class Config:
         """
         calculate some parameters
         """
-        assert self.tensor_parallel_size % self.nnode == 0, (
-            f"tensor_parallel_size: {self.tensor_parallel_size} should be divisible by nnode: {self.nnode}"
-        )
+        total_rank = self.tensor_parallel_size * self.parallel_config.expert_parallel_size
+        assert self.device_ids.split(',').__len__() == min(total_rank, 8), \
+        f"invalid CUDA_VISIBLE_DEVICES, should be equal to {min(total_rank, 8)}"
+        self.local_device_ids = self.device_ids.split(
+            ',')[:self.tensor_parallel_size]
+        assert self.tensor_parallel_size % self.nnode == 0, \
+        f"tensor_parallel_size: {self.tensor_parallel_size} should be divisible by nnode: {self.nnode}"
         self.tp_num_per_node = self.tensor_parallel_size // self.nnode
         self.host_ip = get_host_ip()
 
@@ -656,7 +708,7 @@ class Config:
             if k == "generation_config" and v is not None:
                 for gck, gcv in v.to_dict().items():
                     llm_logger.info("{:<20}:{:<6}{}".format(gck, "", gcv))
-            elif k == "cache_config" or k == "model_config" or k == "scheduler_config":
+            elif k == "cache_config" or k == "model_config" or k == "scheduler_config" or k == "parallel_config":
                 v.print()
             else:
                 llm_logger.info("{:<20}:{:<6}{}".format(k, "", v))
@@ -669,6 +721,33 @@ class Config:
             for k, v in self.__dict__.items():
                 f.write("{:<20}:{:<6}{}\n".format(k, "", v))
             f.close()
+
+    def init_cache_info(self):
+        """
+        initialize cache info
+        """
+        disaggregate_info = {}
+        if self.splitwise_role != "mixed":
+            disaggregate_info["role"] = self.splitwise_role
+            disaggregate_info["cache_info"] = dict()
+            current_protocol = self.cache_config.cache_transfer_protocol.split(
+                ",")
+            disaggregate_info["transfer_protocol"] = current_protocol
+            for protocol in current_protocol:
+                if protocol == "ipc":
+                    disaggregate_info["cache_info"][protocol] = {
+                        "ip": self.host_ip,
+                        "port": self.engine_worker_queue_port,
+                        "device_ids": self.local_device_ids
+                    }
+                elif protocol == "rdma":
+                    disaggregate_info["cache_info"][protocol] = {
+                        "ip": self.host_ip,
+                        "port": self.cache_config.pd_comm_port[0],
+                        "rdma_port": self.cache_config.rdma_comm_ports,
+                    }
+        self.disaggregate_info = disaggregate_info
+        llm_logger.info(f"disaggregate_info: {self.disaggregate_info}")
 
     def read_from_config(self):
         """

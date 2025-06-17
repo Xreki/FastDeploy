@@ -102,6 +102,9 @@ class GPUModelRunner(ModelRunnerBase):
         # Forward meta store the global meta information of the forward
         self.forward_meta: ForwardMeta = None
 
+        # Postprocess Env params
+        os.environ["INFERENCE_MSG_QUEUE_ID"] = str(self.local_rank + int(self.parallel_config.engine_worker_queue_port))
+    
     def prefill_finished(self):
         """
         check whether prefill stage finished
@@ -110,6 +113,7 @@ class GPUModelRunner(ModelRunnerBase):
             return 1
         else:
             return 0
+
 
     def insert_prefill_inputs(self, req_dicts: List[Request]):
         """
@@ -565,6 +569,7 @@ class GPUModelRunner(ModelRunnerBase):
         # Get kv cache shape
         kv_cache_shape = self.attn_backends[0].get_kv_cache_shape(
             max_num_blocks=max_block_num)
+        local_rank = self.local_rank % self.parallel_config.tensor_parallel_degree
 
         if not self.parallel_config.do_profile and (
                 self.parallel_config.enable_prefix_caching \
@@ -572,8 +577,8 @@ class GPUModelRunner(ModelRunnerBase):
             cache_kvs_list = []
             for i in range(self.model_config.num_layers):
                 key_cache = paddle.empty(shape=[], dtype=cache_type)
-                key_cache_name = f"key_caches_{i}_rank{self.local_rank}.device{self.device_id}"
-                val_cache_name = f"value_caches_{i}_rank{self.local_rank}.device{self.device_id}"
+                key_cache_name = f"key_caches_{i}_rank{local_rank}.device{self.device_id}"
+                val_cache_name = f"value_caches_{i}_rank{local_rank}.device{self.device_id}"
                 key_cache = share_external_data(key_cache, key_cache_name,
                                                 kv_cache_shape)
                 cache_kvs_list.append(key_cache)
@@ -744,7 +749,7 @@ class GPUModelRunner(ModelRunnerBase):
 
             if int((self.share_inputs['seq_lens_this_time'] > 0).sum()) == 0:
                 break
-
+    
     def _update_chunked_prefill(self, tasks):
         """
         更新chunked prefill相关参数
@@ -914,6 +919,7 @@ class GPUModelRunner(ModelRunnerBase):
 
         post_process(sampled_token_ids=sampled_token_ids,
                      model_output=model_output_data,
+                     save_each_rank=self.parallel_config.use_ep,
                      speculative_decoding=self.speculative_decoding)
 
         # 6. Speculative decode
@@ -931,6 +937,7 @@ class GPUModelRunner(ModelRunnerBase):
         )
 
         self._update_chunked_prefill(model_forward_batch)
+
         return None
 
     def _execute_empty_input(self) -> None:
@@ -964,9 +971,9 @@ class GPUModelRunner(ModelRunnerBase):
         if self.forward_meta is not None:
             del self.forward_meta.caches
         del self.share_inputs["block_tables"]
-        # # paddle.device.cuda.synchronize()
-        # paddle.device.cuda.empty_cache()
-        # gc.collect()
+        # paddle.device.cuda.synchronize()
+
+
 
     def update_share_input_block_num(self, num_gpu_blocks: int) -> None:
         """

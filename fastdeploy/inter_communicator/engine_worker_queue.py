@@ -14,16 +14,17 @@
 # limitations under the License.
 """
 
-import os
-import time
-from queue import Queue
-from typing import Any, List, Tuple
 import threading
+import time
 from multiprocessing.managers import (AcquirerProxy, BaseManager, ListProxy,
                                       Value, ValueProxy)
+from queue import Queue
+from typing import Any, List, Tuple
+
 import numpy as np
 
 from fastdeploy.utils import llm_logger
+
 
 class EngineWorkerQueue:
     """
@@ -31,12 +32,16 @@ class EngineWorkerQueue:
     Manages shared resources using multiprocessing managers for inter-process communication.
     """
 
-    def __init__(self,
-                 address: Tuple[str, int] = ('0.0.0.0', 5000),
-                 authkey: bytes = b'secret_key',
-                 is_server: bool = False,
-                 num_client: int = 1,
-                 client_id: int = -1) -> None:
+    def __init__(
+            self,
+            address: Tuple[str, int] = ('0.0.0.0', 5000),
+            authkey: bytes = b'secret_key',
+            is_server: bool = False,
+            num_client: int = 1,  # tensor parallel size
+            client_id: int = -1,  # tensor parallel id
+            local_data_parallel_size: int = 1,  # data parallel size
+            local_data_parallel_id: int = 0,  # local data parallel id
+    ) -> None:
         """
         Initialize the communication queue.
 
@@ -49,9 +54,11 @@ class EngineWorkerQueue:
         """
         self.address: Tuple[str, int] = address
         self.authkey: bytes = authkey
+        self.is_server: bool = is_server
         self.num_client: int = num_client
         self.client_id: int = client_id
-
+        self.local_data_parallel_size = local_data_parallel_size
+        self.local_data_parallel_id = local_data_parallel_id
 
         class QueueManager(BaseManager):
             """
@@ -61,56 +68,86 @@ class EngineWorkerQueue:
 
         if is_server:
             # Server-side initialization for shared resources
-            self.tasks_init: List[Any] = list()
-            self.client_read_flag_init: List[int] = [1] * self.num_client
-            self.lock_init: threading.Lock = threading.Lock()
-            self.read_finish_flag_init: Value = Value("i", 0)
-            self.connected_client_counter_init: Value = Value("i", 0)
-            self.finish_request_barrier = threading.Barrier(self.num_client)
-            self.finished_req_queue = Queue()
-            self.cache_infos_init: List[Any] = list()
-            self.client_read_info_flag_init: List[int] = [1] * self.num_client
-            self.lock_info_init: threading.Lock = threading.Lock()
+            self.tasks_init: List[List[Any]] = [
+                list() for _ in range(self.local_data_parallel_size)
+            ]
+            self.client_read_flag_init: List[List[int]] = [
+                [1] * self.num_client
+                for _ in range(self.local_data_parallel_size)
+            ]
+            self.lock_init: List[threading.Lock] = [
+                threading.Lock() for _ in range(self.local_data_parallel_size)
+            ]
+            self.read_finish_flag_init: List[Value] = [
+                Value("i", 0) for _ in range(self.local_data_parallel_size)
+            ]
+            self.connected_client_counter_init: List[Value] = [
+                Value("i", 0) for _ in range(self.local_data_parallel_size)
+            ]
+            self.finished_req_queue = [
+                Queue() for _ in range(self.local_data_parallel_size)
+            ]
+            self.cache_infos_init: List[List[Any]] = [
+                list() for _ in range(self.local_data_parallel_size)
+            ]
+            self.client_read_info_flag_init: List[List[int]] = [
+                [1] * self.num_client
+                for _ in range(self.local_data_parallel_size)
+            ]
+            self.lock_info_init: List[threading.Lock] = [
+                threading.Lock() for _ in range(self.local_data_parallel_size)
+            ]
 
             # Register shared objects with proxy types
             QueueManager.register("get_tasks",
-                                  callable=lambda: self.tasks_init,
+                                  callable=lambda idx: self.tasks_init[idx],
                                   proxytype=ListProxy)
-            QueueManager.register("get_client_read_flag",
-                                  callable=lambda: self.client_read_flag_init,
-                                  proxytype=ListProxy)
+            QueueManager.register(
+                "get_client_read_flag",
+                callable=lambda idx: self.client_read_flag_init[idx],
+                proxytype=ListProxy)
             QueueManager.register("get_lock",
-                                  callable=lambda: self.lock_init,
+                                  callable=lambda idx: self.lock_init[idx],
                                   proxytype=AcquirerProxy)
-            QueueManager.register("get_read_finish_flag",
-                                  callable=lambda: self.read_finish_flag_init,
-                                  proxytype=ValueProxy)
+            QueueManager.register(
+                "get_read_finish_flag",
+                callable=lambda idx: self.read_finish_flag_init[idx],
+                proxytype=ValueProxy)
             QueueManager.register(
                 "get_connected_client_counter",
-                callable=lambda: self.connected_client_counter_init,
+                callable=lambda idx: self.connected_client_counter_init[idx],
                 proxytype=ValueProxy)
 
-            QueueManager.register('get_finish_request_barrier', callable=lambda: self.finish_request_barrier)
-            QueueManager.register('get_finish_request_queue', callable=lambda: self.finished_req_queue)
+            QueueManager.register(
+                'get_finish_request_queue',
+                callable=lambda idx: self.finished_req_queue[idx])
 
-            QueueManager.register("get_cache_infos",
-                                  callable=lambda: self.cache_infos_init,
-                                  proxytype=ListProxy)
+            QueueManager.register(
+                "get_cache_infos",
+                callable=lambda idx: self.cache_infos_init[idx],
+                proxytype=ListProxy)
 
-            QueueManager.register("get_client_read_info_flag",
-                                  callable=lambda: self.client_read_info_flag_init,
-                                  proxytype=ListProxy)
-            QueueManager.register("get_lock_info",
-                                  callable=lambda: self.lock_info_init,
-                                  proxytype=AcquirerProxy)
+            QueueManager.register(
+                "get_client_read_info_flag",
+                callable=lambda idx: self.client_read_info_flag_init[idx],
+                proxytype=ListProxy)
+            QueueManager.register(
+                "get_lock_info",
+                callable=lambda idx: self.lock_info_init[idx],
+                proxytype=AcquirerProxy)
 
-            self.disaggregate_requests = Queue()
-            QueueManager.register("get_disaggregate_requests", callable=lambda: self.disaggregate_requests)
-
+            self.disaggregate_requests = [
+                Queue() for _ in range(self.local_data_parallel_size)
+            ]
+            QueueManager.register(
+                "get_disaggregate_requests",
+                callable=lambda idx: self.disaggregate_requests[idx])
 
             self.available_prefill_instances = Queue()
-            QueueManager.register("get_available_prefill_instances", callable=lambda: self.available_prefill_instances)
-            
+            QueueManager.register(
+                "get_available_prefill_instances",
+                callable=lambda: self.available_prefill_instances)
+ 
 
             self.manager: BaseManager = QueueManager(address=self.address,
                                                      authkey=self.authkey)
@@ -125,7 +162,6 @@ class EngineWorkerQueue:
             QueueManager.register("get_lock")
             QueueManager.register("get_read_finish_flag")
             QueueManager.register("get_connected_client_counter")
-            QueueManager.register("get_finish_request_barrier")
             QueueManager.register("get_finish_request_queue")
             QueueManager.register("get_cache_infos")
             QueueManager.register("get_client_read_info_flag")
@@ -136,27 +172,35 @@ class EngineWorkerQueue:
                                         authkey=self.authkey)
             self._connect_with_retry()
 
-        # Get proxy objects for shared resources
-        self.tasks: ListProxy = self.manager.get_tasks()
-        self.client_read_flag: ListProxy = self.manager.get_client_read_flag()
-        self.lock: AcquirerProxy = self.manager.get_lock()
-        self.read_finish_flag: ValueProxy = self.manager.get_read_finish_flag()
-        self.connected_client_counter: ValueProxy = self.manager.get_connected_client_counter()
-        self.cache_infos: ListProxy = self.manager.get_cache_infos()
-        self.client_read_info_flag: ListProxy = self.manager.get_client_read_info_flag()
-        self.lock_info: AcquirerProxy = self.manager.get_lock_info()
+            # Get proxy objects for shared resources
+            self.tasks: ListProxy = self.manager.get_tasks(
+                self.local_data_parallel_id)
+            self.client_read_flag: ListProxy = self.manager.get_client_read_flag(
+                self.local_data_parallel_id)
+            self.lock: AcquirerProxy = self.manager.get_lock(
+                self.local_data_parallel_id)
+            self.read_finish_flag: ValueProxy = self.manager.get_read_finish_flag(
+                self.local_data_parallel_id)
+            self.connected_client_counter: ValueProxy = \
+                self.manager.get_connected_client_counter(self.local_data_parallel_id)
+            self.cache_infos: ListProxy = self.manager.get_cache_infos(
+                self.local_data_parallel_id)
+            self.client_read_info_flag: ListProxy = self.manager.get_client_read_info_flag(
+                self.local_data_parallel_id)
+            self.lock_info: AcquirerProxy = self.manager.get_lock_info(
+                self.local_data_parallel_id)
 
-        # p/d 分离获取
-        self.disaggregate_requests = self.manager.get_disaggregate_requests()
-        self.available_prefill_instances = self.manager.get_available_prefill_instances()
+            # p/d 分离获取
+            self.disaggregate_requests = self.manager.get_disaggregate_requests(
+                self.local_data_parallel_id)
+            self.available_prefill_instances = self.manager.get_available_prefill_instances()
 
-
-        self.finish_request_barrier = self.manager.get_finish_request_barrier()
-        self.finished_req_queue = self.manager.get_finish_request_queue()
-        assert self.num_client == len(self.client_read_flag)
+            self.finished_req_queue = self.manager.get_finish_request_queue(
+                self.local_data_parallel_id)
+            assert self.num_client == len(self.client_read_flag)
 
         if is_server:
-            llm_logger.info(f"EngineWorkerQueue server started.")
+            llm_logger.info("EngineWorkerQueue server started.")
         else:
             # Update client connection counter
             self.lock.acquire()
@@ -238,6 +282,16 @@ class EngineWorkerQueue:
         self.lock.release()
         return total_num
     
+    def get_prefill_instances(self):
+        """
+        check if the prefill queue is empty
+        """
+        if self.available_prefill_instances.qsize() == 0:
+            return 0
+        else:
+            return self.available_prefill_instances.get()
+
+
     def put_cache_info(self, cache_info) -> None:
         """
         Args:
@@ -253,17 +307,10 @@ class EngineWorkerQueue:
         self.client_read_info_flag[:] = [0] * self.num_client
 
         self.cache_infos.extend(cache_info)
-        llm_logger.info(f"cache_infos: {self.cache_infos}")
+        llm_logger.debug(
+            f"cache_infos: {self.cache_infos}  local_data_parallel_id:{self.local_data_parallel_id}"
+        )
         self.lock_info.release()
-
-    def get_prefill_instances(self):
-        """
-        check if the prefill queue is empty
-        """
-        if self.available_prefill_instances.qsize() == 0:
-            return 0
-        else:
-            return self.available_prefill_instances.get()
 
     def get_cache_info(self) -> List[Any]:
         """
@@ -272,6 +319,7 @@ class EngineWorkerQueue:
         Returns:
             tuple: (list of tasks, bool indicating if all clients have read)
         """
+        # llm_logger.info(f"get cache info: {self.local_data_parallel_id}")
         cache_infos: List[Any] = list()
         self.lock_info.acquire()
         if self.client_read_info_flag[self.client_id] == 1:
@@ -284,9 +332,11 @@ class EngineWorkerQueue:
         if all_client_read:
             self.cache_infos[:] = list()
         self.lock_info.release()
+        if len(cache_infos) != 0:
+            llm_logger.debug(
+                f"get cache infos: {cache_infos}  local_data_parallel_id:{self.local_data_parallel_id}"
+            )
         return cache_infos
-    
-
 
     def put_finished_req(self, req_ids) -> None:
         """
@@ -296,7 +346,6 @@ class EngineWorkerQueue:
             req_ids: Request ID to be added to the queue
         """
         self.finished_req_queue.put(req_ids)
-    
 
     def get_finished_req(self) -> str:
         """
@@ -323,26 +372,26 @@ class EngineWorkerQueue:
         """
         put disaggregated tasks to the queue
         """
-        llm_logger.info(f"put item to queue")
+        llm_logger.info("put item to queue")
         self.disaggregate_requests.put(item)
-        llm_logger.info(f"put item to queue success")
+        llm_logger.info("put item to queue success")
 
     def get_disaggregated_tasks(self):
         """
         get disaggregated tasks from the queue
         """
-        llm_logger.info(f"get tasks from queue")
+        llm_logger.info("get tasks from queue")
         if self.disaggregate_requests.qsize() == 0:
             return None
         item = []
         while not self.disaggregate_requests.empty():
             item.append(self.disaggregate_requests.get())
-        llm_logger.info(f"get tasks from queue success")
+        llm_logger.info("get tasks from queue success")
         return item
 
     def cleanup(self):
         """
         Exit the worker queue gracefully.
         """
-        if self.manager is not None:
+        if self.manager is not None and self.is_server:
             self.manager.shutdown()

@@ -71,7 +71,7 @@ class GpuWorker(WorkerBase):
             device_id=self.device_ids[self.local_rank],
             rank=self.rank,
             local_rank=self.local_rank)
-
+    
     def prefill_finished(self):
         """
         check whether prefill stage finished
