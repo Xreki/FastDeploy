@@ -200,8 +200,6 @@ class Qwen3DecoderLayer(nn.Layer):
                 moe_intermediate_size,
                 num_experts=fd_config.moe_config.num_experts,
                 top_k=fd_config.moe_config.top_k,
-                moe_use_gate_correction_bias=fd_config.moe_config.
-                moe_use_gate_correction_bias,
                 moe_quant_type=fd_config.moe_config.moe_quant_type,
                 layer_idx=layer_id,
                 gate_weight_key=f"{prefix}.mlp.gate.weight",
