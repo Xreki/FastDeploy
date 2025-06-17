@@ -191,6 +191,14 @@ class Qwen3DecoderLayer(nn.Layer):
         assert fd_config.moe_config.moe_quant_type in [
             "weight_only_int8", "weight_only_int4"
         ]
+        weight_key_map = {
+            "gate_weight_key":
+            f"{prefix}.mlp.gate.weight",
+            "ffn1_expert_weight_key":
+            f"{prefix}.mlp.experts.{{}}.up_gate_proj.weight",
+            "ffn2_expert_weight_key":
+            f"{prefix}.mlp.experts.{{}}.down_proj.weight",
+        }
 
         if (fd_config.moe_config.num_experts is not None
                 and layer_id >= fd_config.moe_config.moe_layer_start_index):
@@ -202,11 +210,7 @@ class Qwen3DecoderLayer(nn.Layer):
                 top_k=fd_config.moe_config.top_k,
                 moe_quant_type=fd_config.moe_config.moe_quant_type,
                 layer_idx=layer_id,
-                gate_weight_key=f"{prefix}.mlp.gate.weight",
-                ffn1_expert_weight_key=
-                f"{prefix}.mlp.experts.{{}}.up_gate_proj.weight",
-                ffn2_expert_weight_key=
-                f"{prefix}.mlp.experts.{{}}.down_proj.weight",
+                weight_key_map=weight_key_map,
             )
         else:
             self.mlp = Qwen3MLP(
@@ -302,7 +306,7 @@ class Qwen3MoeModel(nn.Layer):
         self.norm = RMSNorm(
             fd_config,
             hidden_size=fd_config.model_config.hidden_size,
-            eps=1e-5,
+            eps=1e-6,
             prefix=f"{fd_config.model_config.prefix_name}.norm",
         )
 
@@ -438,42 +442,42 @@ class Qwen3MoePretrainedModel(PretrainedModel):
                 "lm_head.weight": partial(fn, is_column=True),
                 # Row Linear
                 "embed_tokens.weight": partial(fn, is_column=False),
-                "layers.0.self_attn.o_proj.weight": partial(fn,
+                "model.0.self_attn.o_proj.weight": partial(fn,
                                                             is_column=False),
-                "layers.0.mlp.down_proj.weight": partial(fn, is_column=False),
+                "model.0.mlp.down_proj.weight": partial(fn, is_column=False),
             }
 
             # Column Linear
             config.fuse_attention_qkv = False
             if config.fuse_attention_qkv:
-                base_actions["layers.0.self_attn.qkv_proj.weight"] = partial(
+                base_actions["model.0.self_attn.qkv_proj.weight"] = partial(
                     fn, is_column=True)
             else:
-                base_actions["layers.0.self_attn.q_proj.weight"] = partial(
+                base_actions["model.0.self_attn.q_proj.weight"] = partial(
                     fn, is_column=True)
-                base_actions["layers.0.self_attn.q_proj.bias"] = partial(
+                base_actions["model.0.self_attn.q_proj.bias"] = partial(
                     fn, is_column=True)
                 # if we have enough num_key_value_heads to split, then split it.
                 if config.num_key_value_heads % config.tensor_parallel_degree == 0:
-                    base_actions["layers.0.self_attn.k_proj.weight"] = partial(
+                    base_actions["model.0.self_attn.k_proj.weight"] = partial(
                         fn, is_column=True)
-                    base_actions["layers.0.self_attn.v_proj.weight"] = partial(
+                    base_actions["model.0.self_attn.v_proj.weight"] = partial(
                         fn, is_column=True)
-                    base_actions["layers.0.self_attn.k_proj.bias"] = partial(
+                    base_actions["model.0.self_attn.k_proj.bias"] = partial(
                         fn, is_column=True)
-                    base_actions["layers.0.self_attn.v_proj.bias"] = partial(
+                    base_actions["model.0.self_attn.v_proj.bias"] = partial(
                         fn, is_column=True)
 
-            base_actions["layers.0.mlp.gate_proj.weight"] = partial(
+            base_actions["model.0.mlp.gate_proj.weight"] = partial(
                 fn, is_column=True)
-            base_actions["layers.0.mlp.up_proj.weight"] = partial(
+            base_actions["model.0.mlp.up_proj.weight"] = partial(
                 fn, is_column=True)
 
             for key, action in base_actions.items():
-                if "layers.0." in key:
+                if "model.0." in key:
                     for i in range(num_layers):
-                        final_actions[key.replace("layers.0.",
-                                                  f"layers.{i}.")] = action
+                        final_actions[key.replace("model.0.",
+                                                  f"model.{i}.")] = action
                 final_actions[key] = action
 
             return final_actions

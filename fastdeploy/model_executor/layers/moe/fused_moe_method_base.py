@@ -36,15 +36,30 @@ def load_experts_weight(state_dict: dict, ffn1_expert_weight_key: str,
     """
     ffn1_weights = []
     ffn2_weights = []
+    is_ffn_merged = ffn1_expert_weight_key.format(expert_id_offset) in state_dict
 
-    for i in range(num_experts):
-        expert_idx = expert_id_offset + i
-        ffn1_weights.append(
-            get_tensor(
-                state_dict.pop(ffn1_expert_weight_key.format(expert_idx))))
-        ffn2_weights.append(
-            get_tensor(
-                state_dict.pop(ffn2_expert_weight_key.format(expert_idx))))
+    if is_ffn_merged:
+        for i in range(num_experts):
+            expert_idx = expert_id_offset + i
+            ffn1_weights.append(
+                get_tensor(
+                    state_dict.pop(ffn1_expert_weight_key.format(expert_idx))))
+            ffn2_weights.append(
+                get_tensor(
+                    state_dict.pop(ffn2_expert_weight_key.format(expert_idx))))
+    else:
+        gate_expert_weight_key = ffn1_expert_weight_key.replace("up_gate_proj", "gate_proj")
+        up_expert_weight_key = ffn1_expert_weight_key.replace("up_gate_proj", "up_proj")
+        for j in range(num_experts):
+            expert_idx = expert_id_offset + j
+            gate = get_tensor(
+                    state_dict.pop(gate_expert_weight_key.format(expert_idx)))
+            up = get_tensor(
+                    state_dict.pop(up_expert_weight_key.format(expert_idx)))
+            ffn1_weights.append(paddle.concat([gate, up], axis=-1))
+            ffn2_weights.append(
+                get_tensor(
+                    state_dict.pop(ffn2_expert_weight_key.format(expert_idx))))
     return ffn1_weights, ffn2_weights
 
 

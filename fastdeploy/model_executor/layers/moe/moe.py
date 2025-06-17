@@ -182,7 +182,7 @@ class FusedMoE(nn.Layer):
             shape=gate_weight_tensor.shape,
             dtype="float32",
         )
-        self.gate_weight.set_value(gate_weight_tensor)
+        self.gate_weight.set_value(gate_weight_tensor.astype("float32"))
 
         # other weight is with compute_method
         # different method may have different way to create weights
