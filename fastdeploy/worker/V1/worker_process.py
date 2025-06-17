@@ -513,7 +513,6 @@ def initialize_fd_config(args) -> FDConfig:
     parallel_config.enable_prefix_caching = args.enable_prefix_caching
     parallel_config.splitwise_role = args.splitwise_role
 
-
     parallel_config.use_ep = args.expert_parallel_size > 1
     parallel_config.tensor_parallel_degree = args.tensor_parallel_size
     parallel_config.expert_parallel_degree = args.expert_parallel_size
@@ -568,8 +567,6 @@ def initialize_fd_config(args) -> FDConfig:
     moe_config.num_experts = config.get("moe_num_experts", None)
     moe_config.moe_intermediate_size = config.get("moe_intermediate_size",
                                                   None)
-    moe_config.moe_use_gate_correction_bias = config.get(
-        "moe_use_gate_correction_bias", True)
     moe_config.moe_every2 = config.get("moe_every2", False)
     moe_config.top_k = config.get("moe_topk", 8)
     moe_config.moe_num_shared_experts = config.get("moe_num_shared_experts", 0)

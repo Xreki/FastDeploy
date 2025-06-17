@@ -104,8 +104,6 @@ class Ernie45TVLMoE(nn.Layer):
                 num_experts=fd_config.moe_config.num_experts[0],
                 expert_id_offset=0,
                 top_k=fd_config.moe_config.top_k,
-                moe_use_gate_correction_bias=fd_config.moe_config.
-                moe_use_gate_correction_bias,
                 moe_quant_type=fd_config.moe_config.moe_quant_type,
                 layer_idx=layer_id,
                 moe_tag="Text",
@@ -138,8 +136,6 @@ class Ernie45TVLMoE(nn.Layer):
                 num_experts=fd_config.moe_config.num_experts[1],
                 expert_id_offset=fd_config.moe_config.num_experts[0],
                 top_k=fd_config.moe_config.top_k,
-                moe_use_gate_correction_bias=fd_config.moe_config.
-                moe_use_gate_correction_bias,
                 moe_quant_type="weight_only_int8",  # not set weight_only_int4
                 layer_idx=layer_id,
                 moe_tag="Image",

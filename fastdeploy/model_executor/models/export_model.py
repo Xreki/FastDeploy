@@ -530,8 +530,6 @@ def build_stream_line_model(
         moe_config.num_experts = config.get("moe_num_experts", None)
         moe_config.moe_intermediate_size = config.get("moe_intermediate_size",
                                                       None)
-        moe_config.moe_use_gate_correction_bias = config.get(
-            "moe_use_gate_correction_bias", False)
         moe_config.moe_every2 = config.get("moe_every2", False)
         moe_config.top_k = config.get("moe_topk", 8)
         moe_config.moe_num_shared_experts = config.get(

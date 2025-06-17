@@ -123,7 +123,6 @@ class ModelConfig(PretrainedConfig):
         system_prompt_version="V1",
         moe_layer_start_index: int | None = None,
         moe_layer_end_index: int | None = None,
-        moe_use_gate_correction_bias: bool | None = None,
         num_hidden_layers: int | None = None,
         prefix_name="",
         freeze_embedding=False,
@@ -184,8 +183,6 @@ class ModelConfig(PretrainedConfig):
             self.moe_layer_start_index = moe_layer_start_index
         if moe_layer_end_index is not None:
             self.moe_layer_end_index = moe_layer_end_index
-        elif moe_use_gate_correction_bias is not None:
-            self.moe_use_gate_correction_bias = moe_use_gate_correction_bias
         self.ffn_hidden_size = ffn_hidden_size
         self.rope_3d = rope_3d
         self.export_model_type = export_model_type
@@ -280,7 +277,6 @@ class MoEConfig:
     num_experts_start_offset: int = -1
     activation = "swiglu"
 
-    moe_use_gate_correction_bias = False
     moe_every2 = (False, )
     moe_num_shared_experts = (0, )
     moe_layer_start_index = 0

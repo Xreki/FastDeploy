@@ -70,7 +70,6 @@ class FusedMoE(nn.Layer):
         num_experts: int = -1,
         expert_id_offset: int = 0,
         top_k: int = -1,
-        moe_use_gate_correction_bias: bool = False,
         moe_quant_type: str = "weight_only_int4",
         layer_idx: int = -1,
         moe_tag: str = "",
@@ -96,8 +95,6 @@ class FusedMoE(nn.Layer):
         assert (self.tp_size >= 1 and self.ep_size == 1) or \
                 (self.tp_size == 1 and self.ep_size > 1), \
             'MoE only support parallelism on TP or EP dimension.'
-
-        self.moe_use_gate_correction_bias = moe_use_gate_correction_bias
 
         self.hidden_size = fd_config.model_config.hidden_size
         self.moe_config = fd_config.moe_config
@@ -161,12 +158,13 @@ class FusedMoE(nn.Layer):
         """
         load_state_dict function.
         """
+        self.gate_correction_bias_key = self.weight_key_map.get(
+            "gate_correction_bias_key", None)
+        if self.gate_correction_bias_key is not None and self.gate_correction_bias_key in state_dict:
+            self.moe_use_gate_correction_bias = True
+        else:
+            self.moe_use_gate_correction_bias = False
         if self.moe_use_gate_correction_bias:
-            self.gate_correction_bias_key = self.weight_key_map.get(
-                "gate_correction_bias_key", None)
-            assert self.gate_correction_bias_key is not None, "gate_correction_bias_key should not be None \
-            when moe_use_gate_correction_bias is True, please check model checkpoints"
-
             gate_correction_bias_tensor = self.extract_gate_correction_bias(
                 self.gate_correction_bias_key, state_dict)
             self.gate_correction_bias = self.create_parameter(
