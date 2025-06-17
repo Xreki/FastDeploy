@@ -22,7 +22,7 @@ import paddle.nn as nn
 from fastdeploy.config import FDConfig
 from fastdeploy.engine.request import Request
 from fastdeploy.utils import get_logger
-from fastdeploy.worker.output import ModelRunnerOutput
+from fastdeploy.worker.V1.output import ModelRunnerOutput
 from fastdeploy.worker.V1.worker_base import WorkerBase
 from fastdeploy.worker.V1.xpu_model_runner import XPUModelRunner
 

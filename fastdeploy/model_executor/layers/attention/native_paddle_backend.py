@@ -1,4 +1,3 @@
-
 """
 # Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
@@ -16,15 +15,14 @@
 
 """
 
-
 from __future__ import annotations
-from typing import TYPE_CHECKING
 
 import paddle
 from paddle.nn.functional import scaled_dot_product_attention
 
-from fastdeploy.model_executor.layers.attention.base_attention_backend import AttentionBackend
-from fastdeploy.worker.model_runner import ForwardMeta, ForwardMode
+from fastdeploy.model_executor.layers.attention.base_attention_backend import \
+    AttentionBackend
+from fastdeploy.worker.V1.forward_meta import ForwardMeta
 
 
 class PaddleNativeAttnBackend(AttentionBackend):
@@ -111,18 +109,14 @@ class PaddleNativeAttnBackend(AttentionBackend):
             per_req_value = v_cache[per_req_tokens].transpose(
                 [query.dim() - 2, 0])
 
-            per_req_out_redudant = (
-                scaled_dot_product_attention(
-                    per_req_query_redudant.unsqueeze(0),
-                    per_req_key.unsqueeze(0),
-                    per_req_value.unsqueeze(0),
-                    is_causal=causal,
-                )
-                .squeeze(0)
-                .transpose([query.dim() - 2, 0])
-            )
-            output[start_q:end_q, :,
-                   :] = per_req_out_redudant[prefill_seq_len_q:, :, :]
+            per_req_out_redudant = (scaled_dot_product_attention(
+                per_req_query_redudant.unsqueeze(0),
+                per_req_key.unsqueeze(0),
+                per_req_value.unsqueeze(0),
+                is_causal=causal,
+            ).squeeze(0).transpose([query.dim() - 2, 0]))
+            output[start_q:end_q, :, :] = per_req_out_redudant[
+                prefill_seq_len_q:, :, :]
             start_q, start_kv = end_q, end_kv
         return output
 
@@ -203,16 +197,12 @@ class PaddleNativeAttnBackend(AttentionBackend):
             per_req_value = v_cache[per_req_tokens].transpose(
                 [query.dim() - 2, 0])
 
-            per_req_out = (
-                self._scaled_dot_product_attention(
-                    per_req_query.unsqueeze(0),
-                    per_req_key.unsqueeze(0),
-                    per_req_value.unsqueeze(0),
-                    is_causal=causal,
-                )
-                .squeeze(0)
-                .transpose([query.dim() - 2, 0])
-            )
+            per_req_out = (self._scaled_dot_product_attention(
+                per_req_query.unsqueeze(0),
+                per_req_key.unsqueeze(0),
+                per_req_value.unsqueeze(0),
+                is_causal=causal,
+            ).squeeze(0).transpose([query.dim() - 2, 0]))
             output[start_q:end_q, :, :] = per_req_out
             start_q, start_kv = end_q, end_kv
 
@@ -238,10 +228,7 @@ class PaddleNativeAttnBackend(AttentionBackend):
 
         if save_kv_cache:
             forward_meta.token_to_kv_pool.set_kv_buffer(
-                layer, forward_meta.out_cache_loc, k, v
-            )
-
-        use_gqa = layer.tp_q_head_num != layer.tp_k_head_num
+                layer, forward_meta.out_cache_loc, k, v)
 
         q_ = q.view([-1, layer.tp_q_head_num, layer.qk_head_dim])
         o_ = o.view([-1, layer.tp_q_head_num, layer.v_head_dim])
@@ -281,11 +268,9 @@ class PaddleNativeAttnBackend(AttentionBackend):
         else:
             o = paddle.empty_like(q)
 
-        forward_meta.token_to_kv_pool.set_kv_buffer(
-            layer, forward_meta.out_cache_loc, k, v
-        )
-
-        use_gqa = layer.tp_q_head_num != layer.tp_k_head_num
+        forward_meta.token_to_kv_pool.set_kv_buffer(layer,
+                                                    forward_meta.out_cache_loc,
+                                                    k, v)
 
         q_ = q.view([-1, layer.tp_q_head_num, layer.qk_head_dim])
         o_ = o.view([-1, layer.tp_q_head_num, layer.v_head_dim])
