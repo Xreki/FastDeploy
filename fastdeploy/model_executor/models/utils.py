@@ -863,7 +863,7 @@ def load_checkpoint(model_path, cls, config, return_numpy=True, load_gpu=True):
         else:
             state_dict = load_tp_checkpoint(model_path,
                                             cls,
-                                            config.model_config,
+                                            config,
                                             return_numpy=return_numpy)
             import re
             for k, v in state_dict.items():
