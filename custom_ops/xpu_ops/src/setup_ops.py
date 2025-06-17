@@ -19,9 +19,69 @@ Copyright (c) 2025 Baidu.com, Inc. All Rights Reserved.
 Build and setup XPU custom ops for ERNIE Bot.
 """
 import os
+import shutil
+import subprocess
+from pathlib import Path
 
 import paddle
 from paddle.utils.cpp_extension import CppExtension, setup
+
+current_file = Path(__file__).resolve()
+base_dir = current_file.parent
+
+
+def build_plugin(CLANG_PATH, XRE_INC_DIR, XRE_LIB_DIR, XDNN_INC_DIR,
+                 XDNN_LIB_DIR):
+    """
+    build xpu plugin
+    """
+    current_working_directory = base_dir
+    print(f"Current working directory: {current_working_directory}")
+
+    # 设置环境变量
+    os.environ["XRE_INC_DIR"] = XRE_INC_DIR
+    os.environ["XRE_LIB_DIR"] = XRE_LIB_DIR
+    os.environ["XDNN_INC_DIR"] = XDNN_INC_DIR
+    os.environ["XDNN_LIB_DIR"] = XDNN_LIB_DIR
+
+    # 设置 Clang 路径
+    os.environ["CLANG_PATH"] = CLANG_PATH
+
+    # 删除指定目录
+    dirs_to_remove = [
+        "dist", "fastdeploy_ops.egg-info", "build", "plugin/build"
+    ]
+    for dir_name in dirs_to_remove:
+        if os.path.exists(dir_name):
+            shutil.rmtree(dir_name)
+            print(f"Removed directory: {dir_name}")
+
+    # 在 plugin 目录中执行构建脚本
+    plugin_dir = "plugin"
+    build_script = os.path.join(current_working_directory, plugin_dir,
+                                "build.sh")
+
+    print("build_script: ", build_script)
+
+    if not os.path.isfile(build_script):
+        print(f"Error: Build script not found at {build_script}")
+        return
+
+    # 赋予执行权限 (如果尚未设置)
+    if not os.access(build_script, os.X_OK):
+        os.chmod(build_script, 0o755)
+
+    # 执行构建脚本
+    try:
+        print("Running build script...")
+        subprocess.run([build_script],
+                       check=True,
+                       cwd=os.path.join(current_working_directory, plugin_dir))
+        print("Build completed successfully.")
+    except subprocess.CalledProcessError as e:
+        print(f"Build failed with error: {e}")
+    except Exception as e:
+        print(f"Unexpected error: {str(e)}")
 
 
 def xpu_setup_ops():
@@ -40,14 +100,30 @@ def xpu_setup_ops():
         BKCL_INC_PATH = os.path.join(BKCL_PATH, "include")
         BKCL_LIB_PATH = os.path.join(BKCL_PATH, "so", "libbkcl.so")
 
+    CLANG_PATH = os.getenv("CLANG_PATH")
+    assert CLANG_PATH is not None, "CLANG_PATH is not set."
+
     XRE_PATH = os.getenv("XRE_PATH")
     if XRE_PATH is None:
         XRE_INC_PATH = os.path.join(PADDLE_INCLUDE_PATH, "xre")
         XRE_LIB_PATH = os.path.join(PADDLE_LIB_PATH, "libxpucuda.so")
+        XRE_LIB_DIR = os.path.join(PADDLE_LIB_PATH)
     else:
         XRE_INC_PATH = os.path.join(XRE_PATH, "include")
         XRE_LIB_PATH = os.path.join(XRE_PATH, "so", "libxpucuda.so")
-    print(XRE_PATH)
+        XRE_LIB_DIR = os.path.join(XRE_PATH, "so")
+
+    XDNN_PATH = os.getenv("XDNN_PATH")
+    if XDNN_PATH is None:
+        XDNN_INC_PATH = os.path.join(PADDLE_INCLUDE_PATH)
+        XDNN_LIB_DIR = os.path.join(PADDLE_LIB_PATH)
+    else:
+        XDNN_INC_PATH = os.path.join(XDNN_PATH, "include")
+        XDNN_LIB_DIR = os.path.join(XDNN_PATH, "so")
+
+    # build plugin
+    build_plugin(CLANG_PATH, XRE_INC_PATH, XRE_LIB_DIR, XDNN_INC_PATH,
+                 XDNN_LIB_DIR)
 
     XVLLM_PATH = os.getenv("XVLLM_PATH")
     if XVLLM_PATH is None:
@@ -87,25 +163,23 @@ def xpu_setup_ops():
         "./ops/device/get_total_global_memory.cc",
         "./ops/device/get_used_global_memory.cc",
     ]
+    ops = [os.path.join(base_dir, op) for op in ops]
 
     include_dirs = [
-        ".",
-        "./plugin/include",
+        os.path.join(base_dir, "./"),
+        os.path.join(base_dir, "./plugin/include"),
         BKCL_INC_PATH,
         XRE_INC_PATH,
         XVLLM_KERNEL_INC_PATH,
         XVLLM_OP_INC_PATH,
     ]
     extra_objects = [
-        "./plugin/build/libxpuplugin.a",
+        os.path.join(base_dir, "./plugin/build/libxpuplugin.a"),
         BKCL_LIB_PATH,
         XRE_LIB_PATH,
         XVLLM_KERNEL_LIB_PATH,
         XVLLM_OP_LIB_PATH,
     ]
-
-    print(f"include_dirs: {include_dirs}")
-    print(f"extra_objects: {extra_objects}")
 
     setup(
         name="fastdeploy_ops",

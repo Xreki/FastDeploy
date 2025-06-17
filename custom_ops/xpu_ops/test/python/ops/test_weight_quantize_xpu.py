@@ -15,7 +15,7 @@
 import numpy as np
 import paddle
 
-from fastdeploy.model_executor.ops.gpu import weight_quantize_xpu
+from fastdeploy.model_executor.ops.xpu import weight_quantize_xpu
 
 np.random.seed(2025)
 

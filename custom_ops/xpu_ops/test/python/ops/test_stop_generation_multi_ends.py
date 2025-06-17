@@ -15,7 +15,7 @@
 import numpy as np
 import paddle
 
-from fastdeploy.model_executor.ops.gpu import set_stop_value_multi_ends
+from fastdeploy.model_executor.ops.xpu import set_stop_value_multi_ends
 
 np.random.seed(1)
 

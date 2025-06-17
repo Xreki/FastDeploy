@@ -15,7 +15,7 @@
 import numpy as np
 import paddle
 
-from fastdeploy.model_executor.ops.gpu import get_padding_offset
+from fastdeploy.model_executor.ops.xpu import get_padding_offset
 
 np.random.seed(2023)
 

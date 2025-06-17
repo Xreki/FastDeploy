@@ -21,28 +21,42 @@ if(NOT DEFINED BUILD_STANDALONE)
   set(XRE_LIB_DIR ${XPU_LIB_DIR})
   set(XPU_DEPS xpulib) # Depends cmake/external/xpu.cmake
 else()
-  if(NOT DEFINED XDNN_PATH)
-    set(XDNN_PATH $ENV{XDNN_PATH})
+  if(NOT DEFINED XDNN_INC_DIR)
+    set(XDNN_INC_DIR $ENV{XDNN_INC_DIR})
   endif()
-  if(NOT DEFINED XRE_PATH)
-    set(XRE_PATH $ENV{XRE_PATH})
-  endif()
-  if(NOT IS_DIRECTORY ${XDNN_PATH})
+  if(NOT IS_DIRECTORY ${XDNN_INC_DIR})
     message(
       FATAL_ERROR
         "XDNN_PATH not set, or directory ${XDNN_PATH} not found, please export XDNN_PATH=<path_to_xdnn>."
     )
   endif()
-  if(NOT IS_DIRECTORY ${XRE_PATH})
+  if(NOT DEFINED XDNN_LIB_DIR)
+    set(XDNN_LIB_DIR $ENV{XDNN_LIB_DIR})
+  endif()
+  if(NOT IS_DIRECTORY ${XDNN_LIB_DIR})
     message(
       FATAL_ERROR
-        "XRE_PATH not set, or directory ${XRE_PATH} not found, please export XRE_PATH=<path_to_xre>."
+        "XDNN_PATH not set, or directory ${XDNN_PATH} not found, please export XDNN_PATH=<path_to_xdnn>."
     )
   endif()
-  set(XDNN_INC_DIR ${XDNN_PATH}/include)
-  set(XDNN_LIB_DIR ${XDNN_PATH}/so)
-  set(XRE_INC_DIR ${XRE_PATH}/include)
-  set(XRE_LIB_DIR ${XRE_PATH}/so)
+  if(NOT DEFINED XRE_INC_DIR)
+    set(XRE_INC_DIR $ENV{XRE_INC_DIR})
+  endif()
+  if(NOT IS_DIRECTORY ${XRE_INC_DIR})
+    message(
+      FATAL_ERROR
+        "XDNN_PATH not set, or directory ${XDNN_PATH} not found, please export XDNN_PATH=<path_to_xdnn>."
+    )
+  endif()
+  if(NOT DEFINED XRE_LIB_DIR)
+    set(XRE_LIB_DIR $ENV{XRE_LIB_DIR})
+  endif()
+  if(NOT IS_DIRECTORY ${XRE_LIB_DIR})
+    message(
+      FATAL_ERROR
+        "XDNN_PATH not set, or directory ${XDNN_PATH} not found, please export XDNN_PATH=<path_to_xdnn>."
+    )
+  endif()
 endif()
 
 if(NOT DEFINED CLANG_PATH)
