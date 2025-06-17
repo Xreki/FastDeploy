@@ -16,17 +16,15 @@
 
 # cipher_token=WjI1fQOvhN  # do not edit this line
 
-
 from __future__ import annotations
 
 import json
+import os
 from typing import Optional
 
+import paddle
 from paddlenlp.transformers.configuration_utils import PretrainedConfig
 from paddlenlp.utils.log import logger
-
-import paddle
-import os
 
 __all__ = [
     "ERNIEBOT_PRETRAINED_INIT_CONFIGURATION",
@@ -48,21 +46,17 @@ ERNIEBOT_PRETRAINED_INIT_CONFIGURATION = {
         "type_vocab_size": 4,
         "vocab_size": 100224,
         "use_rope": True,
-        "weight_sharing": True,
-        "weight_sharing_add_bias": False,
         "sequence_parallel": False,
         "use_flash_attention": False,
         "recompute": False,
         "recompute_granularity": "core_attn",
         "fuse_attn_qkv": True,
-        "fused_linear": False,
         "scale_qk_coeff": 1.0,
         "fused_softmax_with_triangular": True,
         "fused_rotary": False,
         "fused_softmax_mask": False,
     }
 }
-
 
 ERNIEBOT_PRETRAINED_RESOURCE_FILES_MAP = {"model_state": {"ernie-bot": ""}}
 
@@ -92,8 +86,6 @@ class ErnieBotConfig(PretrainedConfig):
         type_vocab_size: int = 4,
         use_rope=True,
         use_rmsnorm=False,
-        weight_sharing=True,
-        weight_sharing_add_bias=False,
         sequence_parallel=False,
         use_flash_attention=False,
         use_fast_ln=False,
@@ -108,7 +100,6 @@ class ErnieBotConfig(PretrainedConfig):
         virtual_pp_degree=1,
         pp_seg_method="layer:TransformerDecoderLayer|EmptyLayer",
         fuse_attn_qkv=True,
-        fused_linear=False,
         use_sparse_flash_attn=True,
         use_sparse_head_and_loss_fn=False,
         use_fused_head_and_loss_fn=False,
@@ -139,7 +130,7 @@ class ErnieBotConfig(PretrainedConfig):
         moe_use_ffn_shared_weight_and_bias=False,
         moe_intermediate_size: int | None = None,
         moe_use_aux_free: bool | None = None,
-        is_quantized: bool  = False,
+        is_quantized: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -159,8 +150,6 @@ class ErnieBotConfig(PretrainedConfig):
         self.type_vocab_size = type_vocab_size
         self.use_rope = use_rope
         self.use_rmsnorm = use_rmsnorm
-        self.weight_sharing = weight_sharing
-        self.weight_sharing_add_bias = weight_sharing_add_bias
         self.sequence_parallel = sequence_parallel
         self.use_flash_attention = use_flash_attention
         self.use_fast_ln = use_fast_ln
@@ -187,7 +176,6 @@ class ErnieBotConfig(PretrainedConfig):
         self.virtual_pp_degree = virtual_pp_degree
         self.pp_seg_method = pp_seg_method
         self.fuse_attn_qkv = fuse_attn_qkv
-        self.fused_linear = fused_linear
         self.use_sparse_flash_attn = use_sparse_flash_attn
         self.use_sparse_head_and_loss_fn = use_sparse_head_and_loss_fn
         self.use_fused_head_and_loss_fn = use_fused_head_and_loss_fn
@@ -225,15 +213,13 @@ class ErnieBotConfig(PretrainedConfig):
             self.moe_use_gate_correction_bias = moe_use_aux_free
         self.weight_block_size = weight_block_size
         self.is_quantized = is_quantized
-        self.register_unsavable_keys(
-            [
-                "refined_recompute",
-                "skip_recompute_ops",
-                "dpo_config",
-                "kto_config",
-                "use_var_len_flash_attn",
-            ]
-        )
+        self.register_unsavable_keys([
+            "refined_recompute",
+            "skip_recompute_ops",
+            "dpo_config",
+            "kto_config",
+            "use_var_len_flash_attn",
+        ])
         if not hasattr(self, "head_dim"):
             self.head_dim = self.hidden_size // self.num_attention_heads
 
@@ -303,16 +289,13 @@ class ErnieBotMoEConfig(ErnieBotConfig):
                 return repr(obj)
             raise TypeError(f"Type {type(obj)} is not serializable")
 
-        return (
-            json.dumps(
-                config_dict,
-                indent=2,
-                sort_keys=True,
-                ensure_ascii=False,
-                default=_serializer,
-            )
-            + "\n"
-        )
+        return (json.dumps(
+            config_dict,
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=False,
+            default=_serializer,
+        ) + "\n")
 
 
 class QuantizationConfig:
@@ -320,12 +303,14 @@ class QuantizationConfig:
     The quantization class to use for offline quantization.
     """
 
-    def __init__(
-        self, quantization_type, groupsize=-1, scale_dtype="float16", arch=None
-    ):
+    def __init__(self,
+                 quantization_type,
+                 groupsize=-1,
+                 scale_dtype="float16",
+                 arch=None):
         """
             Initializes the Quantizer class with the given parameters.
-        
+
         Args:
             quantization_type (str): Type of quantization to be used. Supported values are
                 'uniform', 'tensor_abs_max', and 'channel_wise_abs_max'.
@@ -335,7 +320,7 @@ class QuantizationConfig:
                 "float16".
             arch (int, optional): Architecture of the model. If not specified, it will be set based
                 on the environment variable FLAGS_weight_only_linear_arch. Defaults to None.
-        
+
         Raises:
             ValueError: If the value of `quantization_type` is not one of 'uniform',
                 'tensor_abs_max', or 'channel_wise_abs_max'.

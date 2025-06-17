@@ -160,7 +160,6 @@ class Qwen3Model(nn.Layer):
 
         self.num_layers = fd_config.model_config.num_layers
         fd_config.model_config.prefix_name = "model"
-        fd_config.model_config.weight_sharing = True
         fd_config.model_config.tie_word_embeddings = True
 
         self.embeddings = VocabParallelEmbedding(

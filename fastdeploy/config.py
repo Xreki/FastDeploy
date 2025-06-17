@@ -48,12 +48,9 @@ ERNIEBOT_PRETRAINED_INIT_CONFIGURATION = {
         "type_vocab_size": 4,
         "vocab_size": 100224,
         "use_rope": True,
-        "weight_sharing": True,
-        "weight_sharing_add_bias": False,
         "sequence_parallel": False,
         "use_flash_attention": False,
         "recompute": False,
-        "fused_linear": False,
     }
 }
 
@@ -106,13 +103,10 @@ class ModelConfig(PretrainedConfig):
         type_vocab_size: int = 4,
         use_rope=True,
         use_rmsnorm=True,
-        weight_sharing=True,
-        weight_sharing_add_bias=False,
         sequence_parallel=False,
         use_flash_attention=False,
         use_fast_ffn: bool = False,
         tensor_parallel_output: bool = True,
-        fused_linear=False,
         compression_ratio: float = 1.0,
         rope_theta: int = 10000,
         rope_3d: bool = False,
@@ -160,14 +154,11 @@ class ModelConfig(PretrainedConfig):
         self.type_vocab_size = type_vocab_size
         self.use_rope = use_rope
         self.use_rmsnorm = use_rmsnorm
-        self.weight_sharing = weight_sharing
 
-        self.weight_sharing_add_bias = weight_sharing_add_bias
         self.use_flash_attention = use_flash_attention
         self.use_fast_ffn = use_fast_ffn
         self.tensor_parallel_output = tensor_parallel_output
         self.skip_recompute_ops = dict()
-        self.fused_linear = fused_linear
         self.compression_ratio = compression_ratio
         self.rope_theta = rope_theta
         self.ori_vocab_size = ori_vocab_size or vocab_size
