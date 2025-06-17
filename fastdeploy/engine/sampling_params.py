@@ -15,9 +15,10 @@
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, fields
-from typing import Any, Optional, Union, List
+
 import random
+from dataclasses import dataclass, fields
+from typing import Any, List, Optional, Union
 
 
 @dataclass
@@ -75,15 +76,15 @@ class SamplingParams:
 
     n: int = 1
     best_of: Optional[int] = None
-    presence_penalty: float = 0.0
-    frequency_penalty: float = 0.0
-    repetition_penalty: float = 1.0
-    temperature: float = 1.0
-    top_p: float = 0.7
+    presence_penalty: float = None
+    frequency_penalty: float = None
+    repetition_penalty: float = None
+    temperature: float = None
+    top_p: float = None
     seed: Optional[int] = None
-    stop: Optional[Union[str, List[str]]] = None 
+    stop: Optional[Union[str, List[str]]] = None
     stop_token_ids: Optional[Union[List[List[int]], List[int]]] = None
-    max_tokens: Optional[int] = 16
+    max_tokens: Optional[int] = None
     min_tokens: int = 1
     logprobs: Optional[int] = None
     bad_words: Optional[List[str]] = None
@@ -91,73 +92,76 @@ class SamplingParams:
     @classmethod
     def from_dict(cls, req_dict: dict[str, Any]) -> "SamplingParams":
         """Create instance from command line arguments"""
-        return cls(**{
-            field.name: req_dict[field.name] if field.name in req_dict else field.default
-            for field in fields(cls)
-        })
-
+        return cls(
+            **{
+                field.name:
+                req_dict[field.name] if field.name in
+                req_dict else field.default
+                for field in fields(cls)
+            })
 
     @classmethod
     def from_optional(cls,
-        n,
-        best_of,
-        presence_penalty,
-        frequency_penalty,
-        repetition_penalty,
-        temperature,
-        top_p,
-        seed=None,
-        stop=None,
-        stop_token_ids=None,
-        max_tokens=None,
-        min_tokens=1,
-        logprobs=None,
-        bad_words=None
-        ) -> "SamplingParams":
+                      n,
+                      best_of,
+                      presence_penalty,
+                      frequency_penalty,
+                      repetition_penalty,
+                      temperature,
+                      top_p,
+                      seed=None,
+                      stop=None,
+                      stop_token_ids=None,
+                      max_tokens=None,
+                      min_tokens=1,
+                      logprobs=None,
+                      bad_words=None) -> "SamplingParams":
         """Create instance from command line arguments"""
-        return cls(
-            n=1 if n is None else n,
-            best_of=best_of,
-            presence_penalty=presence_penalty if presence_penalty is not None else 0.0,
-            frequency_penalty=frequency_penalty if frequency_penalty is not None else 0.0,
-            repetition_penalty=repetition_penalty if repetition_penalty is not None else 1.0,
-            temperature=temperature if temperature is not None else 1.0,
-            top_p=top_p if top_p is not None else 0.7,
-            seed=seed,
-            stop=stop,
-            stop_token_ids=stop_token_ids,
-            max_tokens=max_tokens if max_tokens is not None else 8192,
-            min_tokens=min_tokens,
-            logprobs=logprobs,
-            bad_words=bad_words
-        )
-
+        return cls(n=1 if n is None else n,
+                   best_of=best_of,
+                   presence_penalty=presence_penalty
+                   if presence_penalty is not None else 0.0,
+                   frequency_penalty=frequency_penalty
+                   if frequency_penalty is not None else 0.0,
+                   repetition_penalty=repetition_penalty
+                   if repetition_penalty is not None else 1.0,
+                   temperature=temperature if temperature is not None else 1.0,
+                   top_p=top_p if top_p is not None else 0.7,
+                   seed=seed,
+                   stop=stop,
+                   stop_token_ids=stop_token_ids,
+                   max_tokens=max_tokens if max_tokens is not None else 8192,
+                   min_tokens=min_tokens,
+                   logprobs=logprobs,
+                   bad_words=bad_words)
 
     def __post_init__(self):
         if self.seed is None:
             self.seed = random.randint(0, 922337203685477580)
         self._verify_args()
 
-
     def _verify_args(self) -> None:
         if not isinstance(self.n, int):
-            raise ValueError(f"n must be an int, but is of type {type(self.n)}")
+            raise ValueError(
+                f"n must be an int, but is of type {type(self.n)}")
         if self.n < 1:
             raise ValueError(f"n must be at least 1, got {self.n}.")
-        if not -2.0 <= self.presence_penalty <= 2.0:
+        if self.presence_penalty is not None and (
+                not -2.0 <= self.presence_penalty <= 2.0):
             raise ValueError("presence_penalty must be in [-2, 2], got "
                              f"{self.presence_penalty}.")
-        if not -2.0 <= self.frequency_penalty <= 2.0:
+        if self.frequency_penalty is not None and (
+                not -2.0 <= self.frequency_penalty <= 2.0):
             raise ValueError("frequency_penalty must be in [-2, 2], got "
                              f"{self.frequency_penalty}.")
-        if self.repetition_penalty <= 0.0:
+        if self.repetition_penalty is not None and self.repetition_penalty <= 0.0:
             raise ValueError(
                 "repetition_penalty must be greater than zero, got "
                 f"{self.repetition_penalty}.")
-        if self.temperature < 0.0:
+        if self.temperature is not None and self.temperature < 0.0:
             raise ValueError(
                 f"temperature must be non-negative, got {self.temperature}.")
-        if not 0.0 <= self.top_p <= 1.0:
+        if self.top_p is not None and not 0.0 <= self.top_p <= 1.0:
             raise ValueError(f"top_p must be in [0, 1], got {self.top_p}.")
 
         if self.max_tokens is not None and self.max_tokens < 1:
@@ -177,7 +181,6 @@ class SamplingParams:
         if not 0 <= self.seed <= 922337203685477580:
             raise ValueError("seed must be in [0, 922337203685477580], got "
                              f"{self.seed}.")
-
 
     def update_from_tokenizer(self, tokenizer):
         """

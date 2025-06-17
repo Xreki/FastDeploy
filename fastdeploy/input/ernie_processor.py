@@ -15,21 +15,22 @@
 """
 
 import os
-import numpy as np
-from string import Template
 import re
+from string import Template
+
+import numpy as np
+from paddlenlp.generation import GenerationConfig
 
 from fastdeploy.utils import data_processor_logger
-from paddlenlp.generation import GenerationConfig
 
 if os.getenv("FLAG_TOKENIZER_V2"):
     from fastdeploy.input.ernie_tokenizer_v2 import ErnieBotTokenizer
 else:
     from fastdeploy.input.ernie_tokenizer_v1 import ErnieBotTokenizer
 
-from fastdeploy.input.text_processor import BaseDataProcessor
 from fastdeploy.engine.config import ModelConfig
-from fastdeploy.utils import data_processor_logger
+from fastdeploy.input.text_processor import BaseDataProcessor
+
 
 class ErnieProcessor(BaseDataProcessor):
     """
@@ -46,6 +47,7 @@ class ErnieProcessor(BaseDataProcessor):
         eos_token_id_len (int): 存储结束符号的token ID列表的长度。
         pad_token_id (int): 存储填充符号的token ID。
     """
+
     def __init__(self, model_name_or_path):
 
         self.model_name_or_path = model_name_or_path
@@ -61,9 +63,11 @@ class ErnieProcessor(BaseDataProcessor):
         data_processor_logger.info(f"Thinking mode is {self.is_thinking}")
         self.decode_status = dict()
         self._load_tokenizer()
-        data_processor_logger.info(f"tokenizer information: bos_token is {self.tokenizer.bos_token} \
+        data_processor_logger.info(
+            f"tokenizer information: bos_token is {self.tokenizer.bos_token} \
                                    {self.tokenizer.bos_token_id}, \
-                                   eos_token is {self.tokenizer.eos_token}, {self.tokenizer.eos_token_id} ")
+                                   eos_token is {self.tokenizer.eos_token}, {self.tokenizer.eos_token_id} "
+        )
         self.eos_token_ids = [self.tokenizer.eos_token_id]
         self.eos_token_id_len = len(self.eos_token_ids)
         self.pad_token_id = self.get_pad_id()
@@ -73,13 +77,13 @@ class ErnieProcessor(BaseDataProcessor):
 
         # Generation config
         try:
-            self.generation_config = GenerationConfig.from_pretrained(self.model_name_or_path)
-        except:
+            self.generation_config = GenerationConfig.from_pretrained(
+                self.model_name_or_path)
+        except Exception as e:
             data_processor_logger.warning(
-                "Can't find generation config, so it will not use generation_config field in the model config"
-            )
+                f"Can't find generation config, so it will not use "
+                f"generation_config field in the model config, details={e}")
             self.generation_config = None
-
 
     def process_request(self, request, max_model_len=None):
         """
@@ -92,7 +96,9 @@ class ErnieProcessor(BaseDataProcessor):
             bool: Whether preprocessing is successful
             str: error message
         """
-        if request.get("eos_token_ids") is None or len(request.eos_token_ids) == 0:
+        request = self._apply_default_parameters(request)
+        if request.get("eos_token_ids") is None or len(
+                request.eos_token_ids) == 0:
             request.eos_token_ids = self.eos_token_ids
 
         stop_sequences = request.get("stop", [])
@@ -101,23 +107,33 @@ class ErnieProcessor(BaseDataProcessor):
             request.set("stop_token_ids", stop_seqs)
             request.set("stop_seqs_len", stop_seqs_len)
 
-        if request.prompt_token_ids is None or len(request.prompt_token_ids) == 0:
+        if request.prompt_token_ids is None or len(
+                request.prompt_token_ids) == 0:
             system = request.get("system")
             if request.prompt is not None:
-                request.prompt_token_ids = self.text2ids(request.prompt, max_model_len, system)
+                request.prompt_token_ids = self.text2ids(
+                    request.prompt, max_model_len, system)
             elif request.messages is not None:
-                request.prompt_token_ids = self.messages2ids(request.messages, max_model_len)
+                request.prompt_token_ids = self.messages2ids(
+                    request.messages, max_model_len)
             else:
-                raise ValueError(f"The request should have `input_ids`, `text` or `messages`: {request}.")
+                raise ValueError(
+                    f"The request should have `input_ids`, `text` or `messages`: {request}."
+                )
             if self.model_name == "base":
                 assert (
                     system is None or system == ""
                 ), "The loadding model is a base model, `system` is not supported."
                 assert request.messages is None, "The loadding model is a base model, `messages` is not supported."
 
-        if max_model_len is not None and len(request.prompt_token_ids) > max_model_len:
-            request.prompt_token_ids = request.prompt_token_ids[:max_model_len - 1]
-        data_processor_logger.info(f"processed request: {request}")
+        if max_model_len is not None and len(
+                request.prompt_token_ids) > max_model_len:
+            request.prompt_token_ids = request.prompt_token_ids[:
+                                                                max_model_len -
+                                                                1]
+        if request.get("max_tokens") is None:
+            request.set("max_tokens", max(1, max_model_len - len(request.prompt_token_ids)))
+        data_processor_logger.info(f"Processed request {request}")
         return request
 
     def process_request_dict(self, request, max_model_len=None):
@@ -131,6 +147,7 @@ class ErnieProcessor(BaseDataProcessor):
             bool: Whether preprocessing is successful
             str: error message
         """
+        request = self._apply_default_parameters(request)
         if not request.get('eos_token_ids'):
             request['eos_token_ids'] = self.eos_token_ids
 
@@ -147,15 +164,14 @@ class ErnieProcessor(BaseDataProcessor):
             if 'prompt' in request:
                 raw_request = request.get('raw_request', True)
                 request['prompt_token_ids'] = self.text2ids(
-                    request['prompt'],
-                    raw_request,
-                    max_model_len,
-                    system
-                )
+                    request['prompt'], raw_request, max_model_len, system)
             elif 'messages' in request:
-                request['prompt_token_ids'] = self.messages2ids(request['messages'], max_model_len)
+                request['prompt_token_ids'] = self.messages2ids(
+                    request['messages'], max_model_len)
             else:
-                raise ValueError(f"Request must contain 'prompt_token_ids', 'prompt', or 'messages': {request}")
+                raise ValueError(
+                    f"Request must contain 'prompt_token_ids', 'prompt', or 'messages': {request}"
+                )
         if self.model_name == "base":
             assert isinstance(
                 request['prompt'], str
@@ -167,12 +183,14 @@ class ErnieProcessor(BaseDataProcessor):
                 'messages'
             ) is None, "The loadding model is a base model, `messages` is not supported."
 
-
-
         # 截断超过长度限制的prompt
-        if max_model_len is not None and len(request['prompt_token_ids']) > max_model_len:
-            request['prompt_token_ids'] = request['prompt_token_ids'][:max_model_len - 1]
-
+        if max_model_len is not None and len(
+                request['prompt_token_ids']) > max_model_len:
+            request['prompt_token_ids'] = request[
+                'prompt_token_ids'][:max_model_len - 1]
+        if request.get("max_tokens") is None:
+            request["max_tokens"] = max(1, max_model_len - len(request['prompt_token_ids']))
+        data_processor_logger.info(f"Processed request {request}")
         return request
 
     def process_response(self, response_dict, **kwargs):
@@ -188,32 +206,36 @@ class ErnieProcessor(BaseDataProcessor):
         is_end = response_dict.finished
         req_id = response_dict.request_id
 
-
         token_ids = response_dict.outputs.token_ids
         if self.is_thinking:
-            text, reasoning_content = self.ids2tokens_thinking(token_ids, req_id)
+            text, reasoning_content = self.ids2tokens_thinking(
+                token_ids, req_id)
             response_dict.outputs.text = text
             response_dict.outputs.reasoning_content = reasoning_content
         else:
             response_dict.outputs.text = self.ids2tokens(token_ids, req_id)
-        response_dict.usage = {"completion_tokens" : response_dict.outputs.index + 1}
+        response_dict.usage = {
+            "completion_tokens": response_dict.outputs.index + 1
+        }
         if is_end:
             if self.is_thinking:
-                text, reasoning_content = self.ids2tokens_thinking(token_ids, req_id)
+                text, reasoning_content = self.ids2tokens_thinking(
+                    token_ids, req_id)
                 response_dict.outputs.text = text
                 pattern = re.compile(
                     r'^([\s\S]*?)<\|prefixoftext\|>开始回复<\|middleoftext\|>([\s\S]*)$',
-                    flags=re.DOTALL | re.MULTILINE
-                )
+                    flags=re.DOTALL | re.MULTILINE)
                 if reasoning_content != "":
                     match = pattern.search(reasoning_content)
                     if match:
                         response_dict.outputs.text = match.group(2)
-                        response_dict.outputs.reasoning_content = match.group(1)
+                        response_dict.outputs.reasoning_content = match.group(
+                            1)
             else:
                 response_dict.outputs.text = self.ids2tokens(token_ids, req_id)
 
-            data_processor_logger.debug("Request id: {} has been completed.".format(token_ids))
+            data_processor_logger.debug(
+                "Request id: {} has been completed.".format(token_ids))
             self.clear_request_status(req_id)
         if response_dict.outputs.text == "" and response_dict.outputs.reasoning_content == "":
             return None
@@ -234,38 +256,43 @@ class ErnieProcessor(BaseDataProcessor):
 
         token_ids = response_dict["outputs"]["token_ids"]
         if self.is_thinking:
-            text, reasoning_content = self.ids2tokens_thinking(token_ids, req_id)
+            text, reasoning_content = self.ids2tokens_thinking(
+                token_ids, req_id)
             response_dict["outputs"]["text"] = text
             response_dict["outputs"]["reasoning_content"] = reasoning_content
         else:
-            response_dict["outputs"]["text"] = self.ids2tokens(token_ids, req_id)
+            response_dict["outputs"]["text"] = self.ids2tokens(
+                token_ids, req_id)
 
         if is_end:
             if self.is_thinking:
-                text, reasoning_content = self.ids2tokens_thinking(token_ids, req_id)
+                text, reasoning_content = self.ids2tokens_thinking(
+                    token_ids, req_id)
                 response_dict["outputs"]["text"] = text
                 pattern = re.compile(
                     r'^([\s\S]*?)<\|prefixoftext\|>开始回复<\|middleoftext\|>([\s\S]*)$',
-                    flags=re.DOTALL | re.MULTILINE
-                )
+                    flags=re.DOTALL | re.MULTILINE)
                 if reasoning_content != "":
                     match = pattern.search(reasoning_content)
                     if match:
                         response_dict["outputs"]["text"] = match.group(2)
-                        response_dict["outputs"]["reasoning_content"] = match.group(1)
+                        response_dict["outputs"][
+                            "reasoning_content"] = match.group(1)
             else:
-                response_dict["outputs"]["text"] = self.ids2tokens(token_ids, req_id)
-            data_processor_logger.debug("Request id: {} has been completed.".format(token_ids))
+                response_dict["outputs"]["text"] = self.ids2tokens(
+                    token_ids, req_id)
+            data_processor_logger.debug(
+                "Request id: {} has been completed.".format(token_ids))
             full_text, reasoning_content = self.clear_request_status(req_id)
             if not stream:
                 if self.is_thinking:
                     response_dict["outputs"]["text"] = full_text
-                    response_dict["outputs"]["reasoning_content"] = reasoning_content
+                    response_dict["outputs"][
+                        "reasoning_content"] = reasoning_content
                 else:
                     response_dict["outputs"]["text"] = reasoning_content
 
         return response_dict
-
 
     def text2ids(self, text, raw_request, max_model_len=None, system=None):
         """
@@ -286,14 +313,21 @@ class ErnieProcessor(BaseDataProcessor):
         if self.is_thinking:
             system = "<sys_internal>\n【高优系统设定】必须最优先遵循<br/>\n启动思考模式：在采取任何行动前，\
 都需要先写下自己的思考过程，为后续的决策或对用户的回复内容做铺垫。\n</sys_internal>\n\n"
-            tokens = self._convert_to_ids_thinking(messages, max_model_len, system)
+
+            tokens = self._convert_to_ids_thinking(messages, max_model_len,
+                                                   system)
         else:
-            tokens = self._convert_to_ids(messages, raw_request, max_model_len, system)
+            tokens = self._convert_to_ids(messages, raw_request, max_model_len,
+                                          system)
         data_processor_logger.debug(f"processed data : {''.join(tokens)}")
         input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
         return input_ids
 
-    def _convert_to_ids(self, messages, raw_request, max_model_len=None, system=None):
+    def _convert_to_ids(self,
+                        messages,
+                        raw_request,
+                        max_model_len=None,
+                        system=None):
         """
         将多轮对话转换为对话ID序列。
 
@@ -305,7 +339,9 @@ class ErnieProcessor(BaseDataProcessor):
             List[int]: 对话ID序列，每个ID都是整数。
         """
         if len(messages) % 2 == 0:
-            raise ValueError(f"The number of the messages context ({len(messages)}) must be odd.")
+            raise ValueError(
+                f"The number of the messages context ({len(messages)}) must be odd."
+            )
 
         if self.model_name == "base" or not raw_request:
             # for base model, the length of messages should be 1
@@ -317,7 +353,8 @@ class ErnieProcessor(BaseDataProcessor):
         suffix_tokens = self.tokenizer.tokenize("Assistant: ")
         system_tokens = []
         if system is not None:
-            system_tokens = self.tokenizer.tokenize(system) + self.tokenizer.tokenize("\n")
+            system_tokens = self.tokenizer.tokenize(
+                system) + self.tokenizer.tokenize("\n")
         context_tokens = self.tokenizer.tokenize("User: ") + \
             self.tokenizer.tokenize(messages[-1]) + self.tokenizer.tokenize("\n")
 
@@ -329,27 +366,28 @@ class ErnieProcessor(BaseDataProcessor):
                 self.tokenizer.tokenize(messages[idx]) + [self.tokenizer.sep_token]
             if max_model_len is not None and len(prefix_tokens) + len(context_tokens) + len(suffix_tokens) + \
                                                len(cur_turn_tokens) >= max_model_len:
-                data_processor_logger.warning(f"Truncate messages into: {messages[idx + 1:]}")
+                data_processor_logger.warning(
+                    f"Truncate messages into: {messages[idx + 1:]}")
                 break
             context_tokens = cur_turn_tokens + context_tokens
-        new_length =  len(system_tokens) + len(prefix_tokens) + len(context_tokens) + len(suffix_tokens) + 1
         context_tokens = system_tokens + context_tokens
         if max_model_len is not None and len(prefix_tokens) + len(context_tokens) + \
                                              len(suffix_tokens) + 1 >= max_model_len:
             data_processor_logger.warning(
                 "The length of the knowledge and the last user content "
                 f"({len(prefix_tokens) + len(context_tokens) + len(suffix_tokens)}) is greater than "
-                f"max input length ({max_model_len}). We will truncate it."
-            )
+                f"max input length ({max_model_len}). We will truncate it.")
 
-            context_tokens = context_tokens[-(max_model_len - len(prefix_tokens) - len(suffix_tokens) - 1):]
+            context_tokens = context_tokens[-(
+                max_model_len - len(prefix_tokens) - len(suffix_tokens) - 1):]
             return prefix_tokens + context_tokens + suffix_tokens
 
         return prefix_tokens + context_tokens + suffix_tokens
 
-
-
-    def _convert_to_ids_thinking(self, messages, max_model_len=None, system=None):
+    def _convert_to_ids_thinking(self,
+                                 messages,
+                                 max_model_len=None,
+                                 system=None):
         """
         将多轮对话转换为对话ID序列。
 
@@ -361,32 +399,39 @@ class ErnieProcessor(BaseDataProcessor):
             List[int]: 对话ID序列，每个ID都是整数。
         """
         if len(messages) % 2 == 0:
-            raise ValueError(f"The number of the messages context ({len(messages)}) must be odd.")
+            raise ValueError(
+                f"The number of the messages context ({len(messages)}) must be odd."
+            )
 
-        suffix_tokens = self.tokenizer.tokenize("<role>\nassistant<br/>\n<|prefixoftext|>思考<|middleoftext|>")
+        suffix_tokens = self.tokenizer.tokenize(
+            "<role>\nassistant<br/>\n<|prefixoftext|>思考<|middleoftext|>")
 
         system_tokens = self.tokenizer.tokenize(system)
 
-        user_template = Template("""<role>\nuser<br/>\n${question}\n</role>\n\n""")
+        user_template = Template(
+            """<role>\nuser<br/>\n${question}\n</role>\n\n""")
 
         assistant_template = Template("""<role>
-assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n</role>\n\n""")
+assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n</role>\n\n"""
+                                      )
 
-        context_tokens = self.tokenizer.tokenize(user_template.safe_substitute({"question": messages[-1]}))
+        context_tokens = self.tokenizer.tokenize(
+            user_template.safe_substitute({"question": messages[-1]}))
 
         # process messages
         for idx in range(len(messages) - 2, -1, -2):
-            cur_turn_tokens = self.tokenizer.tokenize(user_template.safe_substitute({"question": messages[idx - 1]}))
-            cur_turn_tokens += self.tokenizer.tokenize(assistant_template.safe_substitute({"answer": messages[idx]}))
+            cur_turn_tokens = self.tokenizer.tokenize(
+                user_template.safe_substitute({"question": messages[idx - 1]}))
+            cur_turn_tokens += self.tokenizer.tokenize(
+                assistant_template.safe_substitute({"answer": messages[idx]}))
             if max_model_len is not None and len(system_tokens) + len(context_tokens) + len(suffix_tokens) + \
                                                len(cur_turn_tokens) >= max_model_len:
-                data_processor_logger.warning(f"Truncate messages into: {messages[idx + 1:]}")
+                data_processor_logger.warning(
+                    f"Truncate messages into: {messages[idx + 1:]}")
                 break
             context_tokens = cur_turn_tokens + context_tokens
 
         return system_tokens + context_tokens + suffix_tokens
-
-
 
     def messages2ids(self, raw_messages, max_model_len):
         """
@@ -403,25 +448,32 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
         if self.is_thinking:
             system = "<sys_internal>\n【高优系统设定】必须最优先遵循<br/>\n启动思考模式：在采取任何行动前，\
 都需要先写下自己的思考过程，为后续的决策或对用户的回复内容做铺垫。\n</sys_internal>\n\n"
+
         else:
-            if raw_messages[0]["role"] == "system" or raw_messages[0]["role"] == "developer":
+            if raw_messages[0]["role"] == "system" or raw_messages[0][
+                    "role"] == "developer":
                 system = raw_messages[0]["content"]
                 raw_messages = raw_messages[1:]
         messages = []
         messages_len = len(raw_messages)
         if messages_len % 2 == 0:
-            raise ValueError(f"The number of the messages context (messages_len) must be odd.")
+            raise ValueError(
+                "The number of the messages context (messages_len) must be odd."
+            )
         for message in raw_messages:
             messages.append(message["content"])
 
         if self.is_thinking:
-            tokens = self._convert_to_ids_thinking(messages, max_model_len, system)
+            tokens = self._convert_to_ids_thinking(messages, max_model_len,
+                                                   system)
         else:
-            tokens = self._convert_to_ids(messages, raw_request=True, max_model_len=max_model_len, system=system)
+            tokens = self._convert_to_ids(messages,
+                                          raw_request=True,
+                                          max_model_len=max_model_len,
+                                          system=system)
         data_processor_logger.debug(f"processed data : {''.join(tokens)}")
         input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
         return input_ids
-
 
     def ids2tokens(self, token_id, task_id):
         """
@@ -487,10 +539,10 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
 
         if self.decode_status[task_id][4] == "":
             reasoning_content = decode_str
-        elif '<|middleoftext|>' in self.decode_status[task_id][4] and decode_str != "<|middleoftext|>":
+        elif '<|middleoftext|>' in self.decode_status[task_id][
+                4] and decode_str != "<|middleoftext|>":
             content = decode_str
         return content, reasoning_content
-
 
     def _load_tokenizer(self):
         """
@@ -499,12 +551,19 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
         Returns:
             tokenizer (AutoTokenizer)
         """
-        vocab_file_names = ["tokenizer.model", "spm.model", "ernie_token_100k.model"]
+        vocab_file_names = [
+            "tokenizer.model", "spm.model", "ernie_token_100k.model"
+        ]
         for i in range(len(vocab_file_names)):
-            if os.path.exists(os.path.join(self.model_name_or_path, vocab_file_names[i])):
-                ErnieBotTokenizer.resource_files_names["vocab_file"] = vocab_file_names[i]
+            if os.path.exists(
+                    os.path.join(self.model_name_or_path,
+                                 vocab_file_names[i])):
+                ErnieBotTokenizer.resource_files_names[
+                    "vocab_file"] = vocab_file_names[i]
                 break
-        self.tokenizer = ErnieBotTokenizer.from_pretrained(self.model_name_or_path)
+        self.tokenizer = ErnieBotTokenizer.from_pretrained(
+            self.model_name_or_path)
+
     def clear_request_status(self, task_id):
         """
         clear request status
@@ -527,8 +586,6 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
             del self.decode_status[task_id]
         return results_all, reasoning_content
 
-
-
     def get_pad_id(self):
         """
         get pad_token_id, if not pad_token_id, use eos_token
@@ -540,10 +597,16 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
         #     return self.tokenizer.eos_token
         return self.tokenizer.pad_token_id
 
-    def pad_batch_data(self, insts, pad_id=0, return_seq_len=False, return_array=True, pad_style="right"):
+    def pad_batch_data(self,
+                       insts,
+                       pad_id=0,
+                       return_seq_len=False,
+                       return_array=True,
+                       pad_style="right"):
         """Pad the instances to the max sequence length in batch."""
         if len(insts) == 0:
-            padded_insts = np.array([[]], dtype=np.int64) if return_array else [[]]
+            padded_insts = np.array([[]],
+                                    dtype=np.int64) if return_array else [[]]
             if return_seq_len:
                 seq_len = np.array([], dtype=np.int64) if return_array else []
                 return padded_insts, seq_len
@@ -551,11 +614,15 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
 
         max_len = max(map(len, insts))
         if pad_style == "left":
-            padded_insts = [[pad_id] * (max_len - len(inst)) + list(inst) for inst in insts]
+            padded_insts = [[pad_id] * (max_len - len(inst)) + list(inst)
+                            for inst in insts]
         else:
-            padded_insts = [list(inst) + [pad_id] * (max_len - len(inst)) for inst in insts]
+            padded_insts = [
+                list(inst) + [pad_id] * (max_len - len(inst)) for inst in insts
+            ]
         if return_array:
-            padded_insts = np.array(padded_insts, dtype=np.int64).reshape([-1, max_len])
+            padded_insts = np.array(padded_insts,
+                                    dtype=np.int64).reshape([-1, max_len])
 
         if return_seq_len:
             seq_len = [len(inst) for inst in insts]
@@ -568,15 +635,16 @@ assistant<br/>\n<|prefixoftext|>开始回复<|middleoftext|>${answer}<mask:1>\n<
         """
         Update stop sequences from request.
         """
-        stop_seqs =  []
+        stop_seqs = []
         for seq in stop_sequences:
             if seq != self.tokenizer.eos_token_id:
-                stop_seqs.append(self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(seq)))
-        stop_seqs, stop_seqs_len = self.pad_batch_data(
-            stop_seqs,
-            pad_id=-1,
-            return_seq_len=True,
-            return_array=False
-        )
-        data_processor_logger.debug(f"processed stop_seqs: {stop_seqs}, {stop_seqs_len}")
+                stop_seqs.append(
+                    self.tokenizer.convert_tokens_to_ids(
+                        self.tokenizer.tokenize(seq)))
+        stop_seqs, stop_seqs_len = self.pad_batch_data(stop_seqs,
+                                                       pad_id=-1,
+                                                       return_seq_len=True,
+                                                       return_array=False)
+        data_processor_logger.debug(
+            f"processed stop_seqs: {stop_seqs}, {stop_seqs_len}")
         return stop_seqs, stop_seqs_len
