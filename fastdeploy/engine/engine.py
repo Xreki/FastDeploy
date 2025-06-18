@@ -808,8 +808,20 @@ class LLMEngine(object):
             "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION": "python",
             "FLAGS_use_append_attn": 1,
             "NCCL_ALGO": "Ring",
-            "ELLM_DYNAMIC_MODE": 1,
         }
+        # environment variables needed by Dy2St
+        variables.update({
+            "ELLM_DYNAMIC_MODE":
+            os.getenv("ELLM_DYNAMIC_MODE", default="1"),
+            "SOT_LOG_LEVEL":
+            os.getenv("SOT_LOG_LEVEL", default="0"),
+            "SOT_UNSAFE_CACHE_FASTPATH":
+            os.getenv("SOT_UNSAFE_CACHE_FASTPATH", default="1"),
+            "SOT_ENABLE_0_SIZE_FALLBACK":
+            os.getenv("SOT_ENABLE_0_SIZE_FALLBACK", default="0"),
+            "FLAGS_specialize_device_in_dy2st":
+            os.getenv("FLAGS_specialize_device_in_dy2st", default="1"),
+        })
 
         if self.cfg.splitwise_role != "mixed":
             variables["FLAGS_use_pd_disaggregation"] = 1
