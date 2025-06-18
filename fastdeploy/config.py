@@ -22,7 +22,7 @@ from enum import Enum
 from typing import Optional
 
 import paddle
-from paddlenlp.transformers.configuration_utils import PretrainedConfig
+from paddleformers.transformers.configuration_utils import PretrainedConfig
 
 from fastdeploy.model_executor.layers.quantization.quant_base import \
     QuantConfigBase

@@ -23,7 +23,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 import paddle
 from paddle import nn
-from paddlenlp.utils.log import logger
+from paddleformers.utils.log import logger
 
 from fastdeploy.model_executor.models.ernie45t_vl.configuration import \
     ErnieBotMoEVLConfig

@@ -19,8 +19,8 @@ from shutil import copyfile
 from typing import Any, Dict, List, Optional, Tuple
 
 import sentencepiece as spm
-from paddlenlp.transformers import AddedToken, PretrainedTokenizer
-from paddlenlp.utils import logger
+from paddleformers.transformers import AddedToken, PretrainedTokenizer
+from paddleformers.utils import logger
 
 __all__ = ["ErnieBotTokenizer"]
 

@@ -31,13 +31,14 @@ import paddle
 import paddle.distributed as dist
 from paddle.common_ops_import import convert_dtype
 from paddle.distributed import fleet
-from paddlenlp.transformers.model_utils import _add_variant, load_tp_checkpoint
-from paddlenlp.transformers.utils import paddlenlp_load
-from paddlenlp.utils.env import (PADDLE_WEIGHTS_INDEX_NAME,
+
+from paddleformers.transformers.model_utils import _add_variant, load_tp_checkpoint
+from paddleformers.transformers.utils import paddleformers_load
+from paddleformers.utils.env import (PADDLE_WEIGHTS_INDEX_NAME,
                                  SAFE_MASTER_WEIGHTS_INDEX_NAME,
                                  SAFE_PEFT_WEIGHTS_INDEX_NAME,
                                  SAFE_WEIGHTS_INDEX_NAME)
-from paddlenlp.utils.log import logger
+from paddleformers.utils.log import logger
 from safetensors import safe_open
 from tqdm import tqdm
 
@@ -98,7 +99,7 @@ def load_sharded_checkpoint(folder, variant=None, return_numpy=False):
         return paddle.load(lora_pdparams_file, return_numpy=return_numpy)
     if os.path.isfile(safetensors_file):
         try:
-            from paddlenlp.utils.safetensors import \
+            from paddleformers.utils.safetensors import \
                 fast_load_file as safe_load_file
         except ImportError:
             from safetensors.numpy import load_file as safe_load_file
@@ -145,7 +146,7 @@ def load_sharded_checkpoint(folder, variant=None, return_numpy=False):
 
     if load_safe:
         try:
-            from paddlenlp.utils.safetensors import \
+            from paddleformers.utils.safetensors import \
                 fast_load_file as safe_load_file
         except ImportError:
             from safetensors.numpy import load_file as safe_load_file
@@ -155,7 +156,7 @@ def load_sharded_checkpoint(folder, variant=None, return_numpy=False):
 
     shard_files = list(set(index["weight_map"].values()))
     loader = (safe_load_file if load_safe else partial(
-        paddlenlp_load, map_location="np" if return_numpy else "cpu"))
+        paddleformers_load, map_location="np" if return_numpy else "cpu"))
 
     ret = {}
     for shard_file in tqdm(shard_files):

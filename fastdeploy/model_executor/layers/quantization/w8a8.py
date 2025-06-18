@@ -16,7 +16,7 @@
 from typing import Optional
 
 import paddle
-from paddlenlp.utils.log import logger
+from paddleformers.utils.log import logger
 
 import fastdeploy
 from fastdeploy.platforms.utils import convert_to_npu_dequant_scale

@@ -22,7 +22,7 @@ from collections import defaultdict
 from typing import Any, Dict, List, Union
 
 import numpy as np
-from paddlenlp.transformers.image_utils import ChannelDimension
+from paddleformers.transformers.image_utils import ChannelDimension
 from PIL import Image
 
 

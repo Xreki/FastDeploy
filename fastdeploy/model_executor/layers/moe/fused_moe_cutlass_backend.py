@@ -17,7 +17,7 @@
 import paddle
 from paddle import nn
 from paddle.nn.quant import weight_quantize
-from paddlenlp.utils.log import logger
+from paddleformers.utils.log import logger
 
 import fastdeploy
 from fastdeploy.config import MoEPhase

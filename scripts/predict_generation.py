@@ -29,8 +29,8 @@ import numpy as np
 import paddle
 import paddle.distributed as dist
 from paddle.distributed import fleet
-from paddlenlp.trainer import RuntimeTimer, strtobool
-from paddlenlp.utils.log import logger
+from paddleformers.trainer import RuntimeTimer, strtobool
+from paddleformers.utils.log import logger
 from tqdm import tqdm
 
 from fastdeploy.inference_args import GenerationPhase
@@ -1438,7 +1438,7 @@ def main():
     check_output_dir = False
     if check_output_dir and not check_output(args.model_name_or_path):
         logger.error("args.model_name_or_path is not safe."
-                     )  # Must before using paddlenlp, paddleslim logger
+                     )  # Must before using paddleformers, paddleslim logger
         sys.exit(-1)
 
     token_audit = False
@@ -1450,7 +1450,7 @@ def main():
         assert args.lora_dir is not None, "lora_dir should be set when lora_num > 0"
 
     if int(os.getenv("TEST_QWEN", "1")) == 1:
-        from paddlenlp.transformers import AutoTokenizer
+        from paddleformers.transformers import AutoTokenizer
 
         tokenizer = AutoTokenizer.from_pretrained(
             args.model_name_or_path,

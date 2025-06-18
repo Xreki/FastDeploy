@@ -26,12 +26,12 @@ import paddle
 import paddle.distributed as dist
 from paddle.common_ops_import import convert_dtype
 from paddle.distributed import fleet
-from paddlenlp.trainer import RuntimeTimer
-from paddlenlp.transformers import AutoTokenizer
-from paddlenlp.transformers.configuration_utils import PretrainedConfig
-from paddlenlp.trl import llm_utils
-from paddlenlp.utils.env import USE_FAST_TOKENIZER
-from paddlenlp.utils.log import logger
+from paddleformers.trainer import RuntimeTimer
+from paddleformers.transformers import AutoTokenizer
+from paddleformers.transformers.configuration_utils import PretrainedConfig
+from paddleformers.trl import llm_utils
+from paddleformers.utils.env import USE_FAST_TOKENIZER
+from paddleformers.utils.log import logger
 
 from fastdeploy.config import (AdditionalConfig, DeviceConfig, FDConfig,
                                KVCacheConfig, LoadConfig, ModelConfig,

@@ -58,7 +58,7 @@ class ModelConfig:
         config_file = os.path.join(model_name_or_path, config_json_file)
         if os.path.isfile(model_name_or_path):
             try:
-                from paddlenlp.transformers import AutoConfig
+                from paddleformers.transformers import AutoConfig
                 config = AutoConfig.from_pretrained(model_name_or_path)
                 config_dict = {
                     k: v
@@ -68,10 +68,10 @@ class ModelConfig:
                     setattr(self, key, value)
             except Exception:
                 llm_logger.error(
-                    "Don't support the current model, you can use `paddlenlp` to register your model."
+                    "Don't support the current model, you can use `paddleformers` to register your model."
                 )
                 raise ValueError(
-                    "Don't support the current model, you can use `paddlenlp` to register your model."
+                    "Don't support the current model, you can use `paddleformers` to register your model."
                 )
         else:
             with open(config_file, "r", encoding="utf-8") as f:

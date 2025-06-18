@@ -22,7 +22,7 @@ from enum import Enum
 
 import numpy as np
 import paddle
-from paddlenlp.utils.log import logger
+from paddleformers.utils.log import logger
 
 
 class MoEPhase(Enum):

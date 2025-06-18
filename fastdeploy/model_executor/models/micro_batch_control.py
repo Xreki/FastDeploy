@@ -16,7 +16,7 @@
 
 from paddle.incubate.nn.functional import blha_get_max_len
 import fastdeploy
-from paddlenlp.utils.log import logger
+from paddleformers.utils.log import logger
 
 try:
     from paddle.base.core import EventHandle
