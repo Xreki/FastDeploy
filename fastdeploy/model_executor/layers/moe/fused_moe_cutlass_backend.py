@@ -61,6 +61,23 @@ class CutlassMoEMethod(QuantMethodBase):
         ]
         self.pack_num = 1
 
+    def init_ep(self, layer: nn.Layer) -> None:
+        """
+        Init EP related module
+        """
+        if layer.ep_size > 1:
+            if layer.fd_config.parallel_config.moe_phase == MoEPhase.DECODER:
+                from .ep import EPDecoderRunner
+                self.ep_decoder_runner = EPDecoderRunner(
+                    layer.top_k, layer.hidden_size, layer.num_experts,
+                    layer.moe_config.num_max_dispatch_tokens_per_rank,
+                    layer.ep_size, layer.ep_rank)
+            else:
+                from .ep import EPPrefillRunner
+                self.ep_prefill_runner = EPPrefillRunner(
+                    layer.top_k, layer.hidden_size, layer.num_experts,
+                    layer.ep_size, layer.ep_rank)
+
     def process_loaded_weights(self, layer, weights) -> None:
         """
         process_loaded_weights
@@ -216,12 +233,13 @@ class CutlassMoEMethod(QuantMethodBase):
         else:
             raise NotImplementedError
 
-        ffn_out = self.compute_ffn(layer, permute_input, token_nums_per_expert.cast("int64"),
+        ffn_out = self.compute_ffn(layer, permute_input,
+                                   token_nums_per_expert.cast("int64"),
                                    expert_idx_per_token, True)
 
         # 4. EP combine
-        return self.ep_decoder_runner.combine(ffn_out, topk_idx,
-                                              topk_weights, handle)
+        return self.ep_decoder_runner.combine(ffn_out, topk_idx, topk_weights,
+                                              handle)
 
     def apply_tp(
         self,
@@ -288,12 +306,6 @@ class CutlassMoEMethod(QuantMethodBase):
         Paddle Cutlass compute Fused MoE.
         """
         if layer.ep_size > 1:
-            from .ep import EPPrefillRunner
-            self.ep_prefill_runner = EPPrefillRunner(layer.top_k,
-                                                     layer.hidden_size,
-                                                     layer.global_num_experts,
-                                                     layer.ep_size,
-                                                     layer.ep_rank)
             if layer.fd_config.parallel_config.moe_phase == MoEPhase.PREFILL:
                 return self.apply_ep_prefill(layer, x, gate_out)
             else:

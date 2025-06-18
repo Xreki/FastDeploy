@@ -73,10 +73,11 @@ class FusedMoE(nn.Layer):
         self.weight_key_map = weight_key_map
         self.use_method = use_method
         self.gate_correction_bias = None
-        self.expert_id_offset = expert_id_offset
 
         if self.ep_size > 1:
             expert_id_offset = expert_id_offset + self.ep_rank * self.num_local_experts
+
+        self.expert_id_offset = expert_id_offset
 
         quant_name = "no quant"
         if fd_config.quant_config:
@@ -87,8 +88,11 @@ class FusedMoE(nn.Layer):
             from .fused_moe_cutlass_backend import CutlassMoEMethod
             self.quant_method = CutlassMoEMethod(None)
 
+        if self.ep_size > 1:
+            self.quant_method.init_ep(self)
+
         logger.info(
-            f"{moe_tag}MoE config is {num_experts=}[{expert_id_offset}, {expert_id_offset+num_experts}), \
+            f"{moe_tag}MoE config is {num_experts=}[{expert_id_offset}, {expert_id_offset+self.num_local_experts}), \
         {top_k=}, hidden_size={self.hidden_size}, {moe_intermediate_size=}, \
             quant_type={quant_name}, ep_size={self.ep_size}, \
             tp_size={self.tp_size}.")
@@ -105,30 +109,36 @@ class FusedMoE(nn.Layer):
         """
         ffn1_weights = []
         ffn2_weights = []
-        is_ffn_merged = ffn1_expert_weight_key.format(self.expert_id_offset) in state_dict
+        is_ffn_merged = ffn1_expert_weight_key.format(
+            self.expert_id_offset) in state_dict
 
         if is_ffn_merged:
-            for i in range(self.num_experts):
+            for i in range(self.num_local_experts):
                 expert_idx = self.expert_id_offset + i
                 ffn1_weights.append(
                     get_tensor(
-                        state_dict.pop(ffn1_expert_weight_key.format(expert_idx))))
+                        state_dict.pop(
+                            ffn1_expert_weight_key.format(expert_idx))))
                 ffn2_weights.append(
                     get_tensor(
-                        state_dict.pop(ffn2_expert_weight_key.format(expert_idx))))
+                        state_dict.pop(
+                            ffn2_expert_weight_key.format(expert_idx))))
         else:
-            gate_expert_weight_key = ffn1_expert_weight_key.replace("up_gate_proj", "gate_proj")
-            up_expert_weight_key = ffn1_expert_weight_key.replace("up_gate_proj", "up_proj")
-            for j in range(self.num_experts):
+            gate_expert_weight_key = ffn1_expert_weight_key.replace(
+                "up_gate_proj", "gate_proj")
+            up_expert_weight_key = ffn1_expert_weight_key.replace(
+                "up_gate_proj", "up_proj")
+            for j in range(self.num_local_experts):
                 expert_idx = self.expert_id_offset + j
                 gate = get_tensor(
-                        state_dict.pop(gate_expert_weight_key.format(expert_idx)))
+                    state_dict.pop(gate_expert_weight_key.format(expert_idx)))
                 up = get_tensor(
-                        state_dict.pop(up_expert_weight_key.format(expert_idx)))
+                    state_dict.pop(up_expert_weight_key.format(expert_idx)))
                 ffn1_weights.append(paddle.concat([gate, up], axis=-1))
                 ffn2_weights.append(
                     get_tensor(
-                        state_dict.pop(ffn2_expert_weight_key.format(expert_idx))))
+                        state_dict.pop(
+                            ffn2_expert_weight_key.format(expert_idx))))
         return ffn1_weights, ffn2_weights
 
     def extract_moe_ffn_weights(self, state_dict: dict):
