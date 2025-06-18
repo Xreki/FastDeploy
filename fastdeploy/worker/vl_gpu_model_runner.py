@@ -283,6 +283,7 @@ class GPUVLModelRunner(VLModelRunnerBase):
                                        "weight_only_int4"),
                 use_safetensors=self.is_safetensors_model,
                 return_fd_config=True,
+                quantization=self.args.quantization,
             )
             self.model.eval()
             self.set_state_dict(self.args)
@@ -630,20 +631,36 @@ class GPUVLModelRunner(VLModelRunnerBase):
         """
         dynamic insertion
         """
+
+        def get_numeric_value(task, key, default_value):
+            if task.get(key, None) is not None:
+                return task.get(key)
+            else:
+                return default_value
+
         for i in range(len(tasks)):
             task = tasks[i]
             idx = task.idx
 
             kwargs = {
-                "max_length": task.get("max_tokens", 2048),
-                "top_p": task.get("top_p", 0.8),
-                "temperature": task.get("temperature", 0.2),
-                "top_k": task.get("top_k", 0),
-                "penalty_score": task.get("repetition_penalty", 1.0),
-                "frequency_score": task.get("frequency_penalty", 0.0),
-                "presence_score": task.get("presence_penalty", 0.0),
-                "decode_strategy": "sampling",
-                "pad_token_id": self.args.pad_token_id,
+                "max_length":
+                get_numeric_value(task, "max_tokens", 2048),
+                "top_p":
+                get_numeric_value(task, "top_p", 0.8),
+                "temperature":
+                get_numeric_value(task, "temperature", 0.2),
+                "top_k":
+                get_numeric_value(task, "top_k", 0),
+                "penalty_score":
+                get_numeric_value(task, "repetition_penalty", 1.0),
+                "frequency_score":
+                get_numeric_value(task, "frequency_penalty", 0.0),
+                "presence_score":
+                get_numeric_value(task, "presence_penalty", 0.0),
+                "decode_strategy":
+                "sampling",
+                "pad_token_id":
+                self.args.pad_token_id,
             }
 
             if self.args.enable_chunked_prefill:
@@ -756,7 +773,10 @@ class GPUVLModelRunner(VLModelRunnerBase):
         self.share_inputs["cum_offsets"] = cum_offsets
         self.share_inputs["cu_seqlens_q"] = cu_seqlens_q
         self.share_inputs["cu_seqlens_k"] = cu_seqlens_k
-
+        self.share_inputs["decoder_batch_ids"] = paddle.full(
+            [self.fd_config.parallel_config.max_num_seqs, 1], 0, dtype='int32')
+        self.share_inputs["decoder_tile_ids_per_batch"] = paddle.full(
+            [self.fd_config.parallel_config.max_num_seqs, 1], 0, dtype='int32')
         # initialize_forward_meta
         self.forward_meta = ForwardMeta.init_forward_meta(
             self.share_inputs, self.attn_backend)

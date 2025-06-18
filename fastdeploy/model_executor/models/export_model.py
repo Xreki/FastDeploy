@@ -161,6 +161,7 @@ def build_stream_line_model(
     use_empty_parameter: bool = False,
     embeddings_column_cut: bool = False,
     rope_theta: float = 10000.0,
+    quantization: str = "None",
 ):
     """
     Build a fused inference model
@@ -580,6 +581,16 @@ def build_stream_line_model(
         quant_config = quant_cls.from_config(quantization_config)
         logger.info(
             f"quant_type: {quant_config.name()}, cachekv[{cachekv_dtype}]")
+    elif quantization != "None":
+        quantization_config = {}
+        if use_moe and quantization == "wint4":
+            quantization_config["dense_quant_type"] = "wint8"
+            quantization_config["moe_quant_type"] = "wint4"
+            quant_config_name = "mix_quant"
+        else:
+            quant_config_name = quantization
+        quant_cls = get_quantization_config(quant_config_name)
+        quant_config = quant_cls.from_config(quantization_config)
     else:
         quant_config = None
 

@@ -59,8 +59,8 @@ class WeightOnlyConfig(QuantConfigBase):
 
     def get_quant_method(self, layer) -> Optional[QuantMethodBase]:
         if current_platform.is_xpu():
-            from fastdeploy.model_executor.layers.backends import \
-                XPUWeightOnlyLinearMethod, XPUWeightOnlyMoEMethod
+            from fastdeploy.model_executor.layers.backends import (
+                XPUWeightOnlyLinearMethod, XPUWeightOnlyMoEMethod)
             if isinstance(layer, FusedMoE):
                 return XPUWeightOnlyMoEMethod(self)
             else:
@@ -68,45 +68,47 @@ class WeightOnlyConfig(QuantConfigBase):
         else:
             if isinstance(layer, FusedMoE):
                 if layer.use_method == "cutlass":
-                    from fastdeploy.model_executor.layers.moe.fused_moe_cutlass_backend \
-                        import CutlassWeightOnlyMoEMethod
+                    from fastdeploy.model_executor.layers.moe.fused_moe_cutlass_backend import \
+                        CutlassWeightOnlyMoEMethod
                     return CutlassWeightOnlyMoEMethod(self)
                 else:
-                    from fastdeploy.model_executor.layers.moe.fused_moe_triton_backend \
-                        import TritonWeightOnlyMoEMethod
+                    from fastdeploy.model_executor.layers.moe.fused_moe_triton_backend import \
+                        TritonWeightOnlyMoEMethod
                     return TritonWeightOnlyMoEMethod(self)
             else:
                 return GPUWeightOnlyLinearMethod(self)
 
 
-class WeightOnlyInt8Config(WeightOnlyConfig):
+class WINT8Config(WeightOnlyConfig):
     """
     weight only int8 config
     """
+
     def __init__(self, ) -> None:
         super().__init__("weight_only_int8")
 
     @classmethod
-    def from_config(cls, config: dict) -> "WeightOnlyInt8Config":
+    def from_config(cls, config: dict) -> "WINT8Config":
         return cls()
 
     def name(self) -> str:
-        return "weight_only_int8"
+        return "wint8"
 
 
-class WeightOnlyInt4Config(WeightOnlyConfig):
+class WINT4Config(WeightOnlyConfig):
     """
     weight only int4 config
     """
+
     def __init__(self, ) -> None:
         super().__init__("weight_only_int4")
 
     @classmethod
-    def from_config(cls, config: dict) -> "WeightOnlyInt4Config":
+    def from_config(cls, config: dict) -> "WINT4Config":
         return cls()
 
     def name(self) -> str:
-        return "weight_only_int4"
+        return "wint4"
 
 
 class WeightOnlyLinearMethod(QuantMethodBase):
@@ -123,7 +125,7 @@ class WeightOnlyLinearMethod(QuantMethodBase):
 
     def create_weights(self, layer):
         layer.linear_weight_shape.reverse()
-        if self.quant_config.name() == "weight_only_int4":
+        if self.quant_config.name() == "wint4":
             layer.linear_weight_shape[0] //= 2
         layer.weight_dtype = "int8"
         linear_weight_scale_shape = [layer.embed_dim]
@@ -149,7 +151,7 @@ class WeightOnlyLinearMethod(QuantMethodBase):
             bias=layer.linear_bias if layer.add_bias else None,
             weight_scale=layer.linear_weight_scale,
             weight_dtype="int8"
-            if self.quant_config.name() == "weight_only_int8" else "int4",
+            if self.quant_config.name() == "wint8" else "int4",
             arch=self.quant_config.weight_only_linear_arch,
         )
         return linear_out

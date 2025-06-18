@@ -644,7 +644,7 @@ def parse_args():
                         type=str,
                         default="",
                         help="Quantization name for the model, currentlly support " \
-                        "'weight_only_int4', 'weight_only_int8'," \
+                        "'wint4', 'wint8'," \
                         "default is None. The priority of this configuration "\
                         "is lower than that of the config file. " \
                         "More complex quantization methods need to be configured via the config file.")
