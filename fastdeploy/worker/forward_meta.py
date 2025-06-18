@@ -309,9 +309,6 @@ class ForwardMeta():
     padding_offset: Optional[paddle.Tensor] = None
 
     #
-    cum_offsets: Optional[paddle.Tensor] = None
-
-    #
     cu_seqlens_q: Optional[paddle.Tensor] = None
 
     #
@@ -326,25 +323,38 @@ class ForwardMeta():
     #
     pre_caches_length: int = 0
 
+    # Use cuda graph in this step. Used to avoid run cuda graph when in dummy run or prefill stage.
+    step_use_cudagraph: bool = False
+
+    # for attention backend
+    decoder_batch_ids: Optional[paddle.Tensor] = None
+    # for attention backend
+    decoder_tile_ids_per_batch: Optional[paddle.Tensor] = None
+
     @classmethod
     def init_forward_meta(cls, share_inputs: Dict,
                           attn_backend: "AttentionBackend"):
         """ init forward meta """
         # TODO(gongshaotian): delete this func
-        ret = cls(forward_mode=ForwardMode.MIXED,
-                  input_ids=share_inputs["input_ids"],
-                  ids_remove_padding=share_inputs["ids_remove_padding"],
-                  seq_lens_encoder=share_inputs["seq_lens_encoder"],
-                  seq_lens_decoder=share_inputs["seq_lens_decoder"],
-                  seq_lens_this_time=share_inputs["seq_lens_this_time"],
-                  cum_offsets=share_inputs["cum_offsets"],
-                  block_tables=share_inputs["block_tables"],
-                  attn_backend=attn_backend,
-                  rotary_embs=share_inputs["rope_emb"],
-                  padding_offset=share_inputs["padding_offset"],
-                  cu_seqlens_q=share_inputs["cu_seqlens_q"],
-                  cu_seqlens_k=share_inputs["cu_seqlens_k"],
-                  caches=share_inputs["caches"])
+        ret = cls(
+            forward_mode=ForwardMode.MIXED,
+            input_ids=share_inputs["input_ids"],
+            ids_remove_padding=share_inputs["ids_remove_padding"],
+            seq_lens_encoder=share_inputs["seq_lens_encoder"],
+            seq_lens_decoder=share_inputs["seq_lens_decoder"],
+            seq_lens_this_time=share_inputs["seq_lens_this_time"],
+            cum_offsets=share_inputs["cum_offsets"],
+            block_tables=share_inputs["block_tables"],
+            attn_backend=attn_backend,
+            rotary_embs=share_inputs["rope_emb"],
+            padding_offset=share_inputs["padding_offset"],
+            cu_seqlens_q=share_inputs["cu_seqlens_q"],
+            cu_seqlens_k=share_inputs["cu_seqlens_k"],
+            caches=share_inputs["caches"],
+            decoder_batch_ids=share_inputs["decoder_batch_ids"],
+            decoder_tile_ids_per_batch=share_inputs[
+                "decoder_tile_ids_per_batch"],
+        )
         return ret
 
 

@@ -33,7 +33,7 @@ from fastdeploy.model_executor.layers.lm_head import ParallelLMHead
 from fastdeploy.model_executor.layers.normalization import RMSNorm
 from fastdeploy.model_executor.models.model_base import ModelForCasualLM
 from fastdeploy.worker.forward_meta import ForwardMeta
-
+from fastdeploy.model_executor.graph_optimization.decorator import support_graph_optimization
 
 class Qwen2MLP(nn.Layer):
     """
@@ -348,7 +348,8 @@ class Qwen2ForCausalLM(ModelForCasualLM):
     ):
         """
         """
-        hidden_states = self.model(ids_remove_padding, forward_meta)
+        hidden_states = self.model(ids_remove_padding=ids_remove_padding,
+                                   forward_meta=forward_meta)
 
         return hidden_states
 
