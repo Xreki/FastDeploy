@@ -181,11 +181,11 @@ class CompletionRequest(BaseModel):
     prompt: Union[List[int], List[List[int]], str, List[str]]
     best_of: Optional[int] = None
     echo: Optional[bool] = False
-    frequency_penalty: Optional[float] = 0.0
+    frequency_penalty: Optional[float] = None
     logprobs: Optional[int] = None
     max_tokens: Optional[int] = None
     n: int = 1
-    presence_penalty: Optional[float] = 0.0
+    presence_penalty: Optional[float] = None
     seed: Optional[int] = None
     stop: Optional[Union[str, List[str]]] = Field(default_factory=list)
     stream: Optional[bool] = False
@@ -247,7 +247,7 @@ class ChatCompletionRequest(BaseModel):
     # https://platform.openai.com/docs/api-reference/chat/create
     messages: Union[List[ChatCompletionMessageParam], List[int]]
     model: Optional[str] = "default"
-    frequency_penalty: Optional[float] = 0.0
+    frequency_penalty: Optional[float] = None
     # remove max_tokens when field is removed from OpenAI API
     max_tokens: Optional[int] = Field(
         default=None,
@@ -255,7 +255,7 @@ class ChatCompletionRequest(BaseModel):
         'max_tokens is deprecated in favor of the max_completion_tokens field')
     max_completion_tokens: Optional[int] = None
     n: Optional[int] = 1
-    presence_penalty: Optional[float] = 0.0
+    presence_penalty: Optional[float] = None
     seed: Optional[int] = None
     stop: Optional[Union[str, List[str]]] = Field(default_factory=list)
     stream: Optional[bool] = False

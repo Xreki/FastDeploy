@@ -372,6 +372,7 @@ class LLMEngine(object):
         # TODO 输入输出长度确认
 
         request = Request.from_dict(task)
+        llm_logger.info(f"Receive request {request}")
         if sampling_params is not None:
             request.sampling_params = sampling_params
         request.preprocess_start_time = time.time()

@@ -51,6 +51,27 @@ class BaseDataProcessor(ABC):
             f"mask_token is {self.tokenizer.mask_token}, {self.tokenizer.mask_token_id}"
         ))
 
+    def _apply_default_parameters(self, request):
+        """
+        Apply default value for parameters in request
+        """
+
+        def set_value(req, key, value):
+            value = getattr(self.generation_config, key, value)
+            if isinstance(req, dict):
+                if key not in req:
+                    req[key] = value
+            else:
+                if req.get(key) is None:
+                    req.set(key, value)
+
+        set_value(request, "top_p", 0.7)
+        set_value(request, "temperature", 1.0)
+        set_value(request, "repetition_penalty", 1.0)
+        set_value(request, "frequency_penalty", 0.0)
+        set_value(request, "presence_penalty", 0.0)
+        return request
+
     @abstractmethod
     def process_request(self, request, **kwargs):
         """
@@ -199,6 +220,7 @@ class DataProcessor(BaseDataProcessor):
             bool: Whether preprocessing is successful
             str: error message
         """
+        request = self._apply_default_parameters(request)
         if request.get("eos_token_ids") is None or len(
                 request.eos_token_ids) == 0:
             request.eos_token_ids = self.eos_token_ids
@@ -223,12 +245,9 @@ class DataProcessor(BaseDataProcessor):
                 raise ValueError(
                     f"The request should have `input_ids`, `text` or `messages`: {request}."
                 )
-
-        if max_model_len is not None and len(
-                request.prompt_token_ids) > max_model_len:
-            request.prompt_token_ids = request.prompt_token_ids[:
-                                                                max_model_len -
-                                                                1]
+        if request.get("max_tokens") is None:
+            request.set("max_tokens", max(1, max_model_len - len(request.prompt_token_ids)))
+        data_processor_logger.info(f"Processed request {request}")
         return request
 
     def process_request_dict(self, request, max_model_len=None):
@@ -242,6 +261,7 @@ class DataProcessor(BaseDataProcessor):
             bool: Whether preprocessing is successful
             str: error message
         """
+        request = self._apply_default_parameters(request)
         if not request.get('eos_token_ids'):
             request['eos_token_ids'] = self.eos_token_ids
 
@@ -269,12 +289,9 @@ class DataProcessor(BaseDataProcessor):
                     f"Request must contain 'prompt_token_ids', 'prompt', or 'messages': {request}"
                 )
 
-        # 截断超过长度限制的prompt
-        if max_model_len is not None and len(
-                request['prompt_token_ids']) > max_model_len:
-            request['prompt_token_ids'] = request[
-                'prompt_token_ids'][:max_model_len - 1]
-
+        if request.get("max_tokens") is None:
+            request["max_tokens"] = max(1, max_model_len - len(request['prompt_token_ids']))
+        data_processor_logger.info(f"Processed request {request}")
         return request
 
     def process_response(self, response_dict, **kwargs):
