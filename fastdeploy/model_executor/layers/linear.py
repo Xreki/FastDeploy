@@ -149,6 +149,8 @@ class LinearBase(nn.Layer):
             linear_out = self.quant_method.apply(self, x)
         else:
             linear_out = paddle.matmul(x, self.linear_weight)
+            if self.with_bias:
+                linear_out = paddle.add(linear_out, self.linear_bias)
 
         return linear_out
 
