@@ -86,8 +86,8 @@ class EPPrefillFusedMoeMethod(CutlassFusedMoeMethod, DeepGemmFusedMoeMethod):
             elif self.moe_quant_type in [
                     "weight_only_int4", "weight_only_int8", "w4a8"
             ]:
-                ffn_out = self.compute_ffn(
-                    layer, permute_input,
+                ffn_out = CutlassFusedMoeMethod.compute_ffn(
+                    self, layer, permute_input,
                     recv_num_tokens_per_expert_list_cumsum,
                     expert_idx_per_token)
             else:
@@ -158,11 +158,12 @@ class EPDecoderFusedMoeMethod(CutlassFusedMoeMethod, DeepGemmFusedMoeMethod):
                 expert_idx_per_token = None
 
             ffn_out = CutlassFusedMoeMethod.compute_ffn(
-                layer, permute_input, token_nums_per_expert,
-                expert_idx_per_token, True)
+                self, layer, permute_input,
+                token_nums_per_expert.cast("int64"), expert_idx_per_token,
+                True)
         else:
             raise NotImplementedError
 
         # 4. EP combine
-        return self.ep_decoder_runner.combine(ffn_out, handle, topk_idx,
-                                              topk_weights)
+        return self.ep_decoder_runner.combine(ffn_out, topk_idx, topk_weights,
+                                              handle)
