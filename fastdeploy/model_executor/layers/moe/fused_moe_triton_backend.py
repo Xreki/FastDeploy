@@ -17,11 +17,9 @@
 import paddle
 from paddle import nn
 
-from fastdeploy.model_executor.ops.gpu import tritonmoe_preprocess
 from fastdeploy.utils import ceil_div
 
 from ..quantization.quant_base import QuantMethodBase
-from .triton_moe_kernels import fused_moe_kernel_paddle
 
 
 class TritonWeightOnlyMoEMethod(QuantMethodBase):
@@ -133,7 +131,9 @@ class TritonWeightOnlyMoEMethod(QuantMethodBase):
             "BLOCK_SIZE_K": 128,
             "GROUP_SIZE_M": 1,
         }
+        from fastdeploy.model_executor.ops.gpu import tritonmoe_preprocess
 
+        from .triton_moe_kernels import fused_moe_kernel_paddle
         sorted_token_ids, expert_ids, num_tokens_post_padded = tritonmoe_preprocess(
             topk_ids, num_local_experts, config["BLOCK_SIZE_M"])
         max_num_tokens_padded = sorted_token_ids.shape[0]
