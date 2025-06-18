@@ -37,7 +37,7 @@ from fastdeploy.model_executor.models.ernie45t_vl.dfnrope.modeling import \
     DFNRopeVisionTransformerPretrainedModel
 from fastdeploy.model_executor.models.ernie45t_vl.modeling_resampler import (
     ScatterOp, VariableResolutionResamplerModel)
-from fastdeploy.model_executor.models.utils import load_checkpoint
+from paddleformers.transformers.model_utils import  load_tp_checkpoint
 from fastdeploy.platforms import current_platform
 from fastdeploy.worker.forward_meta import ForwardMeta
 from fastdeploy.worker.utils import check_safetensors_model
@@ -415,7 +415,7 @@ class GPUVLModelRunner(VLModelRunnerBase):
             self.model.set_state_dict(state_dict)
             self.resampler_model.set_state_dict(resampler_state)
         else:
-            state_dict = load_checkpoint(
+            state_dict = load_tp_checkpoint(
                 args.model_name_or_path,
                 ErniePretrainedModel,
                 self.model_cfg,

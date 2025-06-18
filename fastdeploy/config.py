@@ -139,6 +139,7 @@ class ModelConfig(PretrainedConfig):
         head_dim: Optional[int] = None,
         tie_word_embeddings: bool = False,
         is_quantized: bool = False,
+        pre_quant: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -200,6 +201,7 @@ class ModelConfig(PretrainedConfig):
         self.dtype = dtype
         self.tie_word_embeddings = tie_word_embeddings
         self.is_quantized = is_quantized
+        self.pre_quant = pre_quant
 
 
 # This class will be removed in future and replaced by MoEConfig
@@ -546,6 +548,7 @@ class LoadConfig:
 
     act_scales = None
     bias_keys = None
+    load_weights_on: str = None  # cpu/gpu
 
     def _post_init(self, model_config):
         if self.weight_keys:
@@ -593,18 +596,18 @@ class LoadConfig:
             if i == 0:
                 layer_name = f"{model_config.base_model_prefix}.decoder.layers.0.norm1"
                 mapping[layer_name] = act_scales.get(
-                    f"{model_config.base_model_prefix}.decoder.layers.0.self_attn.qkv_proj.activation_quanter",
+                    f"{model_config.base_model_prefix}.decoder.layers.0.self_attn.qkv_proj.activation_scale",
                     -1)
             if i < num_layers:
                 layer_name = f"{model_config.base_model_prefix}.decoder.layers.{i}.norm2"
                 mapping[layer_name] = act_scales.get(
-                    f"{model_config.base_model_prefix}.decoder.layers.{i}.linear1.activation_quanter",
+                    f"{model_config.base_model_prefix}.decoder.layers.{i}.linear1.activation_scale",
                     -1)
 
         for i in range(num_layers - 1):
             layer_name = f"{model_config.base_model_prefix}.decoder.layers.{i+1}.norm1"
             mapping[layer_name] = act_scales.get(
-                f"{model_config.base_model_prefix}.decoder.layers.{i + 1}.self_attn.qkv_proj.activation_quanter",
+                f"{model_config.base_model_prefix}.decoder.layers.{i + 1}.self_attn.qkv_proj.activation_scale",
                 -1)
 
         return mapping

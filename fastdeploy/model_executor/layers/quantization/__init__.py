@@ -19,26 +19,31 @@ from typing import Dict, List, Type
 from fastdeploy.platforms import current_platform
 
 from .quant_base import QuantConfigBase
+from enum import Enum
 
-QUANTIZATION_METHODS: List[str] = [
-    "wint2",
-    "wint4",
-    "wint8",
-    "weight_only",
-    "block_wise",
-    "w4afp8",
-    "w8a8",
-    "w4a8",
-    "wfp8afp8",
-    "mix_quant",
-]
+
+class QuantzationMethods(str, Enum):
+    """QuantzationMethods"""
+    WINT2 = "wint2"
+    WINT4 = "wint4"
+    WINT8 = "wint8"
+    WEIGHT_ONLY = "weight_only"
+    BLOCK_WISE = "block_wise"
+    W4AFP8 = "w4afp8"
+    W8A8 = "w8a8"
+    W4A8 = "w4a8"
+    WFP8AFP8 = "wfp8afp8"
+    KVCACHE = "kvcache"
+    MIX_QUANT = "mix_quant"
 
 
 def get_quantization_config(quantization: str) -> Type[QuantConfigBase]:
     """
     Get the quantization config class by the quantization name.
     """
-    if quantization not in QUANTIZATION_METHODS:
+    try:
+        quantization_enum = QuantzationMethods(quantization)
+    except ValueError:
         raise ValueError(f"Invalid quantization method: {quantization}")
 
     from .block_wise import BlockWiseConfig
@@ -51,22 +56,24 @@ def get_quantization_config(quantization: str) -> Type[QuantConfigBase]:
     from .wfp8afp8 import WFP8AFP8Config
     from .wint2 import WINT2Config
 
+    QUANT = QuantzationMethods
     method_to_config: Dict[str, Type[QuantConfigBase]] = {
-        "wint2": WINT2Config,
-        "wint4": WINT4Config,
-        "wint8": WINT8Config,
-        "weight_only": WeightOnlyConfig,
-        "block_wise": BlockWiseConfig,
-        "w4afp8": W4AFP8Config,
-        "w8a8": W8A8Config,
-        "w4a8": W4A8Config,
-        "wfp8afp8": WFP8AFP8Config,
-        "kvcache": KvCacheQuantConfig,
-        "mix_quant": MixQuantConfig,
+        QUANT.WINT2: WINT2Config,
+        QUANT.WINT4: WINT4Config,
+        QUANT.WINT8: WINT8Config,
+        QUANT.WEIGHT_ONLY: WeightOnlyConfig,
+        QUANT.BLOCK_WISE: BlockWiseConfig,
+        QUANT.W4AFP8: W4AFP8Config,
+        QUANT.W8A8: W8A8Config,
+        QUANT.W4A8: W4A8Config,
+        QUANT.WFP8AFP8: WFP8AFP8Config,
+        QUANT.KVCACHE: KvCacheQuantConfig,
+        QUANT.MIX_QUANT: MixQuantConfig,
     }
 
     if not current_platform.is_xpu():
         from .block_wise import BlockWiseConfig
-        method_to_config["block_wise"] = BlockWiseConfig
 
-    return method_to_config[quantization]
+        method_to_config[QUANT.BLOCK_WISE] = BlockWiseConfig
+
+    return method_to_config[quantization_enum]

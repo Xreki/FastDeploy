@@ -201,10 +201,10 @@ class KVCacheMethodBase(QuantMethodBase):
         create_weights
         """
         self.prefix = layer.prefix
-        self.cache_k_scale_name = layer.prefix + ".cachek_matmul.activation_quanter"
-        self.cache_v_scale_name = layer.prefix + ".cachev_matmul.activation_quanter"
-        self.cache_k_zp_name = layer.cache_k_scale_name + ".zero_point"
-        self.cache_v_zp_name = layer.cache_v_scale_name + ".zero_point"
+        self.cache_k_scale_name = layer.prefix + ".cachek_matmul.activation_scale"
+        self.cache_v_scale_name = layer.prefix + ".cachev_matmul.activation_scale"
+        self.cache_k_zp_name = layer.prefix + ".cachek_matmul.activation_zero_point"
+        self.cache_v_zp_name = layer.prefix + ".cachev_matmul.activation_zero_point"
 
         layer.cache_k_zp = None
         layer.cache_v_zp = None

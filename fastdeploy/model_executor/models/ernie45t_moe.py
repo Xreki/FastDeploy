@@ -36,234 +36,6 @@ from fastdeploy.model_executor.layers.moe.moe import FusedMoE
 from fastdeploy.model_executor.layers.normalization import RMSNorm
 from fastdeploy.model_executor.models.model_base import ModelForCasualLM
 from fastdeploy.worker.forward_meta import ForwardMeta
-from fastdeploy.model_executor.graph_optimization.decorator import support_graph_optimization
-
-class ErniePretrainedModel(PretrainedModel):
-    """
-    ErniePretrainedModel
-    """
-
-    config_class = FDConfig
-
-    def _init_weight(self, layer):
-        """
-        _init_weight
-        """
-        return None
-
-    @classmethod
-    def _get_tensor_parallel_mappings(cls, config: ModelConfig, is_split=True):
-        """
-        get_tensor_parallel_mappings
-        """
-        logger.info("erine inference model _get_tensor_parallel_mappings")
-
-        from paddleformers.transformers.conversion_utils import \
-            split_or_merge_func
-
-        fn = split_or_merge_func(
-            is_split=is_split,
-            tensor_parallel_degree=config.tensor_parallel_degree,
-            tensor_parallel_rank=config.tensor_parallel_rank,
-            num_attention_heads=config.num_attention_heads,
-        )
-
-        def gqa_qkv_split_func(
-            weight,
-            tensor_parallel_degree,
-            tensor_parallel_rank,
-            num_attention_heads,
-            num_key_value_heads,
-            head_dim,
-        ):
-
-            def get_shape(tensor):
-                return (tensor.get_shape()
-                        if hasattr(tensor, "get_shape") else tensor.shape)
-
-            def slice_tensor(tensor, start, end):
-                shape = get_shape(tensor)
-                if len(shape) == 1:
-                    return tensor[start:end]
-                else:
-                    return tensor[..., start:end]
-
-            q_end = num_attention_heads * head_dim
-            k_end = q_end + num_key_value_heads * head_dim
-            v_end = k_end + num_key_value_heads * head_dim
-
-            q = slice_tensor(weight, 0, q_end)
-            k = slice_tensor(weight, q_end, k_end)
-            v = slice_tensor(weight, k_end, v_end)
-
-            def split_tensor(tensor, degree):
-                shape = get_shape(tensor)
-                size = shape[-1]
-                block_size = size // degree
-                if hasattr(tensor, "get_shape"):
-                    return [
-                        slice_tensor(tensor, i * block_size,
-                                     (i + 1) * block_size)
-                        for i in range(degree)
-                    ]
-                else:
-                    return np.split(tensor, degree, axis=-1)
-
-            q_list = split_tensor(q, tensor_parallel_degree)
-            k_list = split_tensor(k, tensor_parallel_degree)
-            v_list = split_tensor(v, tensor_parallel_degree)
-
-            if tensor_parallel_rank is None:
-                return [
-                    np.concatenate([q_i, k_i, v_i], axis=-1)
-                    for q_i, k_i, v_i in zip(q_list, k_list, v_list)
-                ]
-            else:
-                return np.concatenate(
-                    [
-                        q_list[tensor_parallel_rank],
-                        k_list[tensor_parallel_rank],
-                        v_list[tensor_parallel_rank],
-                    ],
-                    axis=-1,
-                )
-
-        def gqa_qkv_merge_func(weight_list, num_attention_heads,
-                               num_key_value_heads, head_dim):
-            tensor_parallel_degree = len(weight_list)
-            num_attention_heads = num_attention_heads // tensor_parallel_degree
-            num_key_value_heads = num_key_value_heads // tensor_parallel_degree
-
-            is_paddle_tensor = not isinstance(weight_list[0], np.ndarray)
-
-            def get_shape(tensor):
-                return (tensor.get_shape()
-                        if hasattr(tensor, "get_shape") else tensor.shape)
-
-            def slice_tensor(tensor, start, end):
-                if len(get_shape(tensor)) == 1:
-                    return tensor[start:end]
-                else:
-                    return tensor[..., start:end]
-
-            q_list, k_list, v_list = [], [], []
-
-            for weight in weight_list:
-                q_end = num_attention_heads * head_dim
-                k_end = q_end + num_key_value_heads * head_dim
-                v_end = k_end + num_key_value_heads * head_dim
-
-                q = slice_tensor(weight, 0, q_end)
-                k = slice_tensor(weight, q_end, k_end)
-                v = slice_tensor(weight, k_end, v_end)
-
-                q_list.append(q)
-                k_list.append(k)
-                v_list.append(v)
-
-            merged = q_list + k_list + v_list
-
-            if is_paddle_tensor:
-                tensor = paddle.concat(merged, axis=-1)
-                if tensor.place.is_gpu_place():
-                    tensor = tensor._copy_to(paddle.CUDAPinnedPlace(), False)
-                return tensor
-            else:
-                return np.concatenate(merged, axis=-1)
-
-        if (config.num_key_value_heads is not None
-                and config.num_key_value_heads != config.num_attention_heads):
-            if is_split:
-                qkv_fn = partial(
-                    gqa_qkv_split_func,
-                    tensor_parallel_degree=config.tensor_parallel_degree,
-                    tensor_parallel_rank=config.tensor_parallel_rank,
-                    num_attention_heads=config.num_attention_heads,
-                    num_key_value_heads=config.num_key_value_heads,
-                    head_dim=config.head_dim,
-                )
-            else:
-                qkv_fn = partial(
-                    gqa_qkv_merge_func,
-                    num_attention_heads=config.num_attention_heads,
-                    num_key_value_heads=config.num_key_value_heads,
-                    head_dim=config.head_dim,
-                )
-        else:
-            qkv_fn = partial(fn, is_column=True)
-
-        def get_tensor_parallel_split_mappings(num_layers, moe_num_experts,
-                                               moe_layer_start_index, is_mtp):
-            final_actions = {}
-            if is_mtp:
-                base_model_prefix = "ernie.mtp"
-            else:
-                base_model_prefix = "ernie"
-            base_actions = {
-                "lm_head.weight":
-                partial(fn, is_column=True),
-                # "eh_proj.weight": partial(fn, is_column=True),
-                f"{base_model_prefix}.embed_tokens.weight":
-                partial(fn, is_column=False),
-            }
-
-            base_actions[
-                f"{base_model_prefix}.layers.0.self_attn.qkv_proj.weight"] = qkv_fn
-            base_actions[
-                f"{base_model_prefix}.layers.0.self_attn.o_proj.weight"] = partial(
-                    fn, is_column=False)
-            base_actions[
-                f"{base_model_prefix}.layers.0.mlp.up_gate_proj.weight"] = partial(
-                    fn, is_column=True, is_naive_2fuse=True)
-            base_actions[
-                f"{base_model_prefix}.layers.0.mlp.down_proj.weight"] = (
-                    partial(fn, is_column=False))
-
-            for expert_idx in range(moe_num_experts):
-                base_actions[
-                    f"{base_model_prefix}.layers.{moe_layer_start_index}"
-                    f".mlp.experts.{expert_idx}.up_gate_proj.weight"] = partial(
-                        fn, is_column=True, is_naive_2fuse=True)
-                base_actions[
-                    f"{base_model_prefix}.layers.{moe_layer_start_index}"
-                    f".mlp.experts.{expert_idx}.down_proj.weight"] = partial(
-                        fn, is_column=False)
-
-            for key, action in base_actions.items():
-                if (f"{base_model_prefix}.layers.0.mlp.up_gate_proj.weight"
-                        in key
-                        or f"{base_model_prefix}.layers.0.mlp.down_proj.weight"
-                        in key):
-                    for i in range(moe_layer_start_index):
-                        final_actions[key.replace("layers.0.",
-                                                  f"layers.{i}.")] = action
-                elif f"layers.{moe_layer_start_index}.mlp.experts." in key:
-                    for i in range(moe_layer_start_index, num_layers):
-                        final_actions[key.replace(
-                            f"layers.{moe_layer_start_index}.",
-                            f"layers.{i}.")] = action
-                elif f"{base_model_prefix}.layers.0." in key:
-                    for i in range(num_layers):
-                        final_actions[key.replace("layers.0.",
-                                                  f"layers.{i}.")] = action
-                final_actions[key] = action
-            return final_actions
-
-        moe_num_experts = 0
-        if isinstance(config.moe_num_experts, list):
-            moe_num_experts = sum(config.moe_num_experts)
-        elif isinstance(config.moe_num_experts, int):
-            moe_num_experts = config.moe_num_experts
-
-        mappings = get_tensor_parallel_split_mappings(
-            config.num_layers,
-            moe_num_experts,
-            config.moe_layer_start_index,
-            config.is_mtp,
-        )
-
-        return mappings
-
 
 class Ernie45TMLP(nn.Layer):
 
@@ -319,10 +91,10 @@ class Ernie45TMoE(nn.Layer):
         if hasattr(fd_config.quant_config, 'moe_quant_type'):
             moe_quant_type = fd_config.quant_config.moe_quant_type
 
-        if moe_quant_type == "w4a8":
+        if fd_config.model_config.is_quantized or moe_quant_type == "w4a8":
             weight_key_map = {
                 "gate_weight_key":
-                f"{prefix}.gate",
+                f"{prefix}.gate.weight",
                 "gate_correction_bias_key":
                 f"{prefix}.moe_statics.e_score_correction_bias",
                 "ffn1_expert_weight_key":
@@ -330,13 +102,13 @@ class Ernie45TMoE(nn.Layer):
                 "ffn2_expert_weight_key":
                 f"{prefix}.experts.{{}}.down_proj.quant_weight",
                 "ffn1_expert_weight_scale_key":
-                f"{prefix}.experts.{{}}.up_gate_proj.weight_quanter",
+                f"{prefix}.experts.{{}}.up_gate_proj.weight_scale",
                 "ffn2_expert_weight_scale_key":
-                f"{prefix}.experts.{{}}.down_proj.weight_quanter",
+                f"{prefix}.experts.{{}}.down_proj.weight_scale",
                 "ffn1_expert_in_scale_key":
-                f"{prefix}.experts.{{}}.up_gate_proj.activation_quanter",
+                f"{prefix}.experts.{{}}.up_gate_proj.activation_scale",
                 "ffn2_expert_in_scale_key":
-                f"{prefix}.experts.{{}}.down_proj.activation_quanter",
+                f"{prefix}.experts.{{}}.down_proj.activation_scale",
             }
         elif moe_quant_type == "w4w2":
             weight_key_map = {
@@ -433,10 +205,10 @@ class Ernie45TAttention(nn.Layer):
             layer_id=layer_id,
             prefix=prefix,
             use_neox_rotary_style=False,
-            cache_k_scale_key=prefix + ".cachek_matmul.activation_quanter"
+            cache_k_scale_key=prefix + ".cachek_matmul.activation_scale"
             if fd_config.kv_cache_config.cache_quant_dtype == "cache_int8" else
             None,
-            cache_v_scale_key=prefix + ".cachev_matmul.activation_quanter"
+            cache_v_scale_key=prefix + ".cachev_matmul.activation_scale"
             if fd_config.kv_cache_config.cache_quant_dtype == "cache_int8" else
             None,
         )
@@ -563,12 +335,12 @@ class Ernie45TModel(nn.Layer):
             params_dtype=paddle.get_default_dtype(),
             prefix=(f"{fd_config.model_config.prefix_name}.embed_tokens"))
 
-        self.hidden_layers = [
+        self.hidden_layers = paddle.nn.LayerList([
             Ernie45TDecoderLayer(
                 fd_config=fd_config,
                 prefix=f"{fd_config.model_config.prefix_name}.layers.{i}")
-            for i in range(self.num_layers)
-        ]
+            for i in range(self.num_layers)])
+
 
         self.norm = RMSNorm(
             fd_config,
@@ -686,3 +458,150 @@ class ErnieForCausalLM(ModelForCasualLM):
                                    forward_meta=forward_meta)
 
         return hidden_states
+
+
+class ErniePretrainedModel(PretrainedModel):
+    """
+    ErniePretrainedModel
+    """
+
+    config_class = FDConfig
+
+    def _init_weight(self, layer):
+        """
+        _init_weight
+        """
+        return None
+    from fastdeploy.model_executor.models.utils import WeightMeta
+    from fastdeploy.model_executor.models.utils import LayerIdPlaceholder as layerid
+    from fastdeploy.model_executor.models.quant_utils import PrePostQuantMethod as pm
+    from fastdeploy.model_executor.models.tp_utils import TensorSplitMode as tsm
+
+    weight_infos = [
+        WeightMeta(f".layers.{{{layerid.LAYER_ID}}}.self_attn.qkv_proj.weight",
+                   True, tsm.GQA, pm.QKV, "qkv_proj"),
+        WeightMeta(f".layers.{{{layerid.LAYER_ID}}}.self_attn.o_proj.weight",
+                   False, None, pm.OUT_LINEAR, "o_proj"),
+        WeightMeta(f".layers.{{{layerid.FFN_LAYER_ID}}}.mlp.up_gate_proj.weight",
+                   True, tsm.PairFused, pm.FFN1, "gate_up_proj"),
+        WeightMeta(f".layers.{{{layerid.FFN_LAYER_ID}}}.mlp.down_proj.weight",
+                   False, None, pm.FFN2, "down_proj"),
+        WeightMeta(f".layers.{{{layerid.MOE_LAYER_ID}}}.mlp.experts.{{{layerid.EXPERT_ID}}}.up_gate_proj.weight",
+                   True, tsm.PairFused, pm.MOE_FFN1, "fused_moe"),
+        WeightMeta(f".layers.{{{layerid.MOE_LAYER_ID}}}.mlp.experts.{{{layerid.EXPERT_ID}}}.down_proj.weight", False,
+                   None, pm.MOE_FFN2, "fused_moe"),
+        WeightMeta(".embed_tokens.weight", False),
+        WeightMeta("lm_head.weight", True),
+        WeightMeta(".embeddings.word_embeddings", False)
+    ]
+
+    # quant_need_find_layer_list: names of model layers whose weights need quantization
+    # e.g., if the model defines `self.qkv_proj = QKVParallelLinear(...)` and qkv needs quantization,
+    #       add "qkv_proj" to this list
+    quant_need_find_layer_list = {
+        "qkv_proj", "o_proj", "gate_up_proj", "down_proj", "fused_moe"}
+
+    @classmethod
+    def _get_quantization_mappings(cls, fd_config: FDConfig):
+        """
+        _get_quantization_mappings
+        """
+        logger.info(
+            "erine bot inference model _get_quantization_mappings")
+        from fastdeploy.model_executor.models.quant_utils import quantization_func
+        from fastdeploy.model_executor.models.tp_utils import build_expanded_keys
+
+        fn = quantization_func(
+            fd_config
+        )
+
+        def get_tensor_quantization_mappings(fd_config: FDConfig):
+            base_actions = {}
+            for (weight_name, _, _, quant_method, quant_layer_key) in cls.weight_infos:
+                if quant_method is None:
+                    continue
+                params = {
+                    "quant_fn_key": quant_method.value,
+                    "quant_layer_key": quant_layer_key,
+                }
+                key = f"{fd_config.model_config.prefix_name}{weight_name}"
+                base_actions[key] = partial(fn, **params)
+            final_actions = {}
+            start_layer = (
+                fd_config.moe_config.moe_layer_start_index
+                if fd_config.moe_config.moe_layer_start_index > 0
+                else fd_config.model_config.num_layers
+            )
+            final_actions = build_expanded_keys(
+                fd_config.model_config.num_layers,
+                fd_config.moe_config.num_experts,
+                start_layer,
+                base_actions,
+            )
+
+            return final_actions
+
+        mappings = get_tensor_quantization_mappings(fd_config)
+
+        return mappings
+
+    @classmethod
+    def _get_tensor_parallel_mappings(cls, config: ModelConfig, is_split=True):
+        """
+        get_tensor_parallel_mappings
+        """
+        logger.info("erine inference model _get_tensor_parallel_mappings")
+        from fastdeploy.model_executor.models.tp_utils import split_or_merge_func_v1
+        from fastdeploy.model_executor.models.tp_utils import build_expanded_keys
+
+        fn = split_or_merge_func_v1(
+            is_split=is_split,
+            tensor_parallel_degree=config.tensor_parallel_degree,
+            tensor_parallel_rank=config.tensor_parallel_rank,
+            num_attention_heads=config.num_attention_heads,
+            num_key_value_heads=config.num_key_value_heads,
+            head_dim=config.hidden_size // config.num_attention_heads
+        )
+        def get_tensor_parallel_split_mappings(num_layers, moe_num_experts,
+                                               moe_layer_start_index, prefix_name):
+            base_actions = {}
+            for (weight_name, is_column, extra, _, _) in cls.weight_infos:
+                params = {
+                    "is_column": is_column,
+                    **({extra.value: True} if extra else {})
+                }
+                prefix = "" if "lm_head.weight" in weight_name else prefix_name
+                key = f"{prefix}{weight_name}"
+                base_actions[key] = partial(fn, **params)
+
+            final_actions = {}
+            start_layer = (
+                moe_layer_start_index
+                if moe_layer_start_index > 0
+                else num_layers
+            )
+            final_actions = build_expanded_keys(
+                num_layers,
+                moe_num_experts,
+                start_layer,
+                base_actions,
+            )
+            return final_actions
+
+        moe_num_experts = 0
+        if isinstance(config.moe_num_experts, list):
+            moe_num_experts = sum(config.moe_num_experts)
+        elif isinstance(config.moe_num_experts, int):
+            moe_num_experts = config.moe_num_experts
+        else:
+            raise ValueError(
+                f"Not support type of moe_num_experts [{type(config.moe_num_experts)}]"
+            )
+        mappings = get_tensor_parallel_split_mappings(
+            config.num_layers,
+            moe_num_experts,
+            config.moe_layer_start_index,
+            config.prefix_name
+        )
+
+        return mappings

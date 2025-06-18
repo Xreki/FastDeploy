@@ -503,6 +503,7 @@ class Config:
         splitwise_role (str): Splitwise role.
         innode_prefill_ports (Optional[List[int]]): Innode prefill ports.
             Temporary configuration, will be removed in the future.
+        load_weights_on(Optional[str]):Load model weights onto the specified device
     """
 
     def __init__(
@@ -530,6 +531,7 @@ class Config:
         max_num_partial_prefills: int = 1,
         max_long_partial_prefills: int = 1,
         long_prefill_token_threshold: int = 0,
+        load_weights_on: str = None,
     ):
         """
         Initialize the Config class.
@@ -554,6 +556,7 @@ class Config:
             enable_mm (bool): Flag to enable multi-modal processing. Default is False.
             splitwise_role (str): Splitwise role. Default is "mixed".
             innode_prefill_ports (Optional[List[int]]): Innode prefill ports. Default is None.
+            load_weights_on(Optional[str]):Load model weights onto the specified device.Default is None
         """
         self.model_config = model_config
         self.cache_config = cache_config
@@ -577,6 +580,7 @@ class Config:
         self.max_num_partial_prefills = max_num_partial_prefills
         self.max_long_partial_prefills = max_long_partial_prefills
         self.long_prefill_token_threshold = long_prefill_token_threshold
+        self.load_weights_on = load_weights_on
 
         assert self.splitwise_role in ["mixed", "prefill", "decode"]
 
