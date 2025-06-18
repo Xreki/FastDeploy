@@ -25,7 +25,7 @@ from paddle.distributed import fleet
 from paddle.distributed.fleet.utils import recompute
 from paddle.nn.functional.flash_attention import \
     flash_attn_unpadded as flash_attn_varlen_func
-from paddlenlp.transformers.model_utils import PretrainedModel
+from paddleformers.transformers.model_utils import PretrainedModel
 
 from fastdeploy.model_executor.models.ernie45t_moe import ErniePretrainedModel
 from .activation import ACT2FN
@@ -673,7 +673,7 @@ class DFNRopeVisionTransformerPretrainedModel(PretrainedModel):
         dummy
         """
 
-        from paddlenlp.transformers.conversion_utils import split_or_merge_func
+        from paddleformers.transformers.conversion_utils import split_or_merge_func
         fn = split_or_merge_func(
             is_split=is_split,
             tensor_parallel_degree=config.tensor_parallel_degree,

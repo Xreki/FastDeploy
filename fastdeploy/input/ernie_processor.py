@@ -19,7 +19,7 @@ import re
 from string import Template
 
 import numpy as np
-from paddlenlp.generation import GenerationConfig
+from paddleformers.generation import GenerationConfig
 
 from fastdeploy.utils import data_processor_logger
 

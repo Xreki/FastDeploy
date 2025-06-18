@@ -22,7 +22,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
-from paddlenlp.utils.env import MAX_BSZ, MAX_DRAFT_TOKENS, SPECULATE_MAX_BSZ
+from paddleformers.utils.env import MAX_BSZ, MAX_DRAFT_TOKENS, SPECULATE_MAX_BSZ
 
 from fastdeploy.engine.request import (CompletionOutput, RequestMetrics,
                                        RequestOutput)

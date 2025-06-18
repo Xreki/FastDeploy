@@ -26,9 +26,9 @@ import sentencepiece as spm
 import paddle
 
 
-from paddlenlp.utils.log import logger
-from paddlenlp.transformers import PretrainedTokenizer
-from paddlenlp.transformers.tokenizer_utils_base import (
+from paddleformers.utils.log import logger
+from paddleformers.transformers import PretrainedTokenizer
+from paddleformers.transformers.tokenizer_utils_base import (
     PaddingStrategy,
     TextInput,
 )

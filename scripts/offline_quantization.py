@@ -17,20 +17,20 @@
 import paddle
 import shutil
 import os
-from paddlenlp.trainer import strtobool
+from paddleformers.trainer import strtobool
 from fastdeploy.model_executor.models.utils import (load_ep_checkpoint,
                                                     get_safetensor_file, fastsafetensors_weights_iterator)
 from fastdeploy.inference_args import InferenceArgs
-from paddlenlp.utils.log import logger
+from paddleformers.utils.log import logger
 from fastdeploy.model_executor.models.configuration import ErnieBotConfig
 from fastdeploy.model_executor.models.tokenizer import ErnieBotTokenizer
 from safetensors.numpy import save_file as safe_save_file
-from paddlenlp.utils.env import SAFE_WEIGHTS_INDEX_NAME, SAFE_WEIGHTS_NAME
+from paddleformers.utils.env import SAFE_WEIGHTS_INDEX_NAME, SAFE_WEIGHTS_NAME
 
 import argparse
 import importlib
 import json
-from paddlenlp.transformers.model_utils import shard_checkpoint
+from paddleformers.transformers.model_utils import shard_checkpoint
 
 MODEL_LIB_NAMES = [
     "fastdeploy.model_executor.models.modeling_ernie_bot",

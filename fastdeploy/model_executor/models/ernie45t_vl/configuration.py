@@ -57,7 +57,7 @@ class ErnieBotMoEVLConfig(ErnieBotMoEConfig):
             Whether to tie weight embeddings
         Example:
     ```python
-    >>> from paddlenlp.transformer import ErnieModel, ErnieConfig
+    >>> from paddleformers.transformer import ErnieModel, ErnieConfig
 
     >>> # Initializing a Ernie ernie-7b style configuration
     >>> configuration = ErnieConfig()

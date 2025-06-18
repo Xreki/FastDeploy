@@ -110,6 +110,7 @@ class Worker:
 
         from fastdeploy.worker.vl_gpu_model_runner import GPUVLModelRunner
 
+
         self.init_dist_env()
         self.format_print_configuration()
         self.helper_tensors = {}

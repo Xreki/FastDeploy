@@ -25,12 +25,12 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import paddle
 import sentencepiece as spm
-from paddlenlp.transformers import PretrainedTokenizer
-from paddlenlp.transformers.tokenizer_utils_base import (
+from paddleformers.transformers import PretrainedTokenizer
+from paddleformers.transformers.tokenizer_utils_base import (
     PaddingStrategy,
     TextInput,
 )
-from paddlenlp.utils.log import logger
+from paddleformers.utils.log import logger
 
 
 class ErnieVLTokenizer(PretrainedTokenizer):

@@ -20,8 +20,8 @@ from functools import partial
 
 import paddle
 from paddle import nn
-from paddlenlp.transformers import PretrainedModel
-from paddlenlp.utils.log import logger
+from paddleformers.transformers import PretrainedModel
+from paddleformers.utils.log import logger
 
 from fastdeploy.config import FDConfig, ModelConfig
 from fastdeploy.model_executor.layers.attention import Attention
@@ -304,7 +304,7 @@ class Qwen3PretrainedModel(PretrainedModel):
     @classmethod
     def _get_tensor_parallel_mappings(cls, config: ModelConfig, is_split=True):
 
-        from paddlenlp.transformers.conversion_utils import split_or_merge_func
+        from paddleformers.transformers.conversion_utils import split_or_merge_func
 
         fn = split_or_merge_func(
             is_split=is_split,

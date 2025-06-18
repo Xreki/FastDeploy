@@ -21,10 +21,10 @@ import random
 import sys
 import time
 
-import paddlenlp
+import paddleformers
 import psutil
-from paddlenlp.trainer.integrations import TrainerCallback
-from paddlenlp.utils.log import logger as nlp_logger
+from paddleformers.trainer.integrations import TrainerCallback
+from paddleformers.utils.log import logger as nlp_logger
 
 import paddle
 
@@ -88,7 +88,7 @@ class TokenTimer:
             "./tool_version.txt"
         )
         self._paddle_version = paddle.version.commit
-        self._paddlenlp_version = paddlenlp.version.commit
+        self._paddleformers_version = paddleformers.version.commit
         nlp_logger.info(f"training mode: {self._task}")
 
     def start(self):
@@ -143,7 +143,7 @@ class TokenTimer:
                     "binaryVersion": self._binary_version,
                     "modelVersion": self._model_version,
                     "paddleVersion": self._paddle_version,
-                    "paddlenlpVersion": self._paddlenlp_version,
+                    "paddleformersVersion": self._paddleformers_version,
                 },
             }
             self.write_data(data, process_index() == 0)

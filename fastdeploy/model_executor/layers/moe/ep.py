@@ -20,7 +20,7 @@ import paddle
 from paddle import nn
 from paddle.base.core import Config
 from paddle.distributed.communication import deep_ep
-from paddlenlp.utils.log import logger
+from paddleformers.utils.log import logger
 
 import fastdeploy
 from fastdeploy.config import MoEPhase

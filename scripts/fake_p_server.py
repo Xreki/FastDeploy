@@ -30,8 +30,8 @@ import paddle
 import paddle.distributed as dist
 from paddle import profiler
 from paddle.distributed import fleet
-from paddlenlp.trainer import RuntimeTimer, strtobool
-from paddlenlp.utils.log import logger
+from paddleformers.trainer import RuntimeTimer, strtobool
+from paddleformers.utils.log import logger
 from tqdm import tqdm
 
 from fastdeploy.inference_args import GenerationPhase
@@ -1451,7 +1451,7 @@ def main():
     check_output_dir = False
     if check_output_dir and not check_output(args.model_name_or_path):
         logger.error("args.model_name_or_path is not safe."
-                     )  # Must before using paddlenlp, paddleslim logger
+                     )  # Must before using paddleformers, paddleslim logger
         sys.exit(-1)
 
     token_audit = False

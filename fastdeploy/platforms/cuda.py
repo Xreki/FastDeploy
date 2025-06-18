@@ -20,7 +20,7 @@ cuda platform file
 
 import paddle
 from .base import Platform, _Backend
-from paddlenlp.utils.log import logger
+from paddleformers.utils.log import logger
 
 
 class CUDAPlatform(Platform):

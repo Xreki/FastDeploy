@@ -19,7 +19,7 @@ from dataclasses import dataclass, replace
 from typing import List, Optional, Tuple, Union
 
 import numpy as np
-from paddlenlp.utils.log import logger
+from paddleformers.utils.log import logger
 
 INF = 1000000
 OPT_MULTI_OF = 256

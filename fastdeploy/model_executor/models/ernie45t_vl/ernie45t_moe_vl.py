@@ -22,7 +22,7 @@ from typing import Dict, Optional, Union
 import numpy as np
 import paddle
 from paddle import nn
-from paddlenlp.utils.log import logger
+from paddleformers.utils.log import logger
 
 from fastdeploy.config import FDConfig
 from fastdeploy.model_executor.layers.embeddings import VocabParallelEmbedding

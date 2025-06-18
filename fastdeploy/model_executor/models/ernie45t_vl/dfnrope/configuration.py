@@ -14,7 +14,7 @@
 # limitations under the License.
 """
 
-from paddlenlp.transformers.configuration_utils import PretrainedConfig
+from paddleformers.transformers.configuration_utils import PretrainedConfig
 
 __all__ = [
     "DFNRopeVisionTransformerConfig",

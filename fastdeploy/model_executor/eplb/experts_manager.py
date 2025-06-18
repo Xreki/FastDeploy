@@ -21,7 +21,7 @@ redundant expert manger
 import paddle
 import numpy as np
 
-from paddlenlp.utils.log import logger
+from paddleformers.utils.log import logger
 
 from fastdeploy.model_executor.eplb.eplb import rebalance_experts
 

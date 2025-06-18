@@ -23,8 +23,8 @@ import os
 from typing import Optional
 
 import paddle
-from paddlenlp.transformers.configuration_utils import PretrainedConfig
-from paddlenlp.utils.log import logger
+from paddleformers.transformers.configuration_utils import PretrainedConfig
+from paddleformers.utils.log import logger
 
 __all__ = [
     "ERNIEBOT_PRETRAINED_INIT_CONFIGURATION",
