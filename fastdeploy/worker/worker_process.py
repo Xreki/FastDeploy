@@ -89,7 +89,12 @@ class PaddleDisWorkerProc():
         # For auto TP split
         self.fd_config.model_config.tensor_parallel_degree = self.parallel_config.tensor_parallel_degree
         self.fd_config.model_config.tensor_parallel_rank = self.parallel_config.tensor_parallel_rank
+        self.fd_config.model_config.use_ep = self.parallel_config.use_ep
         self.fd_config.model_config.is_mtp = self.fd_config.speculative_config.is_mtp
+        self.fd_config.model_config.use_offline_quant = self.fd_config.tmp_config.use_offline_quant
+        if self.fd_config.parallel_config.use_ep:
+            self.fd_config.model_config.num_experts_per_rank = self.fd_config.moe_config.num_experts_per_rank
+            self.fd_config.model_config.num_experts_start_offset = self.fd_config.moe_config.num_experts_start_offset
 
         # TODO(gongshaotian): Use worker factory to get worker
         self.worker = get_worker(fd_config=fd_config,
@@ -281,27 +286,29 @@ class PaddleDisWorkerProc():
     def determine_num_available_blocks(self):
         """
         """
-        # 1. Get available memory(bytes)
-        available_kv_cache_memory = self.worker.determine_available_memory()
-        logger.info(
-            f"------- available_kv_cache_memory:{available_kv_cache_memory / 1024**3} GB --------"
-        )
-
-        # 2. Calculate the appropriate number of blocks
-        model_block_memory_used = self.worker.cal_theortical_kvcache()
-        num_blocks_local = int(available_kv_cache_memory //
-                               model_block_memory_used)
-        logger.info(
-            f"------- model_block_memory_used:{model_block_memory_used} --------"
-        )
-        logger.info(f"------- num_blocks_local:{num_blocks_local} --------")
-
-        logger.info(
-            f"self.fd_config.parallel_config.do_profile:{self.fd_config.parallel_config.do_profile}"
-        )
-
-        # 3. Send IPCSignal
         if self.fd_config.parallel_config.do_profile:
+            # 1. Get available memory(bytes)
+            available_kv_cache_memory = self.worker.determine_available_memory(
+            )
+            logger.info(
+                f"------- available_kv_cache_memory:{available_kv_cache_memory / 1024**3} GB --------"
+            )
+
+            # 2. Calculate the appropriate number of blocks
+            model_block_memory_used = self.worker.cal_theortical_kvcache()
+            num_blocks_local = int(available_kv_cache_memory //
+                                   model_block_memory_used)
+            logger.info(
+                f"------- model_block_memory_used:{model_block_memory_used} --------"
+            )
+            logger.info(
+                f"------- num_blocks_local:{num_blocks_local} --------")
+
+            logger.info(
+                f"self.fd_config.parallel_config.do_profile:{self.fd_config.parallel_config.do_profile}"
+            )
+
+            # 3. Send IPCSignal
             get_profile_block_num = np.zeros(shape=[self.rank], dtype=np.int32)
             self.get_profile_block_num_signal = IPCSignal(
                 name="get_profile_block_num",
@@ -320,7 +327,7 @@ class PaddleDisWorkerProc():
             self.get_profile_block_num_signal.value[
                 self.local_rank] = num_blocks_global
         else:
-            num_blocks_global = num_blocks_local
+            num_blocks_global = self.fd_config.parallel_config.max_block_num
 
         logger.info(f"num_blocks_global {num_blocks_global}")
         # 4. Updata share inputs
@@ -518,13 +525,18 @@ def initialize_fd_config(args) -> FDConfig:
     parallel_config.expert_parallel_degree = args.expert_parallel_size
 
     logger.info(f"parallel_config.use_ep {parallel_config.use_ep}")
+    logger.info(
+        f"parallel_config.tensor_parallel_degree {parallel_config.tensor_parallel_degree}"
+    )
 
     if args.splitwise_role == "mixed":
-        parallel_config.moe_phase = MoEPhase.PREFILL
+        parallel_config.moe_phase = MoEPhase.DECODER
     elif args.splitwise_role == "prefill":
         parallel_config.moe_phase = MoEPhase.PREFILL
-    elif args.splitwise_role == "decoder":
+    elif args.splitwise_role == "decode":
         parallel_config.moe_phase = MoEPhase.DECODER
+    else:
+        raise NotImplementedError
 
     group_size = config.get("group_size", -1)
     num_key_value_heads = config.get("num_key_value_heads", -1)

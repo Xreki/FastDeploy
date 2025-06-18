@@ -840,6 +840,7 @@ class LLMEngine(object):
         if self.cfg.enable_mm:
             worker_path = "../worker/vl_worker_process.py"
         py_script = os.path.join(current_dir_path, worker_path)
+
         arguments = (
             f" --nnodes {str(self.cfg.nnode)}"
             f" --devices {self.cfg.device_ids} {py_script}"

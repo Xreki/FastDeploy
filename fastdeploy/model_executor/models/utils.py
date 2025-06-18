@@ -41,7 +41,7 @@ from paddlenlp.utils.log import logger
 from safetensors import safe_open
 from tqdm import tqdm
 
-from fastdeploy.config import FDConfig
+from fastdeploy.config import ModelConfig
 from fastdeploy.platforms import current_platform
 
 from .configuration import ErnieBotConfig, QuantizationConfig
@@ -630,7 +630,7 @@ def quantization_func(
 
 
 def load_ep_checkpoint(model_path: str,
-                       config: FDConfig,
+                       config: ModelConfig,
                        return_numpy: bool = False,
                        return_key_name: bool = True):
     """
@@ -643,17 +643,15 @@ def load_ep_checkpoint(model_path: str,
         weight_list = json.load(f)["weight_map"]
     filtered_map = {k: v for k, v in weight_list.items() if "experts" not in k}
     num_local_ffn_keys = []
-    quant_suffix = (".quant_weight" if config.tmp_config.use_offline_quant
-                    and config.moe_config.moe_quant_type != "default" else "")
-    scale_suffix = (".quant_scale" if config.tmp_config.use_offline_quant
-                    and config.moe_config.moe_quant_type != "default" else "")
+    quant_suffix = (".quant_weight" if config.use_offline_quant
+                    and config.moe_quant_type != "default" else "")
+    scale_suffix = (".quant_scale" if config.use_offline_quant
+                    and config.moe_quant_type != "default" else "")
 
-    for i in range(config.model_config.moe_layer_start_index,
-                   config.model_config.num_layers):
+    for i in range(config.moe_layer_start_index, config.num_layers):
         for j in range(
-                config.moe_config.num_experts_start_offset,
-                config.moe_config.num_experts_start_offset +
-                config.moe_config.num_experts_per_rank,
+                config.num_experts_start_offset,
+                config.num_experts_start_offset + config.num_experts_per_rank,
         ):
             ffn1_quant_key = f"ernie.layers.{i}.mlp.experts.{j}.up_gate_proj.weight{quant_suffix}"
             ffn2_quant_key = (
@@ -844,7 +842,19 @@ def load_checkpoint(model_path, cls, config, return_numpy=True, load_gpu=True):
     """
     load checkpoint
     """
-    if getattr(config, "use_ep", False):
+    if getattr(config, "parallel_config", None) is not None:
+        use_ep = getattr(config.parallel_config, "use_ep", False)
+        tensor_parallel_degree = config.parallel_config.tensor_parallel_degree
+    else:
+        use_ep = getattr(config, "use_ep", False)
+        tensor_parallel_degree = config.tensor_parallel_degree
+
+    if getattr(config, "model_config", None) is not None:
+        model_config = config.model_config
+    else:
+        model_config = config
+
+    if use_ep:
         state_dict = load_ep_checkpoint(model_path,
                                         config,
                                         return_numpy=True,
@@ -855,15 +865,15 @@ def load_checkpoint(model_path, cls, config, return_numpy=True, load_gpu=True):
             and os.path.isdir(os.path.join(model_path, f))
         ]
         if len(rank_dirs) > 1:
-            if config.parallel_config.tensor_parallel_degree != len(rank_dirs):
+            if tensor_parallel_degree != len(rank_dirs):
                 raise ValueError(
                     f"Your model only supports loading with tp{len(rank_dirs)}"
                 )
-            state_dict = get_state_dict(model_path, config)
+            state_dict = get_state_dict(model_path, model_config)
         else:
             state_dict = load_tp_checkpoint(model_path,
                                             cls,
-                                            config,
+                                            model_config,
                                             return_numpy=return_numpy)
             import re
             for k, v in state_dict.items():
