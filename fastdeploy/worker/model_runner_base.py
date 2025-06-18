@@ -38,8 +38,9 @@ class ModelRunnerBase(ABC):
         self.load_config = fd_config.load_config
         self.device_config = fd_config.device_config
         self.speculative_config = fd_config.speculative_config
-        self.kv_cache_config = self.fd_config.kv_cache_config
-        self.parallel_config = self.fd_config.parallel_config
+        self.kv_cache_config = fd_config.kv_cache_config
+        self.parallel_config = fd_config.parallel_config
+        self.graph_opt_config = fd_config.graph_opt_config
         # ... config
 
         self.device = device

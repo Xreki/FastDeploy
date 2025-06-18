@@ -446,18 +446,18 @@ class GraphOptimizationConfig:
 
     # CUDA Graph Config
     """ Whether to use cudagraph.
-    - Fasle: cudagraph is not used.
+    - False: cudagraph is not used.
     - True: cudagraph is used.
         It requires that all input buffers have fixed addresses, and all
         splitting ops write their outputs to input buffers.
         - With dyncmic graph backend: ...
         - With static grpah backend: WIP
     """
-    use_cudagraph: bool = False
+    use_cudagraph: bool = True
     """Sizes to capture cudagraph.
     - None (default): capture sizes are inferred from llm config.
     - list[int]: capture sizes are specified as given."""
-    cudagraph_capture_sizes: Optional[list[int]] = None
+    cudagraph_capture_sizes: Optional[list[int]] = [1, 2, 3, 4, 5, 6, 7, 8]
     """ Number of warmup runs for cudagraph. """
     cudagraph_num_of_warmups: int = 2
     """Whether to copy input tensors for cudagraph.

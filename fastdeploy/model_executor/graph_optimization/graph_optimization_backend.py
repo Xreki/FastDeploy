@@ -56,5 +56,8 @@ class GraphOptBackend:
                 self.cudagraph_piecewise_backend = CudaGraphPiecewiseBackend(
                     fd_config=self.fd_config, runnable=self.runnable)
             # TODO(gongshaotian): handling kwargs
-            assert kwargs["forward_meta"].input_ids is not None
-            return self.cudagraph_piecewise_backend.__call__(**kwargs)
+            assert kwargs["forward_meta"].ids_remove_padding is not None
+            if (not kwargs["forward_meta"].step_use_cudagraph):
+                return self.runnable(**kwargs)
+            else:
+                return self.cudagraph_piecewise_backend.__call__(**kwargs)

@@ -181,8 +181,14 @@ class GpuWorker(WorkerBase):
         self.model_runner.insert_prefill_inputs(req_dicts=req_dicts)
 
     def graph_optimize_and_warm_up_model(self) -> None:
-        """ """
-        pass
+        """
+
+        """
+        # 1. Warm up model
+        # NOTE(gongshaotian): may be not need warm_up at this place
+
+        # 2. Triger cuda grpah capture
+        self.model_runner.capture_model()
 
     def check_health(self) -> bool:
         """ """

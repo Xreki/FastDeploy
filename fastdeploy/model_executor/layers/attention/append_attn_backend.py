@@ -156,6 +156,9 @@ class AppendAttentionBackend(AttentionBackend):
             metadata.kv_signal_metadata = open_shm_and_get_meta_signal(
                 self.rank, int(self.device_id), self.keep_pd_step_flag)
         self.attention_metadata = metadata
+        forward_meta.decoder_batch_ids.copy_(metadata.decoder_batch_ids, False)
+        forward_meta.decoder_tile_ids_per_batch.copy_(
+            metadata.decoder_tile_ids_per_batch, False)
 
     def get_attntion_meta(self):
         """get_attntion_meta"""
@@ -207,8 +210,8 @@ class AppendAttentionBackend(AttentionBackend):
             metadata.kv_batch_ids,
             metadata.kv_tile_ids_per_batch,
             metadata.kv_num_blocks,
-            metadata.decoder_batch_ids,
-            metadata.decoder_tile_ids_per_batch,
+            forward_meta.decoder_batch_ids,  # from buffer
+            forward_meta.decoder_tile_ids_per_batch,  # from buffer
             metadata.decoder_num_blocks,
             metadata.set_max_lengths,
             metadata.max_len_kv,

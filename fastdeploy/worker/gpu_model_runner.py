@@ -66,12 +66,15 @@ class GPUModelRunner(ModelRunnerBase):
         # self.kv_caches: list[paddle.Tensor] = []
 
         # Cuda Graph
-        self.use_cuda_grpah = False
+        self.use_cudagraph = self.graph_opt_config.use_cudagraph
+        self.cudagraph_capture_sizes = list(
+            reversed(self.graph_opt_config.cudagraph_capture_sizes))
+        self.cudagraph_num_of_warmups = self.graph_opt_config.cudagraph_num_of_warmups
         self.input_ids = paddle.zeros(self.parallel_config.max_num_seqs,
                                       dtype='int32')
 
         # Initialize share inputs
-        self._init_share_inputs(self.fd_config.parallel_config.max_num_seqs)
+        self._init_share_inputs(self.parallel_config.max_num_seqs)
         self.infer_seed_increment = paddle.full(
             shape=[self.parallel_config.max_num_seqs, 1],
             fill_value=4,
@@ -361,6 +364,29 @@ class GPUModelRunner(ModelRunnerBase):
                                                       -1,
                                                       dtype='int32')
 
+        self.share_inputs["ids_remove_padding"] = paddle.full(
+            [max_num_seqs * self.parallel_config.max_model_len],
+            0,
+            dtype='int64')
+        self.share_inputs["cum_offsets"] = paddle.full([max_num_seqs, 1],
+                                                       0,
+                                                       dtype='int32')
+        self.share_inputs["padding_offset"] = paddle.full([max_num_seqs, 1],
+                                                          0,
+                                                          dtype='int32')
+        self.share_inputs["cu_seqlens_q"] = paddle.full([max_num_seqs, 1],
+                                                        0,
+                                                        dtype='int32')
+        self.share_inputs["cu_seqlens_k"] = paddle.full([max_num_seqs, 1],
+                                                        0,
+                                                        dtype='int32')
+        # AttentionBackend buffers
+        self.share_inputs["decoder_batch_ids"] = paddle.full([max_num_seqs, 1],
+                                                             0,
+                                                             dtype='int32')
+        self.share_inputs["decoder_tile_ids_per_batch"] = paddle.full(
+            [max_num_seqs, 1], 0, dtype='int32')
+
         # Initialize rotary position embedding
         tmp_position_ids = paddle.arange(
             self.parallel_config.max_model_len).reshape((1, -1))
@@ -417,11 +443,12 @@ class GPUModelRunner(ModelRunnerBase):
                         use_speculate_method=False)
 
         # Initialize forward meta data
-        self.share_inputs["ids_remove_padding"] = ids_remove_padding
-        self.share_inputs["cum_offsets"] = cum_offsets
-        self.share_inputs["padding_offset"] = padding_offset
-        self.share_inputs["cu_seqlens_q"] = cu_seqlens_q
-        self.share_inputs["cu_seqlens_k"] = cu_seqlens_k
+        self.share_inputs["ids_remove_padding"].copy_(ids_remove_padding,
+                                                      False)
+        self.share_inputs["cum_offsets"].copy_(cum_offsets, False)
+        self.share_inputs["padding_offset"].copy_(padding_offset, False)
+        self.share_inputs["cu_seqlens_q"].copy_(cu_seqlens_q, False)
+        self.share_inputs["cu_seqlens_k"].copy_(cu_seqlens_k, False)
         self.initialize_forward_meta()
 
         # Get sampling metadata
@@ -482,7 +509,7 @@ class GPUModelRunner(ModelRunnerBase):
 
         # Get kv cache dtype
         cache_type = self.parallel_config.dtype
-        if self.fd_config.kv_cache_config.cache_quant_dtype == "cache_int8":
+        if self.kv_cache_config.cache_quant_dtype == "cache_int8":
             cache_type = 'uint8'
         # Get kv cache shape
         kv_cache_shape = self.attn_backends[0].get_kv_cache_shape(
@@ -573,6 +600,7 @@ class GPUModelRunner(ModelRunnerBase):
             # 3. Prepare lora
 
             # 4. Run model
+            self.forward_meta.step_use_cudagraph = False
             model_output = self.model(
                 ids_remove_padding=self.share_inputs["ids_remove_padding"],
                 forward_meta=self.forward_meta)
@@ -674,7 +702,26 @@ class GPUModelRunner(ModelRunnerBase):
         """
         Trigger CUDA Graph capture for all shapes in 'CudaGraphConfig.cudagraph_capture_sizes'
         """
-        pass
+        if not self.use_cudagraph:
+            logger.info(
+                "Skipping CUDA graph capture. Please check GraphOptimizationConfig"
+            )
+            return
+
+        time_before_capture = time.perf_counter()
+        capture_sizes = self.cudagraph_capture_sizes.copy()
+        for batch_size in sorted(capture_sizes, reverse=True):
+            logger.info(
+                f"Warm up the model with the batch size:{batch_size}, num tokens:{self.parallel_config.max_model_len}"
+            )
+            self.model_runner._dummy_run(
+                num_tokens=self.parallel_config.max_model_len,
+                batch_size=batch_size)
+
+        time_after_capture = time.perf_counter()
+        logger.info(
+            f"Cuda Graph capturing took {time_after_capture - time_before_capture} seconds"
+        )
 
     def execute_model(
         self,
@@ -702,15 +749,20 @@ class GPUModelRunner(ModelRunnerBase):
         # 2. Padding inputs for cuda grph
 
         # 3. Execute model
-        model_output = self.model(self.share_inputs["ids_remove_padding"],
-                                  self.forward_meta)
+        # TODO(gongshaotian): Use seq_lens_encoder to set is_decode_batch
+        is_decode_batch = not ((self.share_inputs["seq_lens_this_time"]
+                                > 1).sum() > 0)
+        self.forward_meta.step_use_cudagraph = self.use_cudagraph and is_decode_batch
+        model_output = self.model(
+            ids_remove_padding=self.share_inputs["ids_remove_padding"],
+            forward_meta=self.forward_meta)
         hiddden_states = rebuild_padding(
             model_output,
             self.share_inputs["cum_offsets"],
             self.share_inputs["seq_lens_this_time"],
             self.share_inputs["seq_lens_decoder"],
             self.share_inputs["seq_lens_encoder"],
-            None,  #self.share_inputs["padding_offset"],
+            None,  # speculative decoding requires
             self.parallel_config.max_model_len,
         )
 
