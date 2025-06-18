@@ -208,7 +208,6 @@ class Qwen3DecoderLayer(nn.Layer):
                 moe_intermediate_size,
                 num_experts=fd_config.moe_config.num_experts,
                 top_k=fd_config.moe_config.top_k,
-                moe_quant_type=fd_config.moe_config.moe_quant_type,
                 layer_idx=layer_id,
                 weight_key_map=weight_key_map,
             )

@@ -860,6 +860,7 @@ class LLMEngine(object):
             f" --kv_cache_ratio {self.cfg.cache_config.kv_cache_ratio}"
             f" --tensor_parallel_size {self.cfg.tensor_parallel_size}"
             f" --expert_parallel_size {self.cfg.expert_parallel_size}"
+            f" --quantization {self.cfg.model_config.quantization}"
             f" --ori_vocab_size {len(self.data_processor.tokenizer)}")
 
         worker_append_flag = {

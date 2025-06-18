@@ -18,7 +18,6 @@ from typing import Optional
 import paddle
 
 import fastdeploy
-import fastdeploy.model_executor.ops.gpu.deep_gemm as deep_gemm
 
 from ..utils import per_block_cast_to_fp8
 from .quant_base import QuantConfigBase, QuantMethodBase
@@ -37,8 +36,11 @@ class BlockWiseConfig(QuantConfigBase):
     def __init__(self, weight_block_size: list = [-1, -1]) -> None:
         super().__init__()
         self.weight_block_size = weight_block_size
+        self.quant_max_bound = 448
+        self.quant_min_bound = -448
+        self.quant_round_type = 1
 
-    def get_name(self) -> str:
+    def name(self) -> str:
         return "block_wise"
 
     @classmethod
@@ -63,6 +65,7 @@ class BlockWiseLinearMethod(QuantMethodBase):
         self.quant_config = quant_config
 
     def create_weights(self, layer):
+        layer.linear_weight_shape.reverse()
         layer.linear_weight_scale = self.create_parameter(
             shape=[
                 (layer.embed_dim + QUANT_ALIGNMENT_OFFSET) // QUANT_BLOCK_SIZE,
@@ -72,6 +75,7 @@ class BlockWiseLinearMethod(QuantMethodBase):
             dtype="float32",
             is_bias=False,
         )
+        layer.weight_dtype = "float8_e4m3fn"
 
     def process_loaded_weights(self, layer, weights) -> None:
         weight_tensor = weights.transpose([1, 0])
@@ -86,6 +90,7 @@ class BlockWiseLinearMethod(QuantMethodBase):
         linear_out = paddle.empty(
             (x.shape[0], layer.fd_config.model_config.hidden_size),
             dtype=paddle.bfloat16)
+        import fastdeploy.model_executor.ops.gpu.deep_gemm as deep_gemm
         deep_gemm.gemm_fp8_fp8_bf16_nt(
             (x, x_scale_tensor),
             (layer.linear_weight, layer.linear_weight_scale),

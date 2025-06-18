@@ -21,11 +21,17 @@ from fastdeploy.platforms import current_platform
 from .quant_base import QuantConfigBase
 
 QUANTIZATION_METHODS: List[str] = [
+    "weight_only_int4",
+    "weight_only_int8",
     "weight_only",
     "block_wise",
     "w4afp8",
     "w8a8",
+    "w4a8",
     "wfp8afp8",
+    "w8_linear_w4_moe",
+    "w8_linear_w4a8_moe",
+    "mix_quant",
 ]
 
 
@@ -36,18 +42,26 @@ def get_quantization_config(quantization: str) -> Type[QuantConfigBase]:
     if quantization not in QUANTIZATION_METHODS:
         raise ValueError(f"Invalid quantization method: {quantization}")
 
+    from .block_wise import BlockWiseConfig
     from .kv_cache import KvCacheQuantConfig
+    from .mix_quant import MixQuantConfig
+    from .w4a8 import W4A8Config
     from .w4afp8 import W4AFP8Config
     from .w8a8 import W8A8Config
-    from .weight_only import WeightOnlyConfig
+    from .weight_only import WeightOnlyInt4Config, WeightOnlyInt8Config, WeightOnlyConfig
     from .wfp8afp8 import WFP8AFP8Config
 
     method_to_config: Dict[str, Type[QuantConfigBase]] = {
+        "weight_only_int4": WeightOnlyInt4Config,
+        "weight_only_int8": WeightOnlyInt8Config,
         "weight_only": WeightOnlyConfig,
+        "block_wise": BlockWiseConfig,
         "w4afp8": W4AFP8Config,
         "w8a8": W8A8Config,
+        "w4a8": W4A8Config,
         "wfp8afp8": WFP8AFP8Config,
-        "kvcache": KvCacheQuantConfig
+        "kvcache": KvCacheQuantConfig,
+        "mix_quant": MixQuantConfig,
     }
 
     if not current_platform.is_xpu():

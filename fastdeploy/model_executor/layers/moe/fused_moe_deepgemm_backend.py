@@ -22,13 +22,12 @@ from paddle import nn
 from .fused_moe_method_base import FusedMoEMethodBase
 
 
-class DeepGemmFusedMoeMethod(FusedMoEMethodBase):
+class DeepGemmFusedMoeMethod(QuantMethodBase):
     """
     DeepGemmFusedMoeMethod is a class that implements the FusedMoEMethodBase interface for DeepGemm backend.
     """
 
-    def create_weights(self, layer: nn.Layer, weight_key_map: dict,
-                       state_dict: dict):
+    def create_weights(self, layer: nn.Layer):
         """
         deepgemm create weight process.
         """

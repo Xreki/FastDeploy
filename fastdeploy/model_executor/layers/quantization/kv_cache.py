@@ -13,11 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-from paddle import nn
-import os
-import paddle
-from .quant_base import QuantConfigBase, QuantMethodBase
 from typing import Optional
+
+import paddle
+from paddle import nn
+
+from .quant_base import QuantConfigBase, QuantMethodBase
 
 
 class KvCacheQuantConfig(QuantConfigBase):
@@ -32,7 +33,7 @@ class KvCacheQuantConfig(QuantConfigBase):
         super().__init__()
         self.cachekv_scale_dict = cachekv_scale_dict
 
-    def get_name(self) -> str:
+    def name(self) -> str:
         """
         get_name
         """
@@ -74,34 +75,26 @@ class KVCacheMethodBase(QuantMethodBase):
         """
         if self.cache_k_zp_name in self.quant_config.cachekv_scale_dict:
             cache_k_zp = paddle.cast(
-                paddle.to_tensor(
-                    self.quant_config.cachekv_scale_dict[self.cache_k_zp_name]
-                ),
+                paddle.to_tensor(self.quant_config.cachekv_scale_dict[
+                    self.cache_k_zp_name]),
                 self.cache_scale_dtype,
             )
         else:
             cache_k_zp = paddle.zeros(
-                (
-                    [self.kv_num_heads * self.head_dim]
-                    if self.quant_config.is_channel_wise
-                    else [self.kv_num_heads]
-                ),
+                ([self.kv_num_heads * self.head_dim] if
+                 self.quant_config.is_channel_wise else [self.kv_num_heads]),
                 dtype=self.cache_scale_dtype,
             )
         if self.cache_v_zp_name in self.quant_config.cachekv_scale_dict:
             cache_v_zp = paddle.cast(
-                paddle.to_tensor(
-                    self.quant_config.cachekv_scale_dict[self.cache_v_zp_name]
-                ),
+                paddle.to_tensor(self.quant_config.cachekv_scale_dict[
+                    self.cache_v_zp_name]),
                 self.cache_scale_dtype,
             )
         else:
             cache_v_zp = paddle.zeros(
-                (
-                    [self.kv_num_heads * self.head_dim]
-                    if self.quant_config.is_channel_wise
-                    else [self.kv_num_heads]
-                ),
+                ([self.kv_num_heads * self.head_dim] if
+                 self.quant_config.is_channel_wise else [self.kv_num_heads]),
                 dtype=self.cache_scale_dtype,
             )
         layer.cache_k_zp.set_value(cache_k_zp)
@@ -113,9 +106,8 @@ class KVCacheMethodBase(QuantMethodBase):
         """
         if self.cache_k_scale_name in self.quant_config.cachekv_scale_dict:
             cache_k_scale = paddle.cast(
-                paddle.to_tensor(
-                    self.quant_config.cachekv_scale_dict[self.cache_k_scale_name]
-                ),
+                paddle.to_tensor(self.quant_config.cachekv_scale_dict[
+                    self.cache_k_scale_name]),
                 self.cache_scale_dtype,
             )
             cache_k_out_scale = 1.0 / cache_k_scale
@@ -125,9 +117,8 @@ class KVCacheMethodBase(QuantMethodBase):
 
         if self.cache_v_scale_name in self.quant_config.cachekv_scale_dict:
             cache_v_scale = paddle.cast(
-                paddle.to_tensor(
-                    self.quant_config.cachekv_scale_dict[self.cache_v_scale_name]
-                ),
+                paddle.to_tensor(self.quant_config.cachekv_scale_dict[
+                    self.cache_v_scale_name]),
                 self.cache_scale_dtype,
             )
             cache_v_out_scale = 1.0 / cache_v_scale
@@ -137,9 +128,8 @@ class KVCacheMethodBase(QuantMethodBase):
 
         if self.cache_v_scale_name in self.quant_config.cachekv_scale_dict:
             cache_v_scale = paddle.cast(
-                paddle.to_tensor(
-                    self.quant_config.cachekv_scale_dict[self.cache_v_scale_name]
-                ),
+                paddle.to_tensor(self.quant_config.cachekv_scale_dict[
+                    self.cache_v_scale_name]),
                 self.cache_scale_dtype,
             )
             cache_v_out_scale = 1.0 / cache_v_scale
@@ -157,39 +147,31 @@ class KVCacheMethodBase(QuantMethodBase):
         create_scale
         """
         layer.cache_k_scale = layer.create_parameter(
-            shape=(
-                [layer.kv_num_heads * layer.head_dim]
-                if self.quant_config.is_channel_wise
-                else [layer.kv_num_heads]
-            ),
+            shape=([layer.kv_num_heads *
+                    layer.head_dim] if self.quant_config.is_channel_wise else
+                   [layer.kv_num_heads]),
             dtype=self.cache_scale_dtype,
             is_bias=False,
         )
         layer.cache_v_scale = layer.create_parameter(
-            shape=(
-                [layer.kv_num_heads * layer.head_dim]
-                if self.quant_config.is_channel_wise
-                else [layer.kv_num_heads]
-            ),
+            shape=([layer.kv_num_heads *
+                    layer.head_dim] if self.quant_config.is_channel_wise else
+                   [layer.kv_num_heads]),
             dtype=self.cache_scale_dtype,
             is_bias=False,
         )
         layer.cache_k_out_scale = layer.create_parameter(
-            shape=(
-                [layer.kv_num_heads * layer.head_dim]
-                if self.quant_config.is_channel_wise
-                else [layer.kv_num_heads]
-            ),
+            shape=([layer.kv_num_heads *
+                    layer.head_dim] if self.quant_config.is_channel_wise else
+                   [layer.kv_num_heads]),
             attr=None,
             dtype=self.cache_scale_dtype,
             is_bias=False,
         )
         layer.cache_v_out_scale = layer.create_parameter(
-            shape=(
-                [layer.kv_num_heads * layer.head_dim]
-                if self.quant_config.is_channel_wise
-                else [layer.kv_num_heads]
-            ),
+            shape=([layer.kv_num_heads *
+                    layer.head_dim] if self.quant_config.is_channel_wise else
+                   [layer.kv_num_heads]),
             attr=None,
             dtype=self.cache_scale_dtype,
             is_bias=False,
@@ -200,20 +182,16 @@ class KVCacheMethodBase(QuantMethodBase):
         create_zp
         """
         layer.cache_k_zp = layer.create_parameter(
-            shape=(
-                [layer.kv_num_heads * layer.head_dim]
-                if self.quant_config.is_channel_wise
-                else [layer.kv_num_heads]
-            ),
+            shape=([layer.kv_num_heads *
+                    layer.head_dim] if self.quant_config.is_channel_wise else
+                   [layer.kv_num_heads]),
             dtype=self.cache_scale_dtype,
             is_bias=False,
         )
         layer.cache_v_zp = layer.create_parameter(
-            shape=(
-                [layer.kv_num_heads * layer.head_dim]
-                if self.quant_config.is_channel_wise
-                else [layer.kv_num_heads]
-            ),
+            shape=([layer.kv_num_heads *
+                    layer.head_dim] if self.quant_config.is_channel_wise else
+                   [layer.kv_num_heads]),
             dtype=self.cache_scale_dtype,
             is_bias=False,
         )
@@ -237,20 +215,15 @@ class KVCacheMethodBase(QuantMethodBase):
 
         self._dtype = layer._dtype
         if self._dtype != "bfloat16" and self._dtype != "float16" and self._dtype == "float32":
-            raise ValueError(
-                f"Just support float32, float16 and \
-                    bfloat16 as default dtype, but received {self._dtype}"
-            )
+            raise ValueError(f"Just support float32, float16 and \
+                    bfloat16 as default dtype, but received {self._dtype}")
         self.cache_scale_dtype = (
-            self._dtype if self.quant_config.use_append_attn else "float32"
-        )
+            self._dtype if self.quant_config.use_append_attn else "float32")
 
         if not self.quant_config.use_dynamic_cachekv_quant:
-            if (
-                self.quant_config.cachekv_dtype == "int8"
-                or self.quant_config.cachekv_dtype == "int4"
-                or self.quant_config.cachekv_dtype == "float8_e4m3fn"
-            ):
+            if (self.quant_config.cachekv_dtype == "int8"
+                    or self.quant_config.cachekv_dtype == "int4"
+                    or self.quant_config.cachekv_dtype == "float8_e4m3fn"):
                 self.create_scale(layer)
                 self.load_scale(layer)
                 if self.quant_config.has_zero_point:
@@ -264,4 +237,3 @@ class KVCacheMethodBase(QuantMethodBase):
         """
         raise RuntimeError(
             f"{self.__class__.__name__}.apply should not be called.")
-

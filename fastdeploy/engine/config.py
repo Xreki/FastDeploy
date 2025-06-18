@@ -40,6 +40,7 @@ class ModelConfig:
                  model_name_or_path: str,
                  config_json_file: str = "config.json",
                  dynamic_load_weight: int = 0,
+                 quantization: str = None,
                  download_dir: Optional[str] = None):
         """
         Initialize the ModelConfig class.
@@ -52,6 +53,7 @@ class ModelConfig:
         self.model_dir = model_name_or_path
         self.is_unified_ckpt = check_unified_ckpt(self.model_dir)
         self.dynamic_load_weight = dynamic_load_weight
+        self.quantization = quantization
 
         config_file = os.path.join(model_name_or_path, config_json_file)
         if os.path.isfile(model_name_or_path):
