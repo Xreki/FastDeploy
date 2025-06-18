@@ -125,7 +125,14 @@ function build_and_install_ops() {
   ${python} setup_ops_base.py install --install-lib ${OPS_TMP_DIR_BASE}
   find ${OPS_TMP_DIR_BASE} -type f -name "*.o" -exec rm -f {} \;
   echo -e "${BLUE}[build]${NONE} build and install fastdeploy_ops..."
-  if [ "$CPU_USE_BF16" == "true" ]; then
+
+  TMP_DIR_REAL_PATH=`readlink -f ${OPS_TMP_DIR}`
+  is_xpu=`$python -c "import paddle; print(paddle.is_compiled_with_xpu())"`
+  if [ "$is_xpu" = "True" ]; then
+    cd xpu_ops/src
+    bash build.sh ${TMP_DIR_REAL_PATH}
+    cd ../..
+  elif [ "$CPU_USE_BF16" == "true" ]; then
     if [ "$BUILDING_ARCS" == "" ]; then
       CPU_USE_BF16=True ${python} setup_ops.py install --install-lib ${OPS_TMP_DIR}
     else

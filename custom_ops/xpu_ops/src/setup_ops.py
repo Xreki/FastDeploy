@@ -126,19 +126,13 @@ def xpu_setup_ops():
                  XDNN_LIB_DIR)
 
     XVLLM_PATH = os.getenv("XVLLM_PATH")
-    if XVLLM_PATH is None:
-        XVLLM_KERNEL_INC_PATH = os.path.join(PADDLE_INCLUDE_PATH, "xvllm")
-        XVLLM_KERNEL_LIB_PATH = os.path.join(PADDLE_LIB_PATH, "libapiinfer.so")
-        XVLLM_OP_INC_PATH = os.path.join(PADDLE_INCLUDE_PATH, "xvllm")
-        XVLLM_OP_LIB_PATH = os.path.join(PADDLE_LIB_PATH, "libxft_blocks.so")
-    else:
-        XVLLM_KERNEL_INC_PATH = os.path.join(XVLLM_PATH, "infer_ops",
-                                             "include")
-        XVLLM_KERNEL_LIB_PATH = os.path.join(XVLLM_PATH, "infer_ops", "so",
-                                             "libapiinfer.so")
-        XVLLM_OP_INC_PATH = os.path.join(XVLLM_PATH, "xft_blocks", "include")
-        XVLLM_OP_LIB_PATH = os.path.join(XVLLM_PATH, "xft_blocks", "so",
-                                         "libxft_blocks.so")
+    assert XVLLM_PATH is not None, "XVLLM_PATH is not set."
+    XVLLM_KERNEL_INC_PATH = os.path.join(XVLLM_PATH, "infer_ops", "include")
+    XVLLM_KERNEL_LIB_PATH = os.path.join(XVLLM_PATH, "infer_ops", "so",
+                                         "libapiinfer.so")
+    XVLLM_OP_INC_PATH = os.path.join(XVLLM_PATH, "xft_blocks", "include")
+    XVLLM_OP_LIB_PATH = os.path.join(XVLLM_PATH, "xft_blocks", "so",
+                                     "libxft_blocks.so")
 
     ops = [
         # custom ops
@@ -183,22 +177,18 @@ def xpu_setup_ops():
 
     setup(
         name="fastdeploy_ops",
-        ext_modules=[
-            CppExtension(
-                sources=ops,
-                include_dirs=include_dirs,
-                extra_objects=extra_objects,
-                extra_compile_args={
-                    "cxx": [
-                        "-D_GLIBCXX_USE_CXX11_ABI=1",
-                        "-DPADDLE_WITH_XPU",
-                        "-DBUILD_MULTI_XPU",
-                        # "-DUSE_XFT_FORWARD_GPT_DYBATCH",
-                        # "-DDEBUG_BEAM_SEARCH"
-                    ]
-                },
-            )
-        ],
+        ext_modules=CppExtension(
+            sources=ops,
+            include_dirs=include_dirs,
+            extra_objects=extra_objects,
+            extra_compile_args={
+                "cxx": [
+                    "-D_GLIBCXX_USE_CXX11_ABI=1",
+                    "-DPADDLE_WITH_XPU",
+                    "-DBUILD_MULTI_XPU",
+                ]
+            },
+        ),
     )
 
 

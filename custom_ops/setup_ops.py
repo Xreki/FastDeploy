@@ -381,8 +381,7 @@ elif paddle.is_compiled_with_cuda():
         include_package_data=True,
     )
 elif paddle.is_compiled_with_xpu():
-    from xpu_ops.src.setup_ops import xpu_setup_ops
-    xpu_setup_ops()
+    assert False, "In XPU, we should use setup_ops.py in xpu_ops/src, not this."
 else:
     use_bf16 = os.getenv("CPU_USE_BF16", "False") == "True"
     x86_simd_sort_dir = "third_party/x86-simd-sort"
