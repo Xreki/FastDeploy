@@ -63,10 +63,6 @@ class LinearBase(nn.Layer):
 
         self.fd_config = fd_config
         self.skip_quant = skip_quant
-        self.use_smooth_quant = fd_config.model_config.use_smooth_quant if hasattr(
-            fd_config.model_config, "use_smooth_quant") else False
-        self.weight_dtype = fd_config.model_config.weight_dtype
-        self.act_dtype = fd_config.model_config.act_dtype
         self.input_size = input_size
         self.output_size = output_size
         self.with_bias = with_bias
@@ -80,61 +76,23 @@ class LinearBase(nn.Layer):
         self.out_scale_key = f"{prefix}.out_scale"
 
         self._dtype = self._helper.get_default_dtype()
-
-        if fd_config.quant_config:
-            self.quant_method = fd_config.quant_config.get_quant_method(self)
-        self.use_offline_quant = fd_config.tmp_config.use_offline_quant
-
-    def is_y_transposed(self):
-        """
-        Returns whether the y tensor should be transposed for inference.
-        Args:
-            None.
-
-        Returns:
-            bool, whether the y tensor should be transposed for inference.
-        """
-        if self.weight_dtype == "int4":
-            return True
-        if self.weight_dtype == "int8":
-            return True
-        if "float8" in self.weight_dtype:
-            return True
-        # bf16/fp16/fp32 y is not transposed
-        return False
-
-    def init_weight_shape(self, trans=False):
-        """
-        Initialize the weight shape for the first feedforward network layer.
-
-        Args:
-            trans (bool, optional): Whether to transpose the weight shape.
-                Defaults to False. If True, the shape will be reversed.
-
-        Returns:
-            None.
-        """
+        self.weight_dtype = self._dtype
         self.linear_weight_shape = [
             self.input_size,
             self.output_size,
         ]
-        if trans:
-            self.linear_weight_shape.reverse()
-        if self.use_smooth_quant:
-            self.linear_shift_shape = [self.output_size]
-            self.linear_smooth_shape = [self.output_size]
-        if self.weight_dtype == "int4":
-            self.linear_weight_shape[0] //= 2
+        if fd_config.quant_config:
+            self.quant_method = fd_config.quant_config.get_quant_method(self)
 
     def init_weight(self):
         """
         Initialize the weights and biases.
         """
-        self.init_weight_shape(self.is_y_transposed())
-
+        if self.skip_quant:
+            self.weight_dtype = self._dtype
         self.linear_weight = self.create_parameter(
             shape=self.linear_weight_shape,
-            dtype=self.get_weight_create_dtype(),
+            dtype=self.weight_dtype,
             is_bias=False,
             default_initializer=paddle.nn.initializer.Constant(0),
         )
@@ -150,57 +108,6 @@ class LinearBase(nn.Layer):
         # smooth quant
         self.linear_shift = None
         self.linear_smooth = None
-        if self.use_smooth_quant:
-            self.linear_shift = self.create_parameter(
-                shape=self.linear_shift_shape,
-                dtype=self._dtype,
-                is_bias=False,
-            )
-            self.linear_smooth = self.create_parameter(
-                shape=self.linear_smooth_shape,
-                dtype=self._dtype,
-                is_bias=False,
-            )
-
-    def get_weight_create_dtype(self):
-        """
-        Get the data type for creating weights based on quantization settings.
-
-        Args:
-            self (object): The instance of the class where this method is defined.
-
-        Returns:
-            str: The data type for creating weights. It depends on the quantization settings:
-                - If `self.skip_quant` is True, returns the original data type `self._dtype`.
-                - If `self.weight_dtype` is "int4", returns "int8" to ensure compatibility or optimization.
-                - Otherwise, returns the specified weight data type `self.weight_dtype`.
-        """
-        if self.skip_quant:
-            return self._dtype
-        if self.weight_dtype == "int4":
-            return "int8"
-        # TODO(wangzhe24) create_parameter not support FP8
-        if "float8" in self.weight_dtype:
-            return "float8_e4m3fn"
-
-        return self.weight_dtype
-
-    def load_offline_quant_state_dict(self, quant_weight, quant_scale=None):
-        """
-        Load offline the checkpoint state dictionary into the layer.
-        """
-        if quant_scale is None:
-            if "float8" in self.weight_dtype:
-                self.linear_weight.copy_(quant_weight, False)
-            else:
-                self.linear_weight.set_value(quant_weight)
-        else:
-            if self.inference_args.weight_block_size[0] != -1:
-                self.linear_weight.copy_(
-                    quant_weight.view(paddle.float8_e4m3fn), False)
-            else:
-                self.linear_weight.set_value(quant_weight)
-            self.linear_weight_scale.set_value(quant_scale)
 
     def load_state_dict(self, state_dict):
         """
@@ -209,49 +116,21 @@ class LinearBase(nn.Layer):
         Args:
             state_dict (dict): A dictionary containing the checkpoint weights and biases.
         """
-        if self.use_offline_quant:
-            self.load_offline_quant_state_dict(
-                quant_weight=get_tensor(
-                    state_dict.pop(self.weight_key + ".quant_weight")),
-                quant_scale=get_tensor(
-                    state_dict.pop(self.weight_key + ".quant_scale")),
-            )
-        else:
-            # weight
-            assert self.weight_key is not None, 'weight_key should not be None.'
-            weight_tensor = get_tensor(state_dict.pop(self.weight_key))
+        # weight
+        self.state_dict = state_dict
+        assert self.weight_key is not None, 'weight_key should not be None.'
+        weight_tensor = get_tensor(state_dict.pop(self.weight_key))
 
-            if self.fd_config.quant_config:
-                self.quant_method.process_loaded_weights(self, weight_tensor)
-            else:
-                self.linear_weight.set_value(weight_tensor)
+        if self.fd_config.quant_config:
+            self.quant_method.process_loaded_weights(self, weight_tensor)
+        else:
+            self.linear_weight.set_value(weight_tensor)
 
         # bias
         if self.with_bias:
             bias_tensor = paddle.to_tensor(
                 get_tensor(state_dict.pop(self.bias_key)))
             self.linear_bias.set_value(bias_tensor)
-
-        # smooth quant
-        if self.use_smooth_quant:
-            if self.shift_key in state_dict:
-                shift_tensor = get_tensor(state_dict.pop(
-                    self.shift_key)).astype(paddle.get_default_dtype())
-            else:
-                shift_tensor = paddle.zeros(
-                    shape=self.linear_shift_shape,
-                    dtype=paddle.get_default_dtype(),
-                )
-            self.linear_shift.set_value(shift_tensor)
-            if self.smooth_key in state_dict:
-                smooth_tensor = get_tensor(state_dict.pop(
-                    self.smooth_key)).astype(paddle.get_default_dtype())
-            else:
-                smooth_tensor = paddle.ones(
-                    shape=[self.linear_smooth_shape],
-                    dtype=paddle.get_default_dtype(),
-                )
-            self.linear_smooth.set_value(smooth_tensor)
 
     def forward_cuda(self, x):
         """
@@ -308,47 +187,7 @@ class ReplicatedLinear(LinearBase):
                          with_bias=with_bias,
                          add_bias=add_bias,
                          skip_quant=skip_quant)
-        self.nranks = fd_config.parallel_config.tensor_parallel_degree
-        self.input_size = input_size
         self.init_weight()
-        if fd_config.quant_config:
-            self.quant_method.create_weights(self)
-
-    def init_weight(self):
-        """
-        Initialize the weights and biases.
-        """
-        self.init_weight_shape(self.is_y_transposed())
-
-        self.linear_weight = self.create_parameter(
-            shape=self.linear_weight_shape,
-            dtype=self.get_weight_create_dtype(),
-            is_bias=False,
-            default_initializer=paddle.nn.initializer.Constant(0),
-        )
-
-        self.linear_bias = None
-        if self.with_bias:
-            self.linear_bias = self.create_parameter(
-                shape=[self.output_size],
-                dtype=self._dtype,
-                is_bias=True,
-            )
-
-        # smooth quant
-        self.linear_shift = None
-        self.linear_smooth = None
-        if self.use_smooth_quant:
-            self.linear_shift = self.create_parameter(
-                shape=self.linear_shift_shape,
-                dtype=self._dtype,
-                is_bias=False,
-            )
-            self.linear_smooth = self.create_parameter(
-                shape=self.linear_smooth_shape,
-                dtype=self._dtype,
-                is_bias=False,
-            )
 
 
 class ColumnParallelLinear(LinearBase):
@@ -388,19 +227,23 @@ class ColumnParallelLinear(LinearBase):
         self.nranks = fd_config.parallel_config.tensor_parallel_degree
         self.input_size = input_size
         self.output_size = divide(output_size, self.nranks)
-        self.init_weight()
+        self.linear_weight_shape = [
+            self.input_size,
+            self.output_size,
+        ]
         if fd_config.quant_config:
             self.quant_method.create_weights(self)
+        self.init_weight()
 
     def init_weight(self):
         """
         Initialize the weights and biases.
         """
-        self.init_weight_shape(self.is_y_transposed())
-
+        if self.skip_quant:
+            self.weight_dtype = self._dtype
         self.linear_weight = self.create_parameter(
             shape=self.linear_weight_shape,
-            dtype=self.get_weight_create_dtype(),
+            dtype=self.weight_dtype,
             is_bias=False,
             default_initializer=paddle.nn.initializer.Constant(0),
         )
@@ -422,17 +265,6 @@ class ColumnParallelLinear(LinearBase):
         # smooth quant
         self.linear_shift = None
         self.linear_smooth = None
-        if self.use_smooth_quant:
-            self.linear_shift = self.create_parameter(
-                shape=self.linear_shift_shape,
-                dtype=self._dtype,
-                is_bias=False,
-            )
-            self.linear_smooth = self.create_parameter(
-                shape=self.linear_smooth_shape,
-                dtype=self._dtype,
-                is_bias=False,
-            )
 
 
 class MergedColumnParallelLinear(ColumnParallelLinear):
@@ -614,27 +446,6 @@ class QKVParallelLinear(ColumnParallelLinear):
                 qkv_bias = paddle.concat([q_bias, k_bias, v_bias], axis=-1)
             self.linear_bias.set_value(qkv_bias)
 
-        # smooth quant
-        if self.use_smooth_quant:
-            if self.shift_key in state_dict:
-                shift_tensor = get_tensor(state_dict.pop(
-                    self.shift_key)).astype(paddle.get_default_dtype())
-            else:
-                shift_tensor = paddle.zeros(
-                    shape=self.linear_shift_shape,
-                    dtype=paddle.get_default_dtype(),
-                )
-            self.linear_shift.set_value(shift_tensor)
-            if self.smooth_key in state_dict:
-                smooth_tensor = get_tensor(state_dict.pop(
-                    self.smooth_key)).astype(paddle.get_default_dtype())
-            else:
-                smooth_tensor = paddle.ones(
-                    shape=[self.linear_smooth_shape],
-                    dtype=paddle.get_default_dtype(),
-                )
-            self.linear_smooth.set_value(smooth_tensor)
-
 
 class RowParallelLinear(LinearBase):
     """
@@ -672,10 +483,6 @@ class RowParallelLinear(LinearBase):
                          skip_quant=skip_quant)
         self.fd_config = fd_config
         self.skip_quant = False
-        self.use_smooth_quant = fd_config.model_config.use_smooth_quant if hasattr(
-            fd_config.model_config, "use_smooth_quant") else False
-        self.weight_dtype = fd_config.model_config.weight_dtype
-        self.act_dtype = fd_config.model_config.act_dtype
         self.nranks = fd_config.parallel_config.tensor_parallel_degree
         self.embed_dim = fd_config.model_config.hidden_size
         self.head_dim = fd_config.model_config.head_dim
@@ -689,7 +496,10 @@ class RowParallelLinear(LinearBase):
         self.bias_key = f"{prefix}.bias"
         self.weight_only_scale_key = f"{prefix}.weight_only_scale"
         self.out_scale_key = f"{prefix}.out_scale"
-
+        self.linear_weight_shape = [
+            self.input_size,
+            self.output_size,
+        ]
         self._dtype = self._helper.get_default_dtype()
 
         if fd_config.quant_config:
@@ -702,11 +512,12 @@ class RowParallelLinear(LinearBase):
         """
         Initialize the weights and biases.
         """
-        self.init_weight_shape(self.is_y_transposed())
+        if self.skip_quant:
+            self.weight_dtype = self._dtype
 
         self.linear_weight = self.create_parameter(
             shape=self.linear_weight_shape,
-            dtype=self.get_weight_create_dtype(),
+            dtype=self.weight_dtype,
             is_bias=False,
             default_initializer=paddle.nn.initializer.Constant(0),
         )
@@ -726,17 +537,6 @@ class RowParallelLinear(LinearBase):
         # smooth quant
         self.linear_shift = None
         self.linear_smooth = None
-        if self.use_smooth_quant:
-            self.linear_shift = self.create_parameter(
-                shape=self.linear_shift_shape,
-                dtype=self._dtype,
-                is_bias=False,
-            )
-            self.linear_smooth = self.create_parameter(
-                shape=self.linear_smooth_shape,
-                dtype=self._dtype,
-                is_bias=False,
-            )
 
     def forward_cuda(self, x):
         if self.fd_config.quant_config:

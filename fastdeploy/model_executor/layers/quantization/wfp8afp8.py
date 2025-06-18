@@ -32,8 +32,11 @@ class WFP8AFP8Config(QuantConfigBase):
         super().__init__()
         self.weight_scale_dict = weight_scale_dict
         self.act_scale_dict = act_scale_dict
+        self.quant_max_bound = 448
+        self.quant_min_bound = -448
+        self.quant_round_type = 1
 
-    def get_name(self) -> str:
+    def name(self) -> str:
         return "wfp8afp8"
 
     @classmethod
@@ -59,6 +62,8 @@ class WFP8AFP8LinearMethod(QuantMethodBase):
         self.quant_config = quant_config
 
     def create_weights(self, layer):
+        layer.linear_weight_shape.reverse()
+        layer.weight_dtype = "float8_e4m3fn"
         # TODO(YuanRisheng): set weight logic should be moved to process_loaded_weights func
         weight_scale = self.quant_config.weight_scale_dict.get(
             layer.prefix + ".weight_quanter")
@@ -96,7 +101,7 @@ class WFP8AFP8LinearMethod(QuantMethodBase):
             layer.linear_weight.set_value(weight_tensor)
             return
         weight_tensor = weights.transpose([1, 0])
-        weight_tensor = paddle.cast(weight_tensor, self.weight_dtype)
+        weight_tensor = paddle.cast(weight_tensor, "float8")
         self.linear_weight.copy_(weight_tensor, False)
 
     def apply(self, layer, x):

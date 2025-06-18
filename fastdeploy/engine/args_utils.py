@@ -90,6 +90,7 @@ class EngineArgs:
     """
     dynamic load weight
     """
+    quantization: str = None
 
     # Inference configuration parameters
     gpu_memory_utilization: float = 0.9
@@ -289,6 +290,14 @@ class EngineArgs:
                                  type=int,
                                  default=EngineArgs.engine_worker_queue_port,
                                  help="port for engine worker queue")
+        model_group.add_argument("--quantization",
+                                 type=str,
+                                 default=EngineArgs.quantization,
+                                 help="Quantization name for the model, currentlly support " \
+                                 "'weight_only_int4', 'weight_only_int8'," \
+                                 "default is None. The priority of this configuration "\
+                                 "is lower than that of the config file. " \
+                                 "More complex quantization methods need to be configured via the config file.")
 
         # Parallel processing parameters group
         parallel_group = parser.add_argument_group("Parallel Configuration")
@@ -485,7 +494,8 @@ class EngineArgs:
         """
         return ModelConfig(model_name_or_path=self.model,
                            config_json_file=self.model_config_name,
-                           dynamic_load_weight=self.dynamic_load_weight)
+                           dynamic_load_weight=self.dynamic_load_weight,
+                           quantization=self.quantization)
 
     def create_cache_config(self, model_cfg) -> CacheConfig:
         """

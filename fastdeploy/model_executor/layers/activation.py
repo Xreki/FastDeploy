@@ -92,7 +92,7 @@ class SiluAndMul(nn.Layer):
                     bfloat16 as default dtype, but received {self._dtype}")
 
         # fp8 is not support smooth quantization
-        if "float8" in fd_config.model_config.act_dtype:
+        if fd_config.quant_config and "fp8" in fd_config.quant_config.name():
             self.dequant_scales = None
             self.shift = None
             self.smooth = None

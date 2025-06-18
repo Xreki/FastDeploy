@@ -14,48 +14,11 @@
 # limitations under the License.
 """
 
-from dataclasses import dataclass
-
 import paddle
 from paddle import nn
 from paddlenlp.utils.log import logger
 
-from fastdeploy.config import MoEPhase
 from fastdeploy.model_executor.layers.utils import get_tensor
-from fastdeploy.platforms import current_platform
-
-
-@dataclass
-class MoEComputeParams:
-    """
-    some params for computing MoE.
-    it is given to different compute methods.
-    """
-    global_num_experts: int = -1
-    top_k: int = -1
-    hidden_size: int = -1
-    num_local_experts: int = -1
-    moe_intermediate_size: int = -1
-
-    tp_size: int = -1
-    ep_size: int = -1
-    dp_size: int = -1
-
-    moe_quant_type: str = ""
-
-
-def get_moe_method(moe_compute_params: MoEComputeParams):
-    """
-    get moe method based on platform and moe compute params
-    """
-    if current_platform.is_xpu():
-        from .xpu_fused_moe import XPUFusedMoeMethod
-        return XPUFusedMoeMethod(moe_compute_params)
-    elif current_platform.is_cuda():
-        from .fused_moe_method_tp import TPFusedMoeMethod
-        return TPFusedMoeMethod(moe_compute_params)
-    else:
-        raise NotImplementedError("unsupported platform")
 
 
 class FusedMoE(nn.Layer):
@@ -70,7 +33,6 @@ class FusedMoE(nn.Layer):
         num_experts: int = -1,
         expert_id_offset: int = 0,
         top_k: int = -1,
-        moe_quant_type: str = "weight_only_int4",
         layer_idx: int = -1,
         moe_tag: str = "",
         weight_key_map: dict = {},
@@ -100,50 +62,108 @@ class FusedMoE(nn.Layer):
         self.moe_config = fd_config.moe_config
         self.use_offline_quant = fd_config.tmp_config.use_offline_quant
 
-        self.moe_quant_type = moe_quant_type
         self.num_experts = num_experts
         self.num_local_experts = self.num_experts // self.ep_size
 
         self.moe_intermediate_size = moe_intermediate_size // self.tp_size
+
+        self.top_k = top_k
+        self.hidden_size = self.hidden_size
+        self.moe_intermediate_size = moe_intermediate_size // self.tp_size
         self.weight_key_map = weight_key_map
         self.use_method = use_method
+        self.gate_correction_bias = None
+        self.expert_id_offset = expert_id_offset
+
+        if self.ep_size > 1:
+            expert_id_offset = expert_id_offset + self.ep_rank * self.num_local_experts
+
+        quant_name = "no quant"
+        if fd_config.quant_config:
+            self.quant_method = fd_config.quant_config.get_quant_method(self)
+            quant_name = self.fd_config.quant_config.name()
+        else:
+            # now, no quant method(w_fp16 a_fp16) can't get from quant_config, we will optimize it in future
+            from .fused_moe_cutlass_backend import CutlassMoEMethod
+            self.quant_method = CutlassMoEMethod(None)
 
         logger.info(
             f"{moe_tag}MoE config is {num_experts=}[{expert_id_offset}, {expert_id_offset+num_experts}), \
         {top_k=}, hidden_size={self.hidden_size}, {moe_intermediate_size=}, \
-            moe_quant_type={self.moe_quant_type}, ep_size={self.ep_size}, \
+            quant_type={quant_name}, ep_size={self.ep_size}, \
             tp_size={self.tp_size}.")
 
-        moe_compute_params = MoEComputeParams()
-        moe_compute_params.layer_idx = self.layer_idx
-        moe_compute_params.global_num_experts = self.num_experts
-        moe_compute_params.top_k = top_k
-        moe_compute_params.hidden_size = self.hidden_size
-        moe_compute_params.num_local_experts = self.num_local_experts
-        if self.ep_size > 1:
-            expert_id_offset = expert_id_offset + self.ep_rank * self.num_local_experts
-        moe_compute_params.expert_id_offset = expert_id_offset
-        moe_compute_params.moe_quant_type = self.moe_quant_type
-        moe_compute_params.moe_intermediate_size = self.moe_intermediate_size
-        moe_compute_params.ep_size = self.ep_size
-        moe_compute_params.tp_size = self.tp_size
-        moe_compute_params.ep_rank = self.ep_rank
-        moe_compute_params.num_max_dispatch_tokens_per_rank = fd_config.moe_config.num_max_dispatch_tokens_per_rank
-        moe_compute_params.use_method = self.use_method
+    def load_experts_weight(self, state_dict: dict,
+                            ffn1_expert_weight_key: str,
+                            ffn2_expert_weight_key: str):
+        """
+        Load experts weight from state_dict.
+        Args:
+            state_dict (dict): The state_dict of model.
+            ffn1_expert_weight_key (str): The key of ffn1 expert weight.
+            ffn2_expert_weight_key (str): The key of ffn2 expert weight.
+        """
+        ffn1_weights = []
+        ffn2_weights = []
+        is_ffn_merged = ffn1_expert_weight_key.format(self.expert_id_offset) in state_dict
 
-        if self.ep_size > 1:
-            # Lazy import
-            from .fused_moe_method_ep import (EPDecoderFusedMoeMethod,
-                                              EPPrefillFusedMoeMethod)
-
-            if fd_config.parallel_config.moe_phase == MoEPhase.PREFILL:
-                self.compute_method = EPPrefillFusedMoeMethod(
-                    moe_compute_params)
-            else:
-                self.compute_method = EPDecoderFusedMoeMethod(
-                    moe_compute_params)
+        if is_ffn_merged:
+            for i in range(self.num_experts):
+                expert_idx = self.expert_id_offset + i
+                ffn1_weights.append(
+                    get_tensor(
+                        state_dict.pop(ffn1_expert_weight_key.format(expert_idx))))
+                ffn2_weights.append(
+                    get_tensor(
+                        state_dict.pop(ffn2_expert_weight_key.format(expert_idx))))
         else:
-            self.compute_method = get_moe_method(moe_compute_params)
+            gate_expert_weight_key = ffn1_expert_weight_key.replace("up_gate_proj", "gate_proj")
+            up_expert_weight_key = ffn1_expert_weight_key.replace("up_gate_proj", "up_proj")
+            for j in range(self.num_experts):
+                expert_idx = self.expert_id_offset + j
+                gate = get_tensor(
+                        state_dict.pop(gate_expert_weight_key.format(expert_idx)))
+                up = get_tensor(
+                        state_dict.pop(up_expert_weight_key.format(expert_idx)))
+                ffn1_weights.append(paddle.concat([gate, up], axis=-1))
+                ffn2_weights.append(
+                    get_tensor(
+                        state_dict.pop(ffn2_expert_weight_key.format(expert_idx))))
+        return ffn1_weights, ffn2_weights
+
+    def extract_moe_ffn_weights(self, state_dict: dict):
+        """
+        Extract MoE FFN weights from state dict based on weight key mapping.
+
+        Args:
+            state_dict (dict): Model state dictionary containing the weights.
+
+        Returns:
+            tuple: A tuple containing two lists:
+                - ffn1_weights: List of tensors for first FFN layer weights
+                - ffn2_weights: List of tensors for second FFN layer weights
+
+        Raises:
+            AssertionError: If required weight keys are missing or number of weights
+                doesn't match number of local experts.
+        """
+        ffn1_expert_weight_key = self.weight_key_map.get(
+            "ffn1_expert_weight_key", None)
+        ffn2_expert_weight_key = self.weight_key_map.get(
+            "ffn2_expert_weight_key", None)
+        assert ffn1_expert_weight_key is not None, "ffn1_expert_weight_key should not be none."
+        assert ffn2_expert_weight_key is not None, "ffn2_expert_weight_key should not be none."
+
+        ffn1_weights, ffn2_weights = self.load_experts_weight(
+            state_dict, ffn1_expert_weight_key, ffn2_expert_weight_key)
+        assert len(
+            ffn1_weights
+        ) == self.num_local_experts, "ffn1_weights length should be equal to num_local_experts."
+        assert len(
+            ffn2_weights
+        ) == self.num_local_experts, "ffn2_weights length should be equal to num_local_experts."
+
+        return ffn1_weights, ffn2_weights
 
     def extract_gate_correction_bias(self, gate_correction_bias_key,
                                      state_dict):
@@ -184,10 +204,7 @@ class FusedMoE(nn.Layer):
         )
         self.gate_weight.set_value(gate_weight_tensor.astype("float32"))
 
-        # other weight is with compute_method
-        # different method may have different way to create weights
-        self.compute_method.create_weights(self, self.weight_key_map,
-                                           state_dict)
+        self.quant_method.create_weights(self, state_dict)
 
     def forward(self, x: paddle.Tensor):
         """
@@ -197,9 +214,9 @@ class FusedMoE(nn.Layer):
             x (Tensor): Input tensor to the moe layer.
 
         Returns:
-            Tensor: Output tensor.
+            Tensor: Output tensor.s
 
         """
         gate_out = paddle.matmul(x.cast("float32"), self.gate_weight)
-        out = self.compute_method.apply(self, x, gate_out)
+        out = self.quant_method.apply(self, x, gate_out)
         return out

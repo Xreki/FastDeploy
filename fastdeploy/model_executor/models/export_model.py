@@ -565,69 +565,23 @@ def build_stream_line_model(
     model_config.weight_dtype = weight_dtype
     model_config.act_dtype = act_dtype
 
-    quant_config = None
+    quantization_config = config.get("quantization_config", None)
 
-    if weight_dtype == "int8" and act_dtype in ["bfloat16", "float16"]:
-        quant_cls = get_quantization_config("weight_only")
-        quant_config = quant_cls.from_config({
-            "weight_only_linear_arch": None,
-            "algo": "weight_only_int8"
-        })
-        quant_config.quant_max_bound = 0
-        quant_config.quant_min_bound = 0
-        quant_config.quant_round_type = 0
-        model_config.use_smooth_quant = False
-    elif weight_dtype == "int4" and act_dtype in ["bfloat16", "float16"]:
-        quant_cls = get_quantization_config("weight_only")
-        quant_config = quant_cls.from_config({
-            "weight_only_linear_arch": None,
-            "algo": "weight_only_int4"
-        })
-        quant_config.quant_max_bound = 0
-        quant_config.quant_min_bound = 0
-        quant_config.quant_round_type = 0
-        model_config.use_smooth_quant = False
-    elif tmp_config.weight_block_size[0] != -1:
-        quant_cls = get_quantization_config("block_wise")
-        quant_config = quant_cls.from_config(
-            {"weight_block_size": tmp_config.weight_block_size})
-        quant_config.quant_max_bound = 448
-        quant_config.quant_min_bound = -448
-        quant_config.quant_round_type = 1
-        model_config.use_smooth_quant = False
-    elif weight_dtype == "int4" and act_dtype == "float8_e4m3fn":
-        quant_cls = get_quantization_config("w4afp8")
-        quant_config = quant_cls.from_config({
-            "weight_scale_dict": {},
-            "act_scale_dict": {}
-        })
-        quant_config.quant_max_bound = 448
-        quant_config.quant_min_bound = -448
-        quant_config.quant_round_type = 1
-        model_config.use_smooth_quant = False
-    elif weight_dtype == "int8" and act_dtype == weight_dtype:
-        quant_cls = get_quantization_config("w8a8")
-        quant_config = quant_cls.from_config({
-            "weight_scale_dict": {},
-            "act_scale_dict": {},
-            "use_gemm_dequant": False
-        })
-        quant_config.quant_max_bound = 127
-        quant_config.quant_min_bound = -127
-        quant_config.quant_round_type = 0
-        model_config.use_smooth_quant = True
-    elif weight_dtype == "float8_e4m3fn" and act_dtype == weight_dtype:
-        quant_cls = get_quantization_config("wfp8afp8")
-        quant_config = quant_cls.from_config({
-            "weight_scale_dict": {},
-            "act_scale_dict": {}
-        })
-        quant_config.quant_max_bound = 448
-        quant_config.quant_min_bound = -448
-        quant_config.quant_round_type = 1
-        model_config.use_smooth_quant = False
+    quant_config_name = None
+    if quantization_config is not None and quantization_config.get(
+            "quantization", None) is None:
+        raise ValueError(
+            "quantization_config should have a key named 'quantization' for specify quant config."
+        )
+
+    if quantization_config is not None:
+        quant_config_name = quantization_config["quantization"]
+        quant_cls = get_quantization_config(quant_config_name)
+        quant_config = quant_cls.from_config(quantization_config)
+        logger.info(
+            f"quant_type: {quant_config.name()}, cachekv[{cachekv_dtype}]")
     else:
-        model_config.use_smooth_quant = False
+        quant_config = None
 
     fd_config = FDConfig(
         model_config=model_config,

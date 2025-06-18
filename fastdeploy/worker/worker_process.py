@@ -30,7 +30,6 @@ from fastdeploy.inter_communicator import EngineWorkerQueue as TaskQueue
 from fastdeploy.inter_communicator import IPCSignal
 from fastdeploy.model_executor.layers.quantization import \
     get_quantization_config
-from fastdeploy.model_executor.models.utils import parser_quant_type
 from fastdeploy.platforms import current_platform
 from fastdeploy.utils import get_logger
 from fastdeploy.worker.worker_base import WorkerBase
@@ -454,6 +453,14 @@ def parse_args():
                         help="expert parallel size")
     parser.add_argument("--ori_vocab_size", type=int, default=None)
 
+    parser.add_argument("--quantization",
+                        type=str,
+                        default="",
+                        help="Quantization name for the model, currentlly support " \
+                            "'weight_only_int4', 'weight_only_int8'," \
+                            "default is None. The priority of this configuration "\
+                            "is lower than that of the config file. " \
+                            "More complex quantization methods need to be configured via the config file.")
     args = parser.parse_args()
     return args
 
@@ -490,6 +497,7 @@ def initialize_fd_config(args) -> FDConfig:
     load_config = LoadConfig()
     moe_config = MoEConfig()
     graph_opt_config = GraphOptimizationConfig()
+    model_config.quantization = args.quantization
 
     # Update parallel config
     parallel_config.engine_pid = args.engine_pid
@@ -601,37 +609,29 @@ def initialize_fd_config(args) -> FDConfig:
     if "ErnieBotLMHeadModel" in config.get("architectures"):
         model_config.ori_vocab_size = args.ori_vocab_size
 
-    weight_dtype, act_dtype, cachekv_dtype = parser_quant_type(
-        model_config.export_model_type)
-    model_config.weight_dtype = weight_dtype
-    act_dtype = args.dtype if (act_dtype != args.dtype) else act_dtype
-    model_config.act_dtype = act_dtype  # set as args.dtype from engine
-    logger.info(
-        f"quant_type: weight[{weight_dtype}], act[{act_dtype}] -> act[{args.dtype}], cachekv[{cachekv_dtype}]"
-    )
+    quantization_config = config.get("quantization_config", None)
 
-    if weight_dtype == "int8" and act_dtype in ["bfloat16", "float16"]:
-        quant_cls = get_quantization_config("weight_only")
-        quant_config = quant_cls.from_config({
-            "weight_only_linear_arch": None,
-            "algo": "weight_only_int8"
-        })
-        quant_config.quant_max_bound = 0
-        quant_config.quant_min_bound = 0
-        quant_config.quant_round_type = 0
-        model_config.use_smooth_quant = False
-    elif weight_dtype == "int4" and act_dtype in ["bfloat16", "float16"]:
-        quant_cls = get_quantization_config("weight_only")
-        quant_config = quant_cls.from_config({
-            "weight_only_linear_arch": None,
-            "algo": "weight_only_int4"
-        })
-        quant_config.quant_max_bound = 0
-        quant_config.quant_min_bound = 0
-        quant_config.quant_round_type = 0
-        model_config.use_smooth_quant = False
+    quant_config_name = None
+    if quantization_config is not None and quantization_config.get(
+            "quantization", None) is None:
+        raise ValueError(
+            "quantization_config should have a key named 'quantization' for specify quant config."
+        )
+
+    if quantization_config is not None:
+        quant_config_name = quantization_config["quantization"]
+    elif args.quantization != "None":
+        quant_config_name = args.quantization
     else:
+        quant_config_name = None
+
+    if quant_config_name is None:
         quant_config = None
+    else:
+        quant_cls = get_quantization_config(quant_config_name)
+        quant_config = quant_cls.from_config(quantization_config)
+        logger.info(
+            f"quant_type: {quant_config.name()}, cachekv[{cachekv_dtype}]")
 
     model_config.architectures = config.get("architectures")
 
