@@ -16,7 +16,7 @@ etcd3
 httpx
 tool_helpers
 cupy-cuda12x
-pybind11
+pybind11[global]
 tabulate
 gradio
 xlwt
