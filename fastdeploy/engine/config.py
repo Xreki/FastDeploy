@@ -291,7 +291,7 @@ class CacheConfig:
         else:
             length = num_total_tokens // number_of_tasks
             block_num = (length + self.block_size - 1 +
-                         self.enc_dec_block_num) // self.block_size
+                         self.dec_token_num) // self.block_size
             self.total_block_num = block_num * number_of_tasks
             self.prefill_kvcache_block_num = self.total_block_num
             llm_logger.info(

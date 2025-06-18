@@ -220,11 +220,10 @@ class GPUModelRunner(ModelRunnerBase):
 
     def _dummy_prefill_inputs(self, num_tokens: int, batch_size: int):
         """ Set dummy prefill inputs to share_inputs """
-        full_length = num_tokens // batch_size
+        full_length = min(num_tokens // batch_size, self.parallel_config.max_model_len - 10)
         input_length = int(full_length * self.parallel_config.kv_cache_ratio)
-        block_num = (input_length + self.parallel_config.block_size - 1 +
-                     self.parallel_config.enc_dec_block_num
-                     ) // self.parallel_config.block_size
+        block_num = (input_length + self.parallel_config.block_size - 1 
+                     ) // self.parallel_config.block_size + self.parallel_config.enc_dec_block_num
 
         for i in range(batch_size):
             idx = i
