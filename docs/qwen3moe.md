@@ -2,6 +2,7 @@
 ```
 python3 tools/download.py Qwen/Qwen3-30B-A3B/
 ```
+上述脚本会将模型下载到本地路径，通常在~/.paddlenlp/models/$MODEL中.
 
 ## 运行脚本
 
@@ -9,6 +10,7 @@ python3 tools/download.py Qwen/Qwen3-30B-A3B/
 from fastdeploy.engine.sampling_params import SamplingParams
 from fastdeploy.entrypoints.llm import LLM
 
+# 步骤1中的路径
 model_name_or_path = "./Qwen/Qwen3-30B-A3B/"
 
 

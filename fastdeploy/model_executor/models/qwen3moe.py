@@ -189,7 +189,7 @@ class Qwen3DecoderLayer(nn.Layer):
         )
         fd_config.moe_config.use_moe = True
         assert fd_config.moe_config.moe_quant_type in [
-            "weight_only_int8", "weight_only_int4"
+            "weight_only_int8", "weight_only_int4", "w16a16"
         ]
         weight_key_map = {
             "gate_weight_key":
@@ -442,42 +442,42 @@ class Qwen3MoePretrainedModel(PretrainedModel):
                 "lm_head.weight": partial(fn, is_column=True),
                 # Row Linear
                 "embed_tokens.weight": partial(fn, is_column=False),
-                "model.0.self_attn.o_proj.weight": partial(fn,
-                                                           is_column=False),
-                "model.0.mlp.down_proj.weight": partial(fn, is_column=False),
+                "model.layers.0.self_attn.o_proj.weight": partial(fn, is_column=False),
+                "model.layers.0.mlp.down_proj.weight": partial(fn, is_column=False),
             }
 
             # Column Linear
             config.fuse_attention_qkv = False
             if config.fuse_attention_qkv:
-                base_actions["model.0.self_attn.qkv_proj.weight"] = partial(
+                base_actions["model.layers.0.self_attn.qkv_proj.weight"] = partial(
                     fn, is_column=True)
             else:
-                base_actions["model.0.self_attn.q_proj.weight"] = partial(
+                base_actions["model.layers.0.self_attn.q_proj.weight"] = partial(
                     fn, is_column=True)
-                base_actions["model.0.self_attn.q_proj.bias"] = partial(
+                base_actions["model.layers.0.self_attn.q_proj.bias"] = partial(
                     fn, is_column=True)
                 # if we have enough num_key_value_heads to split, then split it.
                 if config.num_key_value_heads % config.tensor_parallel_degree == 0:
-                    base_actions["model.0.self_attn.k_proj.weight"] = partial(
+                    base_actions["model.layers.0.self_attn.k_proj.weight"] = partial(
                         fn, is_column=True)
-                    base_actions["model.0.self_attn.v_proj.weight"] = partial(
+                    base_actions["model.layers.0.self_attn.v_proj.weight"] = partial(
                         fn, is_column=True)
-                    base_actions["model.0.self_attn.k_proj.bias"] = partial(
+                    base_actions["model.layers.0.self_attn.k_proj.bias"] = partial(
                         fn, is_column=True)
-                    base_actions["model.0.self_attn.v_proj.bias"] = partial(
+                    base_actions["model.layers.0.self_attn.v_proj.bias"] = partial(
                         fn, is_column=True)
+            
 
-            base_actions["model.0.mlp.gate_proj.weight"] = partial(
+            base_actions["model.layers.0.mlp.gate_proj.weight"] = partial(
                 fn, is_column=True)
-            base_actions["model.0.mlp.up_proj.weight"] = partial(
+            base_actions["model.layers.0.mlp.up_proj.weight"] = partial(
                 fn, is_column=True)
 
             for key, action in base_actions.items():
-                if "model.0." in key:
+                if "model.layers.0." in key:
                     for i in range(num_layers):
-                        final_actions[key.replace("model.0.",
-                                                  f"model.{i}.")] = action
+                        final_actions[key.replace("model.layers.0.",
+                                                  f"model.layers.{i}.")] = action
                 final_actions[key] = action
 
             return final_actions
