@@ -54,8 +54,9 @@ class Qwen3Attention(nn.Layer):
         self.fd_config = fd_config
 
         self.head_dim = fd_config.model_config.head_dim
-        self.q_size = fd_config.model_config.num_attention_heads * self.head_dim
-        self.kv_size = fd_config.model_config.num_key_value_heads * self.head_dim
+        nranks = fd_config.parallel_config.tensor_parallel_degree
+        self.q_size = fd_config.model_config.num_attention_heads * self.head_dim // nranks
+        self.kv_size = fd_config.model_config.num_key_value_heads * self.head_dim // nranks
 
         self.qkv_proj = QKVParallelLinear(fd_config=fd_config,
                                           prefix=f"{prefix}.qkv_proj",
@@ -65,7 +66,7 @@ class Qwen3Attention(nn.Layer):
             fd_config=fd_config,
             prefix=f"{prefix}.o_proj",
             input_size=fd_config.model_config.head_dim *
-            fd_config.model_config.num_attention_heads,
+            fd_config.model_config.num_attention_heads // nranks,
             output_size=fd_config.model_config.hidden_size,
         )
 

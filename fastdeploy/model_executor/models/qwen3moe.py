@@ -46,7 +46,8 @@ class Qwen3MLP(nn.Layer):
         prefix: str = "",
     ) -> None:
         super().__init__()
-        self.nranks = fd_config.parallel_config.mp_size
+        self.nranks = fd_config.parallel_config.tensor_parallel_degree
+
         self.gate_up_proj = MergedColumnParallelLinear(
             fd_config,
             prefix=f"{prefix}.up_gate_proj",
@@ -102,12 +103,13 @@ class Qwen3Attention(nn.Layer):
         self.qkv_proj = QKVParallelLinear(fd_config,
                                           prefix=f"{prefix}.qkv_proj",
                                           with_bias=False)
+        nranks = fd_config.parallel_config.tensor_parallel_degree
 
         self.o_proj = RowParallelLinear(
             fd_config,
             prefix=f"{prefix}.o_proj",
             input_size=fd_config.model_config.head_dim *
-            fd_config.model_config.num_attention_heads,
+            fd_config.model_config.num_attention_heads // nranks,
             output_size=fd_config.model_config.hidden_size,
         )
 
@@ -127,8 +129,8 @@ class Qwen3Attention(nn.Layer):
                               prefix=f"{prefix}.k_norm",
                               begin_norm_axis=2)
 
-        self.q_size = fd_config.model_config.num_attention_heads * self.head_dim
-        self.kv_size = fd_config.model_config.num_key_value_heads * self.head_dim
+        self.q_size = fd_config.model_config.num_attention_heads * self.head_dim // nranks
+        self.kv_size = fd_config.model_config.num_key_value_heads * self.head_dim // nranks
 
     def load_state_dict(self, state_dict):
         """
@@ -432,62 +434,70 @@ class Qwen3MoePretrainedModel(PretrainedModel):
             num_attention_heads=config.num_attention_heads,
         )
 
-        def get_tensor_parallel_split_mappings(num_layers):
+        def get_tensor_parallel_split_mappings(num_layers, moe_num_experts):
             final_actions = {}
 
             base_actions = {
                 "lm_head.weight":
                 partial(fn, is_column=True),
                 # Row Linear
-                "embed_tokens.weight":
-                partial(fn, is_column=False),
-                "model.layers.0.self_attn.o_proj.weight":
-                partial(fn, is_column=False),
-                "model.layers.0.mlp.down_proj.weight":
-                partial(fn, is_column=False),
+                "embed_tokens.weight": partial(fn, is_column=False),
+                "layers.0.self_attn.o_proj.weight": partial(fn, is_column=False),
             }
 
             # Column Linear
             config.fuse_attention_qkv = False
             if config.fuse_attention_qkv:
-                base_actions[
-                    "model.layers.0.self_attn.qkv_proj.weight"] = partial(
-                        fn, is_column=True)
+                base_actions["layers.0.self_attn.qkv_proj.weight"] = partial(
+                    fn, is_column=True)
             else:
-                base_actions[
-                    "model.layers.0.self_attn.q_proj.weight"] = partial(
-                        fn, is_column=True)
-                base_actions["model.layers.0.self_attn.q_proj.bias"] = partial(
+                base_actions["layers.0.self_attn.q_proj.weight"] = partial(
+                    fn, is_column=True)
+                base_actions["layers.0.self_attn.q_proj.bias"] = partial(
                     fn, is_column=True)
                 # if we have enough num_key_value_heads to split, then split it.
                 if config.num_key_value_heads % config.tensor_parallel_degree == 0:
-                    base_actions[
-                        "model.layers.0.self_attn.k_proj.weight"] = partial(
-                            fn, is_column=True)
-                    base_actions[
-                        "model.layers.0.self_attn.v_proj.weight"] = partial(
-                            fn, is_column=True)
-                    base_actions[
-                        "model.layers.0.self_attn.k_proj.bias"] = partial(
-                            fn, is_column=True)
-                    base_actions[
-                        "model.layers.0.self_attn.v_proj.bias"] = partial(
-                            fn, is_column=True)
-
-            base_actions["model.layers.0.mlp.gate_proj.weight"] = partial(
-                fn, is_column=True)
-            base_actions["model.layers.0.mlp.up_proj.weight"] = partial(
-                fn, is_column=True)
+                    base_actions["layers.0.self_attn.k_proj.weight"] = partial(
+                        fn, is_column=True)
+                    base_actions["layers.0.self_attn.v_proj.weight"] = partial(
+                        fn, is_column=True)
+                    base_actions["layers.0.self_attn.k_proj.bias"] = partial(
+                        fn, is_column=True)
+                    base_actions["layers.0.self_attn.v_proj.bias"] = partial(
+                        fn, is_column=True)
 
             for key, action in base_actions.items():
-                if "model.layers.0." in key:
+                if "layers.0." in key:
                     for i in range(num_layers):
-                        final_actions[key.replace(
-                            "model.layers.0.", f"model.layers.{i}.")] = action
+                        final_actions[key.replace("layers.0.",
+                                                  f"layers.{i}.")] = action
                 final_actions[key] = action
+
+            base_actions = {
+                "layers.0.mlp.experts.0.gate_proj.weight": partial(fn, is_column=True),
+                "layers.0.mlp.experts.0.down_proj.weight": partial(fn, is_column=False),
+                "layers.0.mlp.experts.0.up_proj.weight": partial(fn, is_column=True),
+            }
+
+            for key, action in base_actions.items():
+                for i in range(num_layers):
+                    newkey = key.replace("layers.0.", f"layers.{i}.")
+                    for j in range(moe_num_experts):
+                        newkey2 = newkey.replace("experts.0.", f"experts.{j}.")
+                        final_actions[newkey2] = action
 
             return final_actions
 
-        mappings = get_tensor_parallel_split_mappings(config.num_layers)
+        moe_num_experts = 0
+        if isinstance(config.moe_num_experts, list):
+            moe_num_experts = sum(config.moe_num_experts)
+        elif isinstance(config.moe_num_experts, int):
+            moe_num_experts = config.moe_num_experts
+        else:
+            raise ValueError(
+                f"Not support type of moe_num_experts [{type(config.moe_num_experts)}]"
+            )
+
+        mappings = get_tensor_parallel_split_mappings(config.num_layers, moe_num_experts)
 
         return mappings
