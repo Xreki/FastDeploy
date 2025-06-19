@@ -23,10 +23,12 @@ import json
 
 from fastdeploy.utils import llm_logger
 
+
 class ZmqClient:
     """
     ZmqClient is a class that provides a client-side interface for sending and receiving messages using ZeroMQ.
     """
+
     def __init__(self, name, mode):
         self.context = zmq.Context()
         self.socket = self.context.socket(mode)
@@ -92,72 +94,32 @@ class ZmqClient:
         Send a multipart message to the router socket.
         """
         if self.router is None:
-            raise RuntimeError("Router socket not created. Call create_router() first.")
+            raise RuntimeError(
+                "Router socket not created. Call create_router() first.")
 
         while self.running:
             with self.mutex:
                 if req_id not in self.req_dict:
                     try:
-                        client, _, request_id = self.router.recv_multipart(flags=zmq.NOBLOCK)
+                        client, _, request_id = self.router.recv_multipart(
+                            flags=zmq.NOBLOCK)
                         req_id_str = request_id.decode('utf-8')
                         self.req_dict[req_id_str] = client
                     except zmq.Again:
+                        time.sleep(0.001)
                         continue
                 else:
                     break
-        
+
         try:
             result = json.dumps(data.to_dict()).encode('utf-8')
             self.router.send_multipart([self.req_dict[req_id], b'', result])
         except Exception as e:
             llm_logger.error(f"Send result to zmq client failed: {e}")
-        
+
         if data.finished:
             with self.mutex:
                 self.req_dict.pop(data.request_id, None)
-    
-    def send_multipart2(self, get_results_handler):
-        """
-        Send a multipart message to the router socket.
-        """
-        if self.router is None:
-            raise RuntimeError("Router socket not created. Call create_router() first.")
-        
-        while self.running:
-            with self.mutex:
-                try:
-                    flags = 0 if len(self.req_dict) == 0 else zmq.NOBLOCK
-                    client, _, request_id = self.router.recv_multipart(flags=flags)
-                    req_id_str = request_id.decode('utf-8')
-                    self.req_dict[req_id_str] = client
-                except zmq.Again:
-                    time.sleep(0.01)
-                    break
-        
-        req_dict_copy = dict()
-        with self.mutex:
-            req_dict_copy = self.req_dict.copy()
-
-        finished_req = []
-        req_ids = list(req_dict_copy.keys())
-        results = get_results_handler(req_ids)
-
-        for req_id, contents in results.items():
-            client = req_dict_copy[req_id]
-            for data in contents:
-                if data["finished"]:
-                    finished_req.append(data["request_id"])
-
-                result = json.dumps(data).encode('utf-8')
-                try:
-                    self.router.send_multipart([client, b'', result])
-                except Exception as e:
-                    llm_logger.error(f"Send result to zmq client2 failed: {e}")
-        
-        if len(finished_req) > 0:
-            with self.mutex:
-                for req_id in finished_req:
-                    self.req_dict.pop(req_id, None)
 
     def receive_json_once(self, block=False):
         """
@@ -190,7 +152,7 @@ class ZmqClient:
             self.close()
             llm_logger.warning(f"{e}")
             return str(e), None
-        
+
     def _clear_ipc(self, name):
         """
         Remove the IPC file with the given name.

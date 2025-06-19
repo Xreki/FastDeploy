@@ -105,8 +105,8 @@ class GlobalScheduler(object):
         self.client = AdaptedRedis(connection_pool=connection_pool)
 
         self.name = self._generate_scheduler_name()
-        self.keep_alive_workers = threading.Thread(target=self._keep_alive)
-        self.keep_alive_workers.daemon = True
+        self.keep_alive_workers = threading.Thread(
+            target=self._keep_alive, daemon=True)
         self.keep_alive_workers.start()
 
         self.put_requests_workers = Workers(
@@ -123,8 +123,7 @@ class GlobalScheduler(object):
         self.stolen_requests: Dict[str, ScheduledRequest] = dict()
 
         self.get_response_workers = threading.Thread(
-            target=self._get_results_worker)
-        self.get_response_workers.daemon = True
+            target=self._get_results_worker, daemon=True)
         self.get_response_workers.start()
 
         llm_logger.info(
@@ -150,7 +149,7 @@ class GlobalScheduler(object):
         """
         return f"{self.topic}.ins.{scheduler_name}"
 
-    def _generate_scheduler_name(self):
+    def _generate_scheduler_name(self) -> str:
         """
         Generate a unique name for this scheduler instance.
 
@@ -626,7 +625,7 @@ class GlobalScheduler(object):
 
         if len(finished_request_ids) > 0:
             llm_logger.info(
-                f"Scheduler has received some finished response: {finished_request_ids}")
+                f"Scheduler has received some finished responses: {finished_request_ids}")
 
         for response_queue_name, responses in stolen_responses.items():
             self.client.rpush(response_queue_name, *responses, ttl=self.ttl)
@@ -680,49 +679,65 @@ class GlobalScheduler(object):
                     responses[response.request_id].append(response)
 
                 with self.mutex:
-                    for request_id, content in responses.items():
+                    for request_id, contents in responses.items():
                         if request_id not in self.local_responses:
                             llm_logger.error(
                                 "Scheduler has received some non-existent response from the queue. "
-                                f"response:{content} queue:{self._response_queue_name()}")
+                                f"response:{contents} queue:{self._response_queue_name()}")
                             continue
-                        self.local_responses[request_id] += content
+                        self.local_responses[request_id] += contents
                     self.local_response_not_empty.notify_all()
             except Exception as e:
                 llm_logger.error(f"Scheduler get_results_worker exception: {e} "
-                                   f"traceback: {traceback.format_exc()}")
+                                 f"traceback: {traceback.format_exc()}")
 
-    def get_results(self, request_ids: List[str]) -> Dict[str, List[RequestOutput]]:
+    def get_results(self) -> Dict[str, List[RequestOutput]]:
         """
-        Get results for specific requests, waiting if necessary.
+        Retrieve all available results from the distributed scheduler.
 
-        Args:
-            request_ids: List of request IDs to get results for
+        This method:
+        - Waits for new responses using a condition variable (timeout=0.001s)
+        - Returns all currently available responses
+        - Automatically removes completed requests from local tracking
+        - Logs finished requests
+
+        Behavior Details:
+        1. For first call with less than 64 pending responses, returns empty dict
+        2. Subsequent calls return all available responses
+        3. Uses thread-safe operations with condition variables
+        4. Automatically cleans up completed request tracking
 
         Returns:
-            Dictionary mapping request IDs to their result lists
+            Dict[str, List[RequestOutput]]: 
+                A dictionary where:
+                - Key is the request ID
+                - Value is a list of RequestOutput objects for that request
+                Completed requests are automatically removed from tracking
+
+        Note:
+            - Thread-safe operation using condition variables
+            - Short timeout avoids blocking while maintaining responsiveness
+            - First call may return empty to batch small responses
+            - Automatically logs finished requests via llm_logger
         """
         first = True
 
         def _get_results() -> Dict[str, List[ScheduledResponse]]:
             nonlocal first
-            unique_request_ids = set(request_ids)
             responses: Dict[str, List[ScheduledResponse]] = dict()
 
             count = 0
-            for request_id in unique_request_ids:
-                if request_id in self.local_responses:
-                    count += len(self.local_responses[request_id])
+            for _, contents in self.local_responses.items():
+                count += len(contents)
 
             if first and count < 64:
                 first = False
                 return responses
 
-            for request_id in unique_request_ids:
-                if request_id in self.local_responses:
-                    responses[request_id] = self.local_responses.pop(
-                        request_id, [])
-                    self.local_responses[request_id] = []
+            request_ids = list(self.local_responses.keys())
+            for request_id in request_ids:
+                responses[request_id] = self.local_responses[request_id]
+                self.local_responses[request_id] = []
             return responses
 
         with self.local_response_not_empty:
@@ -742,3 +757,33 @@ class GlobalScheduler(object):
                     llm_logger.info(
                         f"Scheduler has pulled a finished response: {[request_id]}")
             return results
+
+    def reset(self):
+        """
+        Reset the scheduler to its initial state by:
+        1. Clearing all Redis queues associated with this scheduler instance
+        2. Removing this instance from the load balancing table
+        3. Clearing in-memory tracking of responses and stolen requests
+        
+        This method is thread-safe and should be called when:
+        - The scheduler needs to be cleanly restarted
+        - Recovering from critical errors
+        - Preparing for graceful shutdown
+        
+        Effects:
+        - Deletes the request and response queues in Redis
+        - Removes this scheduler's entry from the load balancing sorted set
+        - Clears the local_responses dictionary tracking pending responses
+        - Clears the stolen_requests dictionary tracking requests taken from other schedulers
+        
+        Note: 
+        - Uses the scheduler's mutex to ensure thread safety
+        - Does not affect other scheduler instances in the cluster
+        - After reset, the scheduler will need to be reinitialized to be usable again
+        """
+        with self.mutex:
+            self.client.delete(self._request_queue_name(),
+                               self._response_queue_name())
+            self.client.zrem(self._load_table_name(), self.name)
+            self.local_responses = dict()
+            self.stolen_requests = dict()

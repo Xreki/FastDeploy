@@ -20,7 +20,7 @@ import traceback
 import uuid
 import time
 from typing import Optional, Dict, List, Any, Union, overload
-
+import threading
 from tqdm import tqdm
 
 from fastdeploy.engine.args_utils import EngineArgs
@@ -83,6 +83,31 @@ class LLM:
             max_tokens=self.llm_engine.cfg.max_model_len)
 
         self.llm_engine.start()
+
+        self.mutex = threading.Lock()
+        self.req_output = dict()
+
+        self._receive_output_thread = threading.Thread(
+            target=self._receive_output, daemon=True)
+        self._receive_output_thread.start()
+
+    def _receive_output(self):
+        """
+        Recieve output from token processor and store them in cache
+        """
+        while True:
+            try:
+                results = self.llm_engine._get_generated_result()
+                for request_id, contents in results.items():
+                    with self.mutex:
+                        for result in contents:
+                            if request_id not in self.req_output:
+                                self.req_output[request_id] = result
+                                continue
+                            self.req_output[request_id].add(result)
+            except Exception as e:
+                llm_logger.error("Unexcepted error happend: {}, {}".format(
+                    e, str(traceback.format_exc())))
 
     def generate(
         self,
@@ -160,7 +185,7 @@ class LLM:
         """
         if sampling_params is None:
             sampling_params = self.default_sampling_params
-        
+
         if isinstance(sampling_params, SamplingParams):
             sampling_params_len = 1
         else:
@@ -261,25 +286,31 @@ class LLM:
                          f"output: {0:.2f} toks/s"),
             )
 
-        output = []
+        output = [None] * num_requests
+        req_ids = [(pos, req_id) for pos, req_id in enumerate(req_ids)]
         while num_requests:
             finished = []
-            for i, req_id in enumerate(req_ids):
-                try:
-                    for result in self.llm_engine._get_generated_result(req_id):
-                        result = self.llm_engine.data_processor.process_response(
-                            result)
-                        llm_logger.debug(
-                            f"Send result to client under push mode: {result}")
-                        if result.finished:
-                            output.append(result)
-                            finished.append(i)
-                            llm_logger.debug(
-                                "Request id: {} has been completed.".format(req_id))
-                            if use_tqdm:
-                                pbar.update(1)
-                except Exception as e:
-                    llm_logger.error("Unexcepted error happend: {}".format(e))
+            for i, (pos, req_id) in enumerate(req_ids):
+                with self.mutex:
+                    if req_id not in self.req_output:
+                        time.sleep(0.01)
+                        continue
+
+                    if not self.req_output[req_id].finished:
+                        time.sleep(0.01)
+                        continue
+
+                    result = self.req_output.pop(req_id)
+                    result = self.llm_engine.data_processor.process_response(
+                        result)
+                    output[pos] = result
+                    finished.append(i)
+
+                    llm_logger.debug(
+                        "Request id: {} has been completed.".format(req_id))
+
+                    if use_tqdm:
+                        pbar.update(1)
 
             num_requests -= len(finished)
             for i in reversed(finished):

@@ -86,6 +86,36 @@ class LocalScheduler(object):
         self.requests_not_empty = threading.Condition(self.mutex)
         self.responses_not_empty = threading.Condition(self.mutex)
 
+    def reset(self):
+        """
+        Reset the local scheduler to its initial empty state by:
+        1. Resetting the request ID tracking cursor to 0
+        2. Clearing all stored request IDs
+        3. Clearing all pending requests
+        4. Clearing all cached responses
+
+        This method is thread-safe and should be called when:
+        - The scheduler needs to be cleanly restarted
+        - Recovering from critical errors
+        - Preparing for graceful shutdown
+
+        Effects:
+        - Resets the ids_read_cursor to 0 (request processing position)
+        - Clears the ids list tracking all request IDs
+        - Clears the requests dictionary tracking pending requests
+        - Clears the responses dictionary tracking received responses
+
+        Note: 
+        - Uses the scheduler's mutex to ensure thread safety
+        - Does not affect the scheduler's configuration parameters (max_size, ttl, etc.)
+        - After reset, the scheduler will be empty but still operational
+        """
+        with self.mutex:
+            self.ids_read_cursor = 0
+            self.ids = list()
+            self.requests = dict()
+            self.responses = dict()
+
     def _recycle(self, request_id: Optional[str] = None):
         """
         Clean up expired or completed requests to free memory.
@@ -157,7 +187,7 @@ class LocalScheduler(object):
             self.requests_not_empty.notify_all()
 
         llm_logger.info(
-                f"Scheduler has put some requests: {valid_ids}")
+            f"Scheduler has enqueued some requests: {valid_ids}")
 
         if len(duplicated_ids) > 0:
             llm_logger.warning(
@@ -239,9 +269,13 @@ class LocalScheduler(object):
                 requests.append(request.raw)
             self.ids_read_cursor += len(requests)
 
+        if len(batch_ids) > 0 and len(requests) == 0:
+            llm_logger.warning(
+                f"Scheduler has put all just-pulled request into the queue: {len(batch_ids)}")
+
         if len(requests) > 0:
             llm_logger.info(
-                    f"Scheduler has pulled some request: {[request.request_id for request in requests]}")
+                f"Scheduler has pulled some request: {[request.request_id for request in requests]}")
 
         return requests
 
@@ -259,7 +293,7 @@ class LocalScheduler(object):
             response.request_id for response in responses if response.finished]
         if len(finished_responses) > 0:
             llm_logger.info(
-                f"Scheduler has received a finished response: {finished_responses}")
+                f"Scheduler has received some finished responses: {finished_responses}")
 
         with self.mutex:
             for response in responses:
@@ -274,23 +308,32 @@ class LocalScheduler(object):
                 self.responses[response.request_id].append(response)
             self.responses_not_empty.notify_all()
 
-    def get_results(self, request_ids: List[str]) -> Dict[str, List[RequestOutput]]:
+    def get_results(self) -> Dict[str, List[RequestOutput]]:
         """
-        Retrieve results for specific requests.
+        Retrieve all available results from the scheduler and clean up completed requests.
 
-        Args:
-            request_ids: List of request IDs to get results for
+        This method:
+        - Waits for new responses using a condition variable
+        - Returns all currently available responses
+        - Automatically removes completed requests from the scheduler
+        - Logs finished requests
 
         Returns:
-            Dictionary mapping request IDs to their result lists.
-            Automatically removes completed requests from the scheduler.
+            Dict[str, List[RequestOutput]]: 
+                A dictionary where:
+                - Key is the request ID
+                - Value is a list of RequestOutput objects for that request
+                Completed requests are automatically removed from the scheduler
+
+        Note:
+            - Thread-safe operation using condition variables
+            - Has a short timeout (0.001s) to avoid blocking
+            - Automatically recycles completed requests to free memory
+            - Logs finished requests via llm_logger
         """
         def _get_results():
-            responses = dict()
-            for request_id in request_ids:
-                if request_id not in responses:
-                    responses[request_id] = []
-                responses[request_id] += self.responses.pop(request_id, [])
+            responses = self.responses
+            self.responses = dict()
             return responses
 
         with self.responses_not_empty:

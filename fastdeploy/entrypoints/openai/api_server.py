@@ -57,34 +57,46 @@ parser.add_argument("--metrics-port",
                     default=8000,
                     type=int,
                     help="port for metrics server")
+parser.add_argument("--controller-port", 
+                    default=-1,
+                    type=int, 
+                    help="port for controller server")
 parser = EngineArgs.add_cli_args(parser)
 args = parser.parse_args()
+
+llm_engine = None
 
 
 def load_engine():
     """
     load engine
     """
+    global llm_engine
+    if llm_engine is not None:
+        return llm_engine
+
     api_server_logger.info(
         f"FastDeploy LLM API server starting... {os.getpid()}")
     engine_args = EngineArgs.from_cli_args(args)
-    llm_engine = LLMEngine.from_engine_args(engine_args)
+    engine = LLMEngine.from_engine_args(engine_args)
 
-    if not llm_engine.start(api_server_pid=os.getpid()):
+    if not engine.start(api_server_pid=os.getpid()):
         api_server_logger.error(
             "Failed to initialize FastDeploy LLM engine, service exit now!")
-        exit(-1)
-    else:
-        api_server_logger.info("FastDeploy LLM engine initialized!\n")
-        console_logger.info(
+        return None
+
+    api_server_logger.info(f"FastDeploy LLM engine initialized!\n")
+    console_logger.info(
             f"Launching metrics service at http://{args.host}:{args.metrics_port}/metrics"
         )
-        console_logger.info(
+    console_logger.info(
             f"Launching chat completion service at http://{args.host}:{args.port}/v1/chat/completions"
         )
-        console_logger.info(
+    console_logger.info(
             f"Launching completion service at http://{args.host}:{args.port}/v1/completions"
         )
+    llm_engine = engine
+    return engine
 
 
 @asynccontextmanager
@@ -276,10 +288,10 @@ def launch_api_server(args) -> None:
         api_server_logger.error(f"launch sync http server error, {e}")
 
 
-main_app = FastAPI()
+metrics_app = FastAPI()
 
 
-@main_app.get("/metrics")
+@metrics_app.get("/metrics")
 async def metrics():
     """
     metrics
@@ -291,10 +303,12 @@ async def metrics():
     return Response(metrics_text, media_type=CONTENT_TYPE_LATEST)
 
 
-def run_main_metrics_server():
-    """Metrics server running the main process"""
+def run_metrics_server():
+    """
+    run metrics server
+    """
 
-    uvicorn.run(main_app,
+    uvicorn.run(metrics_app,
                 host="0.0.0.0",
                 port=args.metrics_port,
                 log_level="error")
@@ -304,9 +318,48 @@ def launch_metrics_server():
     """Metrics server running the sub thread"""
     prom_dir = cleanup_prometheus_files(True)
     os.environ["PROMETHEUS_MULTIPROC_DIR"] = prom_dir
-    metrics_server_thread = threading.Thread(target=run_main_metrics_server,
+    metrics_server_thread = threading.Thread(target=run_metrics_server,
                                              daemon=True)
     metrics_server_thread.start()
+    time.sleep(1)
+
+
+controller_app = FastAPI()
+
+
+@controller_app.post("/controller/reset_scheduler")
+def reset_scheduler():
+    """
+    reset scheduler
+    """
+    global llm_engine
+
+    if llm_engine is None:
+        return Response("Engine not loaded", status_code=500)
+    llm_engine.reset_scheduler()
+    return Response("Scheduler Reset Successfully", status_code=200)
+
+
+def run_controller_server():
+    """ 
+    run controller server
+    """
+    uvicorn.run(
+        controller_app,
+        host="0.0.0.0",
+        port=args.controller_port,
+        log_level="error"
+    )
+
+
+def launch_controller_server():
+    """Controller server running the sub thread"""
+    if args.controller_port < 0:
+        return
+        
+    controller_server_thread = threading.Thread(target=run_controller_server,
+                                             daemon=True)
+    controller_server_thread.start()
     time.sleep(1)
 
 
@@ -318,7 +371,11 @@ def main():
         raise Exception(
             f"The parameter `metrics_port`:{args.metrics_port} is already in use."
         )
-    load_engine()
+
+    if load_engine() is None:
+        return
+
+    launch_controller_server()
     launch_metrics_server()
     launch_api_server(args)
 
