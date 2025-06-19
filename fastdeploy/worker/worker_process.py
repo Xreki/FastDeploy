@@ -457,7 +457,7 @@ def parse_args():
                         type=str,
                         default="",
                         help="Quantization name for the model, currentlly support " \
-                            "'weight_only_int4', 'weight_only_int8'," \
+                            "'wint4', 'wint8'," \
                             "default is None. The priority of this configuration "\
                             "is lower than that of the config file. " \
                             "More complex quantization methods need to be configured via the config file.")
@@ -621,7 +621,12 @@ def initialize_fd_config(args) -> FDConfig:
     if quantization_config is not None:
         quant_config_name = quantization_config["quantization"]
     elif args.quantization != "None":
+        quantization_config = {}
         quant_config_name = args.quantization
+        if use_moe and quant_config_name == "wint4":
+            quantization_config["dense_quant_type"] = "wint8"
+            quantization_config["moe_quant_type"] = "wint4"
+            quant_config_name = "mix_quant"
     else:
         quant_config_name = None
 

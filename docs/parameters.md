@@ -34,6 +34,7 @@
 |  long_prefill_token_threshold  |   int   |        开启chunked_prefill后，token数大于该值的请求被认为是长请求       |    否    |    max_model_len的4%    |
 |  splitwise_role |   str   |           分离式部署角色可选值['prefill', 'decode', 'mixed']       |    否    |    'mixed'    |
 |  innode_prefill_ports  |   list[str]   |        prefill 实例内部引擎启动端口 （仅单机PD分离需要）       |    否    |    None    |
+|  quantization  |   str   |        指定模型量化类型，支持wint8和wint4(moe场景下仅moe为wint4，非moe权重为wint8) |    否    |    None    |
 
 ## 请求参数
 

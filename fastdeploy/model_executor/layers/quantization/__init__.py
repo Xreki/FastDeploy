@@ -21,16 +21,14 @@ from fastdeploy.platforms import current_platform
 from .quant_base import QuantConfigBase
 
 QUANTIZATION_METHODS: List[str] = [
-    "weight_only_int4",
-    "weight_only_int8",
+    "wint4",
+    "wint8",
     "weight_only",
     "block_wise",
     "w4afp8",
     "w8a8",
     "w4a8",
     "wfp8afp8",
-    "w8_linear_w4_moe",
-    "w8_linear_w4a8_moe",
     "mix_quant",
 ]
 
@@ -48,12 +46,12 @@ def get_quantization_config(quantization: str) -> Type[QuantConfigBase]:
     from .w4a8 import W4A8Config
     from .w4afp8 import W4AFP8Config
     from .w8a8 import W8A8Config
-    from .weight_only import WeightOnlyInt4Config, WeightOnlyInt8Config, WeightOnlyConfig
+    from .weight_only import WeightOnlyConfig, WINT4Config, WINT8Config
     from .wfp8afp8 import WFP8AFP8Config
 
     method_to_config: Dict[str, Type[QuantConfigBase]] = {
-        "weight_only_int4": WeightOnlyInt4Config,
-        "weight_only_int8": WeightOnlyInt8Config,
+        "wint4": WINT4Config,
+        "wint8": WINT8Config,
         "weight_only": WeightOnlyConfig,
         "block_wise": BlockWiseConfig,
         "w4afp8": W4AFP8Config,

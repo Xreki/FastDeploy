@@ -44,7 +44,7 @@ class TritonWeightOnlyMoEMethod(QuantMethodBase):
         ffn1_weights, ffn2_weights = layer.extract_moe_ffn_weights(state_dict)
         assert len(ffn1_weights) == layer.num_local_experts
         assert len(ffn2_weights) == layer.num_local_experts
-        assert layer.quant_method.quant_config.name() == "weight_only_int8"
+        assert layer.quant_method.quant_config.name() == "wint8"
         assert ffn1_weights[0].shape == [
             layer.hidden_size, layer.moe_intermediate_size * 2
         ]
@@ -55,9 +55,9 @@ class TritonWeightOnlyMoEMethod(QuantMethodBase):
         ffn1_tensor = paddle.stack(ffn1_weights, axis=0)
         ffn2_tensor = paddle.stack(ffn2_weights, axis=0)
 
-        if self.quant_config.name() == "weight_only_int8":
+        if self.quant_config.name() == "wint8":
             max_bound = 127
-        elif self.quant_config.name() == "weight_only_int4":
+        elif self.quant_config.name() == "wint4":
             max_bound = 7
 
         for idx, weight_tensor in enumerate([ffn1_tensor, ffn2_tensor]):
