@@ -49,10 +49,11 @@ class TokenProcessor(object):
         self.tokens_counter = Counter()
         self.split_connector = split_connector
 
-        self.is_speculate_decoding = False
-        if self.is_speculate_decoding:
+        self.speculative_decoding = self.cfg.speculative_config.method is not None
+
+        if self.speculative_decoding:
             self.output_tokens = paddle.full(shape=[
-                SPECULATE_MAX_BSZ * MAX_DRAFT_TOKENS + SPECULATE_MAX_BSZ + 2, 1
+                SPECULATE_MAX_BSZ * MAX_DRAFT_TOKENS + SPECULATE_MAX_BSZ + 2
             ],
                                              fill_value=2,
                                              dtype="int64")
@@ -128,13 +129,16 @@ class TokenProcessor(object):
             try:
                 rank_id = 0
                 is_blocking = True
-                if self.is_speculate_decoding:
+                if self.speculative_decoding:
                     speculate_get_output(self.output_tokens, rank_id,
-                                         is_blocking)
+                                         is_blocking, False)
+                    if self.output_tokens[0] == -2:
+                        continue
+
                 else:
                     get_output(self.output_tokens, rank_id, is_blocking)
-                if self.output_tokens[0, 0] == -2:
-                    continue
+                    if self.output_tokens[0, 0] == -2:
+                        continue
                 self._process_prefill_metrics()
                 self._process_batch_output()
             except Exception as e:
@@ -206,12 +210,14 @@ class TokenProcessor(object):
         """
         batch post-processing function
         """
+
         tokens = self.output_tokens.numpy()
-        batch = self.output_tokens[1, 0]
-        if not self.is_speculate_decoding:
-            tokens = tokens[2:batch + 2]
-        else:
+        if self.cfg.speculative_config.method:
+            batch = self.output_tokens[1]
             accept_num = tokens[2:batch + 2]
+        else:
+            batch = self.output_tokens[1, 0]
+            tokens = tokens[2:batch + 2]
 
         batch_result = list()
         prefill_batch_result = list()
@@ -220,17 +226,19 @@ class TokenProcessor(object):
             if self.resource_manager.stop_flags[i]:
                 continue
 
-            if not self.is_speculate_decoding:
-                token_ids = [int(tokens[i, 0])]
+            if self.cfg.speculative_config.method:
+                token_ids = tokens[2 + SPECULATE_MAX_BSZ +
+                                   i * MAX_DRAFT_TOKENS:2 + SPECULATE_MAX_BSZ +
+                                   i * MAX_DRAFT_TOKENS +
+                                   accept_num[i]].tolist()
+
+                if len(token_ids) == 0 or token_ids[-1] <= 0:
+                    continue
             else:
-                token_ids = tokens[
-                    2 + SPECULATE_MAX_BSZ + i * MAX_DRAFT_TOKENS:2 +
-                    SPECULATE_MAX_BSZ + i * MAX_DRAFT_TOKENS +
-                    accept_num[i, 0],
-                    0,
-                ].tolist()
-            if any(token_id < 0 for token_id in token_ids):
-                continue
+                token_ids = [int(tokens[i, 0])]
+
+                if any(token_id < 0 for token_id in token_ids):
+                    continue
 
             task = self.resource_manager.tasks_list[i]
 
@@ -375,14 +383,16 @@ class WarmUpTokenProcessor(TokenProcessor):
         while self._is_running:
             try:
                 rank_id = 0
-                if self.is_speculate_decoding:
+                if self.speculative_decoding:
                     speculate_get_output(self.output_tokens, rank_id,
                                          self._is_blocking)
+                    if self.output_tokens[0] == -2:
+                        continue
                 else:
                     get_output(self.output_tokens, rank_id, self._is_blocking)
 
-                if self.output_tokens[0, 0] == -2:
-                    continue
+                    if self.output_tokens[0, 0] == -2:
+                        continue
                 self._process_batch_output()
             except Exception as e:
                 llm_logger.info("while get input_data error: {0} {1}".format(

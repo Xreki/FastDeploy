@@ -79,6 +79,22 @@ class ModelOutputData:
     #
     stop_nums: paddle.Tensor
 
+    #### for speculative decoding ####
+    # full hidden states before lm_head
+    full_hidden_states: paddle.Tensor
+
+    # draft tokens
+    draft_tokens: paddle.Tensor
+
+    #
+    actual_draft_token_num: paddle.Tensor
+
+    # accepted tokens in current step
+    accept_tokens: paddle.Tensor
+
+    # the number of accepted tokens in current step
+    accept_num: paddle.Tensor
+
 
 @dataclass
 class ModelRunnerOutput:

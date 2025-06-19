@@ -889,7 +889,11 @@ class LLMEngine(object):
             f" --tensor_parallel_size {self.cfg.tensor_parallel_size}"
             f" --expert_parallel_size {self.cfg.expert_parallel_size}"
             f" --quantization {self.cfg.model_config.quantization}"
-            f" --ori_vocab_size {len(self.data_processor.tokenizer)}")
+            f" --ori_vocab_size {len(self.data_processor.tokenizer)}"
+            f" --speculative_method {self.cfg.speculative_config.method}"
+            f" --speculative_max_draft_token_num {self.cfg.speculative_config.num_speculative_tokens}"
+            f" --speculative_model_type {self.cfg.speculative_config.model_type}"
+        )
 
         worker_append_flag = {
             "enable_chunked_prefill":

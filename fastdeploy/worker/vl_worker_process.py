@@ -600,16 +600,10 @@ def parse_args():
                         action='store_true',
                         help="enable chunked prefill")
     parser.add_argument(
-        "--speculate_method",
+        "--speculative_method",
         default=None,
         type=str,
-        choices=[
-            "autoregressive",
-            "inference_with_reference",
-            "draft_model",
-            "hydra",
-            "eagle",
-        ],
+        choices=[None, "ngram", "mtp"],
     )
     parser.add_argument(
         "--attention_backend",
@@ -619,7 +613,7 @@ def parse_args():
             "APPEND_ATTN",
         ],
     )
-    parser.add_argument("--speculate_max_draft_tokens", type=int, default=1)
+    parser.add_argument("--speculative_max_draft_tokens", type=int, default=1)
 
     parser.add_argument("--max_num_batched_tokens",
                         type=int,

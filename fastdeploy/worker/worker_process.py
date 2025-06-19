@@ -357,6 +357,10 @@ def parse_args():
     """
     Parse args from command line
     """
+
+    def none_or_str(value):
+        return None if value == "None" else value
+
     parser = argparse.ArgumentParser("FastDeploy LLM Inference")
     parser.add_argument("-m",
                         "--model_name_or_path",
@@ -421,16 +425,24 @@ def parse_args():
                         action='store_true',
                         help="enable chunked prefill")
     parser.add_argument(
-        "--speculate_method",
+        "--speculative_method",
         default=None,
-        type=str,
+        type=none_or_str,
         choices=[
-            "autoregressive",
-            "inference_with_reference",
-            "draft_model",
-            "hydra",
-            "eagle",
+            None,
+            "ngram",
+            "mtp",
         ],
+    )
+    parser.add_argument(
+        "--speculative_max_draft_token_num",
+        default=1,
+        type=int,
+    )
+    parser.add_argument(
+        "--speculative_model_type",
+        default="WINT8",
+        type=str,
     )
     parser.add_argument(
         "--attention_backend",
@@ -440,8 +452,6 @@ def parse_args():
             "APPEND_ATTN",
         ],
     )
-    parser.add_argument("--speculate_max_draft_tokens", type=int, default=1)
-
     parser.add_argument("--max_num_batched_tokens",
                         type=int,
                         default=2048,
@@ -510,6 +520,10 @@ def initialize_fd_config(args) -> FDConfig:
     graph_opt_config = GraphOptimizationConfig()
     model_config.quantization = args.quantization
 
+    # Update speculate config
+    speculative_config.method = args.speculative_method
+    speculative_config.num_speculative_tokens = args.speculative_max_draft_token_num
+
     # Update parallel config
     parallel_config.engine_pid = args.engine_pid
     parallel_config.model_name_or_path = args.model_name_or_path
@@ -532,9 +546,7 @@ def initialize_fd_config(args) -> FDConfig:
     parallel_config.pad_token_id = args.pad_token_id
     parallel_config.eos_tokens_lens = args.eos_tokens_lens
     parallel_config.enable_chunked_prefill = args.enable_chunked_prefill
-    parallel_config.speculate_method = args.speculate_method
     parallel_config.attention_backend = args.attention_backend
-    parallel_config.speculate_max_draft_tokens = args.speculate_max_draft_tokens
     parallel_config.max_num_batched_tokens = args.max_num_batched_tokens
     parallel_config.enable_prefix_caching = args.enable_prefix_caching
     parallel_config.splitwise_role = args.splitwise_role
