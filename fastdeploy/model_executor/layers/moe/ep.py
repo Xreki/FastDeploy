@@ -19,8 +19,12 @@ from abc import abstractmethod
 import paddle
 from paddle import nn
 from paddle.base.core import Config
-from paddle.distributed.communication import deep_ep
 from paddleformers.utils.log import logger
+try:
+    from paddle.distributed.communication import deep_ep
+except:
+    logger.warning("import deep_ep Failed!")
+
 
 import fastdeploy
 from fastdeploy.config import MoEPhase
@@ -81,7 +85,7 @@ class DeepEPEngine:
         else:
             raise ValueError(f"Unknown generation phase {moe_phase}")
 
-    def get_low_latency_buffer(self) -> deep_ep.Buffer:
+    def get_low_latency_buffer(self):
         """
         Get the DeepEP buffer.
         Args:

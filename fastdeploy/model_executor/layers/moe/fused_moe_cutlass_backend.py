@@ -21,9 +21,15 @@ from paddleformers.utils.log import logger
 
 import fastdeploy
 from fastdeploy.config import MoEPhase
+from fastdeploy.model_executor.ops.gpu import (moe_expert_dispatch,
+                                                moe_expert_reduce)
+from fastdeploy.distributed.communication_op import tensor_model_parallel_all_reduce
+    
 
 from ..quantization.quant_base import QuantMethodBase
 from ..utils import get_tensor
+from .ep import EPPrefillRunner
+from .ep import EPDecoderRunner
 
 
 def create_and_set_parameter(layer: nn.Layer, name: str,
@@ -65,13 +71,11 @@ class CutlassMoEMethod(QuantMethodBase):
         """
         if layer.ep_size > 1:
             if layer.fd_config.parallel_config.moe_phase == MoEPhase.DECODER:
-                from .ep import EPDecoderRunner
                 self.ep_decoder_runner = EPDecoderRunner(
                     layer.top_k, layer.hidden_size, layer.num_experts,
                     layer.moe_config.num_max_dispatch_tokens_per_rank,
                     layer.ep_size, layer.ep_rank)
             else:
-                from .ep import EPPrefillRunner
                 self.ep_prefill_runner = EPPrefillRunner(
                     layer.top_k, layer.hidden_size, layer.num_experts,
                     layer.ep_size, layer.ep_rank)
@@ -255,8 +259,6 @@ class CutlassMoEMethod(QuantMethodBase):
         """
         Paddle Cutlass compute Fused MoE.
         """
-        from fastdeploy.model_executor.ops.gpu import (moe_expert_dispatch,
-                                                       moe_expert_reduce)
         (
             permute_input,
             token_nums_per_expert,
@@ -297,8 +299,6 @@ class CutlassMoEMethod(QuantMethodBase):
         )
 
         if layer.tp_size > 1:
-            from fastdeploy.distributed.communication_op import \
-                tensor_model_parallel_all_reduce
             tensor_model_parallel_all_reduce(fused_moe_out)
 
         return fused_moe_out
