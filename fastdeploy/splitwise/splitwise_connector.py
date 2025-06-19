@@ -46,6 +46,20 @@ class SplitwiseConnector:
         self.resource_manager = resource_manager
         self.connect_innode_instances = {}
         self.temp_cache_info = dict()
+    
+    def has_splitwise_tasks(self):
+        """
+        PD mode: check prefill empty
+        """
+        if self.cfg.innode_prefill_ports is None:
+            return True
+        else:
+            for port in self.cfg.innode_prefill_ports:
+                if port not in self.connect_innode_instances:
+                    self.create_connection(port)
+                if self.connect_innode_instances[port].available_prefill_instances.qsize() > 0:
+                    return False
+            return True
 
     def send_splitwise_tasks(self, tasks):
         """

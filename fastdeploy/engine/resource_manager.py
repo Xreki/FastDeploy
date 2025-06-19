@@ -241,8 +241,6 @@ class ResourceManager(object):
                     if task.get("seed") is None:
                         task.set("seed", random.randint(0, 9223372036854775807))
                     task.idx = allocated_position
-                    ori_prompt_token_ids = task.prompt_token_ids
-
 
                     if self.enable_prefix_cache:
                         cache_prepare_time = time.time()
@@ -328,6 +326,7 @@ class ResourceManager(object):
         else:
             task.prompt_token_ids = task.prompt_token_ids[cached_len:]
             task.seq_lens_decoder = cached_len
+        task.prompt_token_ids_len = len(task.prompt_token_ids)
 
 
 

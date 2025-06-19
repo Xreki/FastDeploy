@@ -276,6 +276,11 @@ class LLMEngine(object):
                 if self.engine_worker_queue.num_tasks() > 0:
                     time.sleep(0.001)
                     continue
+                if self.exist_prefill_task_signal.value[0] > 0:
+                    if self.cfg.splitwise_role == "mixed" or \
+                        self.split_connector.has_splitwise_tasks():
+                        time.sleep(0.005)
+                        continue
 
                 num_prefill_batch = min(
                     int(self.resource_manager.available_batch()),
@@ -639,6 +644,8 @@ class LLMEngine(object):
         self.split_connector.send_cache_infos(tasks)
         if not is_decode:
             llm_logger.info(f"Tasks are sent to engine, req_ids={req_ids}")
+            for task in tasks:
+                task.inference_start_time = time.time()
             if not is_prefill:
                 if not self.cfg.enable_mm:
                     self.update_requests_chunk_size(tasks)
@@ -728,6 +735,14 @@ class LLMEngine(object):
             dtype=np.int32,
             suffix=self.ipc_signal_suffix,
             create=True)
+        
+        # exist_prefill_task_signal 用于各worker进程感知是否进行prefill
+        exist_prefill_task_signal_data = np.zeros([1], dtype=np.int32)
+        self.exist_prefill_task_signal = IPCSignal(name="exist_prefill_task_signal",
+                                           array=exist_prefill_task_signal_data,
+                                           dtype=np.int32,
+                                           suffix=self.ipc_signal_suffix,
+                                           create=True)
 
         # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
         worker_healthy_live_recorded_time_array = np.zeros(shape=[
