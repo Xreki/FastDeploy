@@ -26,7 +26,6 @@ from .gemm import get_best_configs
 from .tuner import jit_tuner
 from .utils import (
     get_col_major_tma_aligned_tensor,
-    get_col_major_tma_aligned_tensor_prefill,
     get_num_sms,
 )
 
@@ -169,8 +168,7 @@ def m_grouped_gemm_fp8_fp8_bf16_nt_contiguous(
     rhs, rhs_scales = rhs
     m, k = lhs.shape
     num_groups, n, k_ = rhs.shape
-    # TODO: NOT NEED get_col_major_tma_aligned_tensor!!!
-    lhs_scales = get_col_major_tma_aligned_tensor_prefill(lhs_scales)
+    lhs_scales = get_col_major_tma_aligned_tensor(lhs_scales)
 
     # Do nothing if `m` is zero
     if m == 0:

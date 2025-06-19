@@ -96,7 +96,6 @@ def get_tma_aligned_size(x: int, element_size: int) -> int:
     alignment = tma_alignment_bytes // element_size
     return ceil_div(x, alignment) * alignment
 
-
 def get_col_major_tma_aligned_tensor(x: Tensor) -> Tensor:
     """
     Returns TMA-aligned transposed format of the input tensor. `paddle.transpose` will be called if necessary.
@@ -109,37 +108,24 @@ def get_col_major_tma_aligned_tensor(x: Tensor) -> Tensor:
     Returns:
         The LHS scaling tensor of TMA-aligned transposed format.
     """
-    return x
-
-
-def get_col_major_tma_aligned_tensor_prefill(x: Tensor) -> Tensor:
-    """
-    Returns TMA-aligned transposed format of the input tensor. `paddle.transpose` will be called if necessary.
-    If the input tensor is already column-major layout and 16-byte aligned along the M axis
-        (thus meets the requirement of LHS scaling tensor in DeepGEMM), this function will do nothing.
-
-    Arguments:
-        x: usually the LHS scaling tensor in GEMM.
-
-    Returns:
-        The LHS scaling tensor of TMA-aligned transposed format.
-    """
     # NOTES: for the extreme performance, you may rewrite/fuse this function in CUDA
-    # assert x.dim() in (2, 3)
-    # remove_dim = False
-    # if x.dim() == 2:
-    x, remove_dim = x.unsqueeze(0), True
-
-    b, m, n = x.shape
+    assert x.dim() in (2, 3)
+    remove_dim = False
+    m, n = x.shape[-2], x.shape[-1]
     aligned_m = get_tma_aligned_size(m, x.element_size())
+    if x.dim() == 2:
+        if x.strides[0] == 1 and x.strides[1] == aligned_m:
+            return x
+        x, remove_dim = x.unsqueeze(0), True
+    b = x.shape[0]
 
     # The last kernel gives a column-major TMA aligned layout
-    # if (
-    #     x.strides[0] == aligned_m * n
-    #     and x.strides[1] == 1
-    #     and x.strides[2] == aligned_m
-    # ):
-    #     return x.squeeze(0) if remove_dim else x
+    if (
+        x.strides[0] == aligned_m * n
+        and x.strides[1] == 1
+        and x.strides[2] == aligned_m
+    ):
+        return x.squeeze(0) if remove_dim else x
 
     # Normal layout requires transposing
     aligned_x = paddle.transpose(
@@ -147,5 +133,4 @@ def get_col_major_tma_aligned_tensor_prefill(x: Tensor) -> Tensor:
     )
     aligned_x[:, :m, :] = x
     aligned_x = aligned_x[:, :m, :]
-    return aligned_x.squeeze(0)
-    # return aligned_x.squeeze(0) if remove_dim else aligned_x
+    return aligned_x.squeeze(0) if remove_dim else aligned_x

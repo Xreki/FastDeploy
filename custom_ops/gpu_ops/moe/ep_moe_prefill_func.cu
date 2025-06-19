@@ -674,16 +674,18 @@ __global__ void permute_x_fp8_kernel(const T *src_x,
     const int hidden_size_scale_int4 = hidden_size_scale / scale_vec_size;
     // prmt
     for (int64_t s_token_idx = src_token_idx; s_token_idx < token_nums_this_rank_padded; s_token_idx += gridDim.x) {
-      if (tid == 0) {
-        for (int i = 0; i < NUM_EXPERTS_PER_RANK; i++) {
-          const int start_idx = i == 0 ? 0 : token_nums_per_expert_cum[i - 1];
-          const int end_idx = token_nums_per_expert_cum[i];
-          if (s_token_idx >= start_idx && s_token_idx < end_idx) {
-            m_indices[s_token_idx] = i;
-            break;
-          }
+      
+      // the m_indices[s_token_idx] must be a value `i` in [0, NUM_EXPERTS_PER_RANK)
+      // here we parallel wo find the `i` we want.
+      for (int i = threadIdx.x; i < NUM_EXPERTS_PER_RANK; i+= blockDim.x) {
+        const int start_idx = i == 0 ? 0 : token_nums_per_expert_cum[i - 1];
+        const int end_idx = token_nums_per_expert_cum[i];
+        if (s_token_idx >= start_idx && s_token_idx < end_idx) {
+          m_indices[s_token_idx] = i;
+          break;
         }
       }
+
       if (s_token_idx < num_rows) {
         const int64_t *topk_idx_now = topk_idx + s_token_idx * moe_topk;
 #pragma unroll
@@ -738,7 +740,8 @@ void EPMoeDispatchFP8Kernel(const paddle::Tensor& input,
                             paddle::Tensor* m_indices) {
   auto stream = input.stream();
   auto place = input.place();
-  const int gridx = min(132 * 8, num_rows);
+  // const int gridx = min(132 * 8, num_rows);
+  const int gridx = 132 * 8;
   if (num_experts_per_rank == 8) {
     permute_x_fp8_kernel<phi::dtype::float8_e4m3fn, 8><<<gridx, 512, 0, stream>>>(
       input.data<phi::dtype::float8_e4m3fn>(),
