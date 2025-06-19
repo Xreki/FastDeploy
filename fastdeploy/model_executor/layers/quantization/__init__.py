@@ -21,6 +21,7 @@ from fastdeploy.platforms import current_platform
 from .quant_base import QuantConfigBase
 
 QUANTIZATION_METHODS: List[str] = [
+    "wint2",
     "wint4",
     "wint8",
     "weight_only",
@@ -48,8 +49,10 @@ def get_quantization_config(quantization: str) -> Type[QuantConfigBase]:
     from .w8a8 import W8A8Config
     from .weight_only import WeightOnlyConfig, WINT4Config, WINT8Config
     from .wfp8afp8 import WFP8AFP8Config
+    from .wint2 import WINT2Config
 
     method_to_config: Dict[str, Type[QuantConfigBase]] = {
+        "wint2": WINT2Config,
         "wint4": WINT4Config,
         "wint8": WINT8Config,
         "weight_only": WeightOnlyConfig,

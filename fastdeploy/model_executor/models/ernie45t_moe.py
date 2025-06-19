@@ -338,6 +338,33 @@ class Ernie45TMoE(nn.Layer):
                 "ffn2_expert_in_scale_key":
                 f"{prefix}.experts.{{}}.down_proj.activation_quanter",
             }
+        elif fd_config.quant_config.moe_quant_type == "w4w2":
+            weight_key_map = {
+                "gate_weight_key":
+                f"{prefix}.gate.weight",
+                "gate_correction_bias_key":
+                f"{prefix}.moe_statics.e_score_correction_bias",
+                "ffn1_expert_weight_key":
+                f"{prefix}.experts.{{}}.up_gate_proj.quant_weight",
+                "ffn2_expert_weight_key":
+                f"{prefix}.experts.{{}}.down_proj.quant_weight",
+                "ffn1_expert_weight_scale_key":
+                f"{prefix}.experts.{{}}.up_gate_proj.quant_scale",
+                "ffn2_expert_weight_scale_key":
+                f"{prefix}.experts.{{}}.down_proj.quant_scale",
+                "ffn1_expert_super_scales_key":
+                f"{prefix}.experts.{{}}.up_gate_proj.super_scales",
+                "ffn2_expert_super_scales_key":
+                f"{prefix}.experts.{{}}.down_proj.super_scales",
+                "ffn1_expert_code_scale_key":
+                f"{prefix}.experts.{{}}.up_gate_proj.code_scale",
+                "ffn2_expert_code_scale_key":
+                f"{prefix}.experts.{{}}.down_proj.code_scale",
+                "ffn1_expert_code_zp_key":
+                f"{prefix}.experts.{{}}.up_gate_proj.code_zp",
+                "ffn2_expert_code_zp_key":
+                f"{prefix}.experts.{{}}.down_proj.code_zp",
+            }
         else:
             weight_key_map = {
                 "gate_weight_key":

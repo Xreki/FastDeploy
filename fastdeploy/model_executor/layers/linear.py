@@ -83,6 +83,9 @@ class LinearBase(nn.Layer):
         ]
         if fd_config.quant_config:
             self.quant_method = fd_config.quant_config.get_quant_method(self)
+        if fd_config.model_config.is_quantized:
+            self.weight_key = f"{prefix}.quant_weight"
+            self.weight_scale_key = f"{prefix}.quant_scale"
 
     def init_weight(self):
         """
@@ -109,6 +112,31 @@ class LinearBase(nn.Layer):
         self.linear_shift = None
         self.linear_smooth = None
 
+    def load_prequant_weight(self, state_dict):
+        """
+        Load the prequantized weight from the state dictionary.
+
+        Args:
+            state_dict (dict): A dictionary containing the prequantized weights and scales.
+        """
+        self.quant_method.process_prequanted_weights(
+            self, get_tensor(state_dict.pop(self.weight_key)),
+            get_tensor(state_dict.pop(self.weight_scale_key)))
+
+    def load_weight(self, state_dict):
+        """
+        Load the weight from the state dictionary.
+
+        Args:
+            state_dict (dict): A dictionary containing the weights
+        """
+        weight_tensor = get_tensor(state_dict.pop(self.weight_key))
+
+        if self.fd_config.quant_config:
+            self.quant_method.process_loaded_weights(self, weight_tensor)
+        else:
+            self.linear_weight.set_value(weight_tensor)
+
     def load_state_dict(self, state_dict):
         """
         Load the checkpoint state dictionary into the layer.
@@ -119,12 +147,10 @@ class LinearBase(nn.Layer):
         # weight
         self.state_dict = state_dict
         assert self.weight_key is not None, 'weight_key should not be None.'
-        weight_tensor = get_tensor(state_dict.pop(self.weight_key))
-
-        if self.fd_config.quant_config:
-            self.quant_method.process_loaded_weights(self, weight_tensor)
+        if self.fd_config.model_config.is_quantized:
+            self.load_prequant_weight(state_dict)
         else:
-            self.linear_weight.set_value(weight_tensor)
+            self.load_weight(state_dict)
 
         # bias
         if self.with_bias:
@@ -398,17 +424,24 @@ class QKVParallelLinear(ColumnParallelLinear):
                          with_bias=with_bias,
                          add_bias=add_bias)
 
-    def load_state_dict(self, state_dict):
+    def load_prequant_weight(self, state_dict):
         """
-        Load the checkpoint state dictionary into the layer.
+        Load the prequantized weight from the state dictionary.
 
         Args:
-            state_dict (dict): A dictionary containing the checkpoint weights and biases.
+            state_dict (dict): A dictionary containing the prequantized weights and scales.
         """
-        # weight
-        assert self.weight_key is not None, 'weight_key should not be None.'
-        # qkv fused in disk
+        self.quant_method.process_prequanted_weights(
+            self, get_tensor(state_dict.pop(self.weight_key)),
+            get_tensor(state_dict.pop(self.weight_scale_key)))
 
+    def load_weight(self, state_dict):
+        """
+        Load the weight from the state dictionary.
+
+        Args:
+            state_dict (dict): A dictionary containing the weights
+        """
         if self.weight_key in state_dict.keys():
             weight_tensor = get_tensor(state_dict.pop(self.weight_key))
         else:
@@ -431,6 +464,22 @@ class QKVParallelLinear(ColumnParallelLinear):
             self.quant_method.process_loaded_weights(self, weight_tensor)
         else:
             self.linear_weight.set_value(weight_tensor)
+
+    def load_state_dict(self, state_dict):
+        """
+        Load the checkpoint state dictionary into the layer.
+
+        Args:
+            state_dict (dict): A dictionary containing the checkpoint weights and biases.
+        """
+        # weight
+        assert self.weight_key is not None, 'weight_key should not be None.'
+        # qkv fused in disk
+
+        if self.fd_config.model_config.is_quantized:
+            self.load_prequant_weight(state_dict)
+        else:
+            self.load_weight(state_dict)
 
         # bias
         if self.with_bias:
@@ -507,7 +556,9 @@ class RowParallelLinear(LinearBase):
         if fd_config.quant_config:
             self.quant_method = fd_config.quant_config.get_quant_method(self)
             self.quant_method.create_weights(self)
-
+        if fd_config.model_config.is_quantized:
+            self.weight_key = f"{prefix}.quant_weight"
+            self.weight_scale_key = f"{prefix}.quant_scale"
         self.init_weight()
 
     def init_weight(self):

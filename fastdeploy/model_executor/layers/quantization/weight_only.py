@@ -170,6 +170,19 @@ class GPUWeightOnlyLinearMethod(WeightOnlyLinearMethod):
     ) -> None:
         super().__init__(quant_config)
 
+    def process_prequanted_weights(self, layer, quant_weight,
+                                   weight_scale) -> None:
+        """
+        Process pre-quantized weights before applying them to the model
+        Args:
+            layer: The layer that owns the weights
+            quant_weight: The quantized weights
+            weight_scale: The scale of the quantized weights
+        """
+        layer.linear_weight.set_value(quant_weight)
+        layer.linear_weight_scale.set_value(
+            weight_scale.astype(paddle.get_default_dtype()))
+
     def process_loaded_weights(self, layer, weight) -> None:
         quanted_weight_tensor, weight_scale_tensor = weight_quantize(
             weight,

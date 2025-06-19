@@ -435,6 +435,49 @@ class CutlassWeightOnlyMoEMethod(CutlassMoEMethod):
         self.moe_quant_type = self.quant_config.algo
         self.pack_num = 1
 
+    def process_prequanted_weights(self, layer: nn.Layer, state_dict):
+        """
+        Paddle cutlass process prequanted weights.
+        """
+        ffn1_expert_weight_key = layer.weight_key_map.get(
+            "ffn1_expert_weight_key", None)
+        ffn2_expert_weight_key = layer.weight_key_map.get(
+            "ffn2_expert_weight_key", None)
+        ffn1_expert_weight_scale_key = layer.weight_key_map.get(
+            "ffn1_expert_weight_scale_key", None)
+        ffn2_expert_weight_scale_key = layer.weight_key_map.get(
+            "ffn2_expert_weight_scale_key", None)
+
+        ffn1_weights, ffn2_weights = layer.load_experts_weight(
+            state_dict, ffn1_expert_weight_key, ffn2_expert_weight_key)
+        # self.check(layer, ffn1_weights, ffn2_weights)
+        ffn1_weight_scale = []
+        ffn2_weight_scale = []
+        for i in range(layer.num_experts):
+            expert_idx = layer.expert_id_offset + i
+            ffn1_weight_scale.append(
+                get_tensor(
+                    state_dict.pop(
+                        ffn1_expert_weight_scale_key.format(expert_idx))))
+            ffn2_weight_scale.append(
+                get_tensor(
+                    state_dict.pop(
+                        ffn2_expert_weight_scale_key.format(expert_idx))))
+
+        ffn1_weight = paddle.stack(ffn1_weights, axis=0)
+        ffn2_weight = paddle.stack(ffn2_weights, axis=0)
+        ffn1_weight_scale = paddle.stack(ffn1_weight_scale, axis=0)
+        ffn2_weight_scale = paddle.stack(ffn2_weight_scale, axis=0)
+
+        name_tensor_map = {
+            "moe_ffn1_weight": ffn1_weight,
+            "moe_ffn2_weight": ffn2_weight,
+            "moe_ffn1_weight_scale": ffn1_weight_scale,
+            "moe_ffn2_weight_scale": ffn2_weight_scale
+        }
+        for name, tensor in name_tensor_map.items():
+            create_and_set_parameter(layer, name, tensor)
+
     def create_weights(self, layer: nn.Layer, state_dict):
         """
         Paddle cutlass create weight process.

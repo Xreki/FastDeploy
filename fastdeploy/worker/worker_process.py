@@ -610,6 +610,7 @@ def initialize_fd_config(args) -> FDConfig:
         model_config.ori_vocab_size = args.ori_vocab_size
 
     quantization_config = config.get("quantization_config", None)
+    model_config.is_quantized = config.get("is_quantized", False)
 
     quant_config_name = None
     if quantization_config is not None and quantization_config.get(

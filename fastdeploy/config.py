@@ -131,6 +131,7 @@ class ModelConfig(PretrainedConfig):
         output_via_mq: bool = True,
         head_dim: Optional[int] = None,
         tie_word_embeddings: bool = False,
+        is_quantized: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -183,6 +184,7 @@ class ModelConfig(PretrainedConfig):
         self.output_via_mq = output_via_mq
         self.dtype = dtype
         self.tie_word_embeddings = tie_word_embeddings
+        self.is_quantized = is_quantized
 
 
 # This class will be removed in future and replaced by MoEConfig
