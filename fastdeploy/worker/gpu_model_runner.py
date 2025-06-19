@@ -220,10 +220,12 @@ class GPUModelRunner(ModelRunnerBase):
 
     def _dummy_prefill_inputs(self, num_tokens: int, batch_size: int):
         """ Set dummy prefill inputs to share_inputs """
-        full_length = min(num_tokens // batch_size, self.parallel_config.max_model_len - 10)
+        full_length = min(num_tokens // batch_size,
+                          self.parallel_config.max_model_len - 10)
         input_length = int(full_length * self.parallel_config.kv_cache_ratio)
-        block_num = (input_length + self.parallel_config.block_size - 1 
-                     ) // self.parallel_config.block_size + self.parallel_config.enc_dec_block_num
+        block_num = (
+            input_length + self.parallel_config.block_size - 1
+        ) // self.parallel_config.block_size + self.parallel_config.enc_dec_block_num
 
         for i in range(batch_size):
             idx = i
@@ -471,6 +473,8 @@ class GPUModelRunner(ModelRunnerBase):
         time_before_load = time.perf_counter()
         # 1. Load original model
         self.model = get_model_from_loader(fd_config=self.fd_config)
+        if os.getenv("ELLM_DYNAMIC_MODE", "1") == "0":
+            self.model = paddle.jit.to_static(self.model)
 
         # 2. Load lora model
 
