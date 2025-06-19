@@ -876,9 +876,9 @@ class GPUVLModelRunner(VLModelRunnerBase):
         """
         fake input to profile
         """
-        input_length = num_total_tokens // number_of_tasks
-        block_num = (input_length + self.args.block_size - 1 +
-                     self.args.enc_dec_block_num) // self.args.block_size
+        input_length = min(num_total_tokens // number_of_tasks, self.args.max_model_len - 10)
+        block_num = (input_length + self.args.block_size - 1 ) // self.args.block_size \
+                    + self.args.enc_dec_block_num
         self.share_inputs["free_list"] = paddle.to_tensor([], dtype="int32")
         self.share_inputs["free_list_len"][0] = 0
 
