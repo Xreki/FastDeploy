@@ -21,8 +21,6 @@ from paddleformers.utils.log import logger
 
 import fastdeploy
 from fastdeploy.config import MoEPhase
-from fastdeploy.model_executor.ops.gpu import (moe_expert_dispatch,
-                                               moe_expert_reduce)
 
 from ..quantization.quant_base import QuantMethodBase
 from ..utils import get_tensor
@@ -250,6 +248,8 @@ class CutlassMoEMethod(QuantMethodBase):
         """
         Paddle Cutlass compute Fused MoE.
         """
+        from fastdeploy.model_executor.ops.gpu import (moe_expert_dispatch,
+                                                       moe_expert_reduce)
         (
             permute_input,
             token_nums_per_expert,
