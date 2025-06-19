@@ -31,7 +31,7 @@ from fastdeploy.inter_communicator import IPCSignal
 from fastdeploy.model_executor.layers.quantization import \
     get_quantization_config
 from fastdeploy.platforms import current_platform
-from fastdeploy.utils import get_logger
+from fastdeploy.utils import get_logger, none_or_str
 from fastdeploy.worker.worker_base import WorkerBase
 
 logger = get_logger("worker_process", "worker_process.log")
@@ -165,11 +165,12 @@ class PaddleDisWorkerProc():
 
         # init exist_prefill_task_signal
         exist_prefill_task_signal_data = np.zeros([1], dtype=np.int32)
-        self.exist_prefill_task_signal = IPCSignal(name="exist_prefill_task_signal",
-                                           array=exist_prefill_task_signal_data,
-                                           dtype=np.int32,
-                                           suffix=self.parallel_config.engine_pid,
-                                           create=False)
+        self.exist_prefill_task_signal = IPCSignal(
+            name="exist_prefill_task_signal",
+            array=exist_prefill_task_signal_data,
+            dtype=np.int32,
+            suffix=self.parallel_config.engine_pid,
+            create=False)
 
         # init model_weights_status
         workers_model_weights = np.zeros(shape=[1], dtype=np.int32)
@@ -224,7 +225,7 @@ class PaddleDisWorkerProc():
             # The first worker detects whether there are tasks in the task queue
             mp_num_per_node = self.rank / self.nnode
             if self.local_rank % mp_num_per_node == 0:
-                if self.task_queue.num_tasks() > 0 :
+                if self.task_queue.num_tasks() > 0:
                     if self.nnode > 1:
                         self.task_queue.read_finish_flag.set(1)
                     else:
@@ -250,7 +251,7 @@ class PaddleDisWorkerProc():
                 for req_dict, bsz in tasks:
                     num_running_requests = int(bsz)
                     req_dicts.extend(req_dict)
-                
+
                 req_ids = [req.request_id for req in req_dicts]
                 logger.info(f"Rank: {self.local_rank}, num_running_requests: {num_running_requests}, " \
                             f"num_insert_requests: {len(req_dicts)}, req_ids: {req_ids}")
@@ -269,7 +270,8 @@ class PaddleDisWorkerProc():
             # These generated tokens can be obtained through get_output op.
             self.worker.execute_model(req_dicts)
 
-            self.exist_prefill_task_signal.value[0] = self.worker.prefill_finished()
+            self.exist_prefill_task_signal.value[
+                0] = self.worker.prefill_finished()
 
     def init_distributed_enviroment(self, seed=20) -> List[int]:
         """ Initialize Paddle Fleet and get rank of worker """
@@ -357,10 +359,6 @@ def parse_args():
     """
     Parse args from command line
     """
-
-    def none_or_str(value):
-        return None if value == "None" else value
-
     parser = argparse.ArgumentParser("FastDeploy LLM Inference")
     parser.add_argument("-m",
                         "--model_name_or_path",

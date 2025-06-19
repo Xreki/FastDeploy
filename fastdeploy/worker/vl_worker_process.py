@@ -25,7 +25,7 @@ import paddle.distributed.fleet as fleet
 
 from fastdeploy.engine.config import ModelConfig
 from fastdeploy.inter_communicator import EngineWorkerQueue, IPCSignal
-from fastdeploy.utils import get_logger
+from fastdeploy.utils import get_logger, none_or_str
 
 logger = get_logger("worker", "worker.log")
 
@@ -109,7 +109,6 @@ class Worker:
         self.model_cfg = ModelConfig(args.model_name_or_path)
 
         from fastdeploy.worker.vl_gpu_model_runner import GPUVLModelRunner
-
 
         self.init_dist_env()
         self.format_print_configuration()
@@ -602,8 +601,18 @@ def parse_args():
     parser.add_argument(
         "--speculative_method",
         default=None,
-        type=str,
+        type=none_or_str,
         choices=[None, "ngram", "mtp"],
+    )
+    parser.add_argument(
+        "--speculative_max_draft_token_num",
+        default=1,
+        type=int,
+    )
+    parser.add_argument(
+        "--speculative_model_type",
+        default="WINT8",
+        type=str,
     )
     parser.add_argument(
         "--attention_backend",
@@ -613,8 +622,6 @@ def parse_args():
             "APPEND_ATTN",
         ],
     )
-    parser.add_argument("--speculative_max_draft_tokens", type=int, default=1)
-
     parser.add_argument("--max_num_batched_tokens",
                         type=int,
                         default=2048,

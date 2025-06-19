@@ -497,6 +497,13 @@ def ceil_div(x: int, y: int) -> int:
     return (x + y - 1) // y
 
 
+def none_or_str(value):
+    """
+    Keep parameters None, not the string "None".
+    """
+    return None if value == "None" else value
+
+
 llm_logger = get_logger("fastdeploy", "fastdeploy.log")
 data_processor_logger = get_logger("data_processor", "data_processor.log")
 api_server_logger = get_logger("api_server", "api_server.log")
