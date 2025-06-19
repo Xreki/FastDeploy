@@ -85,7 +85,7 @@ class LinearBase(nn.Layer):
             self.quant_method = fd_config.quant_config.get_quant_method(self)
         if fd_config.model_config.is_quantized:
             self.weight_key = f"{prefix}.quant_weight"
-            self.weight_scale_key = f"{prefix}.quant_scale"
+            self.weight_scale_key = f"{prefix}.weight_scale"
 
     def init_weight(self):
         """
@@ -558,7 +558,7 @@ class RowParallelLinear(LinearBase):
             self.quant_method.create_weights(self)
         if fd_config.model_config.is_quantized:
             self.weight_key = f"{prefix}.quant_weight"
-            self.weight_scale_key = f"{prefix}.quant_scale"
+            self.weight_scale_key = f"{prefix}.weight_scale"
         self.init_weight()
 
     def init_weight(self):
