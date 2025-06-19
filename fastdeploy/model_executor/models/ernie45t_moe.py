@@ -58,7 +58,8 @@ class ErniePretrainedModel(PretrainedModel):
         """
         logger.info("erine inference model _get_tensor_parallel_mappings")
 
-        from paddleformers.transformers.conversion_utils import split_or_merge_func
+        from paddleformers.transformers.conversion_utils import \
+            split_or_merge_func
 
         fn = split_or_merge_func(
             is_split=is_split,
@@ -654,6 +655,7 @@ class ErnieForCausalLM(ModelForCasualLM):
         ids_remove_padding: paddle.Tensor,
         forward_meta: ForwardMeta,
     ):
-        hidden_states = self.model(ids_remove_padding, forward_meta)
+        hidden_states = self.model(ids_remove_padding=ids_remove_padding,
+                                   forward_meta=forward_meta)
 
         return hidden_states

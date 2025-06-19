@@ -453,7 +453,7 @@ class GraphOptimizationConfig:
         - With dyncmic graph backend: ...
         - With static grpah backend: WIP
     """
-    use_cudagraph: bool = True
+    use_cudagraph: bool = False
     """Sizes to capture cudagraph.
     - None (default): capture sizes are inferred from llm config.
     - list[int]: capture sizes are specified as given."""
