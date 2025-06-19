@@ -104,14 +104,6 @@ function copy_ops(){
     fi
 
     cp -r ./${OPS_TMP_DIR_BASE}/${WHEEL_BASE_NAME}/* ../fastdeploy/model_executor/ops/base
-    cd ${OPS_TMP_DIR}/${WHEEL_CPU_NAME}/xFasterTransformer/build/
-    for file in *_pd_.so; do
-      mv "$file" "${file/_pd_/}"
-    done
-    cd ../../x86-simd-sort/builddir/
-    for file in *_pd_.so; do
-      mv "$file" "${file/_pd_/}"
-    done
     cd ../../../../
     cp -r ${OPS_TMP_DIR}/${WHEEL_CPU_NAME}/* ../fastdeploy/model_executor/ops/cpu
     echo -e "BASE and CPU ops have been copy to fastdeploy"
@@ -125,7 +117,6 @@ function build_and_install_ops() {
   ${python} setup_ops_base.py install --install-lib ${OPS_TMP_DIR_BASE}
   find ${OPS_TMP_DIR_BASE} -type f -name "*.o" -exec rm -f {} \;
   echo -e "${BLUE}[build]${NONE} build and install fastdeploy_ops..."
-
   TMP_DIR_REAL_PATH=`readlink -f ${OPS_TMP_DIR}`
   is_xpu=`$python -c "import paddle; print(paddle.is_compiled_with_xpu())"`
   if [ "$is_xpu" = "True" ]; then
