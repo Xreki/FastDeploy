@@ -349,9 +349,9 @@ class Ernie45TMoE(nn.Layer):
                 "ffn2_expert_weight_key":
                 f"{prefix}.experts.{{}}.down_proj.quant_weight",
                 "ffn1_expert_weight_scale_key":
-                f"{prefix}.experts.{{}}.up_gate_proj.quant_scale",
+                f"{prefix}.experts.{{}}.up_gate_proj.weight_scale",
                 "ffn2_expert_weight_scale_key":
-                f"{prefix}.experts.{{}}.down_proj.quant_scale",
+                f"{prefix}.experts.{{}}.down_proj.weight_scale",
                 "ffn1_expert_super_scales_key":
                 f"{prefix}.experts.{{}}.up_gate_proj.super_scales",
                 "ffn2_expert_super_scales_key":

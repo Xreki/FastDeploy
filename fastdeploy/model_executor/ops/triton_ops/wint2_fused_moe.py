@@ -1,3 +1,4 @@
+"""
 # Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,8 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-This file contains the triton ops for fused_moe_kernel
-"""
+
 import paddle
 import triton.language as tl
 from paddle import _C_ops
