@@ -744,7 +744,7 @@ class GPUVLModelRunner(VLModelRunnerBase):
         pre_process
         """
         if current_platform.is_cuda():
-            if self.args.speculate_method is not None:
+            if self.args.speculative_method is not None:
                 (
                     ids_remove_padding,
                     padding_offset,
