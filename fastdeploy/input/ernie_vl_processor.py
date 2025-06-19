@@ -22,7 +22,7 @@ from fastdeploy.input.mm_processor import DataProcessor, IDS_TYPE_FLAG
 from fastdeploy.input.ernie_processor import ErnieProcessor
 from fastdeploy.engine.request import Request
 from fastdeploy.entrypoints.chat_utils import parse_chat_messages
-from fastdeploy.utils import api_server_logger
+from fastdeploy.utils import data_processor_logger
 
 
 class ErnieMoEVLProcessor(ErnieProcessor):
@@ -33,6 +33,7 @@ class ErnieMoEVLProcessor(ErnieProcessor):
 
         if "merge_llm_model" in model_name_or_path:
             model_name_or_path = os.path.dirname(model_name_or_path)
+        data_processor_logger.info(f"model_name_or_path: {model_name_or_path}")
         tokenizer_path = model_name_or_path
         preprocessor_path = model_name_or_path
         processor_kwargs = self._parse_processor_kwargs(mm_processor_kwargs)
@@ -53,7 +54,27 @@ class ErnieMoEVLProcessor(ErnieProcessor):
         self.pad_token_id = self.get_pad_id()
         self.limit_mm_per_prompt = self._parse_limits(limit_mm_per_prompt)
 
+    def get_pad_id(self):
+        """get pad id"""
+        return self.tokenizer.pad_token_id
 
+    def _load_tokenizer(self):
+        """
+        load tokenizer
+
+        Returns:
+            tokenizer (AutoTokenizer)
+        """
+        self.tokenizer = self.ernie_processor.tokenizer
+
+    def process_request(self, request, max_model_len=None):
+        """process the input data"""
+        task = request.to_dict()
+        self.process_request_dict(task, max_model_len)
+        request = Request.from_dict(task)
+
+        return request
+    
     def _parse_processor_kwargs(self, kwargs):
         """解析多模态处理器参数配置"""
         if not kwargs:
@@ -64,7 +85,7 @@ class ErnieMoEVLProcessor(ErnieProcessor):
                 raise ValueError("mm-processor-kwargs must be a dictionary")
 
             # 验证参数类型
-            api_server_logger.info(f"kwargs:{kwargs}")
+            data_processor_logger.info(f"kwargs:{kwargs}")
             expected_types = {
                 "spatial_conv_size": int,
                 "temporal_conv_size": int,
@@ -87,29 +108,8 @@ class ErnieMoEVLProcessor(ErnieProcessor):
             return kwargs
 
         except Exception as e:
-            api_server_logger.warning(f"Invalid mm-processor-kwargs format: {e}")
+            data_processor_logger.warning(f"Invalid mm-processor-kwargs format: {e}")
             return {}
-
-    def get_pad_id(self):
-        """get pad id"""
-        return self.tokenizer.pad_token_id
-
-    def _load_tokenizer(self):
-        """
-        load tokenizer
-
-        Returns:
-            tokenizer (AutoTokenizer)
-        """
-        self.tokenizer = self.ernie_processor.tokenizer
-
-    def process_request(self, request, max_model_len=None):
-        """process the input data"""
-        task = request.to_dict()
-        self.process_request_dict(task, max_model_len)
-        request = Request.from_dict(task)
-
-        return request
 
     def _parse_limits(self, limits):
         """解析多模态限制配置"""
@@ -125,70 +125,74 @@ class ErnieMoEVLProcessor(ErnieProcessor):
         try:
             if not isinstance(limits, dict):
                 raise ValueError("limit-mm-per-prompt must be a dictionary")
-            api_server_logger.info(f"_parse_limits:{limits}")
+            data_processor_logger.info(f"_parse_limits:{limits}")
             return {**DEFAULT_LIMITS, **limits}
         except Exception as e:
-            api_server_logger.warning(f"Invalid limit-mm-per-prompt format: {e}, using default limits")
+            data_processor_logger.warning(f"Invalid limit-mm-per-prompt format: {e}, using default limits")
             return DEFAULT_LIMITS
 
-    def _check_mm_limits(self, messages):
-        """检查多模态数据是否超过限制"""
-        mm_data = {
-            "image": [],
-            "video": [],
-            "audio": []
-        }
+    def _check_mm_limits(self, item):
+        if isinstance(item, dict):
+            # 请求包含prompt和multi_modal_data
+            mm_data = item
+        else:
+            # 请求包含messages
+            mm_data = {
+                "image": [],
+                "video": []
+            }
 
-        # 提取多模态数据
-        for message in messages:
-            if isinstance(message.get("content"), list):
-                for item in message["content"]:
-                    if item.get("type") == "image_url":
-                        mm_data["image"].append(item)
-                    elif item.get("type") == "video_url":
-                        mm_data["video"].append(item)
-                    elif item.get("type") in ["audio_url", "input_audio"]:
-                        mm_data["audio"].append(item)
-
-        # 检查限制
-        for modality, items in mm_data.items():
+            for message in item:
+                if isinstance(message.get("content"), list):
+                    for part in message["content"]:
+                        if part.get("type") == "image":
+                            mm_data["image"].append(part)
+                        elif part.get("type") == "video":
+                            mm_data["video"].append(part)
+            
+        for modality, data in mm_data.items():
             if modality in self.limit_mm_per_prompt:
                 limit = self.limit_mm_per_prompt[modality]
-                if len(items) > limit:
+                if len(data) > limit:
                     raise ValueError(
-                        f"Too many {modality} items in prompt. "
-                        f"Got {len(items)}, but limit is {limit}."
+                        f"Too many {modality} items in prompt, "
+                        f"got {len(data)} but limit is {limit}"
                     )
 
     def process_request_dict(self, request, max_model_len=None):
         """process the input data"""
 
-        if request.get("eos_token_ids") is None or len(
-                request.get("eos_token_ids")) == 0:
+        if not request.get("eos_token_ids"):
             request["eos_token_ids"] = self.eos_token_ids
 
         stop_sequences = request.get("stop", [])
-        if stop_sequences is not None and len(stop_sequences) != 0:
+        if stop_sequences:
             stop_seqs, stop_seqs_len = self.update_stop_seq(stop_sequences)
             request.set("stop_token_ids", stop_seqs)
             request.set("stop_seqs_len", stop_seqs_len)
 
-        messages = request.get("messages")
-        try:
+        if request.get("prompt"):
+            multimodal_data = request.get("multimodal_data", {})
+            self._check_mm_limits(multimodal_data)
+            images = multimodal_data.get("image", None)
+            videos = multimodal_data.get("video", None)
+            outputs = self.ernie_processor.text2ids(request["prompt"], images, videos)
+        elif request.get("messages"):
+            messages = request["messages"]
             self._check_mm_limits(messages)
-        except ValueError as e:
-            api_server_logger.error(f"Multi-modal limit exceeded: {e}")
-            raise
-        messages = parse_chat_messages(messages)
-        output = self.ernie_processor.process(messages)
+            messages = parse_chat_messages(messages)
+            outputs = self.ernie_processor.messages2ids(messages)
+        else:
+            raise ValueError(f"Request must contain 'prompt', or 'messages': {request}")
+        
         metadata = request.get("metadata")
         # 如果metadata包含之前输出的token，将这些token添加到input_ids末尾
         if metadata and metadata.get("generated_token_ids"):
-            self.append_generated_tokens(output, metadata["generated_token_ids"])
-        output = self.pack_outputs(output)
-        request["prompt_token_ids"] = output["input_ids"]
+            self.append_generated_tokens(outputs, metadata["generated_token_ids"])
+        outputs = self.pack_outputs(outputs)
+        request["prompt_token_ids"] = outputs["input_ids"]
         request["prompt_token_ids_len"] = len(request["prompt_token_ids"])
-        request["multimodal_inputs"] = output
+        request["multimodal_inputs"] = outputs
 
         # 截断超过长度限制的prompt
         if max_model_len is not None and len(
