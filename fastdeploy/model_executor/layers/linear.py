@@ -18,6 +18,7 @@ import paddle
 from paddle import nn
 
 from fastdeploy.platforms import current_platform
+from fastdeploy.distributed.communication_op import tensor_model_parallel_all_reduce
 
 from .utils import _set_var_distributed, divide, get_tensor
 
@@ -598,8 +599,6 @@ class RowParallelLinear(LinearBase):
             out = paddle.matmul(x, self.linear_weight)
 
         if self.nranks > 1:
-            from fastdeploy.distributed.communication_op import \
-                tensor_model_parallel_all_reduce
             tensor_model_parallel_all_reduce(out)
 
         return out
