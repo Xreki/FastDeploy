@@ -180,14 +180,14 @@ class ErniePretrainedModel(PretrainedModel):
                     tensor_parallel_rank=config.tensor_parallel_rank,
                     num_attention_heads=config.num_attention_heads,
                     num_key_value_heads=config.num_key_value_heads,
-                    head_dim=config.hidden_size // config.num_attention_heads,
+                    head_dim=config.head_dim,
                 )
             else:
                 qkv_fn = partial(
                     gqa_qkv_merge_func,
                     num_attention_heads=config.num_attention_heads,
                     num_key_value_heads=config.num_key_value_heads,
-                    head_dim=config.hidden_size // config.num_attention_heads,
+                    head_dim=config.head_dim,
                 )
         else:
             qkv_fn = partial(fn, is_column=True)
@@ -254,10 +254,7 @@ class ErniePretrainedModel(PretrainedModel):
             moe_num_experts = sum(config.moe_num_experts)
         elif isinstance(config.moe_num_experts, int):
             moe_num_experts = config.moe_num_experts
-        else:
-            raise ValueError(
-                f"Not support type of moe_num_experts [{type(config.moe_num_experts)}]"
-            )
+
         mappings = get_tensor_parallel_split_mappings(
             config.num_layers,
             moe_num_experts,

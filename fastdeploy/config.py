@@ -173,6 +173,9 @@ class ModelConfig(PretrainedConfig):
         self.base_model_prefix = base_model_prefix
         if moe_layer_start_index is not None:
             self.moe_layer_start_index = moe_layer_start_index
+        else:
+            self.moe_layer_start_index = self.num_layers
+            self.moe_num_experts = 0
         if moe_layer_end_index is not None:
             self.moe_layer_end_index = moe_layer_end_index
         self.ffn_hidden_size = ffn_hidden_size
