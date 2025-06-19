@@ -351,9 +351,9 @@ class ForwardMeta():
             cu_seqlens_q=share_inputs["cu_seqlens_q"],
             cu_seqlens_k=share_inputs["cu_seqlens_k"],
             caches=share_inputs["caches"],
-            decoder_batch_ids=share_inputs["decoder_batch_ids"],
-            decoder_tile_ids_per_batch=share_inputs[
-                "decoder_tile_ids_per_batch"],
+            decoder_batch_ids=share_inputs.get("decoder_batch_ids", None),
+            decoder_tile_ids_per_batch=share_inputs.get(
+                "decoder_tile_ids_per_batch", None),
         )
         return ret
 
