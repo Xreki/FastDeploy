@@ -79,6 +79,7 @@ class GPUModelRunner(ModelRunnerBase):
             shape=[self.parallel_config.max_num_seqs, 1],
             fill_value=4,
             dtype="int64")
+        self.restore_chunked_prefill_request = dict()
 
         # Initialize attention Backend
         # Note(gonshaotian): Currently, all attention layers share one attention backend instance.
@@ -94,9 +95,10 @@ class GPUModelRunner(ModelRunnerBase):
         """
         check whether prefill stage finished
         """
-        prefill_statue = (self.share_inputs["seq_lens_this_time"] != 0) & (
-            self.share_inputs["seq_lens_this_time"] != 1)
-        return not paddle.any(prefill_statue).numpy()
+        if int(paddle.max(self.share_inputs['seq_lens_encoder'])) != 0:
+            return 1
+        else:
+            return 0
 
     def insert_prefill_inputs(self, req_dicts: List[Request]):
         """
@@ -668,8 +670,12 @@ class GPUModelRunner(ModelRunnerBase):
 
             if task.chunk_idx > len(task.prefill_chunk_info):
                 continue
+            self.restore_chunked_prefill_request[task.request_id] = task
 
+
+        for id, task in list(self.restore_chunked_prefill_request.items()):
             idx = task.idx
+            logger.debug(f"{task.request_id} chunked prefill {task.chunk_idx}/{len(task.prefill_chunk_info)}")
             start_idx = sum(task.prefill_chunk_info[:task.chunk_idx])
             if task.chunk_idx == len(task.prefill_chunk_info):
                 self.share_inputs["seq_lens_this_time"][idx:idx + 1] = 1
@@ -677,6 +683,7 @@ class GPUModelRunner(ModelRunnerBase):
                 self.share_inputs["step_idx"][idx:idx + 1] = 1
                 self.share_inputs["seq_lens_decoder"][
                     idx:idx + 1] = start_idx + task.get("seq_lens_decoder", 0)
+                del self.restore_chunked_prefill_request[task.request_id]
             else:
                 token_chunk_size = task.prefill_chunk_info[task.chunk_idx]
 
@@ -829,7 +836,7 @@ class GPUModelRunner(ModelRunnerBase):
 
         # 2. Dummy run
         self._dummy_run(num_tokens=self.parallel_config.max_num_batched_tokens,
-                        batch_size=self.parallel_config.max_num_seqs)
+                        batch_size=min(self.parallel_config.max_num_seqs, 3))
 
         # 3. gc
         del self.share_inputs["caches"]

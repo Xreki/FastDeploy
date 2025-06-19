@@ -163,6 +163,14 @@ class PaddleDisWorkerProc():
             suffix=self.parallel_config.engine_pid,
             create=False)
 
+        # init exist_prefill_task_signal
+        exist_prefill_task_signal_data = np.zeros([1], dtype=np.int32)
+        self.exist_prefill_task_signal = IPCSignal(name="exist_prefill_task_signal",
+                                           array=exist_prefill_task_signal_data,
+                                           dtype=np.int32,
+                                           suffix=self.parallel_config.engine_pid,
+                                           create=False)
+
         # init model_weights_status
         workers_model_weights = np.zeros(shape=[1], dtype=np.int32)
         self.model_weights_status = IPCSignal(
@@ -203,7 +211,7 @@ class PaddleDisWorkerProc():
         """
         # Currently, only support single node
         self.nnode = 1
-
+        req_ids = []
         while True:
             if self.parallel_config.tensor_parallel_degree > 1:
                 # Synchronize before updating weights
@@ -216,8 +224,7 @@ class PaddleDisWorkerProc():
             # The first worker detects whether there are tasks in the task queue
             mp_num_per_node = self.rank / self.nnode
             if self.local_rank % mp_num_per_node == 0:
-                if self.task_queue.num_tasks(
-                ) > 0 and self.worker.prefill_finished():
+                if self.task_queue.num_tasks() > 0 :
                     if self.nnode > 1:
                         self.task_queue.read_finish_flag.set(1)
                     else:
@@ -243,8 +250,10 @@ class PaddleDisWorkerProc():
                 for req_dict, bsz in tasks:
                     num_running_requests = int(bsz)
                     req_dicts.extend(req_dict)
+                
+                req_ids = [req.request_id for req in req_dicts]
                 logger.info(f"Rank: {self.local_rank}, num_running_requests: {num_running_requests}, " \
-                            f"num_insert_requests: {len(req_dicts)}")
+                            f"num_insert_requests: {len(req_dicts)}, req_ids: {req_ids}")
 
                 # Process prefill inputs
                 self.worker.preprocess_new_task(req_dicts)
@@ -259,6 +268,8 @@ class PaddleDisWorkerProc():
             # Execute model to generate token. The generated token will be written to the buffer.
             # These generated tokens can be obtained through get_output op.
             self.worker.execute_model(req_dicts)
+
+            self.exist_prefill_task_signal.value[0] = self.worker.prefill_finished()
 
     def init_distributed_enviroment(self, seed=20) -> List[int]:
         """ Initialize Paddle Fleet and get rank of worker """
