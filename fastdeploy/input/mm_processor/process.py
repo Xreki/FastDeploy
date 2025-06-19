@@ -147,7 +147,54 @@ class DataProcessor:
         """Enable evaluation mode (doesn't produce labels)."""
         self.is_training = False
 
-    def process(self, messages: List[Dict[str, Any]]) -> Dict[str, Union[np.ndarray, List[np.ndarray], None]]:
+    def text2ids(self, text, images=None, videos=None):
+        outputs = {
+            "input_ids": [],
+            "token_type_ids": [],
+            "position_ids": [],
+            "images": [],
+            "grid_thw": [],
+            "image_type_ids": [],
+            "labels": [],
+            "cur_position": 0,
+            "pic_cnt": 0,
+            "video_cnt": 0,
+        }
+        
+        IMAGE_PLACEHOLDER = "<|image@placeholder|>"
+        VIDEO_PLACEHOLDER = "<|video@placeholder|>"
+        IMAGE_PLACEHOLDER_LEN = len(IMAGE_PLACEHOLDER)
+        VIDEO_PLACEHOLDER_LEN = len(VIDEO_PLACEHOLDER)
+        st, image_idx, video_idx = 0, 0, 0
+        while st < len(text):
+            image_pos = text.find(IMAGE_PLACEHOLDER, st)
+            image_pos = len(text) if image_pos == -1 else image_pos
+            video_pos = text.find(VIDEO_PLACEHOLDER, st)
+            video_pos = len(text) if video_pos == -1 else video_pos
+            ed = min(image_pos, video_pos)
+
+            self._add_text(text[st:ed], outputs)
+            if ed == len(text):
+                break
+
+            if ed == image_pos:
+                self._add_image(images[image_idx], outputs)
+                image_idx += 1
+                st = ed + IMAGE_PLACEHOLDER_LEN
+            else:
+                item = videos[video_idx]
+                if isinstance(item, dict):
+                    frames = self._load_and_process_video(item["video"], item)
+                else:
+                    frames = self._load_and_process_video(item, {})
+
+                self._add_video(frames, outputs)
+                video_idx += 1
+                st = ed + VIDEO_PLACEHOLDER_LEN
+        
+        return outputs
+
+    def messages2ids(self, messages: List[Dict[str, Any]]) -> Dict[str, Union[np.ndarray, List[np.ndarray], None]]:
         """
         Convert chat messages into model inputs.
         Returns a dict with input_ids, token_type_ids, position_ids, images, grid_thw, image_type_ids, labels.
@@ -181,10 +228,27 @@ class DataProcessor:
                 if isinstance(item, str) or item.get("type") == "text":
                     text = item if isinstance(item, str) else item.get("text", "")
                     self._add_text(text, outputs)
-                elif item.get("type") == "image_url" or item.get("type") == "image":
-                    self._add_image(item, outputs)
-                elif item.get("type") == "video_url" or item.get("type") == "video":
-                    self._add_video(item, outputs)
+                elif item.get("type") == "image":
+                    img = item.get("image")
+                    if img is None:
+                        continue
+
+                    outputs["pic_cnt"] += 1
+                    self._add_text(f"Picture {outputs['pic_cnt']}:", outputs)
+                    self._add_special_token(self.IMG_START, outputs)
+                    self._add_image(img, outputs)
+                    self._add_special_token(self.IMG_END, outputs)
+                elif item.get("type") == "video":
+                    video_bytes = item.get("video")
+                    if video_bytes is None:
+                        continue
+                    frames = self._load_and_process_video(video_bytes, item)
+
+                    outputs["video_cnt"] += 1
+                    self._add_text(f"Video {outputs['video_cnt']}:", outputs)
+                    self._add_special_token(self.VID_START, outputs)
+                    self._add_video(frames, outputs)
+                    self._add_special_token(self.VID_END, outputs)
 
             if role in ("user", "system"):
                 self._add_text("\n", outputs)
@@ -215,25 +279,7 @@ class DataProcessor:
             outputs["position_ids"].append([start + i] * 3)
         outputs["cur_position"] += len(tokens)
 
-    def _add_image(self, item: Dict, outputs: Dict) -> None:
-        url_info = item.get("image_url", {})
-        w = url_info.get("image_width", None)
-        h = url_info.get("image_height", None)
-
-        if "image" in item:
-            img = item["image"]
-        else:
-            url = url_info.get("url")
-            data = get_downloadable(url, download_dir=RAW_IMAGE_DIR, save_to_disk=False)
-            img = Image.open(io.BytesIO(data) if isinstance(data, bytes) else data)
-
-        if w and h:
-            img = img.resize((w, h))
-
-        outputs["pic_cnt"] += 1
-        self._add_text(f"Picture {outputs['pic_cnt']}:", outputs)
-        self._add_special_token(self.IMG_START, outputs)
-
+    def _add_image(self, img, outputs: Dict) -> None:
         patches_h, patches_w = self.image_preprocessor.get_smarted_resize(
             img.height,
             img.width,
@@ -262,21 +308,7 @@ class DataProcessor:
         outputs["grid_thw"].append(ret["image_grid_thw"])
         outputs["image_type_ids"].append(0)
 
-        self._add_special_token(self.IMG_END, outputs)
-
-    def _add_video(self, item: Dict, outputs: Dict) -> None:
-        url_info = item.get("video_url", {})
-        url = url_info.get("url")
-        outputs["video_cnt"] += 1
-        self._add_text(f"Video {outputs['video_cnt']}:", outputs)
-        self._add_special_token(self.VID_START, outputs)
-
-        if "video" in item:
-            video_path = item["video"]
-            frames = self._load_and_process_video(video_path, item)
-        else:
-            video_path = get_downloadable(url, save_to_disk=False)
-            frames = self._load_and_process_video(video_path, item)
+    def _add_video(self, frames, outputs: Dict) -> None:
         patches_h, patches_w = self.image_preprocessor.get_smarted_resize(
             frames[0].height,
             frames[0].width,
@@ -306,8 +338,6 @@ class DataProcessor:
         pos_ids = self._compute_3d_positions(num_frames, patches_h, patches_w, outputs["cur_position"])
         outputs["position_ids"].extend(pos_ids)
         outputs["cur_position"] = np.max(pos_ids) + 1
-
-        self._add_special_token(self.VID_END, outputs)
 
     def _load_and_process_video(self, url: str, item: Dict) -> List[Image.Image]:
         reader, meta, path = read_video_decord(url, save_to_disk=False)

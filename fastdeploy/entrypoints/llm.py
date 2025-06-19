@@ -121,10 +121,10 @@ class LLM:
             prompts = [prompts]
 
         if isinstance(prompts, dict):
-            if "prompts" not in prompts:
+            if "prompt" not in prompts:
                 raise ValueError("prompts must be a input dict")
             prompts = [prompts]
-            sampling_params = None
+            # sampling_params = None
 
         if sampling_params_len != 1 and len(prompts) != sampling_params_len:
             raise ValueError(

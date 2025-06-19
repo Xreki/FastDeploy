@@ -44,6 +44,7 @@ class Request:
         preprocess_start_time: Optional[float] = None,
         preprocess_end_time: Optional[float] = None,
         multimodal_inputs: Optional[dict] = None,
+        multimodal_data: Optional[dict] = None,
         raw_request: bool = True,
         disaggregate_info: Optional[dict] = None
     ) -> None:
@@ -68,6 +69,7 @@ class Request:
 
         # Multi-modal related
         self.multimodal_inputs = multimodal_inputs
+        self.multimodal_data = multimodal_data
 
     @classmethod
     def from_dict(cls, d: dict):
@@ -87,6 +89,7 @@ class Request:
             preprocess_start_time=d.get("preprocess_start_time"),
             preprocess_end_time=d.get("preprocess_end_time"),
             multimodal_inputs=d.get("multimodal_inputs"),
+            multimodal_data=d.get("multimodal_data"),
             raw_request=d.get("raw_request", True)
         )
 
@@ -105,6 +108,7 @@ class Request:
             "preprocess_start_time": self.preprocess_start_time,
             "preprocess_end_time": self.preprocess_end_time,
             "multimodal_inputs": self.multimodal_inputs,
+            "multimodal_data": self.multimodal_data,
             "raw_request": self.raw_request
         }
         data.update(asdict(self.sampling_params))
