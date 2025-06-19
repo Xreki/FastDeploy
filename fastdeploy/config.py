@@ -342,21 +342,9 @@ class ParallelConfig:
     # Enable chunked prefill
     enable_chunked_prefill: str = "store_true"
     """
-
-    - autoregressive:
-    - inference_with_reference:
-    - draft_model:
-    - hydra:
-    - eagle:
-    """
-    speculate_method: str = None
-    """
     - APPEND_ATTN:
     """
     attention_backend: str = "APPEND_ATTN"
-
-    # speculate_max_draft_tokens
-    speculate_max_draft_tokens: int = 1
     max_num_batched_tokens: int = 2048
     # enable prefix cache
     enable_prefix_caching = None
@@ -369,13 +357,18 @@ class SpeculativeConfig:
     """
     Configuration for speculative decoding.
     """
-    speculate_method = None  # speculate method
-    # the max length of draft tokens for speculate method
-    speculate_max_draft_token_num = 1  # speculate_max_draft_tokens
-    draft_type = "None"  # draft type
-    is_mtp = False  # is mtp
-    speculate_max_candidate_len = 5  # the max length of candidate tokens for speculate method
-    speculate_verify_window = 2  # the max length of verify window for speculate method
+    # speculative method, choose in [None, "ngram_match", "mtp"]
+    method: Optional[str] = None
+    # the max length of speculative tokens
+    num_speculative_tokens: int = 1
+    #
+    is_mtp: bool = False
+    # the max length of candidate tokens for speculative method
+    max_candidate_len: int = 5
+    # the max length of verify window for speculative method
+    verify_window: int = 2
+    # ngram match
+    max_ngram_size: int = 5
 
 
 @dataclass

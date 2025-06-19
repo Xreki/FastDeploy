@@ -87,9 +87,9 @@ class AppendAttentionBackend(AttentionBackend):
                            else fd_config.model_config.rope_theta)
         self.rope_3d = getattr(fd_config.model_config, "rope_3d", False)
         self.causal = getattr(fd_config.model_config, "causal", True)
-        self.speculate_method = fd_config.parallel_config.speculate_method
-        self.use_speculate = self.speculate_method is not None
-        self.speculate_max_draft_token_num = fd_config.parallel_config.speculate_max_draft_tokens
+        self.speculative_method = fd_config.speculative_config.method
+        self.use_speculate = self.speculative_method is not None
+        self.speculate_max_draft_token_num = fd_config.speculative_config.num_speculative_tokens
         self.keep_pd_step_flag = fd_config.speculative_config.is_mtp
         self.rank = fd_config.parallel_config.tensor_parallel_rank
 
@@ -242,7 +242,7 @@ class AppendAttentionBackend(AttentionBackend):
             metadata.encoder_max_partition_size,
             self.speculate_max_draft_token_num + 1,
             self.causal,
-            self.speculate_method is not None,
+            self.speculative_method is not None,
         )[0]
         return res
 

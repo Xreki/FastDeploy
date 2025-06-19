@@ -234,7 +234,7 @@ def build_stream_line_model(
     parallel_config.expert_parallel_degree = 1
     parallel_config.column_cut = False
 
-    speculative_config.is_mtp = draft_type in ["eagle", "mtp"]
+    speculative_config.is_mtp = draft_type in ["mtp"]
     speculative_config.draft_type = draft_type
 
     # Note(tangbinhan): used for load_checkpoint

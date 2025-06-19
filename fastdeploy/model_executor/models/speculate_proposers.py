@@ -22,16 +22,16 @@ import paddle
 import paddle.distributed as dist
 from paddle.distributed import fleet
 
-from fastdeploy.model_executor.layers.hydra_head import HydraHead
+from fastdeploy.config import FDConfig
 from fastdeploy.model_executor.layers.rotary_embedding import get_rope
 from fastdeploy.model_executor.models.export_model import \
     build_stream_line_model
+from fastdeploy.utils import spec_logger
 
 try:
     from fastdeploy.model_executor.ops.gpu import (
         draft_model_postprocess, draft_model_preprocess,
-        eagle_get_hidden_states, eagle_get_self_hidden_states,
-        hydra_fetch_hidden_states, ngram_match,
+        eagle_get_hidden_states, eagle_get_self_hidden_states, ngram_match,
         speculate_update_seq_lens_this_time)
 except ImportError:
     pass
@@ -45,10 +45,15 @@ class Proposer:
     the speculative decoding framework
     """
 
-    def __init__(self, **kwargs):
-        pass
+    def __init__(self, cfg: FDConfig):
+        self.cfg = cfg
+        self.spec_cfg = cfg.speculative_config
+        self.max_num_seqs = cfg.parallel_config.max_num_seqs
+        self.max_draft_token_num = cfg.speculative_config.num_speculative_tokens
 
-    def run(self, share_inputs, **kargs):
+        spec_logger.info(f"Speculate config: {self.spec_cfg}")
+
+    def run(self, share_inputs):
         """
         run
         """
@@ -76,9 +81,6 @@ class AutogressiveProposer(Proposer):
     the first position of draft_tokens.
     """
 
-    def __init__(self, **kwargs):
-        super().__init__()
-
     def run(self, share_inputs, **kargs):
         speculate_update_seq_lens_this_time(
             kargs["seq_lens_this_time"],
@@ -89,21 +91,18 @@ class AutogressiveProposer(Proposer):
         )
 
 
-class InferenceWithReferenceProposer(Proposer):
+class NgramProposer(Proposer):
     """
-    Proposer for Inference with Reference.
+    Proposer for Ngram match method.
 
     Matching corresponding tokens in input and output as draft tokens.
     """
 
-    def __init__(self, max_draft_tokens, max_ngram_size, max_batch_size,
-                 **kwargs):
-        super().__init__()
-        self.max_ngram_size = max_ngram_size
-        self.input_ids_len = paddle.zeros(shape=[max_batch_size, 1],
+    def __init__(self, cfg: FDConfig):
+        super().__init__(cfg)
+        self.max_ngram_size = self.spec_cfg.max_ngram_size
+        self.input_ids_len = paddle.zeros(shape=[self.max_num_seqs, 1],
                                           dtype="int64").cpu()
-        self.max_batch_size = max_batch_size
-        self.max_draft_tokens = max_draft_tokens
 
     def update(self, bid: int, seq_len: int):
         """
@@ -116,7 +115,7 @@ class InferenceWithReferenceProposer(Proposer):
         run
         """
         draft_tokens = share_inputs["draft_tokens"].cpu()
-        seq_lens_this_time = kargs["seq_lens_this_time"].cpu()
+        seq_lens_this_time = share_inputs["seq_lens_this_time"].cpu()
         seq_lens_encoder = share_inputs["seq_lens_encoder"].cpu()
         seq_lens_decoder = share_inputs["seq_lens_decoder"].cpu()
 
@@ -131,108 +130,24 @@ class InferenceWithReferenceProposer(Proposer):
             seq_lens_encoder,
             seq_lens_decoder,
             share_inputs["max_dec_len"].cpu(),
-            kargs["real_batch_size"],
             self.max_ngram_size,
-            self.max_draft_tokens,
+            self.max_draft_token_num,
         )
         share_inputs["draft_tokens"][:] = draft_tokens.cuda()
         share_inputs["seq_lens_encoder"][:] = seq_lens_encoder.cuda()
-        kargs["seq_lens_this_time"][:] = seq_lens_this_time.cuda()
-
-
-class HydraProposer(Proposer):
-    """
-    Proposer for Hydra
-
-    Args:
-        hidden_size (int): The size of the hidden layers in the block.
-        tensor_parallel_degree(int): TP degree.
-        tensor_parallel_rank(int): TP rank ID.
-        vocab_size (int): The size of vocabulary.
-        hydra_ckpt_path (str): The checkpoint path to load hydra weights.
-        batch_size (int): Batch Size.
-        max_seq_len (int): Max Sequence Length.
-    """
-
-    def __init__(
-        self,
-        hidden_size,
-        tensor_parallel_degree,
-        tensor_parallel_rank,
-        vocab_size,
-        hydra_ckpt_path,
-        batch_size,
-        max_seq_len,
-        **kwargs,
-    ):
-        with open(os.path.join(hydra_ckpt_path, "config.json"), "r") as f:
-            hydra_config = json.load(f)
-
-            self.hydra_num_heads = hydra_config["hydra_num_heads"]
-            self.hydra_num_layers = hydra_config["hydra_num_layers"]
-
-            self.batch_size = batch_size
-            self.max_seq_len = max_seq_len
-
-            with paddle.LazyGuard():
-                self.hydra_head = HydraHead(
-                    self.hydra_num_heads,
-                    self.hydra_num_layers,
-                    hidden_size,
-                    tensor_parallel_degree,
-                    vocab_size,
-                )
-
-            if tensor_parallel_degree == 1:
-                state_dict = paddle.load(
-                    os.path.join(hydra_ckpt_path, "hydra.pdparams"))
-            else:
-                state_dict = paddle.load(
-                    os.path.join(
-                        hydra_ckpt_path,
-                        f"hydra_tp{tensor_parallel_rank:02d}.pdparams",
-                    ))
-
-            self.hydra_head.set_state_dict(state_dict)
-
-        super().__init__()
-
-    @paddle.no_grad()
-    def run(self, share_inputs, **kargs):
-        """
-        run
-        """
-        ids = share_inputs["draft_tokens"][:, 0]
-        hidden_states = hydra_fetch_hidden_states(
-            share_inputs["output_hidden_states"],
-            share_inputs["output_padding_offset"],
-            share_inputs["accept_num"],
-            self.batch_size,
-            self.max_seq_len,
-        )
-
-        self.hydra_head(ids, hidden_states, share_inputs["draft_tokens"])
-
-        speculate_update_seq_lens_this_time(
-            kargs["seq_lens_this_time"],
-            share_inputs["seq_lens_encoder"],
-            share_inputs["seq_lens_decoder"],
-            kargs["real_batch_size"],
-            self.hydra_head.hydra_num_heads + 1,
-        )
+        share_inputs["seq_lens_this_time"][:] = seq_lens_this_time.cuda()
 
 
 class ModelProposer(Proposer):
     """
-    用于类 Model 的 Proposer 基类
-    在输入输出中匹配符合的tokens作为 draft tokens
+    Proposer for model-based method. Like Draft Model/Eagle/MTP.
     """
 
     def __init__(self, args, max_draft_tokens, batch_size):
         super().__init__()
-        print(f"Initialize {args.speculate_method} proposer")
+        print(f"Initialize {args.speculative_method} proposer")
         self.args = args
-        self.draft_type = args.speculate_method
+        self.draft_type = args.speculative_method
         assert self.draft_type in (
             "draft_model",
             "eagle",
@@ -263,7 +178,7 @@ class ModelProposer(Proposer):
 
         self.beam_batch_size = args.batch_size * args.beam_width
         self.use_beam_search = True if args.beam_width > 1 else False
-        self.speculate_max_draft_tokens = args.speculate_max_draft_tokens
+        self.speculative_max_draft_tokens = args.speculative_max_draft_tokens
         self.show_topk = False
 
         # 2. build model
@@ -295,7 +210,7 @@ class ModelProposer(Proposer):
             top_k=args.top_k,  # not use
             top_p=args.top_p,  # not use
             export_model_type=args.draft_model_type,
-            speculate_method=self.draft_type,
+            speculative_method=self.draft_type,
             pad_vocab=False,
             draft_type=self.draft_type,
         )
@@ -311,7 +226,7 @@ class ModelProposer(Proposer):
         self.cache_kvs = []
         self.free_list = list(range(args.max_num_blocks))
         self.used_list = [[] for _ in range(self.beam_batch_size)]
-        head_dim = self.model_config["head_dim"] 
+        head_dim = self.model_config["head_dim"]
         self.pre_ids = paddle.to_tensor(
             np.zeros((self.beam_batch_size,
                       args.max_dec_len)).astype("int64") - 1)
@@ -496,32 +411,7 @@ max_dec_len({self.args.max_dec_len}) > max_seq_len({max_sec_len})")
         self.used_list = [[] for _ in range(self.beam_batch_size)]
 
 
-class DraftModelProposer(ModelProposer):
-    """
-    用于 Draft Model 的 Proposer
-    在输入输出中匹配符合的tokens作为 draft tokens
-    """
-
-    def insert_query(self, preprocessed_inputs):
-        super().insert_query(preprocessed_inputs)
-        real_bs = preprocessed_inputs["real_bs"]
-        self.model_inputs["seq_lens_encoder"] += 1
-        self.model_inputs["seq_lens_this_time"] += 1
-        for i in range(real_bs):
-            self.seq_lens_encoder_record[i:i + 1] += 1
-
-    def run_infer(self, share_inputs):
-        """ """
-        if self.model_inputs["not_need_stop"]:
-            with paddle.no_grad():
-                self.model_inputs["substep"] = 0
-                while (self.model_inputs["substep"] < self.max_draft_tokens
-                       and self.model_inputs["not_need_stop"]):
-                    self.model(**self.model_inputs)
-                    self.model_inputs["substep"] += 1
-
-
-class EagleProposer(ModelProposer):
+class MTPProposer(ModelProposer):
     """
     用于 Eagle 的 Proposer
     在输入输出中匹配符合的tokens作为 draft tokens
@@ -576,12 +466,3 @@ class EagleProposer(ModelProposer):
                         )
                 else:
                     self.model_inputs["hidden_states"] = None
-
-
-class MTPProposer(EagleProposer):
-    """
-    用于 MTP 的 Proposer, 与 Eagle 一致
-    """
-
-    def __init__(self, args, max_draft_tokens, batch_size):
-        super(MTPProposer, self).__init__(args, max_draft_tokens, batch_size)

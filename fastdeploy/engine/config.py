@@ -320,6 +320,117 @@ class CacheConfig:
             "=============================================================")
 
 
+class SpeculativeConfig:
+    """
+    Speculative Decoding Configuration class.
+
+    Attributes:
+        model_name_or_path (Optional[str]): Path of the model.
+        method (Optional[str]): Method used for speculative decoding.
+        quantization (str): Quantization method for draft model, default is WINT8.
+        num_speculative_tokens (int): Maximum draft tokens, default is 5.
+        disable_by_batch_size (Optional[int]): Disable speculative decoding by batch size.
+        disable_log_stats: Optional[bool]: Disable printing of stage times in speculative decoding.
+        disable_logprobs: Optional[bool]: Disable logging of log probabilities during speculative decoding.
+        max_model_len: Optional[int]: Maximum model length for draft model.
+        acceptance_method: Optional[str]: Acceptance method for draft model.
+    """
+
+    def __init__(self,
+                 method: Optional[str] = None,
+                 num_speculative_tokens: Optional[int] = 1,
+                 model_name_or_path: Optional[str] = None,
+                 model_type: Optional[str] = "WINT8",
+                 disable_by_batch_size: Optional[int] = None,
+                 disable_log_stats: Optional[bool] = None,
+                 disable_logprobs: Optional[bool] = None,
+                 max_model_len: Optional[int] = None,
+                 acceptance_method: Optional[str] = None,
+                 **kwargs):
+        self.model_name_or_path = model_name_or_path
+        self.method = method
+        self.num_speculative_tokens = num_speculative_tokens
+        self.model_type = model_type
+        self.disable_by_batch_size = disable_by_batch_size
+        self.disable_log_stats = disable_log_stats
+
+        for key, value in kwargs.items():
+            try:
+                setattr(self, key, value)
+            except Exception:
+                continue
+
+        self.read_model_config()
+        self.reset()
+
+    def read_model_config(self):
+        """
+        Read configuration from file.
+        """
+        self.model_config = {}
+        if not self.enabled_speculative_decoding():
+            return
+
+        self.is_unified_ckpt = check_unified_ckpt(self.model_name_or_path)
+        if self.model_name_or_path is None:
+            return
+
+        self.config_path = os.path.join(self.model_name_or_path, "config.json")
+        if os.path.exists(self.config_path):
+            self.model_config = json.load(
+                open(self.config_path, 'r', encoding='utf-8'))
+
+    def reset(self):
+        """
+        Reset configuration.
+        """
+
+        def reset_value(cls, value_name, key=None, default=None):
+            if key is not None and key in cls.model_config:
+                setattr(cls, value_name, cls.model_config[key])
+            elif getattr(cls, value_name, None) is None:
+                setattr(cls, value_name, default)
+
+        if not self.enabled_speculative_decoding():
+            return
+
+        if self.method in ["mtp"]:
+            reset_value(self,
+                        "mtp_total_block_ratio",
+                        "mtp_total_block_ratio",
+                        default=1.2)
+
+            self.add_extra_cache_layer = True
+
+    def enabled_speculative_decoding(self):
+        """
+        Check if speculative decoding is enabled.
+        """
+        if self.method is None:
+            return False
+        return True
+
+    def to_json_string(self):
+        """
+        Convert speculative_config to json string.
+        """
+        return json.dumps({
+            key: value
+            for key, value in self.__dict__.items() if value is not None
+        })
+
+    def print(self):
+        """
+        print all config
+
+        """
+        llm_logger.info("Speculative Decoding Configuration Information :")
+        for k, v in self.__dict__.items():
+            llm_logger.info("{:<20}:{:<6}{}".format(k, "", v))
+        llm_logger.info(
+            "=============================================================")
+
+
 class Config:
     """
     Initial configuration class.

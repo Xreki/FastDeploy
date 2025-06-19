@@ -19,7 +19,7 @@ from dataclasses import fields as dataclass_fields
 from typing import Any, Dict, List, Optional
 
 from fastdeploy.engine.config import (CacheConfig, Config, ModelConfig,
-                                      TaskOption)
+                                      SpeculativeConfig, TaskOption)
 from fastdeploy.scheduler.config import SchedulerConfig
 from fastdeploy.utils import FlexibleArgumentParser
 
@@ -277,7 +277,8 @@ class EngineArgs:
                                  help="Flag to enable multi-modal model.")
         model_group.add_argument(
             "--speculative_config",
-            default=None,
+            type=json.loads,
+            default=EngineArgs.speculative_config,
             help="Configuration for speculative execution.")
 
         model_group.add_argument(
@@ -474,7 +475,6 @@ class EngineArgs:
             default=EngineArgs.scheduler_load_shards_num,
             help=("Number of shards for load balancing table. Default is "
                   f"{EngineArgs.scheduler_load_shards_num} (global)"))
-
         return parser
 
     @classmethod
@@ -515,6 +515,14 @@ class EngineArgs:
             enc_dec_block_num=self.static_decode_blocks,
         )
 
+    def create_speculative_config(self) -> SpeculativeConfig:
+        """
+        """
+        if self.speculative_config is not None:
+            return SpeculativeConfig(**self.speculative_config)
+        else:
+            return SpeculativeConfig()
+
     def create_scheduler_config(self) -> SchedulerConfig:
         """
         Create and retuan a SchedulerConfig object based on the current settings.
@@ -551,6 +559,9 @@ class EngineArgs:
             else:
                 self.max_num_batched_tokens = self.max_model_len
         scheduler_cfg = self.create_scheduler_config()
+
+        speculative_cfg = self.create_speculative_config()
+
         return Config(
             model_name_or_path=self.model,
             model_config=model_cfg,
@@ -561,7 +572,7 @@ class EngineArgs:
             tensor_parallel_size=self.tensor_parallel_size,
             expert_parallel_size=self.expert_parallel_size,
             max_num_seqs=self.max_num_seqs,
-            speculative_config=self.speculative_config,
+            speculative_config=speculative_cfg,
             max_num_batched_tokens=self.max_num_batched_tokens,
             nnode=self.nnode,
             pod_ips=self.pod_ips,

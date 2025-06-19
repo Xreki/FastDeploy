@@ -69,3 +69,49 @@ def apply_penalty_multi_scores(
         raise NotImplementedError()
 
     return logits
+
+
+def apply_speculative_penalty_multi_scores(
+    prompt_token_ids: paddle.Tensor,
+    logits: paddle.Tensor,
+    repetition_penalties: paddle.Tensor,
+    frequency_penalties: paddle.Tensor,
+    presence_penalties: paddle.Tensor,
+    temperature: paddle.Tensor,
+    bad_words_token_ids: paddle.Tensor,
+    step_idx: paddle.Tensor,
+    min_dec_lens: paddle.Tensor,
+    eos_token_ids: paddle.Tensor,
+    seq_lens_this_time: paddle.Tensor,
+    output_cum_offset: paddle.Tensor,
+    output_padding_offset: paddle.Tensor,
+    max_len: int,
+):
+    """
+    Args:
+    Returns:
+    """
+    if current_platform.is_cuda():
+        from fastdeploy.model_executor.ops.gpu import \
+            speculate_get_token_penalty_multi_scores
+
+        logits = speculate_get_token_penalty_multi_scores(
+            prompt_token_ids,
+            logits,
+            repetition_penalties,
+            frequency_penalties,
+            presence_penalties,
+            temperature,
+            bad_words_token_ids,
+            step_idx,
+            min_dec_lens,
+            eos_token_ids,
+            seq_lens_this_time,
+            output_padding_offset,
+            output_cum_offset,
+            max_len,
+        )
+    else:
+        raise NotImplementedError()
+
+    return logits

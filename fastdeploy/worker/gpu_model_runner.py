@@ -29,8 +29,10 @@ from fastdeploy.model_executor.layers.attention.base_attention_backend import \
     AttentionBackend
 from fastdeploy.model_executor.layers.rotary_embedding import get_rope
 from fastdeploy.model_executor.layers.sample.meta_data import SamplingMetadata
-from fastdeploy.model_executor.layers.sample.sampler import Sampler
+from fastdeploy.model_executor.layers.sample.sampler import (
+    Sampler, SpeculativeSampler)
 from fastdeploy.model_executor.model_loader import get_model_from_loader
+from fastdeploy.model_executor.models.speculate_proposers import NgramProposer
 from fastdeploy.model_executor.ops.gpu import (rebuild_padding,
                                                share_external_data)
 from fastdeploy.model_executor.pre_and_post_process import (post_process,
@@ -58,9 +60,17 @@ class GPUModelRunner(ModelRunnerBase):
         self.rank = rank
         self.local_rank = local_rank
         self.device_id = device_id
+        self.speculative_method = self.fd_config.speculative_config.method
+        self.speculative_decoding = self.speculative_method is not None
 
         #  Sampler
-        self.sampler = Sampler()
+        if not self.speculative_decoding:
+            self.sampler = Sampler()
+            self.proposer = None
+        else:
+            self.sampler = SpeculativeSampler(fd_config)
+            if self.speculative_method == "ngram":
+                self.proposer = NgramProposer(fd_config)
 
         # Lazy initialize kv cache after model loading
         # self.kv_caches: list[paddle.Tensor] = []
@@ -220,10 +230,12 @@ class GPUModelRunner(ModelRunnerBase):
 
     def _dummy_prefill_inputs(self, num_tokens: int, batch_size: int):
         """ Set dummy prefill inputs to share_inputs """
-        full_length = min(num_tokens // batch_size, self.parallel_config.max_model_len - 10)
+        full_length = min(num_tokens // batch_size,
+                          self.parallel_config.max_model_len - 10)
         input_length = int(full_length * self.parallel_config.kv_cache_ratio)
-        block_num = (input_length + self.parallel_config.block_size - 1 
-                     ) // self.parallel_config.block_size + self.parallel_config.enc_dec_block_num
+        block_num = (
+            input_length + self.parallel_config.block_size - 1
+        ) // self.parallel_config.block_size + self.parallel_config.enc_dec_block_num
 
         for i in range(batch_size):
             idx = i
@@ -426,6 +438,34 @@ class GPUModelRunner(ModelRunnerBase):
         ],
                                                      -1,
                                                      dtype="int32")
+        if self.speculative_decoding:
+            max_draft_token_num = self.speculative_config.num_speculative_tokens
+            self.share_inputs["input_ids_cpu"] = paddle.full(
+                shape=[max_num_seqs, self.parallel_config.max_model_len],
+                fill_value=1,
+                dtype='int64').cpu()
+            self.share_inputs['accept_tokens'] = paddle.full(
+                shape=[max_num_seqs, max_draft_token_num + 1],
+                fill_value=0,
+                dtype="int64")
+            self.share_inputs['accept_num'] = paddle.full(shape=[max_num_seqs],
+                                                          fill_value=0,
+                                                          dtype='int32')
+            self.share_inputs['draft_tokens'] = paddle.full(
+                shape=[max_num_seqs, max_draft_token_num + 1],
+                fill_value=0,
+                dtype="int64")
+
+            self.share_inputs['actual_draft_token_num'] = paddle.full(
+                shape=[max_num_seqs],
+                fill_value=max_draft_token_num,
+                dtype="int32")
+            self.share_inputs["output_cum_offsets"] = paddle.full(
+                shape=[max_num_seqs, 1], fill_value=0, dtype='int32')
+            self.share_inputs["output_padding_offset"] = paddle.full(
+                shape=[max_num_seqs * (max_draft_token_num + 1)],
+                fill_value=0,
+                dtype="int32")
 
     def _prepare_inputs(self) -> None:
         """ prepare the model inputs """
@@ -436,11 +476,14 @@ class GPUModelRunner(ModelRunnerBase):
             padding_offset,
             cu_seqlens_q,
             cu_seqlens_k,
-        ) = pre_process(self.parallel_config.max_model_len,
-                        self.share_inputs["input_ids"],
-                        self.share_inputs["seq_lens_this_time"],
-                        use_speculate_method=False)
-
+            output_cum_offsets,
+            output_padding_offset,
+        ) = pre_process(
+            self.parallel_config.max_model_len, self.share_inputs["input_ids"],
+            self.share_inputs["seq_lens_this_time"], self.speculative_decoding,
+            self.share_inputs["draft_tokens"] if self.speculative_decoding else
+            None, self.share_inputs["seq_lens_encoder"],
+            self.share_inputs["seq_lens_decoder"])
         # Initialize forward meta data
         self.share_inputs["ids_remove_padding"].copy_(ids_remove_padding,
                                                       False)
@@ -448,6 +491,12 @@ class GPUModelRunner(ModelRunnerBase):
         self.share_inputs["padding_offset"].copy_(padding_offset, False)
         self.share_inputs["cu_seqlens_q"].copy_(cu_seqlens_q, False)
         self.share_inputs["cu_seqlens_k"].copy_(cu_seqlens_k, False)
+        # for speculative decoding
+        if self.speculative_decoding:
+            self.share_inputs["output_cum_offsets"].copy_(
+                output_cum_offsets, False)
+            self.share_inputs["output_padding_offset"].copy_(
+                output_padding_offset, False)
         self.initialize_forward_meta()
 
         # Get sampling metadata
@@ -597,29 +646,46 @@ class GPUModelRunner(ModelRunnerBase):
             # 2. Initialize attention backend and forward meta data
 
             # 3. Prepare lora
-
             # 4. Run model
             self.forward_meta.step_use_cudagraph = False
             model_output = self.model(
                 ids_remove_padding=self.share_inputs["ids_remove_padding"],
                 forward_meta=self.forward_meta)
+
             hiddden_states = rebuild_padding(
                 model_output,
                 self.share_inputs["cum_offsets"],
                 self.share_inputs["seq_lens_this_time"],
                 self.share_inputs["seq_lens_decoder"],
                 self.share_inputs["seq_lens_encoder"],
+                self.share_inputs["output_padding_offset"]
+                if self.speculative_decoding else
                 None,  # speculative decoding requires
                 self.parallel_config.max_model_len,
             )
 
             # 5. Execute spec decode
             logits = self.model.compute_logits(hiddden_states)
-            sampled_token_ids = self.sampler(logits, self.sampling_metadata)
+            if not self.speculative_decoding:
+                sampled_token_ids = self.sampler(logits,
+                                                 self.sampling_metadata)
+                if self.parallel_config.tensor_parallel_degree > 1:
+                    paddle.distributed.broadcast(sampled_token_ids, 0)
 
-            if self.parallel_config.tensor_parallel_degree > 1:
-                paddle.distributed.broadcast(sampled_token_ids, 0)
-            # self._dummy_sampler_run()
+            else:
+                self.sampler(logits, self.sampling_metadata,
+                             self.parallel_config.max_model_len,
+                             self.share_inputs)
+                sampled_token_ids = None
+                if self.parallel_config.tensor_parallel_degree > 1:
+                    paddle.distributed.broadcast(
+                        self.share_inputs["accept_tokens"], 0)
+                    paddle.distributed.broadcast(
+                        self.share_inputs["accept_num"], 0)
+                    paddle.distributed.broadcast(self.share_inputs["step_idx"],
+                                                 0)
+                    paddle.distributed.broadcast(
+                        self.share_inputs["stop_flags"], 0)
 
             # 6. post process
             model_output_data = ModelOutputData(
@@ -636,21 +702,34 @@ class GPUModelRunner(ModelRunnerBase):
                 seq_lens_encoder=self.share_inputs["seq_lens_encoder"],
                 seq_lens_decoder=self.share_inputs["seq_lens_decoder"],
                 is_block_step=self.share_inputs["is_block_step"],
+                full_hidden_states=model_output,
                 output_via_mq=self.model_config.output_via_mq,
                 msg_queue_id=self.parallel_config.msg_queue_id,
                 mp_rank=self.local_rank,
-                use_ep=self.parallel_config.use_ep)
+                use_ep=self.parallel_config.use_ep,
+                draft_tokens=self.share_inputs["draft_tokens"]
+                if self.speculative_decoding else None,
+                actual_draft_token_num=self.
+                share_inputs["actual_draft_token_num"]
+                if self.speculative_decoding else None,
+                accept_tokens=self.share_inputs["accept_tokens"]
+                if self.speculative_decoding else None,
+                accept_num=self.share_inputs["accept_num"]
+                if self.speculative_decoding else None)
 
-            post_process(
-                sampled_token_ids=sampled_token_ids,
-                model_output=model_output_data,
-            )
+            post_process(sampled_token_ids=sampled_token_ids,
+                         model_output=model_output_data,
+                         speculative_decoding=self.speculative_decoding)
+
+            if self.speculative_decoding:
+                self.proposer.run(self.share_inputs)
 
             # 7. Updata 'infer_seed' and step_cuda()
             self.share_inputs["infer_seed"].add_(self.infer_seed_increment)
             self.share_inputs["infer_seed"][:] %= self.MAX_INFER_SEED
             step_cuda(self.share_inputs, self.parallel_config.block_size,
-                      self.parallel_config.enc_dec_block_num)
+                      self.parallel_config.enc_dec_block_num,
+                      self.speculative_config)
 
             if int((self.share_inputs['seq_lens_this_time'] > 0).sum()) == 0:
                 break
@@ -755,27 +834,39 @@ class GPUModelRunner(ModelRunnerBase):
         model_output = self.model(
             ids_remove_padding=self.share_inputs["ids_remove_padding"],
             forward_meta=self.forward_meta)
+
         hiddden_states = rebuild_padding(
             model_output,
             self.share_inputs["cum_offsets"],
             self.share_inputs["seq_lens_this_time"],
             self.share_inputs["seq_lens_decoder"],
             self.share_inputs["seq_lens_encoder"],
-            None,  # speculative decoding requires
+            self.share_inputs["output_padding_offset"]
+            if self.speculative_decoding else None,
             self.parallel_config.max_model_len,
         )
 
         # 4. Compute logits, Sample
         logits = self.model.compute_logits(hiddden_states)
+        if not self.speculative_decoding:
+            sampled_token_ids = self.sampler(logits, self.sampling_metadata)
+            if self.parallel_config.tensor_parallel_degree > 1:
+                paddle.distributed.broadcast(sampled_token_ids, 0)
 
-        sampled_token_ids = self.sampler(logits, self.sampling_metadata)
+        else:
+            self.sampler(logits, self.sampling_metadata,
+                         self.parallel_config.max_model_len, self.share_inputs)
+            sampled_token_ids = None
+            if self.parallel_config.tensor_parallel_degree > 1:
+                paddle.distributed.broadcast(
+                    self.share_inputs["accept_tokens"], 0)
+                paddle.distributed.broadcast(self.share_inputs["accept_num"],
+                                             0)
+                paddle.distributed.broadcast(self.share_inputs["step_idx"], 0)
+                paddle.distributed.broadcast(self.share_inputs["stop_flags"],
+                                             0)
 
-        if self.parallel_config.tensor_parallel_degree > 1:
-            paddle.distributed.broadcast(sampled_token_ids, 0)
-
-        # 5. Speculative decode
-
-        # 6. Post Process
+        # 5. Post Process
         model_output_data = ModelOutputData(
             next_tokens=self.share_inputs["next_tokens"],
             stop_flags=self.share_inputs["stop_flags"],
@@ -790,17 +881,37 @@ class GPUModelRunner(ModelRunnerBase):
             seq_lens_encoder=self.share_inputs["seq_lens_encoder"],
             seq_lens_decoder=self.share_inputs["seq_lens_decoder"],
             is_block_step=self.share_inputs["is_block_step"],
+            full_hidden_states=model_output,
             output_via_mq=self.model_config.output_via_mq,
             msg_queue_id=self.parallel_config.msg_queue_id,
             mp_rank=self.local_rank,
-            use_ep=self.parallel_config.use_ep)
+            use_ep=self.parallel_config.use_ep,
+            draft_tokens=self.share_inputs["draft_tokens"]
+            if self.speculative_decoding else None,
+            actual_draft_token_num=self.share_inputs["actual_draft_token_num"]
+            if self.speculative_decoding else None,
+            accept_tokens=self.share_inputs["accept_tokens"]
+            if self.speculative_decoding else None,
+            accept_num=self.share_inputs["accept_num"]
+            if self.speculative_decoding else None)
+
         post_process(sampled_token_ids=sampled_token_ids,
-                     model_output=model_output_data)
+                     model_output=model_output_data,
+                     speculative_decoding=self.speculative_decoding)
+
+        # 6. Speculative decode
+        if self.speculative_decoding:
+            self.proposer.run(self.share_inputs)
+
         # 7. Updata 'infer_seed' and step_cuda()
         self.share_inputs["infer_seed"].add_(self.infer_seed_increment)
         self.share_inputs["infer_seed"][:] %= self.MAX_INFER_SEED
-        step_cuda(self.share_inputs, self.parallel_config.block_size,
-                  self.parallel_config.enc_dec_block_num)
+        step_cuda(
+            self.share_inputs,
+            self.parallel_config.block_size,
+            self.parallel_config.enc_dec_block_num,
+            self.speculative_config,
+        )
 
         self._update_chunked_prefill(model_forward_batch)
         return None

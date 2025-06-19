@@ -60,8 +60,8 @@ class InferenceArgs:
         gqa_use_tensorcore=False,
         use_dynamic_cachekv_quant=False,
         max_position_embeddings=512,
-        speculate_method=None,
-        speculate_max_draft_token_num=1,
+        speculative_method=None,
+        speculative_max_draft_token_num=1,
         use_moe=False,
         moe_num_experts=None,
         moe_intermediate_size=None,
@@ -308,8 +308,8 @@ class InferenceArgs:
         self.quant_min_bound = quant_min_bound
         self.use_dynamic_cachekv_quant = use_dynamic_cachekv_quant
 
-        self.speculate_method = speculate_method
-        self.speculate_max_draft_token_num = speculate_max_draft_token_num
+        self.speculative_method = speculative_method
+        self.speculative_max_draft_token_num = speculative_max_draft_token_num
 
         # set_scales
         if (self.act_dtype == "float8_e4m3fn"
