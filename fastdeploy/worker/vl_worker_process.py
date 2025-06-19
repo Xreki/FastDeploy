@@ -110,7 +110,6 @@ class Worker:
 
         from fastdeploy.worker.vl_gpu_model_runner import GPUVLModelRunner
 
-
         self.init_dist_env()
         self.format_print_configuration()
         self.helper_tensors = {}
@@ -213,18 +212,8 @@ class Worker:
         """
         step cuda
         """
-        from fastdeploy.model_executor.models import \
-            inference_runner_supported_models
-
-        if any(
-                self.model_cfg.architectures.startswith(model)
-                for model in inference_runner_supported_models):
-            from fastdeploy.model_executor.ops.gpu import (step_paddle,
-                                                           step_system_cache)
-        elif self.model_cfg.architectures.startswith("ErnieMoEVLForCausalLM"):
-            from fastdeploy.model_executor.ops.gpu import step_paddle
-        else:
-            from paddlenlp_ops import step_paddle
+        from fastdeploy.model_executor.ops.gpu import (step_reschedule,
+                                                       step_system_cache)
 
         if self.args.enable_prefix_caching:
             step_system_cache(
@@ -254,7 +243,7 @@ class Worker:
                 self.args.block_size, self.args.enc_dec_block_num)
 
         else:
-            step_paddle(
+            step_reschedule(
                 self.infer_engine.share_inputs["stop_flags"],
                 self.infer_engine.share_inputs["seq_lens_this_time"],
                 self.infer_engine.share_inputs["step_seq_lens_encoder"],

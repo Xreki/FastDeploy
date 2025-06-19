@@ -22,7 +22,8 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
-from paddleformers.utils.env import MAX_BSZ, MAX_DRAFT_TOKENS, SPECULATE_MAX_BSZ
+from paddleformers.utils.env import (MAX_BSZ, MAX_DRAFT_TOKENS,
+                                     SPECULATE_MAX_BSZ)
 
 from fastdeploy.engine.request import (CompletionOutput, RequestMetrics,
                                        RequestOutput)
@@ -31,6 +32,7 @@ from fastdeploy.metrics.metrics import main_process_metrics
 from fastdeploy.platforms import current_platform
 from fastdeploy.utils import llm_logger
 
+RECOVERY_STOP_SIGNAL = -3
 
 class TokenProcessor(object):
     """
@@ -226,6 +228,7 @@ class TokenProcessor(object):
             if self.resource_manager.stop_flags[i]:
                 continue
 
+            recovery_stop = False
             if self.cfg.speculative_config.method:
                 token_ids = tokens[2 + SPECULATE_MAX_BSZ +
                                    i * MAX_DRAFT_TOKENS:2 + SPECULATE_MAX_BSZ +
@@ -235,11 +238,12 @@ class TokenProcessor(object):
                 if len(token_ids) == 0 or token_ids[-1] <= 0:
                     continue
             else:
-                token_ids = [int(tokens[i, 0])]
-
-                if any(token_id < 0 for token_id in token_ids):
+                token_id = int(tokens[i, 0])
+                token_ids = [token_id]
+                recovery_stop = token_id == RECOVERY_STOP_SIGNAL
+                if not recovery_stop and token_id < 0:
                     continue
-
+           
             task = self.resource_manager.tasks_list[i]
 
             if task.get("prefill_chunk_info", None) is not None:
@@ -288,11 +292,14 @@ class TokenProcessor(object):
 
             for token_id in token_ids:
                 self.tokens_counter[task_id] += 1
-                result.outputs.token_ids.append(token_id)
-                if token_id in task.eos_token_ids or is_prefill:
+                if token_id != RECOVERY_STOP_SIGNAL:
+                    result.outputs.token_ids.append(token_id)
+                if token_id in task.eos_token_ids or is_prefill or recovery_stop:
                     result.finished = True
                     result.prompt = task.prompt
                     result.prompt_token_ids = task.prompt_token_ids
+                    if recovery_stop:
+                        result.error_msg = "Recover is not supported, the result is incomplete!"
                     llm_logger.info(
                         f"Request: {task_id} finished, number of "
                         f"generated tokens: {self.tokens_counter[task_id]}.")
