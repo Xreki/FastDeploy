@@ -288,13 +288,7 @@ paddle::Tensor MoeExpertFFNFunc(
     const paddle::optional<paddle::Tensor>& ffn2_in_scale,
     const paddle::optional<paddle::Tensor>& expert_idx_per_token,
     const std::string& quant_method, const bool used_in_ep_low_latency) {
-
-    cudaError_t e = cudaDeviceSynchronize();                                  
-    if (e != cudaSuccess) {                                               
-        std::cerr << "CUDA Error " << __FILE__ << ":" << __LINE__ << ": " 
-                    << cudaGetErrorString(e) << std::endl;                  
-        exit(EXIT_FAILURE);                                               
-    }                                       
+                          
     cudaCheckError();
     const auto t_type = quant_method == "w4a8" ? ffn1_scale.get().dtype() : permute_input.dtype();
     auto ffn_out = paddle::empty_like(permute_input, t_type);
