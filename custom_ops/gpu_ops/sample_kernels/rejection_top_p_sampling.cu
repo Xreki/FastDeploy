@@ -40,7 +40,7 @@ std::vector<paddle::Tensor> TopPSamplingReject(const paddle::Tensor &probs,
 
   cudaError_t status;
 
-  status = sampling::TopPSamplingFromProb<float, int64_t>(
+  status = sampling::TopKTopPSamplingFromProb<float, int64_t>(
       const_cast<float *>(probs.data<float>()), samples.data<int64_t>(), 
       batch_size, top_p.data<float>(), vocab_size,
       true, philox_seed, philox_offset, cu_stream);
