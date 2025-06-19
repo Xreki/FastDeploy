@@ -185,6 +185,13 @@ class CutlassMoEMethod(QuantMethodBase):
                 token_all_num,
                 self.moe_quant_type,
             )
+            if self.moe_quant_type != "w4a8":
+                # only w4a8 need expert_idx_per_token
+                # Other need not this tensor, so we make it None.
+                expert_idx_per_token = None
+            else:
+                expert_idx_per_token = expert_idx_per_token.cast("int64")
+
             ffn_out = self.compute_ffn(layer, permute_input,
                                        recv_num_tokens_per_expert_list_cumsum,
                                        expert_idx_per_token)
