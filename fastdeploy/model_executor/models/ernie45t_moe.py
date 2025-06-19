@@ -338,7 +338,9 @@ class Ernie45TMoE(nn.Layer):
                 "ffn2_expert_in_scale_key":
                 f"{prefix}.experts.{{}}.down_proj.activation_quanter",
             }
-        elif fd_config.quant_config.moe_quant_type == "w4w2":
+        elif hasattr(
+            fd_config.quant_config, 'moe_quant_type'
+            ) and fd_config.quant_config.moe_quant_type == "w4w2":
             weight_key_map = {
                 "gate_weight_key":
                 f"{prefix}.gate.weight",
