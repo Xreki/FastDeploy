@@ -77,6 +77,8 @@ class TokenProcessor(object):
                                              suffix=os.getpid(),
                                              create=True)
         self.executor = ThreadPoolExecutor(max_workers=1)
+        # self.prefill_result_recycle = ThreadPoolExecutor(max_workers=1)
+        self.prefill_result_status = dict()
         self._finalizer = weakref.finalize(self, self._cleanup_resources)
 
     def _cleanup_resources(self):
@@ -86,6 +88,9 @@ class TokenProcessor(object):
 
         if hasattr(self, 'executor'):
             self.executor.shutdown(wait=False)
+
+        if hasattr(self, 'prefill_result_recycle'):
+            self.prefill_result_recycle.shutdown(wait=False)
 
     def set_resource_manager(self, resource_manager):
         """
@@ -125,11 +130,11 @@ class TokenProcessor(object):
                 from fastdeploy.model_executor.ops.xpu import get_output
             else:
                 from fastdeploy.model_executor.ops.gpu import (
-                    get_output, speculate_get_output)
+                    get_output, speculate_get_output, get_output_ep)
+        rank_id = self.cfg.parallel_config.local_data_parallel_id
 
         while True:
             try:
-                rank_id = 0
                 is_blocking = True
                 if self.speculative_decoding:
                     speculate_get_output(self.output_tokens, rank_id,
@@ -138,9 +143,18 @@ class TokenProcessor(object):
                         continue
 
                 else:
-                    get_output(self.output_tokens, rank_id, is_blocking)
-                    if self.output_tokens[0, 0] == -2:
-                        continue
+                    if self.cfg.parallel_config.enable_expert_parallel and \
+                        self.cfg.parallel_config.data_parallel_size > 1:
+                        get_output_ep(self.output_tokens, rank_id, is_blocking)
+
+                    else:
+                        get_output(self.output_tokens, rank_id, is_blocking)
+
+                if self.output_tokens[0, 0] == -2:
+                    continue
+                llm_logger.debug(
+                    f"rank_id {rank_id} self.output_tokens[0, 0] {self.output_tokens[0, 0]}"
+                )
                 self._process_prefill_metrics()
                 self._process_batch_output()
             except Exception as e:
@@ -178,36 +192,46 @@ class TokenProcessor(object):
         except Exception as e:
             llm_logger.error(f"Error in TokenProcessor's postprocess: {e}")
 
-    def _recycle_resources(self, task_id, index, task, is_prefill=False):
+    def _recycle_resources(self,
+                           task_id,
+                           index,
+                           task,
+                           result=None,
+                           is_prefill=False):
         """
         recycle resources
         """
-        if is_prefill and not self.resource_manager.cache_transfer_finished[
-                task_id]:
-            wait_for_all_finish = time.time()
-            while 1:
+        if is_prefill:
+            while self.resource_manager.cache_transfer_finished[
+                    task_id] != self.cfg.tensor_parallel_size:
                 finished_task_ids = self.engine_worker_queue.get_finished_req()
                 if len(finished_task_ids) > 0:
                     for finished_task_id in finished_task_ids:
                         llm_logger.info(
                             f"finished_task_id: {finished_task_id}")
                         self.resource_manager.cache_transfer_finished[
-                            finished_task_id] = True
-                    if self.resource_manager.cache_transfer_finished[task_id]:
-                        break
+                            finished_task_id[0]] += 1
+                        self.prefill_result_status[
+                            finished_task_id[0]] = finished_task_id[1]
                 else:
-                    time.sleep(0.001)
-            llm_logger.info(
-                f"recycle_resources cost time: {time.time() - wait_for_all_finish}"
-            )
+                    time.sleep(0.002)
+            if self.resource_manager.cache_transfer_finished[
+                    task_id] == self.cfg.tensor_parallel_size:
+                if self.prefill_result_status[task_id] != "finished":
+                    result.error_code = 400
+                    result.error_message = f"{task_id} failed to {self.prefill_result_status[task_id]}"
+                self.split_connector.send_first_token(task.disaggregate_info,
+                                                      [result])
 
-        if task_id in self.resource_manager.cache_transfer_finished and self.resource_manager.cache_transfer_finished[
-                task_id]:
-            del self.resource_manager.cache_transfer_finished[task_id]
-
-        self.resource_manager.stop_flags[index] = True
-        self.resource_manager.tasks_list[index] = None
-        self.resource_manager._recycle_block_tables(task)
+                del self.resource_manager.cache_transfer_finished[task_id]
+                self.resource_manager.stop_flags[index] = True
+                self.resource_manager.tasks_list[index] = None
+                self.resource_manager._recycle_block_tables(task)
+                del self.resource_manager.req_dict[task_id]
+        else:
+            self.resource_manager.stop_flags[index] = True
+            self.resource_manager.tasks_list[index] = None
+            self.resource_manager._recycle_block_tables(task)
         if task_id in self.tokens_counter:
             del self.tokens_counter[task_id]
 
@@ -225,8 +249,6 @@ class TokenProcessor(object):
             tokens = tokens[2:batch + 2]
 
         batch_result = list()
-        prefill_batch_result = list()
-        prefill_port = -1
         for i in range(batch):
             if self.resource_manager.stop_flags[i]:
                 continue
@@ -249,14 +271,17 @@ class TokenProcessor(object):
            
             task = self.resource_manager.tasks_list[i]
 
+            task_id = task.request_id
+
+            if any(token_id < 0 for token_id in token_ids):
+                continue
+
             if task.get("prefill_chunk_info", None) is not None:
                 prefill_chunk_num = task.get("prefill_chunk_num", 0)
                 task.prefill_chunk_num = prefill_chunk_num + 1
 
                 if task.prefill_chunk_num < len(task.prefill_chunk_info):
                     continue
-
-            task_id = task.request_id
 
             self.total_step += 1
             current_time = time.time()
@@ -280,8 +305,10 @@ class TokenProcessor(object):
             self.number_of_output_tokens += len(token_ids)
             self._record_metrics(task, current_time, token_ids)
             result = RequestOutput(request_id=task_id,
-                                   outputs=CompletionOutput(index=i,
-                                                            token_ids=[]),
+                                   outputs=CompletionOutput(
+                                       index=i,
+                                       send_idx=self.tokens_counter[task_id],
+                                       token_ids=[]),
                                    finished=False,
                                    metrics=metrics)
             if self.tokens_counter[task_id] == 0:
@@ -316,16 +343,11 @@ class TokenProcessor(object):
                     )
                     if not is_prefill:
                         self._record_completion_metrics(task, current_time)
-                    self._recycle_resources(task_id, i, task, is_prefill)
-                    if is_prefill:
-                        prefill_batch_result.append(result)
-                        prefill_port = task.disaggregate_info['port']
+                    self._recycle_resources(task_id, i, task, result,
+                                            is_prefill)
                     break
-            if not is_prefill:
-                batch_result.append(result)
-        if len(prefill_batch_result) > 0:
-            self.split_connector.send_first_token(prefill_port,
-                                                  prefill_batch_result)
+            batch_result.append(result)
+
         self.postprocess(batch_result)
 
     def _record_metrics(self, task, current_time, token_ids):

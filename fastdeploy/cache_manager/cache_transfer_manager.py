@@ -16,16 +16,16 @@
 
 import argparse
 import concurrent.futures
+import os
 import queue
 import time
 
 import numpy as np
 import paddle
 
-from fastdeploy.cache_manager.data import CacheStatus
+from fastdeploy.model_executor.ops.gpu import set_data_ipc, cuda_host_alloc, swap_cache_all_layers
+from fastdeploy.cache_manager.cache_data import CacheStatus
 from fastdeploy.inter_communicator import EngineCacheQueue, IPCSignal
-from fastdeploy.model_executor.ops.gpu import (cuda_host_alloc, set_data_ipc,
-                                               swap_cache_all_layers)
 from fastdeploy.utils import get_logger
 
 
@@ -34,6 +34,10 @@ def parse_args():
     从命令行解析参数
     """
     parser = argparse.ArgumentParser("Cache transfer manager")
+    parser.add_argument("--splitwise_role",
+                        type=str,
+                        default="mixed",
+                        help="splitwise role, can be decode, prefill or mixed")
     parser.add_argument("--rank", type=int, default=0, help="current rank")
     parser.add_argument("--device_id", type=int, default=0, help="device id")
     parser.add_argument("--num_layers",
@@ -48,6 +52,7 @@ def parse_args():
                         type=int,
                         default=1,
                         help="model kv num head")
+    parser.add_argument("--rdma_port", type=str, default="", help="rmda port")
     parser.add_argument("--mp_num",
                         type=int,
                         default=1,
@@ -69,7 +74,7 @@ def parse_args():
                         default=9923,
                         help="engine worker queue port")
     parser.add_argument("--engine_pid",
-                        type=int,
+                        type=str,
                         default=None,
                         help="engine pid")
 
@@ -94,6 +99,8 @@ def parse_args():
                         default="bfloat16",
                         choices=["uint8", "bfloat16"],
                         help="cache dtype")
+
+    parser.add_argument("--local_data_parallel_id", type=int, default=0)
 
     args = parser.parse_args()
     return args
@@ -128,10 +135,12 @@ class CacheTransferManager:
         self.device = device
 
         address = ('0.0.0.0', args.cache_queue_port)
-        self.cache_task_queue = EngineCacheQueue(address=address,
-                                                 is_server=False,
-                                                 num_client=args.mp_num,
-                                                 client_id=rank)
+        self.cache_task_queue = EngineCacheQueue(
+            address=address,
+            is_server=False,
+            num_client=args.mp_num,
+            client_id=rank,
+            local_data_parallel_id=args.local_data_parallel_id)
 
         self.num_cpu_blocks = args.num_cpu_blocks
 
@@ -210,22 +219,21 @@ class CacheTransferManager:
         paddle.set_device(f"gpu:{device}")
         if args.enable_splitwise:
             logger.debug("create cache messager...")
-
-            commu_protocol = args.protocol.split(",")
-            assert len(commu_protocol) == 1
-            assert commu_protocol[0] in [
-                "ipc"
-            ], f"not support protocol: {args.protocol}"
             logger.info(f"{args}")
-            from fastdeploy.cache_manager.transfer_factory.ipc_cache_transfer import \
-                IPCCacheTransfer
-            self.cache_messager = IPCCacheTransfer(
+            from fastdeploy.cache_manager.cache_messager import CacheMessager
+
+            self.cache_messager = CacheMessager(
+                splitwise_role=args.splitwise_role,
+                transfer_protocol=args.protocol,
                 engine_worker_queue_port=args.engine_worker_queue_port,
+                local_data_parallel_id=args.local_data_parallel_id,
                 gpu_cache_kvs=self.gpu_cache_kvs,
                 rank=self.rank,
                 nranks=args.mp_num,
                 num_layers=args.num_layers,
-                gpu_id=self.device)
+                gpu_id=self.device,
+                rdma_port=args.rdma_port,
+            )
             logger.info("successfully create cache messager")
         logger.info(
             f"done init CacheMessager gmem alloc : {paddle.device.cuda.memory_allocated()}"

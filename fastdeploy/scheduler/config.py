@@ -18,6 +18,8 @@ import redis
 from fastdeploy.utils import llm_logger
 from .global_scheduler import GlobalScheduler
 from .local_scheduler import LocalScheduler
+from .splitwise_scheduler import SplitWiseScheduler, SplitWiseSchedulerConfig
+
 
 
 class LocalSchedulerConfig:
@@ -222,6 +224,9 @@ class SchedulerConfig:
 
         if name == "global":
             self.config = GlobalSchedulerConfig(**kwargs)
+        
+        if name == "splitwise":
+            self.config = SplitWiseSchedulerConfig(**kwargs)
 
     def check(self):
         """
@@ -230,7 +235,7 @@ class SchedulerConfig:
         Raises:
             Exception: If invalid scheduler type is specified
         """
-        if self.name not in ["local", "global"]:
+        if self.name not in ["local", "global", "splitwise"]:
             raise Exception(f'Unknown scheduler type {self.name}')
 
         self.config.check()
@@ -262,6 +267,9 @@ class SchedulerConfig:
                                    max_num_partial_prefills=self.config.max_num_partial_prefills,
                                    max_long_partial_prefills=self.config.max_long_partial_prefills,
                                    long_prefill_token_threshold=self.config.long_prefill_token_threshold,)
+        
+        if self.name == "splitwise":
+            return SplitWiseScheduler(self.config)
 
         return LocalScheduler(max_size=self.config.max_size,
                               ttl=self.config.ttl,

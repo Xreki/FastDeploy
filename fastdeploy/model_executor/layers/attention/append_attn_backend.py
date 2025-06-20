@@ -103,10 +103,13 @@ class AppendAttentionBackend(AttentionBackend):
             os.getenv("FLAGS_use_pd_disaggregation", 0))
         self.start_layer_index = fd_config.model_config.start_layer_index
         self.device_id = os.getenv("CUDA_VISIBLE_DEVICES", None)
+
+        device_id = self.rank + fd_config.parallel_config.tensor_parallel_degree * \
+            fd_config.parallel_config.expert_parallel_rank
         if self.device_id is None:
-            self.device_id = self.rank
+            self.device_id = device_id
         else:
-            self.device_id = self.device_id.split(",")[self.rank]
+            self.device_id = self.device_id.split(",")[device_id]
 
     def init_attention_metadata(self, forward_meta: ForwardMeta):
         """Initialize attntion metadata hence all layers in the forward pass can reuse it."""

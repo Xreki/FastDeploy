@@ -100,8 +100,9 @@ def pre_process(
 
 
 def post_process_normal(sampled_token_ids: paddle.Tensor,
-                        model_output: ModelOutputData):
-    """"""
+                 model_output: ModelOutputData,
+                 save_each_rank: bool = False) -> None:
+    """ Post-processing steps after completing a single token generation. """
     # 1. Set stop value
     paddle.assign(
         paddle.where(
@@ -142,7 +143,7 @@ def post_process_normal(sampled_token_ids: paddle.Tensor,
         sampled_token_ids,
         model_output.not_need_stop,
         model_output.mp_rank,
-        False,  # use_ep
+        save_each_rank,  # save_each_rank
     )
 
 
@@ -188,12 +189,13 @@ def post_process_specualate(model_output):
 
 def post_process(sampled_token_ids: paddle.Tensor,
                  model_output: ModelOutputData,
+                 save_each_rank: bool = False,
                  speculative_decoding: bool = False) -> None:
     """ Post-processing steps after completing a single token generation. """
     if speculative_decoding:
         post_process_specualate(model_output)
     else:
-        post_process_normal(sampled_token_ids, model_output)
+        post_process_normal(sampled_token_ids, model_output, save_each_rank)
 
 
 def step_cuda(

@@ -15,16 +15,15 @@
 """
 
 from __future__ import annotations
+
 import time
+from dataclasses import asdict, dataclass, fields
+from typing import Any, Optional, Union
+
 import numpy
-from dataclasses import dataclass, asdict, fields
-from typing import TYPE_CHECKING, Optional, Union, Any
-from fastdeploy.engine.sampling_params import SamplingParams
-from fastdeploy.utils import data_processor_logger
 
 from fastdeploy.engine.sampling_params import SamplingParams
 from fastdeploy.utils import data_processor_logger
-
 
 
 @dataclass
@@ -66,7 +65,6 @@ class Request:
         self.raw_request = raw_request
         self.disaggregate_info = disaggregate_info
 
-
         # Multi-modal related
         self.multimodal_inputs = multimodal_inputs
         self.multimodal_data = multimodal_data
@@ -90,6 +88,7 @@ class Request:
             preprocess_end_time=d.get("preprocess_end_time"),
             multimodal_inputs=d.get("multimodal_inputs"),
             multimodal_data=d.get("multimodal_data"),
+            disaggregate_info=d.get("disaggregate_info"),
             raw_request=d.get("raw_request", True)
         )
 
@@ -109,7 +108,8 @@ class Request:
             "preprocess_end_time": self.preprocess_end_time,
             "multimodal_inputs": self.multimodal_inputs,
             "multimodal_data": self.multimodal_data,
-            "raw_request": self.raw_request
+            "raw_request": self.raw_request,
+            "disaggregate_info": self.disaggregate_info
         }
         data.update(asdict(self.sampling_params))
         return data
@@ -146,20 +146,37 @@ class CompletionOutput:
     """
 
     index: int
+    send_idx: int
     token_ids: list[int]
     text: Optional[str] = None
     reasoning_content: Optional[str] = None
 
+    def to_dict(self):
+        """
+            convert CompletionOutput to a serialized dict
+        """
+        return {
+            "index": self.index,
+            "send_idx": self.send_idx,
+            "token_ids": self.token_ids,
+            "text": self.text,
+            "reasoning_content": self.reasoning_content
+        }
+
     @classmethod
     def from_dict(cls, req_dict: dict[str, Any]) -> 'CompletionOutput':
         """Create instance from dict arguments"""
-        return cls(**{
-            field.name: req_dict[field.name] if field.name in req_dict else field.default
-            for field in fields(cls)
-        })
+        return cls(
+            **{
+                field.name:
+                req_dict[field.name] if field.name in
+                req_dict else field.default
+                for field in fields(cls)
+            })
 
     def __repr__(self) -> str:
         return (f"CompletionOutput(index={self.index}, "
+                f"send_idx={self.send_idx}, "
                 f"text={self.text!r}, "
                 f"token_ids={self.token_ids}, "
                 f"reasoning_content={self.reasoning_content!r}")
@@ -191,13 +208,31 @@ class RequestMetrics:
     model_execute_time: Optional[float] = None
     request_start_time: Optional[float] = None
 
+    def to_dict(self):
+        """
+        Convert the RequestMetrics object to a dictionary.
+        """
+        return {
+            "arrival_time": self.arrival_time,
+            "inference_start_time": self.inference_start_time,
+            "first_token_time": self.first_token_time,
+            "time_in_queue": self.time_in_queue,
+            "preprocess_cost_time": self.preprocess_cost_time,
+            "model_forward_time": self.model_forward_time,
+            "model_execute_time": self.model_execute_time,
+            "request_start_time": self.request_start_time
+        }
+
     @classmethod
     def from_dict(cls, req_dict: dict[str, Any]) -> 'RequestMetrics':
         """Create instance from dict arguments"""
-        return cls(**{
-            field.name: req_dict[field.name] if field.name in req_dict else field.default
-            for field in fields(cls)
-        })
+        return cls(
+            **{
+                field.name:
+                req_dict[field.name] if field.name in
+                req_dict else field.default
+                for field in fields(cls)
+            })
 
 
 class RequestOutput:
@@ -287,9 +322,11 @@ class RequestOutput:
             "request_id": self.request_id,
             "prompt": self.prompt,
             "prompt_token_ids": self.prompt_token_ids,
-            "outputs": None if self.outputs is None else asdict(self.outputs),
+            "outputs":
+            None if self.outputs is None else self.outputs.to_dict(),
+            "metrics":
+            None if self.metrics is None else self.metrics.to_dict(),
             "finished": self.finished,
-            "metrics": None if self.metrics is None else asdict(self.metrics),
             "num_cached_tokens": self.num_cached_tokens,
             "error_code": self.error_code,
             "error_msg": self.error_msg,

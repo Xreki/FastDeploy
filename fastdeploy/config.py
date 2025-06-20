@@ -48,9 +48,12 @@ ERNIEBOT_PRETRAINED_INIT_CONFIGURATION = {
         "type_vocab_size": 4,
         "vocab_size": 100224,
         "use_rope": True,
+        "weight_sharing": True,
+        "weight_sharing_add_bias": False,
         "sequence_parallel": False,
         "use_flash_attention": False,
         "recompute": False,
+        "fused_linear": False,
     }
 }
 
@@ -103,10 +106,13 @@ class ModelConfig(PretrainedConfig):
         type_vocab_size: int = 4,
         use_rope=True,
         use_rmsnorm=True,
+        weight_sharing=True,
+        weight_sharing_add_bias=False,
         sequence_parallel=False,
         use_flash_attention=False,
         use_fast_ffn: bool = False,
         tensor_parallel_output: bool = True,
+        fused_linear=False,
         compression_ratio: float = 1.0,
         rope_theta: int = 10000,
         rope_3d: bool = False,
@@ -117,6 +123,7 @@ class ModelConfig(PretrainedConfig):
         system_prompt_version="V1",
         moe_layer_start_index: int | None = None,
         moe_layer_end_index: int | None = None,
+        moe_use_gate_correction_bias: bool | None = None,
         num_hidden_layers: int | None = None,
         prefix_name="",
         freeze_embedding=False,
@@ -143,10 +150,7 @@ class ModelConfig(PretrainedConfig):
             self.num_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
         self.num_key_value_heads = num_key_value_heads
-        if head_dim is None:
-            self.head_dim = self.hidden_size // self.num_attention_heads
-        else:
-            self.head_dim = head_dim
+        self.head_dim = head_dim
         self.hidden_act = hidden_act
         self.hidden_dropout_prob = hidden_dropout_prob
         self.max_position_embeddings = max_position_embeddings
@@ -154,11 +158,14 @@ class ModelConfig(PretrainedConfig):
         self.type_vocab_size = type_vocab_size
         self.use_rope = use_rope
         self.use_rmsnorm = use_rmsnorm
+        self.weight_sharing = weight_sharing
 
+        self.weight_sharing_add_bias = weight_sharing_add_bias
         self.use_flash_attention = use_flash_attention
         self.use_fast_ffn = use_fast_ffn
         self.tensor_parallel_output = tensor_parallel_output
         self.skip_recompute_ops = dict()
+        self.fused_linear = fused_linear
         self.compression_ratio = compression_ratio
         self.rope_theta = rope_theta
         self.ori_vocab_size = ori_vocab_size or vocab_size
@@ -178,6 +185,8 @@ class ModelConfig(PretrainedConfig):
             self.moe_num_experts = 0
         if moe_layer_end_index is not None:
             self.moe_layer_end_index = moe_layer_end_index
+        elif moe_use_gate_correction_bias is not None:
+            self.moe_use_gate_correction_bias = moe_use_gate_correction_bias
         self.ffn_hidden_size = ffn_hidden_size
         self.rope_3d = rope_3d
         self.export_model_type = export_model_type
@@ -273,6 +282,7 @@ class MoEConfig:
     num_experts_start_offset: int = -1
     activation = "swiglu"
 
+    moe_use_gate_correction_bias = False
     moe_every2 = (False, )
     moe_num_shared_experts = (0, )
     moe_layer_start_index = 0
@@ -636,6 +646,19 @@ class TmpConfig:
 
 
 @dataclass
+class DecodingConfig:
+    """
+    Configuration for decoding
+    """
+    max_dec_len = 20
+    min_dec_len = 0
+    decode_strategy = "sampling"
+    bos_token_id = None
+    pad_token_id = None
+    num_return_sequences: int = 1
+
+
+@dataclass
 class FDConfig:
     """
     The configuration class which contains all fastdeploy-related configuration. This
@@ -655,5 +678,7 @@ class FDConfig:
     graph_opt_config: Optional[GraphOptimizationConfig] = None
     tmp_config: TmpConfig = field(default=None, init=True)
     moe_config: MoEConfig = field(default=None, init=True)  # type: ignore
+    decoding_config: DecodingConfig = field(default=None,
+                                            init=True)  # type: ignore
     kv_cache_config: KVCacheConfig = field(default=None,
                                            init=True)  # type: ignore

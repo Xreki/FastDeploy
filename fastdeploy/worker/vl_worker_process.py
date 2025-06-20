@@ -14,6 +14,7 @@
 # limitations under the License.
 """
 import argparse
+import os
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -114,6 +115,9 @@ class Worker:
         self.format_print_configuration()
         self.helper_tensors = {}
 
+        local_rank = self.rank % self.args.tensor_parallel_size
+        self.local_data_parallel_id = self.rank // self.args.tensor_parallel_size
+
         self.infer_engine = GPUVLModelRunner(config=self.model_cfg,
                                              args=self.args,
                                              nranks=self.nranks,
@@ -122,10 +126,12 @@ class Worker:
 
         # TODO 多机
         address = ('0.0.0.0', self.args.engine_worker_queue_port)
-        self.engine_worker_queue = EngineWorkerQueue(address=address,
-                                                     is_server=False,
-                                                     num_client=self.nranks,
-                                                     client_id=self.rank)
+        self.engine_worker_queue = EngineWorkerQueue(
+            address=address,
+            is_server=False,
+            num_client=self.nranks,
+            client_id=local_rank,
+            local_data_parallel_id=self.local_data_parallel_id)
         self.init_health()
 
     def init_dist_env(self, seed=20):
