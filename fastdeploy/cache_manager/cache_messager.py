@@ -152,18 +152,32 @@ class CacheMessager(object):
         try:
             prefilled_step_idx_data = np.zeros(shape=[1], dtype=np.int32)
             prefilled_layer_idx_data = np.zeros(shape=[1], dtype=np.int32)
-            step_shm_value = IPCSignal(
-                name=f"splitwise_complete_prefilled_step_{self.rank}",
-                array=prefilled_step_idx_data,
-                dtype=np.int32,
-                suffix=self.gpu_id,
-                create=True)
-            layer_shm_value = IPCSignal(
-                name=f"splitwise_complete_prefilled_layer_{self.rank}",
-                array=prefilled_layer_idx_data,
-                dtype=np.int32,
-                suffix=self.gpu_id,
-                create=True)
+            try:
+                step_shm_value = IPCSignal(
+                    name=f"splitwise_complete_prefilled_step_{self.rank}",
+                    array=prefilled_step_idx_data,
+                    dtype=np.int32,
+                    suffix=self.gpu_id,
+                    create=True)
+                layer_shm_value = IPCSignal(
+                    name=f"splitwise_complete_prefilled_layer_{self.rank}",
+                    array=prefilled_layer_idx_data,
+                    dtype=np.int32,
+                    suffix=self.gpu_id,
+                    create=True)
+            except:
+                step_shm_value = IPCSignal(
+                    name=f"splitwise_complete_prefilled_step_{self.rank}",
+                    array=prefilled_step_idx_data,
+                    dtype=np.int32,
+                    suffix=self.gpu_id,
+                    create=False)
+                layer_shm_value = IPCSignal(
+                    name=f"splitwise_complete_prefilled_layer_{self.rank}",
+                    array=prefilled_layer_idx_data,
+                    dtype=np.int32,
+                    suffix=self.gpu_id,
+                    create=False)
 
             step_shm_value.value[0] = -1
             layer_shm_value.value[0] = -1
