@@ -527,6 +527,8 @@ class GPUModelRunner(ModelRunnerBase):
         time_before_load = time.perf_counter()
         # 1. Load original model
         self.model = get_model_from_loader(fd_config=self.fd_config)
+        if os.getenv("ELLM_DYNAMIC_MODE", "1") == "0":
+            self.model = paddle.jit.to_static(self.model)
 
         # 2. Load lora model
 
