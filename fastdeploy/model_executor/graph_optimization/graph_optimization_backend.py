@@ -16,6 +16,8 @@
 
 from typing import Callable, Optional
 
+import paddle
+
 from fastdeploy.config import FDConfig
 from fastdeploy.model_executor.graph_optimization.cudagraph_piecewise_backend import \
     CudaGraphPiecewiseBackend
@@ -30,38 +32,36 @@ class GraphOptBackend:
     def __init__(self, runnable: Callable, fd_config: FDConfig):
         self.runnable = runnable
         self.fd_config = fd_config
-        self.max_captre_batch = fd_config.graph_opt_config.cudagraph_capture_sizes[0]
 
-    def __call__(self, **kwargs):
-        # 1. TODO(gongshaotian): Static graph
+        self.max_captre_batch = fd_config.graph_opt_config.cudagraph_capture_sizes[
+            0]
+
         if self.fd_config.graph_opt_config.graph_opt_level > 0:
             # 1. Prepare cuda grpah input buffers (contain output of subgraphs)
 
             # 2. Convert dynamic grpah to static graph
             if self.fd_config.graph_opt_config.graph_opt_level > 1:
                 # with cinn
-                pass
+                # NOTE(liujundong): full_graph=False means SOT ,full_graph=True means AST
+                self.runnable = paddle.jit.to_static(self.runnable,
+                                                     full_graph=False,
+                                                     backend='CINN')
             else:
-                # not use cinn
-                pass
+                # NOTE(liujundong): full_graph=False means SOT ,full_graph=True means AST
+                self.runnable = paddle.jit.to_static(self.runnable,
+                                                     full_graph=False,
+                                                     backend=None)
 
-            # 3. Split the static graph and get a list of callable obj
+    def __call__(self, **kwargs):
+        if self.cudagraph_piecewise_backend is None:
+            self.cudagraph_piecewise_backend = CudaGraphPiecewiseBackend(
+                fd_config=self.fd_config, runnable=self.runnable)
 
-            # 4. Get piecewise cuda grpah backend list
+        assert kwargs["forward_meta"].ids_remove_padding is not None
+        batch_size = kwargs["forward_meta"].ids_remove_padding.shape[0]
 
-            return self.runnable  # Fake return value
-
-        # 2. Dynamic graph
+        if ((not kwargs["forward_meta"].step_use_cudagraph)
+                or (batch_size > self.max_captre_batch)):
+            return self.runnable(**kwargs)
         else:
-            if self.cudagraph_piecewise_backend is None:
-                self.cudagraph_piecewise_backend = CudaGraphPiecewiseBackend(
-                    fd_config=self.fd_config, runnable=self.runnable)
-            
-            assert kwargs["forward_meta"].ids_remove_padding is not None
-            batch_size = kwargs["forward_meta"].ids_remove_padding.shape[0]
-            
-            if ((not kwargs["forward_meta"].step_use_cudagraph) or (batch_size > self.max_captre_batch)):
-                return self.runnable(**kwargs)
-            else:
-                
-                return self.cudagraph_piecewise_backend.__call__(**kwargs)
+            return self.cudagraph_piecewise_backend.__call__(**kwargs)
