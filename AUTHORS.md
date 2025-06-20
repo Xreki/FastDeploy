@@ -7,3 +7,4 @@
 | [Jiang-Jia-Jun](https://github.com/Jiang-Jia-Jun) | Jiang Jiajun |
 | [RichardWooSJTU](https://github.com/RichardWooSJTU) | Wu Feisheng |
 | [yuanlehome](https://github.com/yuanlehome) |  Liu Yuanle |
+| [zhink](https://github.com/zhink) |  Zhang Sishuai |
