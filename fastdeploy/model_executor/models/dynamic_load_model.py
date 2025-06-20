@@ -131,8 +131,13 @@ class DynamicLoadModel(nn.Layer):
         """
         注入vision model参数
         """
-        from fastdeploy.input.mm_processor.tokenizer import ErnieVLTokenizer
-        tokenizer = ErnieVLTokenizer.from_pretrained(
+        from fastdeploy.input.ernie_tokenizer_v2 import ErnieBotTokenizer
+        vocab_file_names = ["tokenizer.model", "spm.model", "ernie_token_100k.model"]
+        for i in range(len(vocab_file_names)):
+            if os.path.exists(os.path.join(self.model_path, vocab_file_names[i])):
+                ErnieBotTokenizer.resource_files_names["vocab_file"] = vocab_file_names[i]
+                break
+        tokenizer = ErnieBotTokenizer.from_pretrained(
             os.path.dirname(self.model_path),
             model_max_length=self.max_len,
             padding_side="right",

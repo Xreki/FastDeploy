@@ -17,7 +17,7 @@
 import os
 
 import numpy as np
-
+import re
 from fastdeploy.input.mm_processor import DataProcessor, IDS_TYPE_FLAG
 from fastdeploy.input.ernie_processor import ErnieProcessor
 from fastdeploy.engine.request import Request
@@ -53,28 +53,8 @@ class ErnieMoEVLProcessor(ErnieProcessor):
         self.eos_token_id_len = len(self.eos_token_ids)
         self.pad_token_id = self.get_pad_id()
         self.limit_mm_per_prompt = self._parse_limits(limit_mm_per_prompt)
+        self.think_end_token = "</think>"
 
-    def get_pad_id(self):
-        """get pad id"""
-        return self.tokenizer.pad_token_id
-
-    def _load_tokenizer(self):
-        """
-        load tokenizer
-
-        Returns:
-            tokenizer (AutoTokenizer)
-        """
-        self.tokenizer = self.ernie_processor.tokenizer
-
-    def process_request(self, request, max_model_len=None):
-        """process the input data"""
-        task = request.to_dict()
-        self.process_request_dict(task, max_model_len)
-        request = Request.from_dict(task)
-
-        return request
-    
     def _parse_processor_kwargs(self, kwargs):
         """解析多模态处理器参数配置"""
         if not kwargs:
@@ -110,6 +90,27 @@ class ErnieMoEVLProcessor(ErnieProcessor):
         except Exception as e:
             data_processor_logger.warning(f"Invalid mm-processor-kwargs format: {e}")
             return {}
+
+    def get_pad_id(self):
+        """get pad id"""
+        return self.tokenizer.pad_token_id
+
+    def _load_tokenizer(self):
+        """
+        load tokenizer
+
+        Returns:
+            tokenizer (AutoTokenizer)
+        """
+        self.tokenizer = self.ernie_processor.tokenizer
+
+    def process_request(self, request, max_model_len=None):
+        """process the input data"""
+        task = request.to_dict()
+        self.process_request_dict(task, max_model_len)
+        request = Request.from_dict(task)
+
+        return request
 
     def _parse_limits(self, limits):
         """解析多模态限制配置"""
@@ -180,8 +181,7 @@ class ErnieMoEVLProcessor(ErnieProcessor):
         elif request.get("messages"):
             messages = request["messages"]
             self._check_mm_limits(messages)
-            messages = parse_chat_messages(messages)
-            outputs = self.ernie_processor.messages2ids(messages)
+            outputs = self.ernie_processor.request2ids(request)
         else:
             raise ValueError(f"Request must contain 'prompt', or 'messages': {request}")
         
@@ -231,3 +231,146 @@ class ErnieMoEVLProcessor(ErnieProcessor):
         outs["position_ids"] = np.array(outs["position_ids"], dtype=np.int64)
 
         return outs
+
+    def clear_request_status(self, task_id):
+        """
+        clear request status
+
+        Args:
+            task_id (str): task id
+
+        Returns:
+            results_all (str): all token strings
+        """
+
+        results_all = ""
+        reasoning_content = ""
+
+        if task_id in self.decode_status:
+            if self.use_hf_tokenizer:
+                results_all = self.decode_status[task_id][2]
+            else:
+                reasoning_content = "".join(self.decode_status[task_id][3])
+                results_all = "".join(
+                    self.decode_status[task_id][4])
+            del self.decode_status[task_id]
+        return results_all, reasoning_content
+
+    def ids2tokens(self, token_id, task_id):
+        """
+        token ids to strings
+
+        Args:
+            token_ids (List[int]): token ids
+                        task_id (str): task id
+
+        Returns:
+            List[str]: strings
+        """
+
+        if task_id not in self.decode_status:
+            # prefix offset & read offset & history token ids & history token strings
+            self.decode_status[task_id] = [0, 0, [], "", ""]
+
+        prefix_offset = self.decode_status[task_id][0]
+        read_offset = self.decode_status[task_id][1]
+        previous_token_ids = self.decode_status[task_id][2]
+        decode_str, prefix_offset, read_offset = self.tokenizer.decode_token(
+            previous_token_ids + token_id, prefix_offset, read_offset)
+        self.decode_status[task_id][0] = prefix_offset
+        self.decode_status[task_id][1] = read_offset
+        self.decode_status[task_id][2] += token_id
+        self.decode_status[task_id][3] += decode_str
+        return decode_str
+
+    def ids2tokens_thinking(self, token_id, task_id):
+        """
+        token ids to strings
+
+        Args:
+            token_ids (List[int]): token ids
+                        task_id (str): task id
+
+        Returns:
+            List[str]: strings
+        """
+
+        if task_id not in self.decode_status:
+            # prefix offset & read offset & history token ids & history token strings
+            self.decode_status[task_id] = [0, 0, [], "", ""]
+
+        prefix_offset = self.decode_status[task_id][0]
+        read_offset = self.decode_status[task_id][1]
+        previous_token_ids = self.decode_status[task_id][2]
+        decode_str, prefix_offset, read_offset = self.tokenizer.decode_token(
+            previous_token_ids + token_id, prefix_offset, read_offset)
+        self.decode_status[task_id][0] = prefix_offset
+        self.decode_status[task_id][1] = read_offset
+        self.decode_status[task_id][2] += token_id
+
+        data_processor_logger.debug(f"{token_id}, {decode_str}")
+        reasoning_content = ""
+        content = ""
+        if decode_str == "</think>":
+            self.decode_status[task_id][4] = decode_str
+        elif self.decode_status[task_id][4] == "":
+            self.decode_status[task_id][3] += decode_str
+        else:
+            self.decode_status[task_id][4] += decode_str
+
+        if self.decode_status[task_id][4] == "":
+            reasoning_content = decode_str
+        elif decode_str != "</think>":
+            content = decode_str
+        return content, reasoning_content
+
+    def process_response_dict(self, response_dict, **kwargs):
+        """
+        Preprocess the response
+
+        Args:
+            response_dict (Dict): response for engine, contain ids fields
+
+        Returns:
+            Dict: response contain text fields
+        """
+
+        stream = kwargs.get("stream", True)
+        enable_thinking = kwargs.get("enable_thinking", True)
+        is_end = response_dict["finished"]
+        req_id = response_dict["request_id"]
+        token_ids = response_dict["outputs"]["token_ids"]
+
+        if is_end and len(token_ids) > 0:
+            if token_ids[-1] == self.tokenizer.eos_token_id:
+                token_ids = token_ids[:-1]
+        if enable_thinking:
+            text, reasoning_content = self.ids2tokens_thinking(
+                token_ids, req_id)
+            response_dict["outputs"]["text"] = text.replace("</think>", "")
+            response_dict["outputs"]["reasoning_content"] = reasoning_content
+        else:
+            response_dict["outputs"]["text"] = self.ids2tokens(
+                token_ids, req_id)
+
+        if is_end:
+            data_processor_logger.debug(
+                "Request id: {} has been completed.".format(token_ids))
+            full_text, reasoning_content = self.clear_request_status(req_id)
+            data_processor_logger.debug(
+                f"full_text: {full_text}, reasoning_content: {reasoning_content}")
+            if not stream:
+                if enable_thinking:
+                    # full_text: </think>xxxxxxxx
+                    # 提取 response 部分
+                    match = re.search(
+                        r'</think>(.*)', full_text, re.DOTALL)
+                    if match:
+                        response_content = match.group(1).strip()
+                    else:
+                        response_content = full_text
+                    response_dict["outputs"]["text"] = response_content
+                    response_dict["outputs"]["reasoning_content"] = reasoning_content
+                else:
+                    response_dict["outputs"]["text"] = reasoning_content
+        return response_dict

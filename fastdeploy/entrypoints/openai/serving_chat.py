@@ -109,6 +109,7 @@ class OpenAIServingChat:
         num_prompt_tokens = 0
         num_choices = 1
         max_streaming_response_tokens = 1
+        enable_thinking = True
         if request.metadata is not None and request.metadata.get("max_streaming_response_tokens", 1) > 1:
             max_streaming_response_tokens = request.metadata["max_streaming_response_tokens"]
 
@@ -149,7 +150,10 @@ class OpenAIServingChat:
                 res = json.loads(raw_data[-1].decode('utf-8'))
                 if res.get("error_code", 200) != 200:
                     raise ValueError("{}".format(res["error_msg"]))
-                self.engine_client.data_processor.process_response_dict(res, stream=True)
+                if request.metadata is not None:
+                    enable_thinking = request.metadata.get("enable_thinking", True)
+                self.engine_client.data_processor.process_response_dict(
+                    res, stream=True, enable_thinking=enable_thinking)
 
                 if res['metrics']['first_token_time'] is not None:
                     arrival_time = res['metrics']['first_token_time']
@@ -162,7 +166,7 @@ class OpenAIServingChat:
                     for i in range(num_choices):
                         choice = ChatCompletionResponseStreamChoice(
                             index=i,
-                            delta=DeltaMessage(role="assistant", content="", reasoning_content="")
+                            delta=DeltaMessage(role="assistant", content="", reasoning_content="", tool_calls=None)
                         )
                         if request.metadata is not None and request.metadata.get("training", False):
                             choice.delta.token_ids = list(res["prompt_token_ids"])
@@ -188,7 +192,7 @@ class OpenAIServingChat:
 
                 previous_num_tokens += len(output["token_ids"])
                 delta_message = DeltaMessage(content=delta_text, reasoning_content=output.get("reasoning_content"), \
-                    token_ids=output.get("token_ids"))
+                    token_ids=output.get("token_ids"), tool_calls=output.get("tool_call_content", []))
 
                 choice = ChatCompletionResponseStreamChoice(
                     index=0,
@@ -200,6 +204,9 @@ class OpenAIServingChat:
                     work_process_metrics.e2e_request_latency.observe(time.time() - res["metrics"]["request_start_time"])
                     if request.max_tokens is None or previous_num_tokens != request.max_tokens:
                         choice.finish_reason = "stop"
+                        if self.engine_client.data_processor.is_thinking and \
+                        self.engine_client.data_processor.reasoning_parser.finish_reason == "tool_calls":
+                            choice.finish_reason = "tool_calls"
                     else:
                         choice.finish_reason = "length"
 
@@ -254,6 +261,7 @@ class OpenAIServingChat:
         """
         created_time = int(time.time())
         final_res = None
+        enable_thinking = True
         try:
             dealer = await aiozmq.create_zmq_stream(
                 zmq.DEALER,
@@ -275,7 +283,10 @@ class OpenAIServingChat:
                 data = json.loads(raw_data[-1].decode('utf-8'))
                 if data.get("error_code", 200) != 200:
                     raise ValueError("{}".format(data["error_msg"]))
-                data = self.engine_client.data_processor.process_response_dict(data, stream=False)
+                if request.metadata is not None:
+                    enable_thinking = request.metadata.get("enable_thinking", True)
+                data = self.engine_client.data_processor.process_response_dict(
+                    data, stream=False, enable_thinking=enable_thinking)
                 # api_server_logger.debug(f"Client {request_id} received: {data}")
                 previous_num_tokens += len(data["outputs"]["token_ids"])
                 if data["finished"]:
@@ -290,6 +301,7 @@ class OpenAIServingChat:
             role="assistant",
             content=output["text"],
             reasoning_content=output.get("reasoning_content"),
+            tool_calls=output.get("tool_call_content"),
             token_ids=output.get("token_ids")
         )
 
@@ -300,6 +312,9 @@ class OpenAIServingChat:
         )
         if request.max_tokens is None or previous_num_tokens != request.max_tokens:
             choice.finish_reason = "stop"
+            if self.engine_client.data_processor.is_thinking and \
+                self.engine_client.data_processor.reasoning_parser.finish_reason == "tool_calls":
+                choice.finish_reason = "tool_calls"
         else:
             choice.finish_reason = "length"
         choices.append(choice)
