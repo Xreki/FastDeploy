@@ -103,8 +103,10 @@ class GPUModelRunner(ModelRunnerBase):
         self.forward_meta: ForwardMeta = None
 
         # Postprocess Env params
-        os.environ["INFERENCE_MSG_QUEUE_ID"] = str(self.local_rank + int(self.parallel_config.engine_worker_queue_port))
-    
+        os.environ["INFERENCE_MSG_QUEUE_ID"] = str(
+            self.local_rank +
+            int(self.parallel_config.engine_worker_queue_port))
+
     def prefill_finished(self):
         """
         check whether prefill stage finished
@@ -113,7 +115,6 @@ class GPUModelRunner(ModelRunnerBase):
             return 1
         else:
             return 0
-
 
     def insert_prefill_inputs(self, req_dicts: List[Request]):
         """
@@ -747,11 +748,12 @@ class GPUModelRunner(ModelRunnerBase):
             self.share_inputs["infer_seed"][:] %= self.MAX_INFER_SEED
             step_cuda(self.share_inputs, self.parallel_config.block_size,
                       self.parallel_config.enc_dec_block_num,
-                      self.speculative_config)
+                      self.speculative_config,
+                      self.parallel_config.enable_prefix_caching)
 
             if int((self.share_inputs['seq_lens_this_time'] > 0).sum()) == 0:
                 break
-    
+
     def _update_chunked_prefill(self, tasks):
         """
         更新chunked prefill相关参数
@@ -945,6 +947,7 @@ class GPUModelRunner(ModelRunnerBase):
             self.parallel_config.block_size,
             self.parallel_config.enc_dec_block_num,
             self.speculative_config,
+            self.parallel_config.enable_prefix_caching,
         )
 
         self._update_chunked_prefill(model_forward_batch)
@@ -983,8 +986,6 @@ class GPUModelRunner(ModelRunnerBase):
             del self.forward_meta.caches
         del self.share_inputs["block_tables"]
         # paddle.device.cuda.synchronize()
-
-
 
     def update_share_input_block_num(self, num_gpu_blocks: int) -> None:
         """
