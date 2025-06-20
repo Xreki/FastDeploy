@@ -188,9 +188,6 @@ class Qwen3DecoderLayer(nn.Layer):
             prefix=f"{prefix}.self_attn",
         )
         fd_config.moe_config.use_moe = True
-        assert fd_config.moe_config.moe_quant_type in [
-            "weight_only_int8", "weight_only_int4", "w16a16"
-        ]
         weight_key_map = {
             "gate_weight_key":
             f"{prefix}.mlp.gate.weight",
