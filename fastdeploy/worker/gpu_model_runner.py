@@ -34,6 +34,7 @@ from fastdeploy.model_executor.layers.sample.sampler import (
 from fastdeploy.model_executor.model_loader import get_model_from_loader
 from fastdeploy.model_executor.models.speculate_proposers import NgramProposer
 from fastdeploy.model_executor.ops.gpu import (rebuild_padding,
+                                               set_value_by_flags_and_idx,
                                                share_external_data)
 from fastdeploy.model_executor.pre_and_post_process import (post_process,
                                                             pre_process,
@@ -668,12 +669,20 @@ class GPUModelRunner(ModelRunnerBase):
 
             # 5. Execute spec decode
             logits = self.model.compute_logits(hiddden_states)
+            set_value_by_flags_and_idx(
+                self.share_inputs["pre_ids"],
+                self.share_inputs["input_ids"],
+                self.share_inputs["seq_lens_this_time"],
+                self.share_inputs["seq_lens_encoder"],
+                self.share_inputs["seq_lens_decoder"],
+                self.share_inputs["step_idx"],
+                self.share_inputs["stop_flags"],
+            )
             if not self.speculative_decoding:
                 sampled_token_ids = self.sampler(logits,
                                                  self.sampling_metadata)
                 if self.parallel_config.tensor_parallel_degree > 1:
                     paddle.distributed.broadcast(sampled_token_ids, 0)
-
             else:
                 self.sampler(logits, self.sampling_metadata,
                              self.parallel_config.max_model_len,
