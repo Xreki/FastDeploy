@@ -24,6 +24,7 @@ from fastdeploy.cache_manager.prefix_cache_manager import PrefixCacheManager
 from fastdeploy.metrics.metrics import main_process_metrics
 from fastdeploy.utils import llm_logger
 
+
 class ResourceManager(object):
     """
     record and allocate resources for the engine
@@ -270,9 +271,12 @@ class ResourceManager(object):
 
                         if task.disaggregate_info is not None:
                             if task.disaggregate_info['role'] == "prefill":
-                                self.req_dict[task.request_id] = allocated_position
-                                self.cache_transfer_finished[task.request_id] = 0
-                                task.disaggregate_info['block_tables'] = task.block_tables
+                                self.req_dict[
+                                    task.request_id] = allocated_position
+                                self.cache_transfer_finished[
+                                    task.request_id] = 0
+                                task.disaggregate_info[
+                                    'block_tables'] = task.block_tables
                                 self._delete_cached_data(task, cached_len)
                             elif task.disaggregate_info['role'] == "decode":
                                 self.req_dict[
@@ -295,10 +299,13 @@ class ResourceManager(object):
                         task.need_block_tables = task.block_tables
 
                         if task.disaggregate_info is not None:
-                            task.disaggregate_info['block_tables'] = block_tables
+                            task.disaggregate_info[
+                                'block_tables'] = block_tables
                             if task.disaggregate_info['role'] == "prefill":
-                                self.req_dict[task.request_id] = allocated_position
-                                self.cache_transfer_finished[task.request_id] = False
+                                self.req_dict[
+                                    task.request_id] = allocated_position
+                                self.cache_transfer_finished[
+                                    task.request_id] = False
                             elif task.disaggregate_info['role'] == "decode":
                                 self.req_dict[
                                     task.request_id] = allocated_position
@@ -336,7 +343,7 @@ class ResourceManager(object):
         Delete cached data from the task's prompt token ids based on the cached length.
         """
         if cached_len == len(task.prompt_token_ids):
-            task.prompt_token_ids = task.prompt_token_ids[:-1]
+            task.prompt_token_ids = task.prompt_token_ids[cached_len - 1:]
             task.seq_lens_decoder = cached_len - 1
         else:
             task.prompt_token_ids = task.prompt_token_ids[cached_len:]
