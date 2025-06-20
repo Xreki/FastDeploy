@@ -191,14 +191,14 @@ class OpenAIServingChat:
                     token_ids=output.get("token_ids"))
 
                 choice = ChatCompletionResponseStreamChoice(
-                    index=output["index"],
+                    index=0,
                     delta=delta_message,
                     arrival_time=arrival_time
                 )
                 if res["finished"]:
                     num_choices -= 1
                     work_process_metrics.e2e_request_latency.observe(time.time() - res["metrics"]["request_start_time"])
-                    if request.max_tokens is None or output["index"] + 1 != request.max_tokens:
+                    if request.max_tokens is None or previous_num_tokens != request.max_tokens:
                         choice.finish_reason = "stop"
                     else:
                         choice.finish_reason = "length"
@@ -294,12 +294,11 @@ class OpenAIServingChat:
         )
 
         choice = ChatCompletionResponseChoice(
-            index=output["index"],
+            index=0,
             message=message,
             finish_reason=None
         )
-        if request.max_tokens is None or output["index"] + 1 != request.max_tokens:
-
+        if request.max_tokens is None or previous_num_tokens != request.max_tokens:
             choice.finish_reason = "stop"
         else:
             choice.finish_reason = "length"
