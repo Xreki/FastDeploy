@@ -899,6 +899,10 @@ class LLMEngine(object):
             os.getenv("SOT_ENABLE_0_SIZE_FALLBACK", default="0"),
             "FLAGS_specialize_device_in_dy2st":
             os.getenv("FLAGS_specialize_device_in_dy2st", default="1"),
+            "FLAGS_enable_async_fast_gc":
+            os.getenv("FLAGS_enable_async_fast_gc", default="1"),
+            "FLAGS_pir_interpreter_record_stream_for_gc_cache":
+            os.getenv("FLAGS_pir_interpreter_record_stream_for_gc_cache", default="1"),
         })
 
         if self.cfg.splitwise_role != "mixed":
