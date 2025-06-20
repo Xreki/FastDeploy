@@ -559,7 +559,7 @@ def initialize_fd_config(args) -> FDConfig:
     )
 
     if args.splitwise_role == "mixed":
-        parallel_config.moe_phase = MoEPhase.DECODER
+        parallel_config.moe_phase = MoEPhase.PREFILL
     elif args.splitwise_role == "prefill":
         parallel_config.moe_phase = MoEPhase.PREFILL
     elif args.splitwise_role == "decode":

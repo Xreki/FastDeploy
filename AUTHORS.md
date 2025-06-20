@@ -5,4 +5,5 @@
 | [chang-wenbin](https://github.com/chang-wenbin) | Chang Wenbin |
 | [gongshaotian](https://github.com/gongshaotian) | Gong Shaotian |
 | [Jiang-Jia-Jun](https://github.com/Jiang-Jia-Jun) | Jiang Jiajun |
+| [RichardWooSJTU](https://github.com/RichardWooSJTU) | Wu Feisheng |
 | [yuanlehome](https://github.com/yuanlehome) |  Liu Yuanle |

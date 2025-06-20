@@ -18,10 +18,11 @@ from typing import Optional
 import paddle
 
 import fastdeploy
+from fastdeploy.model_executor.layers.moe import FusedMoE
 
 from ..utils import per_block_cast_to_fp8
 from .quant_base import QuantConfigBase, QuantMethodBase
-from fastdeploy.model_executor.layers.moe import FusedMoE
+
 
 class BlockWiseConfig(QuantConfigBase):
     """
@@ -48,11 +49,11 @@ class BlockWiseConfig(QuantConfigBase):
     def get_quant_method(self, layer) -> Optional[QuantMethodBase]:
         '''
         Get quantization method.
-        ''' 
+        '''
         if isinstance(layer, FusedMoE):
             from fastdeploy.model_executor.layers.moe.fused_moe_deepgemm_backend import \
                 DeepGemmFusedMoeMethod
-            return DeepGemmFusedMoeMethod()
+            return DeepGemmFusedMoeMethod(self)
         else:
             return BlockWiseLinearMethod(self)
 
@@ -93,9 +94,8 @@ class BlockWiseLinearMethod(QuantMethodBase):
     def apply(self, layer, x):
         x, x_scale_tensor = fastdeploy.model_executor.ops.gpu.per_token_quant_padding(
             x, self.quant_config.weight_block_size[0])
-        linear_out = paddle.empty(
-            (x.shape[0], layer.output_size),
-            dtype=paddle.bfloat16)
+        linear_out = paddle.empty((x.shape[0], layer.output_size),
+                                  dtype=paddle.bfloat16)
         import fastdeploy.model_executor.ops.gpu.deep_gemm as deep_gemm
         deep_gemm.gemm_fp8_fp8_bf16_nt(
             (x, x_scale_tensor),
