@@ -107,6 +107,12 @@ class XpuWorker(WorkerBase):
         output = self.model_runner.execute_model(model_forward_batch)
         return output
 
+    def prefill_finished(self):
+        """
+        check whether prefill stage finished
+        """
+        return self.model_runner.prefill_finished()
+
     def preprocess_new_task(self, req_dicts: List[Request]) -> None:
         """ Process new requests and then start the decode loop
         TODO(gongshaotian):The scheduler should schedule the handling of prefill,
