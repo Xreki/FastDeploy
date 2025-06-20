@@ -315,8 +315,11 @@ class Ernie45TMoE(nn.Layer):
     def __init__(self, fd_config: FDConfig, layer_id: int,
                  prefix: str) -> None:
         super().__init__()
+        moe_quant_type = ""
+        if hasattr(fd_config.quant_config, 'moe_quant_type'):
+            moe_quant_type = fd_config.quant_config.moe_quant_type
 
-        if fd_config.moe_config.moe_quant_type == "w4a8":
+        if moe_quant_type == "w4a8":
             weight_key_map = {
                 "gate_weight_key":
                 f"{prefix}.gate",
@@ -335,9 +338,7 @@ class Ernie45TMoE(nn.Layer):
                 "ffn2_expert_in_scale_key":
                 f"{prefix}.experts.{{}}.down_proj.activation_quanter",
             }
-        elif hasattr(
-            fd_config.quant_config, 'moe_quant_type'
-            ) and fd_config.quant_config.moe_quant_type == "w4w2":
+        elif moe_quant_type == "w4w2":
             weight_key_map = {
                 "gate_weight_key":
                 f"{prefix}.gate.weight",

@@ -422,7 +422,8 @@ class Qwen3MoePretrainedModel(PretrainedModel):
     def _get_tensor_parallel_mappings(cls, config: ModelConfig, is_split=True):
         # TODO not support TP split now, next PR will support TP.
 
-        from paddleformers.transformers.conversion_utils import split_or_merge_func
+        from paddleformers.transformers.conversion_utils import \
+            split_or_merge_func
 
         fn = split_or_merge_func(
             is_split=is_split,
@@ -435,34 +436,43 @@ class Qwen3MoePretrainedModel(PretrainedModel):
             final_actions = {}
 
             base_actions = {
-                "lm_head.weight": partial(fn, is_column=True),
+                "lm_head.weight":
+                partial(fn, is_column=True),
                 # Row Linear
-                "embed_tokens.weight": partial(fn, is_column=False),
-                "model.layers.0.self_attn.o_proj.weight": partial(fn, is_column=False),
-                "model.layers.0.mlp.down_proj.weight": partial(fn, is_column=False),
+                "embed_tokens.weight":
+                partial(fn, is_column=False),
+                "model.layers.0.self_attn.o_proj.weight":
+                partial(fn, is_column=False),
+                "model.layers.0.mlp.down_proj.weight":
+                partial(fn, is_column=False),
             }
 
             # Column Linear
             config.fuse_attention_qkv = False
             if config.fuse_attention_qkv:
-                base_actions["model.layers.0.self_attn.qkv_proj.weight"] = partial(
-                    fn, is_column=True)
+                base_actions[
+                    "model.layers.0.self_attn.qkv_proj.weight"] = partial(
+                        fn, is_column=True)
             else:
-                base_actions["model.layers.0.self_attn.q_proj.weight"] = partial(
-                    fn, is_column=True)
+                base_actions[
+                    "model.layers.0.self_attn.q_proj.weight"] = partial(
+                        fn, is_column=True)
                 base_actions["model.layers.0.self_attn.q_proj.bias"] = partial(
                     fn, is_column=True)
                 # if we have enough num_key_value_heads to split, then split it.
                 if config.num_key_value_heads % config.tensor_parallel_degree == 0:
-                    base_actions["model.layers.0.self_attn.k_proj.weight"] = partial(
-                        fn, is_column=True)
-                    base_actions["model.layers.0.self_attn.v_proj.weight"] = partial(
-                        fn, is_column=True)
-                    base_actions["model.layers.0.self_attn.k_proj.bias"] = partial(
-                        fn, is_column=True)
-                    base_actions["model.layers.0.self_attn.v_proj.bias"] = partial(
-                        fn, is_column=True)
-            
+                    base_actions[
+                        "model.layers.0.self_attn.k_proj.weight"] = partial(
+                            fn, is_column=True)
+                    base_actions[
+                        "model.layers.0.self_attn.v_proj.weight"] = partial(
+                            fn, is_column=True)
+                    base_actions[
+                        "model.layers.0.self_attn.k_proj.bias"] = partial(
+                            fn, is_column=True)
+                    base_actions[
+                        "model.layers.0.self_attn.v_proj.bias"] = partial(
+                            fn, is_column=True)
 
             base_actions["model.layers.0.mlp.gate_proj.weight"] = partial(
                 fn, is_column=True)
@@ -472,8 +482,8 @@ class Qwen3MoePretrainedModel(PretrainedModel):
             for key, action in base_actions.items():
                 if "model.layers.0." in key:
                     for i in range(num_layers):
-                        final_actions[key.replace("model.layers.0.",
-                                                  f"model.layers.{i}.")] = action
+                        final_actions[key.replace(
+                            "model.layers.0.", f"model.layers.{i}.")] = action
                 final_actions[key] = action
 
             return final_actions
