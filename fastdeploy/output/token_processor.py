@@ -173,7 +173,10 @@ class TokenProcessor(object):
         Args:
             batch_result (list): batch results
         """
-        self.cached_generated_tokens.put_results(batch_result)
+        try:
+            self.cached_generated_tokens.put_results(batch_result)
+        except Exception as e:
+            llm_logger.error(f"Error in TokenProcessor's postprocess: {e}")
 
     def _recycle_resources(self, task_id, index, task, is_prefill=False):
         """

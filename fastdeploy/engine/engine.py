@@ -92,8 +92,8 @@ class LLMEngine(object):
                                                  cfg.limit_mm_per_prompt,
                                                  cfg.mm_processor_kwargs,
                                                  cfg.enable_mm)
-        self.resource_manager = ResourceManager(cfg.max_num_seqs, cfg.cache_config, \
-                cfg.tensor_parallel_size, cfg.splitwise_role)
+        self.resource_manager = ResourceManager(cfg.max_num_seqs, cfg.cache_config,
+                                                cfg.tensor_parallel_size, cfg.splitwise_role)
 
         os.environ['INFERENCE_MSG_QUEUE_ID'] = str(
             self.cfg.engine_worker_queue_port)
@@ -126,9 +126,15 @@ class LLMEngine(object):
             self.cfg.max_num_partial_prefills + 1)
         for idx in range(1, self.cfg.max_num_partial_prefills + 1):
             self.partial_chunked_tokens[idx] = (self.cfg.max_num_batched_tokens // idx) \
-                                // self.cfg.cache_config.block_size * self.cfg.cache_config.block_size
+                // self.cfg.cache_config.block_size * self.cfg.cache_config.block_size
 
         self._finalizer = weakref.finalize(self, self._exit_sub_services)
+
+    def reset_scheduler(self):
+        """
+        Reset the scheduler to its initial state.
+        """
+        self.scheduler.reset()
 
     def start(self, api_server_pid=None):
         """
@@ -156,10 +162,10 @@ class LLMEngine(object):
                 self.cfg.cache_config.enable_prefix_caching
                 or self.cfg.splitwise_role != "mixed"):
             self.cache_manager_processes = self.resource_manager.cache_manager.launch_cache_manager(
-                self.cfg.cache_config, \
-                self.cfg.tensor_parallel_size, self.cfg.device_ids, \
+                self.cfg.cache_config,
+                self.cfg.tensor_parallel_size, self.cfg.device_ids,
                 self.cfg.engine_worker_queue_port, self.ipc_signal_suffix
-                )
+            )
 
         self.worker_proc = self._start_worker_service()
         console_logger.info("Waitting worker processes ready...")
@@ -182,19 +188,16 @@ class LLMEngine(object):
         self.token_processor.tasks_queue = self.engine_worker_queue
 
         self.insert_task_to_worker_thread = threading.Thread(
-            target=self._insert_task_to_worker, args=())
-        self.insert_task_to_worker_thread.daemon = True
+            target=self._insert_task_to_worker, daemon=True)
         self.insert_task_to_worker_thread.start()
 
         if self.api_server_pid is not None:
             self.insert_task_to_scheduler_thread = threading.Thread(
-                target=self._insert_zmq_task_to_scheduler, args=())
-            self.insert_task_to_scheduler_thread.daemon = True
+                target=self._insert_zmq_task_to_scheduler, daemon=True)
             self.insert_task_to_scheduler_thread.start()
 
             self.receive_output_thread = threading.Thread(
-                target=self._zmq_send_generated_tokens, args=())
-            self.receive_output_thread.daemon = True
+                target=self._zmq_send_generated_tokens, daemon=True)
             self.receive_output_thread.start()
 
         # Start TokenProcessor thread
@@ -219,49 +222,20 @@ class LLMEngine(object):
         assert self.api_server_pid is not None
         while self.running:
             try:
-
-                def get_results_handler(request_ids):
-                    results = dict()
-                    try:
-                        results = self.scheduler.get_results(request_ids)
-                        for req_id, contents in results.items():
-                            results[req_id] = [
-                                data.to_dict() for data in contents
-                            ]
-                    except Exception as e:
-                        llm_logger.error(f"Get results handler error: {e}")
-                    return results
-
-                self.zmq_server.send_multipart2(get_results_handler)
+                results = self.scheduler.get_results()
+                for request_id, contents in results.items():
+                    for result in contents:
+                        self.zmq_server.send_multipart(request_id, result)
             except Exception as e:
                 llm_logger.error("Unexcepted error happend: {}, {}".format(
                     e, str(traceback.format_exc())))
 
-    def _get_generated_result(self, request_id):
+    def _get_generated_result(self):
         """
         Get result from scheduler, this function is called by generate()
         which is only used in offline inference.
         """
-        try:
-            acc = None
-            while self.running:
-                results = self.scheduler.get_results([request_id])
-                for _, contents in results.items():
-                    for result in contents:
-                        if acc is None:
-                            acc = result
-                        else:
-                            acc.add(result)
-
-                        if result.finished:
-                            yield acc
-                            return
-
-                        yield result
-
-        except Exception as e:
-            llm_logger.error("Unexcepted error happend: {}, {}".format(
-                e, str(traceback.format_exc())))
+        return self.scheduler.get_results()
 
     def _insert_task_to_worker(self):
         """
@@ -500,7 +474,8 @@ class LLMEngine(object):
                 if len(waiting_requests) == 0:
                     break
 
-                available_tokens = remain_batched_tokens // self.cfg.cache_config.block_size * self.cfg.cache_config.block_size
+                available_tokens = remain_batched_tokens // self.cfg.cache_config.block_size * \
+                    self.cfg.cache_config.block_size
                 append_idx = current_request_size.index(min(waiting_requests))
                 chunk_size = min(
                     current_request_size[append_idx],
@@ -712,7 +687,7 @@ class LLMEngine(object):
         worker_ready_signal_data = np.zeros(shape=[
             self.cfg.tensor_parallel_size * self.cfg.expert_parallel_size
         ],
-                                            dtype=np.int32)
+            dtype=np.int32)
         self.worker_ready_signal = IPCSignal(name="worker_ready_singnal",
                                              array=worker_ready_signal_data,
                                              dtype=np.int32,
@@ -748,7 +723,7 @@ class LLMEngine(object):
         worker_healthy_live_recorded_time_array = np.zeros(shape=[
             self.cfg.tensor_parallel_size * self.cfg.expert_parallel_size
         ],
-                                                           dtype=np.int32)
+            dtype=np.int32)
         self.worker_healthy_live_signal = IPCSignal(
             name="worker_healthy_live_signal",
             array=worker_healthy_live_recorded_time_array,
@@ -760,7 +735,7 @@ class LLMEngine(object):
             get_profile_block_num = np.zeros([
                 self.cfg.tensor_parallel_size * self.cfg.expert_parallel_size
             ],
-                                             dtype=np.int32)
+                dtype=np.int32)
             self.get_profile_block_num_signal = IPCSignal(
                 name="get_profile_block_num",
                 array=get_profile_block_num,
@@ -1005,10 +980,10 @@ class LLMEngine(object):
         self.resource_manager.reset_cache_config(self.cfg.cache_config)
         if self.cfg.cache_config.enable_prefix_caching or self.cfg.splitwise_role != "mixed":
             self.cache_manager_processes = self.resource_manager.cache_manager.launch_cache_manager(
-                self.cfg.cache_config, \
-                self.cfg.tensor_parallel_size, self.cfg.device_ids, \
+                self.cfg.cache_config,
+                self.cfg.tensor_parallel_size, self.cfg.device_ids,
                 self.cfg.engine_worker_queue_port, self.ipc_signal_suffix
-               )
+            )
 
     def check_health(self, time_interval_threashold=30):
         """
@@ -1049,8 +1024,7 @@ class LLMEngine(object):
                         self.worker_init_status["finished"] = True
 
         self.checking_worker_status_thread = threading.Thread(
-            target=detect_thread, args=())
-        self.checking_worker_status_thread.daemon = True
+            target=detect_thread, daemon=True)
         self.checking_worker_status_thread.start()
 
         # display weight loadding progress

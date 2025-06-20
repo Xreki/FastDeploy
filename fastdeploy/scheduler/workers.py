@@ -24,7 +24,7 @@ from fastdeploy.utils import llm_logger
 class Task:
     """
     A container class representing a unit of work to be processed.
-    
+
     Attributes:
         id: Unique identifier for the task
         raw: The actual task payload/data
@@ -36,7 +36,7 @@ class Task:
                  reason: Optional[str] = None):
         """
         Initialize a Task instance.
-        
+
         Args:
             task_id: Unique identifier for the task
             task: The actual task payload/data
@@ -54,7 +54,7 @@ class Task:
 class Workers:
     """
     A thread pool implementation for parallel task processing.
-    
+
     Features:
     - Configurable number of worker threads
     - Task batching support
@@ -70,7 +70,7 @@ class Workers:
                  task_filters: Optional[List[Callable[[Task], bool]]] = None):
         """
         Initialize a Workers thread pool.
-        
+
         Args:
             name: Identifier for the worker pool
             work: The worker function that processes tasks
@@ -100,11 +100,11 @@ class Workers:
     def _get_tasks(self, worker_index: int, filter: Optional[Callable[[Task], bool]] = None):
         """
         Retrieve tasks from the queue for a worker thread.
-        
+
         Args:
             worker_index: Index of the worker thread
             filter: Optional filter function for task selection
-            
+
         Returns:
             List of tasks assigned to the worker
         """
@@ -134,7 +134,7 @@ class Workers:
     def _worker(self, worker_index: int):
         """
         Worker thread main loop.
-        
+
         Args:
             worker_index: Index of the worker thread
         """
@@ -175,7 +175,7 @@ class Workers:
     def start(self, workers: int):
         """
         Start the worker threads.
-        
+
         Args:
             workers: Number of worker threads to start
         """
@@ -186,15 +186,15 @@ class Workers:
 
             for _ in range(remain):
                 index = len(self.pool)
-                t = threading.Thread(target=self._worker, args=(index,))
-                t.daemon = True
+                t = threading.Thread(target=self._worker,
+                                     args=(index,), daemon=True)
                 t.start()
                 self.pool.append(t)
 
     def terminate(self):
         """
         Gracefully shutdown all worker threads.
-        
+
         Waits for all threads to complete current tasks before stopping.
         """
         with self.mutex:
@@ -215,11 +215,11 @@ class Workers:
     def get_results(self, max_size: int, timeout: float) -> List[Task]:
         """
         Retrieve processed task results.
-        
+
         Args:
             max_size: Maximum number of results to retrieve
             timeout: Maximum wait time in seconds
-            
+
         Returns:
             List of completed tasks/results
         """
@@ -239,7 +239,7 @@ class Workers:
     def add_tasks(self, tasks: List[Task], unique: bool = False):
         """
         Add new tasks to the worker pool.
-        
+
         Args:
             tasks: List of tasks to add
             unique: If True, only adds tasks with unique IDs
