@@ -17,6 +17,8 @@ import inspect
 import os
 
 from fastdeploy.utils import llm_logger as logger
+import paddle
+import functools
 
 
 def import_custom_ops(package, module_name, global_ns):
@@ -62,6 +64,22 @@ def rename_imported_op(old_name, new_name, global_ns):
     del global_ns[old_name]
 
 
+def wrap_unified_op(original_cpp_ext_op, original_custom_op):
+    """
+    Wrap a static operator into a unified operator with runtime dispatching.
+    Args:
+        original_cpp_ext_op: Original C++ extension operator function.
+        original_custom_op: Original custom operator function.
+    """
+    @paddle.jit.marker.unified
+    @functools.wraps(original_custom_op)
+    def unified_op(*args, **kwargs):
+        if paddle.in_dynamic_mode():
+            return original_cpp_ext_op(*args, **kwargs)
+        return original_custom_op(*args, **kwargs)
+    return unified_op
+
+
 def preprocess_static_op(global_ns):
     """
     Transforms operator/function references in the global namespace based on the presence of 'static_op_' prefixes.
@@ -81,7 +99,8 @@ def preprocess_static_op(global_ns):
 
         if has_dynamic_op:
             if not dynamic_mode:
-                del global_ns[op_name]
-                global_ns[op_name] = global_ns[static_op]
+                original_cpp_ext_op = global_ns[op_name]
+                original_custom_op = global_ns[static_op]
+                global_ns[op_name] = wrap_unified_op(original_cpp_ext_op, original_custom_op)
         else:
             global_ns[op_name] = global_ns[static_op]
