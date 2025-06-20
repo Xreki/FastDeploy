@@ -301,8 +301,7 @@ class CutlassW4A8MoEMethod(CutlassMoEMethod):
 
         def _extract_scale_tensor(state_dict, key_template, expert_idx):
             return get_tensor(
-                state_dict.pop(key_template.format(self.layer_idx,
-                                                   expert_idx)))
+                state_dict.pop(key_template.format(expert_idx)))
 
         def _process_in_scale(name: str, in_scales: list[paddle.Tensor]):
             processed_in_scale = 1 / paddle.concat(in_scales)
