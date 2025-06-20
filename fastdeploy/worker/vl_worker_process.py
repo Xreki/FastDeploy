@@ -646,6 +646,12 @@ def parse_args():
                         "default is None. The priority of this configuration "\
                         "is lower than that of the config file. " \
                         "More complex quantization methods need to be configured via the config file.")
+    parser.add_argument(
+        "--load_weights_on",
+        default="",
+        type=str,
+        help="Load model weights onto CPU or GPU choices cup/cuda"
+    )
     args = parser.parse_args()
     return args
 

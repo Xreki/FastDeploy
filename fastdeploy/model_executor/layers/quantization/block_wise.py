@@ -34,9 +34,6 @@ class BlockWiseConfig(QuantConfigBase):
     def __init__(self, weight_block_size: list = [-1, -1]) -> None:
         super().__init__()
         self.weight_block_size = weight_block_size
-        self.quant_max_bound = 448
-        self.quant_min_bound = -448
-        self.quant_round_type = 1
 
     def name(self) -> str:
         return "block_wise"
@@ -69,6 +66,9 @@ class BlockWiseLinearMethod(QuantMethodBase):
     ) -> None:
         super().__init__()
         self.quant_config = quant_config
+        self.quant_max_bound = 448
+        self.quant_min_bound = -448
+        self.quant_round_type = 1
 
     def create_weights(self, layer):
         layer.linear_weight_shape.reverse()
@@ -84,10 +84,23 @@ class BlockWiseLinearMethod(QuantMethodBase):
         )
         layer.weight_dtype = "float8_e4m3fn"
 
-    def process_loaded_weights(self, layer, weights) -> None:
-        weight_tensor = weights.transpose([1, 0])
+    def process_quantized_weights(self, layer, quanted_weight_tensor, weight_block_scale_tensor=None) -> None:
+        """process_quantized_weights"""
+        layer.linear_weight.set_value(quanted_weight_tensor)
+        if weight_block_scale_tensor is not None:
+            layer.linear_weight_scale.set_value(weight_block_scale_tensor)
+
+    def apply_weight_quantization(self, weight):
+        """apply_weight_quantization"""
         quanted_weight_tensor, weight_block_scale_tensor = (
             per_block_cast_to_fp8(weight_tensor))
+        return quanted_weight_tensor, weight_block_scale_tensor
+
+    def process_unquantized_weights(self, layer, weights) -> None:
+        """process_unquantized_weights"""
+        weight_tensor = weights.transpose([1, 0])
+        quanted_weight_tensor, weight_block_scale_tensor = self.apply_weight_quantization(
+            weight_tensor)
         layer.linear_weight.copy_(quanted_weight_tensor, False)
         layer.linear_weight_scale.set_value(weight_block_scale_tensor)
 

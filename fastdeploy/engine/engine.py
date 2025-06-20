@@ -960,6 +960,7 @@ class LLMEngine(object):
             f" --speculative_method {self.cfg.speculative_config.method}"
             f" --speculative_max_draft_token_num {self.cfg.speculative_config.num_speculative_tokens}"
             f" --speculative_model_type {self.cfg.speculative_config.model_type}"
+            f" --load_weights_on {self.cfg.load_weights_on}"
         )
 
         worker_append_flag = {

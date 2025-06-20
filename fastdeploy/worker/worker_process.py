@@ -467,6 +467,14 @@ def parse_args():
             "APPEND_ATTN",
         ],
     )
+    parser.add_argument(
+        "--load_weights_on",
+        default="",
+        type=str,
+        help="Load model weights onto CPU or GPU choices cup/cuda"
+    )
+    parser.add_argument("--speculate_max_draft_tokens", type=int, default=1)
+
     parser.add_argument("--max_num_batched_tokens",
                         type=int,
                         default=2048,
@@ -573,6 +581,7 @@ def initialize_fd_config(args) -> FDConfig:
     parallel_config.tensor_parallel_degree = args.tensor_parallel_size
     parallel_config.expert_parallel_degree = args.expert_parallel_size
     parallel_config.splitwise_role = args.splitwise_role
+    load_config.load_weights_on = args.load_weights_on
 
     logger.info(f"parallel_config.use_ep {parallel_config.use_ep}")
     logger.info(

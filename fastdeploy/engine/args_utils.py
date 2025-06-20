@@ -264,6 +264,11 @@ class EngineArgs:
     SplitWise Use, Results Writer Batch Size
     """
 
+    load_weights_on: str = None
+    """
+    Load model weights onto the specified device
+    """
+
     def __post_init__(self):
         """
         Post-initialization processing to set default tokenizer if not provided.
@@ -350,6 +355,13 @@ class EngineArgs:
                                  "default is None. The priority of this configuration "\
                                  "is lower than that of the config file. " \
                                  "More complex quantization methods need to be configured via the config file.")
+        # Load group
+        load_group = parser.add_argument_group("Load Configuration")
+        load_group.add_argument(
+            "--load_weights_on",
+            type=str,
+            default=EngineArgs.load_weights_on,
+            help="Load model weights onto the specified device cuda/cpu.")
 
         # Parallel processing parameters group
         parallel_group = parser.add_argument_group("Parallel Configuration")
@@ -715,4 +727,6 @@ class EngineArgs:
             innode_prefill_ports=self.innode_prefill_ports,
             max_num_partial_prefills=self.max_num_partial_prefills,
             max_long_partial_prefills=self.max_long_partial_prefills,
-            long_prefill_token_threshold=self.long_prefill_token_threshold)
+            long_prefill_token_threshold=self.long_prefill_token_threshold,
+            load_weights_on=self.load_weights_on,
+            )

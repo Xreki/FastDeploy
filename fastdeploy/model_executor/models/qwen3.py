@@ -301,7 +301,7 @@ class Qwen3PretrainedModel(PretrainedModel):
         _init_weight
         """
         return None
-
+        
     @classmethod
     def _get_tensor_parallel_mappings(cls, config: ModelConfig, is_split=True):
 

@@ -253,6 +253,24 @@ class CutlassW4A8MoEMethod(CutlassMoEMethod):
         self.moe_quant_type = "w4a8"
         self.pack_num = 2
 
+    def process_quantized_weights(self, layer: nn.Layer, state_dict) -> None:
+        """process_quantized_weights"""
+        ffn1_weights, ffn2_weights = layer.extract_moe_ffn_weights(state_dict)
+        for idx, weight_tensor in enumerate(
+                [ffn1_weights, ffn2_weights]):
+            weight_name = self.added_weight_attrs[idx]
+            weight_list = weight_tensor
+            quanted_weight = paddle.stack(weight_list, axis=0)
+            create_and_set_parameter(layer, weight_name, quanted_weight)
+        self.create_w4a8_scale_weights(layer, layer.weight_key_map, state_dict)
+
+    def apply_weight_quantization(self, weight):
+        """apply_weight_quantization"""
+        quant_weight, scale = weight_quantize(weight,
+                                              algo=self.moe_quant_type,
+                                              arch=80)
+        return quant_weight, scale
+
     def create_weights(self, layer: nn.Layer, state_dict):
         """
         Paddle cutlass create weight process.
@@ -263,9 +281,8 @@ class CutlassW4A8MoEMethod(CutlassMoEMethod):
             weight_name = self.added_weight_attrs[idx]
             weight_list = []
             for i in range(layer.num_local_experts):
-                quant_weight, scale = weight_quantize(weight_tensor[i],
-                                                      algo=self.moe_quant_type,
-                                                      arch=80)
+                quant_weight, scale = self.apply_weight_quantization(
+                    weight_tensor[i])
                 weight_list.append(quant_weight)
             quanted_weight = paddle.stack(weight_list, axis=0)
             create_and_set_parameter(layer, weight_name, quanted_weight)
@@ -363,7 +380,7 @@ class CutlassWeightOnlyMoEMethod(CutlassMoEMethod):
         self.moe_quant_type = self.quant_config.algo
         self.pack_num = 1
 
-    def process_prequanted_weights(self, layer: nn.Layer, state_dict):
+    def process_quantized_weights(self, layer: nn.Layer, state_dict):
         """
         Paddle cutlass process prequanted weights.
         """
@@ -406,6 +423,13 @@ class CutlassWeightOnlyMoEMethod(CutlassMoEMethod):
         for name, tensor in name_tensor_map.items():
             create_and_set_parameter(layer, name, tensor)
 
+    def apply_weight_quantization(self, weight):
+        """apply_weight_quantization"""
+        quant_weight, scale = weight_quantize(weight,
+                                              algo=self.moe_quant_type,
+                                              arch=80)
+        return quant_weight, scale
+
     def create_weights(self, layer: nn.Layer, state_dict):
         """
         Paddle cutlass create weight process.
@@ -420,8 +444,8 @@ class CutlassWeightOnlyMoEMethod(CutlassMoEMethod):
             weight_list = []
             weight_scale_list = []
             for i in range(layer.num_local_experts):
-                quant_weight, scale = weight_quantize(weight_tensor[i],
-                                                      algo=self.moe_quant_type)
+                quant_weight, scale = self.apply_weight_quantization(
+                    weight_tensor[i])
                 weight_list.append(quant_weight)
                 weight_scale_list.append(scale)
             quanted_weight = paddle.stack(weight_list, axis=0)

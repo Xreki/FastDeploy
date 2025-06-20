@@ -101,8 +101,10 @@ class Attention(nn.Layer):
                 self)
             self.kvcache_quant_method.create_weights(self)
         if fd_config.quant_config is not None:
-            self.quant_max_bound = fd_config.quant_config.quant_max_bound
-            self.quant_min_bound = fd_config.quant_config.quant_min_bound
+            self.quant_max_bound = fd_config.quant_config.get_quant_method(
+                self).quant_max_bound
+            self.quant_min_bound = fd_config.quant_config.get_quant_method(
+                self).quant_min_bound
 
         self.cache_k_scale_key = cache_k_scale_key
         self.cache_v_scale_key = cache_v_scale_key
