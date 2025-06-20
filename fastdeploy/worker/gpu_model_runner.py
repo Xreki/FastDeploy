@@ -507,7 +507,7 @@ class GPUModelRunner(ModelRunnerBase):
             temperature=self.share_inputs["temperature"],
             top_p=self.share_inputs["top_p"],
             step_idx=self.share_inputs["step_idx"],
-            prompt_token_ids=self.share_inputs["input_ids"],
+            pre_token_ids=self.share_inputs["pre_ids"],
             frequency_penalties=self.share_inputs["frequency_score"],
             presence_penalties=self.share_inputs["presence_score"],
             repetition_penalties=self.share_inputs["penalty_score"],
@@ -760,10 +760,11 @@ class GPUModelRunner(ModelRunnerBase):
                 continue
             self.restore_chunked_prefill_request[task.request_id] = task
 
-
         for id, task in list(self.restore_chunked_prefill_request.items()):
             idx = task.idx
-            logger.debug(f"{task.request_id} chunked prefill {task.chunk_idx}/{len(task.prefill_chunk_info)}")
+            logger.debug(
+                f"{task.request_id} chunked prefill {task.chunk_idx}/{len(task.prefill_chunk_info)}"
+            )
             start_idx = sum(task.prefill_chunk_info[:task.chunk_idx])
             if task.chunk_idx == len(task.prefill_chunk_info):
                 self.share_inputs["seq_lens_this_time"][idx:idx + 1] = 1
