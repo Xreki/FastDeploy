@@ -90,27 +90,7 @@ class Ernie45TMoE(nn.Layer):
         moe_quant_type = ""
         if hasattr(fd_config.quant_config, 'moe_quant_type'):
             moe_quant_type = fd_config.quant_config.moe_quant_type
-
-        if fd_config.model_config.is_quantized or moe_quant_type == "w4a8":
-            weight_key_map = {
-                "gate_weight_key":
-                f"{prefix}.gate.weight",
-                "gate_correction_bias_key":
-                f"{prefix}.moe_statics.e_score_correction_bias",
-                "ffn1_expert_weight_key":
-                f"{prefix}.experts.{{}}.up_gate_proj.quant_weight",
-                "ffn2_expert_weight_key":
-                f"{prefix}.experts.{{}}.down_proj.quant_weight",
-                "ffn1_expert_weight_scale_key":
-                f"{prefix}.experts.{{}}.up_gate_proj.weight_scale",
-                "ffn2_expert_weight_scale_key":
-                f"{prefix}.experts.{{}}.down_proj.weight_scale",
-                "ffn1_expert_in_scale_key":
-                f"{prefix}.experts.{{}}.up_gate_proj.activation_scale",
-                "ffn2_expert_in_scale_key":
-                f"{prefix}.experts.{{}}.down_proj.activation_scale",
-            }
-        elif moe_quant_type == "w4w2":
+        if fd_config.model_config.is_quantized:
             weight_key_map = {
                 "gate_weight_key":
                 f"{prefix}.gate.weight",
@@ -136,18 +116,43 @@ class Ernie45TMoE(nn.Layer):
                 f"{prefix}.experts.{{}}.up_gate_proj.code_zp",
                 "ffn2_expert_code_zp_key":
                 f"{prefix}.experts.{{}}.down_proj.code_zp",
+                "ffn1_expert_in_scale_key":
+                f"{prefix}.experts.{{}}.up_gate_proj.activation_scale",
+                "ffn2_expert_in_scale_key":
+                f"{prefix}.experts.{{}}.down_proj.activation_scale",
             }
         else:
-            weight_key_map = {
-                "gate_weight_key":
-                f"{prefix}.gate.weight",
-                "gate_correction_bias_key":
-                f"{prefix}.moe_statics.e_score_correction_bias",
-                "ffn1_expert_weight_key":
-                f"{prefix}.experts.{{}}.up_gate_proj.weight",
-                "ffn2_expert_weight_key":
-                f"{prefix}.experts.{{}}.down_proj.weight",
-            }
+            if  moe_quant_type == "w4a8":
+                weight_key_map = {
+                    "gate_weight_key":
+                    f"{prefix}.gate.weight",
+                    "gate_correction_bias_key":
+                    f"{prefix}.moe_statics.e_score_correction_bias",
+                    "ffn1_expert_weight_key":
+                    f"{prefix}.experts.{{}}.up_gate_proj.quant_weight",
+                    "ffn2_expert_weight_key":
+                    f"{prefix}.experts.{{}}.down_proj.quant_weight",
+                    "ffn1_expert_weight_scale_key":
+                    f"{prefix}.experts.{{}}.up_gate_proj.weight_scale",
+                    "ffn2_expert_weight_scale_key":
+                    f"{prefix}.experts.{{}}.down_proj.weight_scale",
+                    "ffn1_expert_in_scale_key":
+                    f"{prefix}.experts.{{}}.up_gate_proj.activation_scale",
+                    "ffn2_expert_in_scale_key":
+                    f"{prefix}.experts.{{}}.down_proj.activation_scale",
+                    
+                }
+            else:
+                weight_key_map = {
+                    "gate_weight_key":
+                    f"{prefix}.gate.weight",
+                    "gate_correction_bias_key":
+                    f"{prefix}.moe_statics.e_score_correction_bias",
+                    "ffn1_expert_weight_key":
+                    f"{prefix}.experts.{{}}.up_gate_proj.weight",
+                    "ffn2_expert_weight_key":
+                    f"{prefix}.experts.{{}}.down_proj.weight",
+                }
 
         self.fused_moe = FusedMoE(
             fd_config=fd_config,
