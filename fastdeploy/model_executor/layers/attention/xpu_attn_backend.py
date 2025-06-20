@@ -86,9 +86,9 @@ class XPUAttentionBackend(AttentionBackend):
                            else fd_config.model_config.rope_theta)
         self.rope_3d = getattr(fd_config.model_config, "rope_3d", False)
         self.causal = getattr(fd_config.model_config, "causal", True)
-        self.speculate_method = fd_config.parallel_config.speculate_method
-        self.use_speculate = self.speculate_method is not None
-        self.speculate_max_draft_token_num = fd_config.parallel_config.speculate_max_draft_tokens
+        # self.speculate_method = fd_config.parallel_config.speculate_method
+        # self.use_speculate = self.speculate_method is not None
+        # self.speculate_max_draft_token_num = fd_config.parallel_config.speculate_max_draft_tokens
         self.keep_pd_step_flag = fd_config.speculative_config.is_mtp
         self.rank = fd_config.parallel_config.tensor_parallel_rank
 

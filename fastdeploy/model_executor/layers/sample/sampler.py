@@ -25,8 +25,6 @@ from fastdeploy.model_executor.layers.sample.meta_data import SamplingMetadata
 from fastdeploy.model_executor.layers.sample.ops import (
     apply_penalty_multi_scores, apply_speculative_penalty_multi_scores,
     top_p_sampling)
-from fastdeploy.model_executor.ops.gpu import (speculate_verify,
-                                               top_p_candidates)
 from fastdeploy.platforms import current_platform
 
 
@@ -96,6 +94,9 @@ class SpeculativeSampler(nn.Layer):
     ) -> paddle.Tensor:
         """
         """
+
+        from fastdeploy.model_executor.ops.gpu import (speculate_verify,
+                                                       top_p_candidates)
 
         logits = apply_speculative_penalty_multi_scores(
             sampling_metadata.pre_token_ids,
