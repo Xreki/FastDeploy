@@ -18,6 +18,7 @@
 #include <cuda_fp16.h>
 #include <stdio.h>
 
+#include "cutlass/trace.h"
 #include "cutlass_kernels/moe_gemm/wint_type_traits.h"
 #include "helper.h"
 
@@ -112,9 +113,9 @@ struct UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt2, TileRows,
   static constexpr int32_t kLocalScaleMask = 0xF;
   static constexpr int32_t kBZP = 32;
 
-  static constexpr int32_t kSmemBytes =
-      (TileRows / 4 + (TileRows + 127) / 128 + 2 * sizeof(float) + sizeof(T)) *
-      TileColumns;
+  static constexpr int32_t kZippedSmemRows =
+      TileRows / 4 + (TileRows + 127) / 128 + 2 * sizeof(float) + sizeof(T);
+  static constexpr int32_t kZippedSmemBytes = kZippedSmemRows * TileColumns;
 
   struct Arguments {
     uint8_t *weight_ptr;
@@ -135,6 +136,13 @@ struct UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt2, TileRows,
           smem_ptr +
           (TileRows / 4 + (TileRows + 127) / 128 + 2 * sizeof(float)) *
               TileColumns);
+      // CUTLASS_TRACE_DEVICE(" weight_ptr=%p, local_scale_ptr=%p,
+      // code_scale_ptr=%p, code_zp_ptr=%p, super_scale_ptr=%p",
+      //     reinterpret_cast<void*>(weight_ptr),
+      //     reinterpret_cast<void*>(local_scale_ptr),
+      //     reinterpret_cast<void*>(code_scale_ptr),
+      //     reinterpret_cast<void*>(code_zp_ptr),
+      //     reinterpret_cast<void*>(super_scale_ptr));
     }
   };
 
@@ -279,7 +287,7 @@ Wint2UnzipKernel(const uint8_t *zipped_weight_ptr,
       UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt2, TileRows,
                              TileColumns, NumThreads>;
 
-  __shared__ uint8_t zipped_smem[UnzipFunctor::kSmemBytes];
+  __shared__ uint8_t zipped_smem[UnzipFunctor::kZippedSmemBytes];
   __shared__ T smem[TileRows * TileColumns];
 
   int64_t block_start_column = blockIdx.x * TileColumns;

@@ -38,12 +38,10 @@ struct TileDequanter {
   static constexpr int kRows = Rows;
   static constexpr int kColumns = Columns;
 
-  struct SharedStorage {};
-
   char *pointer{nullptr};
 
   CUTLASS_DEVICE
-  TileDequanter(SharedStorage &storage, char *pointer, int64_t ldm,
+  TileDequanter(MmaElementT *smem_ptr, char *pointer, int64_t ldm,
                 const cutlass::MatrixCoord &extent,
                 const cutlass::MatrixCoord &tb_offset,
                 ScaleElementT *super_scale_ptr,
@@ -76,10 +74,7 @@ struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, NumThreads, Method,
 
   static constexpr int kRows = Rows;
   static constexpr int kColumns = Columns;
-
-  struct SharedStorage {
-    MmaElementT smem[kRows * kColumns];
-  };
+  static constexpr int kStages = 4;
 
   MmaElementT *smem_ptr{nullptr};
 
@@ -93,21 +88,18 @@ struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, NumThreads, Method,
 
   Arguments quant_args;
 
+  int64_t block_start_rows[kStages];
+
   CUTLASS_DEVICE
-  TileDequanter(SharedStorage &storage, char *pointer, int64_t ldm,
+  TileDequanter(MmaElementT *smem_ptr, char *pointer, int64_t ldm,
                 const cutlass::MatrixCoord &extent,
                 const cutlass::MatrixCoord &tb_offset,
                 ScaleElementT *super_scale_ptr,
                 const cutlass::MatrixCoord &tb_offset_scale,
                 const Arguments &quant_args)
-      : smem_ptr(storage.smem), pointer(pointer), ldm(ldm), extent(extent),
+      : smem_ptr(smem_ptr), pointer(pointer), ldm(ldm), extent(extent),
         tb_offset(tb_offset), super_scale_ptr(super_scale_ptr),
-        tb_offset_scale(tb_offset_scale), quant_args(quant_args) {
-    // CUTLASS_TRACE_DEVICE(" TileDequanter::SharedStorage: {%d, %d} * %d = %d
-    // bytes",
-    //     kRows, kColumns, static_cast<int>(sizeof(MmaElementT)),
-    //     static_cast<int>(sizeof(SharedStorage)));
-  }
+        tb_offset_scale(tb_offset_scale), quant_args(quant_args) {}
 
   CUTLASS_DEVICE
   MmaElementT *GetOutPtr() { return smem_ptr; }
@@ -120,6 +112,87 @@ struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, NumThreads, Method,
     tb_offset.row() += tile_offset.row() * kRows;
     tb_offset.column() += tile_offset.column() * kColumns;
     tb_offset_scale.column() += tile_offset.column() * kColumns;
+  }
+
+  CUTLASS_DEVICE
+  void Load(uint8_t *zipped_smem_ptr, int stage) {
+    int zipped_row = WeightQuantTraits::CaclPackedDim(tb_offset.row());
+    if (tb_offset.row() >= extent.row() ||
+        tb_offset.column() >= extent.column()) {
+      CUTLASS_TRACE_DEVICE(" zipped_smem_ptr=%p, stage=%d, tb_offset={%d, %d}, "
+                           "zipped_row=%d, skipped!!!",
+                           reinterpret_cast<void *>(zipped_smem_ptr), stage,
+                           static_cast<int>(tb_offset.row()),
+                           static_cast<int>(tb_offset.column()), zipped_row);
+      return;
+    } else {
+      CUTLASS_TRACE_DEVICE(" zipped_smem_ptr=%p, stage=%d, tb_offset={%d, %d}, zipped_row=%d",
+          reinterpret_cast<void*>(zipped_smem_ptr), stage,
+          static_cast<int>(tb_offset.row()),
+          static_cast<int>(tb_offset.column()), zipped_row);
+    }
+
+    block_start_rows[stage % kStages] = tb_offset.row();
+
+    using ZippedT = typename WeightQuantTraits::WeightType;
+    ZippedT *in_ptr = reinterpret_cast<ZippedT *>(pointer) + zipped_row * ldm +
+                      tb_offset.column();
+    ScaleElementT *scale_ptr = super_scale_ptr + tb_offset_scale.column();
+
+    UnzipAndDequantFunctor functor;
+    if constexpr (Method == WintQuantMethod::kWeightOnlyInt2) {
+      const uint8_t *local_scale_ptr = quant_args.local_scale_ptr +
+                                       (tb_offset.row() / 128) * ldm +
+                                       tb_offset_scale.column();
+      const float *code_scale_ptr =
+          quant_args.code_scale_ptr + tb_offset_scale.column();
+      const float *code_zp_ptr =
+          quant_args.code_zp_ptr + tb_offset_scale.column();
+      __syncthreads();
+      functor.Load(in_ptr, local_scale_ptr, code_scale_ptr, code_zp_ptr,
+                   scale_ptr, zipped_smem_ptr, ldm);
+      __syncthreads();
+    } else {
+      CUTLASS_TRACE_DEVICE("Not Supported!");
+    }
+  }
+
+  CUTLASS_DEVICE
+  void UnpackAndDequant(uint8_t *zipped_smem_ptr, int stage) {
+    MmaElementT *out_ptr = smem_ptr;
+
+    int64_t block_start_row = block_start_rows[stage % kStages];
+    int fake_value = (stage < 128) ? (block_start_row / Rows + 1) : 0;
+    if (block_start_row >= extent.row()) {
+      CUTLASS_TRACE_DEVICE(" zipped_smem_ptr=%p, out_ptr=%p, stage=%d, "
+                           "block_start_row=%d, skipped!!!",
+                           reinterpret_cast<void *>(zipped_smem_ptr), out_ptr,
+                           stage, static_cast<int>(block_start_row));
+      return;
+    } else {
+      CUTLASS_TRACE_DEVICE(" zipped_smem_ptr=%p, out_ptr=%p, stage=%d, "
+                           "block_start_row=%d, fake_value=%d",
+                           reinterpret_cast<void *>(zipped_smem_ptr), out_ptr,
+                           stage, static_cast<int>(block_start_row),
+                           fake_value);
+    }
+
+    UnzipAndDequantFunctor functor;
+    if constexpr (Method == WintQuantMethod::kWeightOnlyInt2) {
+      __syncthreads();
+      functor.Compute(zipped_smem_ptr, out_ptr, block_start_row);
+      __syncthreads();
+#if 0
+      for (int col = threadIdx.x; col < Columns; ++col) {
+        for (int row = 0; row < Rows; ++row) {
+          out_ptr[row * Columns + col] = static_cast<MmaElementT>(fake_value);
+        }
+      }
+      __syncthreads();
+#endif
+    } else {
+      CUTLASS_TRACE_DEVICE("Not Supported!");
+    }
   }
 
   CUTLASS_DEVICE
@@ -140,6 +213,7 @@ struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, NumThreads, Method,
       //     static_cast<int>(tb_offset.column()), zipped_row, fake_value);
     }
 
+#if 0
     using ZippedT = typename WeightQuantTraits::WeightType;
 
     MmaElementT *out_ptr = smem_ptr;
@@ -164,5 +238,6 @@ struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, NumThreads, Method,
     } else {
       unzip_and_dequant_functor(in_ptr, scale_ptr, out_ptr, ldm);
     }
+#endif
   }
 };

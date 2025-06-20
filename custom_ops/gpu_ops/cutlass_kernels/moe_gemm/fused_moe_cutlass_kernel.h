@@ -136,11 +136,11 @@ CUTLASS_DEVICE static void run_mma(Mma mma,
                                    const int thread_idx,
                                    MatrixCoord tb_offset_scale) {
   //CUTLASS_TRACE_DEVICE(" use_dq_gemm is false");
-  //if constexpr (QuantMethod == WintQuantMethod::kWeightOnlyInt25) {
+  if constexpr (QuantMethod == WintQuantMethod::kWeightOnlyInt2) {
     mma(gemm_k_iterations, accum, iterator_A, iterator_B, tile_dequanter_B, src_accum);
-  //} else {
+  } else {
   //  mma(gemm_k_iterations, accum, iterator_A, iterator_B, src_accum);
-  //}
+  }
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -524,7 +524,7 @@ struct MoeFCGemm {
 
       // LayoutB should be RowMajor
       using TileDequanterB = TileDequanter<ElementA, ElementScale, ThreadblockShape::kK, ThreadblockShape::kN, kThreadCount, QuantMethod>;
-      __shared__ typename TileDequanterB::SharedStorage dequant_storage_B;
+      //__shared__ typename TileDequanterB::SharedStorage dequant_storage_B;
 
       //
       // Problem visitor.
@@ -545,12 +545,12 @@ struct MoeFCGemm {
         GemmCoord problem_size = problem_visitor.problem_size();
         int32_t problem_idx = problem_visitor.problem_index();
         int32_t cta_idx = int32_t(problem_visitor.threadblock_idx());
-        //CUTLASS_TRACE_DEVICE(" problem_idx: %d, cta_idx: %d, problem_size: {%d, %d, %d}",
-        //    problem_idx, cta_idx, static_cast<int>(problem_size.m()), static_cast<int>(problem_size.n()), static_cast<int>(problem_size.k()));
+        CUTLASS_TRACE_DEVICE(" problem_idx: %d, cta_idx: %d, problem_size: {%d, %d, %d}",
+            problem_idx, cta_idx, static_cast<int>(problem_size.m()), static_cast<int>(problem_size.n()), static_cast<int>(problem_size.k()));
 
-        //if (problem_idx > 5) {
-        //  break;
-        //}
+        if (problem_idx > 2) {
+          //break;
+        }
 
         GemmCoord grid_shape = problem_visitor.grid_shape(problem_size);
 
@@ -605,8 +605,13 @@ struct MoeFCGemm {
         cutlass::MatrixCoord extent_B{problem_size.k() * kInterleave, problem_size.n() / kInterleave};
         cutlass::MatrixCoord extent_B_shared{TileDequanterB::kRows, TileDequanterB::kColumns};
 
+        // MmaElementB* smem_unzip_B_ptr = dequant_storage_B.smem;
+        MmaElementB* smem_unzip_B_ptr = nullptr;
+        if constexpr (QuantMethod == WintQuantMethod::kWeightOnlyInt2) {
+          smem_unzip_B_ptr = shared_storage.main_loop.operand_unzip_B_ptr();
+        }
         QuantArguments quant_args = get_quant_args(params, problem_idx, gemm_k, gemm_n);
-        TileDequanterB tile_dequanter_B(dequant_storage_B,
+        TileDequanterB tile_dequanter_B(smem_unzip_B_ptr,
                                         byte_ptr_B,
                                         ldm_B,
                                         extent_B,
@@ -683,6 +688,9 @@ struct MoeFCGemm {
                      thread_idx,
                      tb_offset_scale);
 
+        CUTLASS_TRACE_DEVICE(" FragmentC::kElements=%d", static_cast<int>(Mma::FragmentC::kElements));
+        CUTLASS_TRACE_DEVICE_TID(" accumulators[0:1]={%f, %f}", static_cast<float>(accumulators[0]), static_cast<float>(accumulators[1]));
+
         //
         // Epilogue
         //
@@ -742,16 +750,16 @@ struct MoeFCGemm {
     static constexpr bool kCompileNeeded = NeedCompile<KernelArch>();
     if constexpr (std::is_same<ElementB, cutlass::bfloat16_t>::value || std::is_same<ElementB, cutlass::half_t>::value) {
       if (params.quant_method == WintQuantMethod::kWeightOnlyInt25) {
-        KernelRunner<WintQuantMethod::kWeightOnlyInt25, kCompileNeeded>::run_kernel(params, shared_storage);
+        //KernelRunner<WintQuantMethod::kWeightOnlyInt25, kCompileNeeded>::run_kernel(params, shared_storage);
       } else if (params.quant_method == WintQuantMethod::kWeightOnlyInt2) {
         KernelRunner<WintQuantMethod::kWeightOnlyInt2, kCompileNeeded>::run_kernel(params, shared_storage);
       } else {
         KernelRunner<WintQuantMethod::kNone, kCompileNeeded>::run_kernel(params, shared_storage);
       }
     } else if constexpr (std::is_same<ElementB, uint8_t>::value) {
-      KernelRunner<WintQuantMethod::kWeightOnlyInt8, kCompileNeeded>::run_kernel(params, shared_storage);
+      //KernelRunner<WintQuantMethod::kWeightOnlyInt8, kCompileNeeded>::run_kernel(params, shared_storage);
     } else if constexpr (std::is_same<ElementB, cutlass::uint4b_t>::value) {
-      KernelRunner<WintQuantMethod::kWeightOnlyInt4, kCompileNeeded>::run_kernel(params, shared_storage);
+      //KernelRunner<WintQuantMethod::kWeightOnlyInt4, kCompileNeeded>::run_kernel(params, shared_storage);
     } else {
       CUTLASS_NOT_IMPLEMENTED();
     }
