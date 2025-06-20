@@ -24,7 +24,6 @@ from .m_grouped_gemm import (
 from .utils import (
     ceil_div,
     get_col_major_tma_aligned_tensor,
-    get_col_major_tma_aligned_tensor_prefill,
     get_m_alignment_for_contiguous_layout,
     get_num_sms,
     set_num_sms,

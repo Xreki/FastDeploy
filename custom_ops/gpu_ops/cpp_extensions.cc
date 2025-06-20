@@ -125,38 +125,34 @@ paddle::Tensor FusedExpertMoeFunc(
     const bool norm_topk_prob, const bool group_moe);
 
 std::vector<paddle::Tensor> MoeExpertDispatch(
-    const paddle::Tensor& input,
-    const paddle::Tensor& gating_output,
-    const paddle::optional<paddle::Tensor>& gating_correction_bias,
-    const paddle::optional<paddle::Tensor> &w4a8_in_scale,
-    const int moe_topk,
-    const bool group_moe,
-    const bool topk_only_mode);
+    const paddle::Tensor &input, const paddle::Tensor &gating_output,
+    const paddle::optional<paddle::Tensor> &gating_correction_bias,
+    const paddle::optional<paddle::Tensor> &w4a8_in_scale, const int moe_topk,
+    const bool group_moe, const bool topk_only_mode);
 
 std::vector<paddle::Tensor>
 MoETopKSelectKernel(const paddle::Tensor &gating_logits,
-                  const paddle::optional<paddle::Tensor> &bias,
-                  const int moe_topk, const bool apply_norm_weight,
-                  const bool enable_softmax_top_k_fused);
+                    const paddle::optional<paddle::Tensor> &bias,
+                    const int moe_topk, const bool apply_norm_weight,
+                    const bool enable_softmax_top_k_fused);
 
-std::vector<paddle::Tensor> MoERedundantTopKSelectKernel(
-    const paddle::Tensor& gating_logits,
-    const paddle::Tensor& expert_id_to_ep_rank_array,
-    const paddle::Tensor& expert_in_rank_num_list,
-    paddle::Tensor& tokens_per_expert_stats_list,
-    const paddle::optional<paddle::Tensor>& bias,
-    const int moe_topk,
-    const bool apply_norm_weight,
-    const bool enable_softmax_top_k_fused,
-    const int redundant_ep_rank_num_plus_one);
+std::vector<paddle::Tensor>
+MoERedundantTopKSelectKernel(const paddle::Tensor &gating_logits,
+                             const paddle::Tensor &expert_id_to_ep_rank_array,
+                             const paddle::Tensor &expert_in_rank_num_list,
+                             paddle::Tensor &tokens_per_expert_stats_list,
+                             const paddle::optional<paddle::Tensor> &bias,
+                             const int moe_topk, const bool apply_norm_weight,
+                             const bool enable_softmax_top_k_fused,
+                             const int redundant_ep_rank_num_plus_one);
 
 std::vector<paddle::Tensor>
 EPMoeExpertDispatch(const paddle::Tensor &input, const paddle::Tensor &topk_ids,
-                  const paddle::Tensor &topk_weights,
-                  const paddle::optional<paddle::Tensor> &ffn1_in_scale,
-                  const std::vector<int> &token_nums_per_expert,
-                  const int token_nums_this_rank,
-                  const std::string &moe_quant_type);
+                    const paddle::Tensor &topk_weights,
+                    const paddle::optional<paddle::Tensor> &ffn1_in_scale,
+                    const std::vector<int> &token_nums_per_expert,
+                    const int token_nums_this_rank,
+                    const std::string &moe_quant_type);
 
 std::vector<paddle::Tensor> EPMoeExpertDispatchFP8(
     const paddle::Tensor &input, const paddle::Tensor &scale,
@@ -180,9 +176,8 @@ std::vector<paddle::Tensor> EPMoeExpertCombine(
     const paddle::optional<paddle::Tensor> &ffn2_bias,
     const bool norm_topk_prob, const float routed_scaling_factor);
 
-std::vector<std::vector<int>> GetExpertTokenNum(
-    const paddle::Tensor& topk_ids,
-    const int num_experts);
+std::vector<std::vector<int>> GetExpertTokenNum(const paddle::Tensor &topk_ids,
+                                                const int num_experts);
 
 paddle::Tensor MoeExpertFFNFunc(
     const paddle::Tensor &permute_input,
@@ -205,20 +200,16 @@ paddle::Tensor MoeExpertReduceFunc(
 void InitKVSignalPerQuery(const paddle::Tensor &seq_lens_encoder_tensor,
                           const paddle::Tensor &seq_lens_this_time_tensor,
                           const paddle::Tensor &seq_lens_decoder_tensor,
-                          const int rank,
-                          const int num_layers);
+                          const int rank, const int num_layers);
 
-void GetOutputKVSignal(const paddle::Tensor& x,
-                       int64_t rank_id,
+void GetOutputKVSignal(const paddle::Tensor &x, int64_t rank_id,
                        bool wait_flag);
-
 
 paddle::Tensor DequantInt8Func(const paddle::Tensor &input,
                                const paddle::Tensor &out_scale,
                                std::string dtype);
 
-paddle::Tensor OpenShmAndGetMetaSignalFunc(const int rank,
-                                           const int device_id,
+paddle::Tensor OpenShmAndGetMetaSignalFunc(const int rank, const int device_id,
                                            const bool keep_pd_step_flag);
 
 paddle::Tensor InitSignalLayerwiseFunc(const paddle::Tensor &kv_signal_metadata,
@@ -287,74 +278,68 @@ std::vector<paddle::Tensor> ExtractTextTokenOutput(
     const paddle::Tensor &seq_lens_this_time,
     const paddle::Tensor &cu_seqlens_q, const paddle::Tensor &score_text);
 
-std::vector<paddle::Tensor> MoEDeepGEMMPermute(
-    const paddle::Tensor& x,
-    const paddle::Tensor& topk_idx,
-    const int num_experts,
-    const int max_tokens_per_expert
-);
+std::vector<paddle::Tensor> MoEDeepGEMMPermute(const paddle::Tensor &x,
+                                               const paddle::Tensor &topk_idx,
+                                               const int num_experts,
+                                               const int max_tokens_per_expert);
 
 std::vector<paddle::Tensor> MoEDeepGEMMDePermute(
-    const paddle::Tensor& ffn_out, // [num_experts, max_tokens_per_expert, hidden]
-    const paddle::Tensor& permute_indices_per_token, // [token_num, topk}]
-    const paddle::Tensor& topk_idx,
-    const paddle::Tensor& topk_weights
-);
+    const paddle::Tensor
+        &ffn_out, // [num_experts, max_tokens_per_expert, hidden]
+    const paddle::Tensor &permute_indices_per_token, // [token_num, topk}]
+    const paddle::Tensor &topk_idx, const paddle::Tensor &topk_weights);
 
-void TextImageIndexOut(
-    const paddle::Tensor& token_type_ids,
-    const paddle::Tensor& text_input,
-    const paddle::Tensor& image_input);
+void TextImageIndexOut(const paddle::Tensor &token_type_ids,
+                       const paddle::Tensor &text_input,
+                       const paddle::Tensor &image_input);
 
-void TextImageGatherScatter(
-    paddle::Tensor& input,
-    paddle::Tensor& text_input,
-    paddle::Tensor& image_input,
-    paddle::Tensor& token_type_ids,
-    paddle::Tensor& text_index,
-    paddle::Tensor& image_index,
-    const bool is_scatter);
+void TextImageGatherScatter(paddle::Tensor &input, paddle::Tensor &text_input,
+                            paddle::Tensor &image_input,
+                            paddle::Tensor &token_type_ids,
+                            paddle::Tensor &text_index,
+                            paddle::Tensor &image_index, const bool is_scatter);
 
+paddle::Tensor count_tokens_per_expert_func(const paddle::Tensor &topk_ids,
+                                            int64_t num_experts);
 
 PYBIND11_MODULE(fastdeploy_ops, m) {
 
-      m.def("get_expert_token_num", &GetExpertTokenNum,
-            py::arg("topk_ids"), py::arg("num_experts"),
-            "get expert token num");
+  m.def("get_expert_token_num", &GetExpertTokenNum, py::arg("topk_ids"),
+        py::arg("num_experts"), "get expert token num");
 
+  /**
+   * moe/fused_moe/moe_redundant_topk_select.cu
+   * moe_redundant_topk_select
+   */
+  m.def("f_moe_redundant_topk_select", &MoERedundantTopKSelectKernel,
+        py::arg("gating_logits"), py::arg("expert_id_to_ep_rank_array"),
+        py::arg("expert_in_rank_num_list"),
+        py::arg("tokens_per_expert_stats_list"), py::arg("bias"),
+        py::arg("moe_topk"), py::arg("apply_norm_weight"),
+        py::arg("enable_softmax_top_k_fused"),
+        py::arg("redundant_ep_rank_num_plus_one"),
+        "moe export RedundantTopKSelect function");
 
-      /**
-      * moe/fused_moe/moe_redundant_topk_select.cu
-      * moe_redundant_topk_select
-      */
-      m.def("f_moe_redundant_topk_select", &MoERedundantTopKSelectKernel,
-            py::arg("gating_logits"), py::arg("expert_id_to_ep_rank_array"),
-            py::arg("expert_in_rank_num_list"), py::arg("tokens_per_expert_stats_list"),
-            py::arg("bias"), py::arg("moe_topk"), py::arg("apply_norm_weight"),
-            py::arg("enable_softmax_top_k_fused"), py::arg("redundant_ep_rank_num_plus_one"),
-            "moe export RedundantTopKSelect function");
+  /**
+   * open_shm_and_get_meta_signal.cc
+   * InitKVSingnalPerQuery
+   */
+  m.def("init_kv_signal_per_query", &InitKVSignalPerQuery,
+        py::arg("seq_lens_encoder_tensor"),
+        py::arg("seq_lens_this_time_tensor"),
+        py::arg("seq_lens_decoder_tensor"), py::arg("rank"),
+        py::arg("num_layers"), "init_kv_signal_per_query function");
 
+  /**
+   * GetOutputKVSignal
+   */
+  m.def("get_output_kv_signal", &GetOutputKVSignal, py::arg("x"),
+        py::arg("rank_id"), py::arg("wait_flag"),
+        "get_output_kv_signal function");
 
-      /**
-      * open_shm_and_get_meta_signal.cc
-      * InitKVSingnalPerQuery
-      */
-      m.def("init_kv_signal_per_query", &InitKVSignalPerQuery, 
-            py::arg("seq_lens_encoder_tensor"), py::arg("seq_lens_this_time_tensor"),
-            py::arg("seq_lens_decoder_tensor"), py::arg("rank"), py::arg("num_layers"),
-            "init_kv_signal_per_query function");
-            
-      /**
-      * GetOutputKVSignal
-      */
-      m.def("get_output_kv_signal", &GetOutputKVSignal, 
-            py::arg("x"), py::arg("rank_id"), py::arg("wait_flag"),
-            "get_output_kv_signal function");
-
-
-
-      m.def("moe_deepgemm_permute", &MoEDeepGEMMPermute, "MoEDeepGEMMPermute");
-      m.def("moe_deepgemm_depermute", &MoEDeepGEMMDePermute, "MoEDeepGEMMDePermute");
+  m.def("moe_deepgemm_permute", &MoEDeepGEMMPermute, "MoEDeepGEMMPermute");
+  m.def("moe_deepgemm_depermute", &MoEDeepGEMMDePermute,
+        "MoEDeepGEMMDePermute");
   /**
    * alloc_cache_pinned.cc
    * cuda_host_alloc
@@ -538,8 +523,11 @@ PYBIND11_MODULE(fastdeploy_ops, m) {
   m.def("group_swiglu_with_masked", &GroupSwigluWithMasked,
         "group_swiglu_with_masked function");
 
-  m.def("text_image_index_out", &TextImageIndexOut, "text_image_index_out function");
+  m.def("text_image_index_out", &TextImageIndexOut,
+        "text_image_index_out function");
 
-  m.def("text_image_gather_scatter", &TextImageGatherScatter, "text_image_gather_scatter function");
+  m.def("text_image_gather_scatter", &TextImageGatherScatter,
+        "text_image_gather_scatter function");
 
+  m.def("count_tokens_per_expert_func", &count_tokens_per_expert_func);
 }

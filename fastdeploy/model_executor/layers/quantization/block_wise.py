@@ -21,7 +21,7 @@ import fastdeploy
 
 from ..utils import per_block_cast_to_fp8
 from .quant_base import QuantConfigBase, QuantMethodBase
-
+from fastdeploy.model_executor.layers.moe import FusedMoE
 
 class BlockWiseConfig(QuantConfigBase):
     """
@@ -46,7 +46,15 @@ class BlockWiseConfig(QuantConfigBase):
         return cls(weight_block_size)
 
     def get_quant_method(self, layer) -> Optional[QuantMethodBase]:
-        return BlockWiseLinearMethod(self)
+        '''
+        Get quantization method.
+        ''' 
+        if isinstance(layer, FusedMoE):
+            from fastdeploy.model_executor.layers.moe.fused_moe_deepgemm_backend import \
+                DeepGemmFusedMoeMethod
+            return DeepGemmFusedMoeMethod()
+        else:
+            return BlockWiseLinearMethod(self)
 
 
 class BlockWiseLinearMethod(QuantMethodBase):
