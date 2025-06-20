@@ -104,6 +104,8 @@ class AppendAttentionBackend(AttentionBackend):
         self.start_layer_index = fd_config.model_config.start_layer_index
         self.device_id = os.getenv("CUDA_VISIBLE_DEVICES", None)
 
+        if fd_config.parallel_config.expert_parallel_rank is None:
+            fd_config.parallel_config.expert_parallel_rank = 0
         device_id = self.rank + fd_config.parallel_config.tensor_parallel_degree * \
             fd_config.parallel_config.expert_parallel_rank
         if self.device_id is None:
