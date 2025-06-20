@@ -231,6 +231,7 @@ def build_stream_line_model(
     parallel_config.tensor_parallel_degree = tensor_parallel_degree
     parallel_config.tensor_parallel_degree = tensor_parallel_degree
     parallel_config.expert_parallel_degree = 1
+    parallel_config.expert_parallel_rank = int(tensor_parallel_rank / tensor_parallel_degree)
     parallel_config.column_cut = False
 
     speculative_config.is_mtp = draft_type in ["mtp"]
