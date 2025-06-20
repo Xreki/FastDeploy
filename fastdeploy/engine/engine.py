@@ -900,7 +900,7 @@ class LLMEngine(object):
             "FLAGS_specialize_device_in_dy2st":
             os.getenv("FLAGS_specialize_device_in_dy2st", default="1"),
             "FLAGS_enable_async_fast_gc":
-            os.getenv("FLAGS_enable_async_fast_gc", default="1"),
+            os.getenv("FLAGS_enable_async_fast_gc", default="0"),
             "FLAGS_pir_interpreter_record_stream_for_gc_cache":
             os.getenv("FLAGS_pir_interpreter_record_stream_for_gc_cache", default="1"),
         })
