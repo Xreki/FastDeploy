@@ -559,9 +559,7 @@ def build_stream_line_model(
 
     weight_dtype, act_dtype, cachekv_dtype = parser_quant_type(
         export_model_type)
-    logger.info(
-        f"quant_type: weight[{weight_dtype}], act[{act_dtype}], cachekv[{cachekv_dtype}]"
-    )
+
     model_config.weight_dtype = weight_dtype
     model_config.act_dtype = act_dtype
 
@@ -578,8 +576,6 @@ def build_stream_line_model(
         quant_config_name = quantization_config["quantization"]
         quant_cls = get_quantization_config(quant_config_name)
         quant_config = quant_cls.from_config(quantization_config)
-        logger.info(
-            f"quant_type: {quant_config.name()}, cachekv[{cachekv_dtype}]")
     elif quantization != "None":
         quantization_config = {}
         if use_moe and quantization == "wint4":
@@ -592,6 +588,15 @@ def build_stream_line_model(
         quant_config = quant_cls.from_config(quantization_config)
     else:
         quant_config = None
+
+    logger.info("===========quantization_config==============")
+    if quant_config is not None:
+        logger.info(f"{quantization_config}")
+    else:
+        logger.info(
+            "No quantization config found and use original weight and act dtype."
+        )
+    logger.info("============================================")
 
     fd_config = FDConfig(
         model_config=model_config,
