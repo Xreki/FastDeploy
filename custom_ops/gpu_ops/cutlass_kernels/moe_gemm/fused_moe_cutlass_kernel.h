@@ -523,8 +523,7 @@ struct MoeFCGemm {
           "B must be row major/col major OR col major interleaved.");
 
       // LayoutB should be RowMajor
-      using TileDequanterB = TileDequanter<ElementA, ElementScale, ThreadblockShape::kK, ThreadblockShape::kN, kThreadCount, QuantMethod>;
-      //__shared__ typename TileDequanterB::SharedStorage dequant_storage_B;
+      using TileDequanterB = TileDequanter<ElementA, ElementScale, ThreadblockShape::kK, ThreadblockShape::kN, kStages, kThreadCount, QuantMethod>;
 
       //
       // Problem visitor.

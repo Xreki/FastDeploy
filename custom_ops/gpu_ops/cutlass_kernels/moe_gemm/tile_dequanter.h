@@ -27,7 +27,7 @@ template <>
 struct UseSharedMemory<WintQuantMethod::kWeightOnlyInt2> : std::true_type {};
 
 template <typename ElementT, typename ScaleElementT, int Rows, int Columns,
-          int NumThreads, WintQuantMethod Method, typename = void>
+          int Stages, int NumThreads, WintQuantMethod Method, typename = void>
 struct TileDequanter {
   using WeightQuantTraits = WintQuantTraits<ElementT, Method>;
   using MmaElementT = typename WeightQuantTraits::MmaWeightType;
@@ -60,8 +60,8 @@ struct TileDequanter {
 };
 
 template <typename ElementT, typename ScaleElementT, int Rows, int Columns,
-          int NumThreads, WintQuantMethod Method>
-struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, NumThreads, Method,
+          int Stages, int NumThreads, WintQuantMethod Method>
+struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, Stages, NumThreads, Method,
                      std::enable_if_t<UseSharedMemory<Method>::value>> {
   using WeightQuantTraits = WintQuantTraits<ElementT, Method>;
   using MmaElementT = typename WeightQuantTraits::MmaWeightType;
@@ -74,7 +74,7 @@ struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, NumThreads, Method,
 
   static constexpr int kRows = Rows;
   static constexpr int kColumns = Columns;
-  static constexpr int kStages = 4;
+  static constexpr int kStages = Stages;
 
   MmaElementT *smem_ptr{nullptr};
 
@@ -148,10 +148,10 @@ struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, NumThreads, Method,
           quant_args.code_scale_ptr + tb_offset_scale.column();
       const float *code_zp_ptr =
           quant_args.code_zp_ptr + tb_offset_scale.column();
-      __syncthreads();
-      functor.Load(in_ptr, local_scale_ptr, code_scale_ptr, code_zp_ptr,
-                   scale_ptr, zipped_smem_ptr, ldm);
-      __syncthreads();
+      
+      typename UnzipAndDequantFunctor::Arguments args(zipped_smem_ptr);
+      functor.LoadAsync(in_ptr, local_scale_ptr, code_scale_ptr, code_zp_ptr,
+                        scale_ptr, &args, ldm);
     } else {
       CUTLASS_TRACE_DEVICE("Not Supported!");
     }
@@ -179,9 +179,8 @@ struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, NumThreads, Method,
 
     UnzipAndDequantFunctor functor;
     if constexpr (Method == WintQuantMethod::kWeightOnlyInt2) {
-      __syncthreads();
-      functor.Compute(zipped_smem_ptr, out_ptr, block_start_row);
-      __syncthreads();
+      typename UnzipAndDequantFunctor::Arguments args(zipped_smem_ptr);
+      functor.Compute(args, out_ptr, block_start_row);
 #if 0
       for (int col = threadIdx.x; col < Columns; ++col) {
         for (int row = 0; row < Rows; ++row) {
