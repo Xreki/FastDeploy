@@ -121,18 +121,20 @@ def xpu_setup_ops():
         XDNN_INC_PATH = os.path.join(XDNN_PATH, "include")
         XDNN_LIB_DIR = os.path.join(XDNN_PATH, "so")
 
-    # build plugin
-    build_plugin(CLANG_PATH, XRE_INC_PATH, XRE_LIB_DIR, XDNN_INC_PATH,
-                 XDNN_LIB_DIR)
-
     XVLLM_PATH = os.getenv("XVLLM_PATH")
     assert XVLLM_PATH is not None, "XVLLM_PATH is not set."
     XVLLM_KERNEL_INC_PATH = os.path.join(XVLLM_PATH, "infer_ops", "include")
     XVLLM_KERNEL_LIB_PATH = os.path.join(XVLLM_PATH, "infer_ops", "so",
                                          "libapiinfer.so")
+    XVLLM_KERNEL_LIB_DIR = os.path.join(XVLLM_PATH, "infer_ops", "so")
     XVLLM_OP_INC_PATH = os.path.join(XVLLM_PATH, "xft_blocks", "include")
     XVLLM_OP_LIB_PATH = os.path.join(XVLLM_PATH, "xft_blocks", "so",
                                      "libxft_blocks.so")
+    XVLLM_OP_LIB_DIR = os.path.join(XVLLM_PATH, "xft_blocks", "so")
+
+    # build plugin
+    build_plugin(CLANG_PATH, XRE_INC_PATH, XRE_LIB_DIR, XDNN_INC_PATH,
+                 XDNN_LIB_DIR)
 
     ops = [
         # custom ops
@@ -188,6 +190,7 @@ def xpu_setup_ops():
                     "-DBUILD_MULTI_XPU",
                 ]
             },
+            runtime_library_dirs=[XVLLM_KERNEL_LIB_DIR, XVLLM_OP_LIB_DIR],
         ),
     )
 
