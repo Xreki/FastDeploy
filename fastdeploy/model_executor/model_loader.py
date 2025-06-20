@@ -28,7 +28,7 @@ from fastdeploy.model_executor.models.qwen3moe import Qwen3MoePretrainedModel
 from fastdeploy.model_executor.load_weight_utils import load_composite_checkpoint
 from paddleformers.transformers import PretrainedModel
 from fastdeploy.model_executor.models.utils import reconstruct_memory
-from typing import Dict
+from fastdeploy.platforms import current_platform
 
 MODEL_CLASSES = {
     "ErnieForCausalLM": ErniePretrainedModel,
@@ -87,16 +87,16 @@ class DefaultModelLoader(BaseModelLoader):
             ):
                 fd_config.model_config.is_quantized = True
 
-    def clean_memory_fragments(
-        self, state_dict: Dict[str, paddle.Tensor], model
-    ) -> None:
+    def clean_memory_fragments(self, state_dict: dict, model) -> None:
         """clean_memory_fragments"""
-        if state_dict:
-            for k, v in state_dict.items:
-                v.value().get_tensor()._clear()
-        reconstruct_memory(model)
-        paddle.device.cuda.empty_cache()
-        paddle.device.cuda.synchronize()
+        if current_platform.is_cuda():
+            if state_dict:
+                for k, v in state_dict.items():
+                    if isinstance(v, paddle.Tensor):
+                        v.value().get_tensor()._clear()
+            reconstruct_memory(model)
+            paddle.device.cuda.empty_cache()
+            paddle.device.cuda.synchronize()
 
     def load_model(self, fd_config: FDConfig) -> nn.Layer:
         context = paddle.LazyGuard()
