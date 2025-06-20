@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """ setup for FastDeploy custom ops """
-import glob
 import json
 import os
 import shutil
@@ -384,42 +383,6 @@ elif paddle.is_compiled_with_xpu():
     assert False, "In XPU, we should use setup_ops.py in xpu_ops/src, not this."
 else:
     use_bf16 = os.getenv("CPU_USE_BF16", "False") == "True"
-    x86_simd_sort_dir = "third_party/x86-simd-sort"
-    if not os.path.exists(x86_simd_sort_dir) or not os.listdir(
-            x86_simd_sort_dir):
-        x86_simd_sort_url = "https://paddlepaddle-inference-banchmark.bj.bcebos.com/x86-simd-sort.tar.gz"
-        download_and_extract(x86_simd_sort_url, "third_party")
-    xft_dir = "third_party/xFasterTransformer"
-    if not os.path.exists(xft_dir) or not os.listdir(xft_dir):
-        if use_bf16:
-            xft_url = (
-                "https://paddlepaddle-inference-banchmark.bj.bcebos.com/xft.tar.gz"
-            )
-        else:
-            xft_url = "https://paddlepaddle-inference-banchmark.bj.bcebos.com/xft_no_bf16.tar.gz"
-        download_and_extract(xft_url, "third_party")
-
-    libs = [
-        "xfastertransformer",
-        "xft_comm_helper",
-        "x86simdsortcpp",
-    ]
-    xft_dir = "third_party/xFasterTransformer"
-    x86_simd_sort_dir = "third_party/x86-simd-sort"
-    paddle_custom_kernel_include = [
-        os.path.join(xft_dir, "include"),
-        os.path.join(xft_dir, "src/common"),  # src
-        os.path.join(xft_dir, "src/kernels"),  # src
-        os.path.join(xft_dir, "src/layers"),  # src
-        os.path.join(xft_dir, "src/models"),  # src
-        os.path.join(xft_dir, "src/utils"),  # src
-        os.path.join(xft_dir, "3rdparty/onednn/include"),  # src
-        os.path.join(xft_dir, "3rdparty/onednn/build/include"),  # src
-        os.path.join(xft_dir, "3rdparty/xdnn"),  # src
-        os.path.join(xft_dir, "3rdparty"),
-        os.path.join(xft_dir, "3rdparty/mkl/include"),
-        os.path.join(x86_simd_sort_dir, "src"),  # src
-    ]
 
     # cc flags
     paddle_extra_compile_args = [
@@ -428,48 +391,15 @@ else:
         "-fPIC",
         "-Wno-parentheses",
         "-DPADDLE_WITH_CUSTOM_KERNEL",
-        "-DPADDLE_ON_INFERENCE"
-        "-mavx512f",
-        "-mavx512vl",
-        "-fopenmp",
-        "-mavx512bw",
-        "-mno-mmx",
+        "-DPADDLE_ON_INFERENCE",
         "-Wall",
-        "-march=skylake-avx512",
         "-O3",
         "-g",
         "-lstdc++fs",
         "-D_GLIBCXX_USE_CXX11_ABI=1",
         "-DPy_LIMITED_API=0x03090000",
     ]
-    if use_bf16:
-        # avx512-bf16 flags
-        paddle_extra_compile_args += [
-            "-DAVX512_BF16_WEIGHT_ONLY_BF16=true",
-            "-DAVX512_FP16_WEIGHT_ONLY_INT8=true",
-            "-DAVX512_FP16_WEIGHT_ONLY_FP16=true",
-        ]
-    else:
-        # no avx512-bf16 flags
-        paddle_extra_compile_args += [
-            "-DAVX512_FP32_WEIGHT_ONLY_INT8=true",
-            "-DAVX512_FP32_WEIGHT_ONLY_FP16=true",
-        ]
-    paddle_custom_kernel_library_dir = [
-        "third_party/xFasterTransformer/build/",
-        "third_party/x86-simd-sort/builddir",
-    ]
 
-    include_files = []
-    for include_dir in paddle_custom_kernel_include:
-        include_files.extend(glob.glob(os.path.join(include_dir, "*.h")))
-    so_files = []
-    for library_dir in paddle_custom_kernel_library_dir:
-        if os.path.isdir(library_dir):
-            for lib in libs:
-                lib_file = os.path.join(library_dir, f"lib{lib}.so")
-                if os.path.isfile(lib_file):
-                    so_files.append(lib_file)
     setup(
         name="fastdeploy_cpu_ops",
         ext_modules=CppExtension(
@@ -480,21 +410,14 @@ else:
                 "cpu_ops/stop_generation_multi_ends.cc",
                 "cpu_ops/update_inputs.cc",
                 "cpu_ops/get_padding_offset.cc",
-                "cpu_ops/xft_all_layer.cc",
-                "cpu_ops/xft_greedy_search.cc",
-                "cpu_ops/avx_weight_only.cc",
             ],
             extra_link_args=[
                 "-Wl,-rpath,$ORIGIN/x86-simd-sort/builddir",
                 "-Wl,-rpath,$ORIGIN/xFasterTransformer/build",
             ],
-            include_dirs=paddle_custom_kernel_include,
-            library_dirs=paddle_custom_kernel_library_dir,
-            libraries=libs,
             extra_compile_args=paddle_extra_compile_args,
         ),
         packages=find_namespace_packages(where="third_party"),
         package_dir={"": "third_party"},
-        package_data={"fastdeploy_cpu_ops": include_files + so_files},
         include_package_data=True,
     )

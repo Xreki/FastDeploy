@@ -89,19 +89,10 @@ function copy_ops(){
     if [ "$WITH_CPU" == "true" ]; then
       WHEEL_CPU_NAME="fastdeploy_cpu_ops-${OPS_VERSION}-${PY_VERSION}-${SYSTEM_VERSION}-${PROCESSOR_VERSION}.egg"
       echo -e "OPS are for CPU"
-      cd ${OPS_TMP_DIR_CPU}/${WHEEL_CPU_NAME}/xFasterTransformer/build/
-      for file in *_pd_.so; do
-        mv "$file" "${file/_pd_/}"
-      done
-      cd ../../x86-simd-sort/builddir/
-      for file in *_pd_.so; do
-        mv "$file" "${file/_pd_/}"
-      done
       cd ../../../../
       cp -r ./${OPS_TMP_DIR_CPU}/${WHEEL_CPU_NAME}/* ../fastdeploy/model_executor/ops/cpu
     fi
     return
-
 }
 
 function build_and_install_ops() {
