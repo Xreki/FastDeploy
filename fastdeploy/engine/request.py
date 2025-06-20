@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import asdict, dataclass, fields
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, Dict
 
 import numpy
 
@@ -36,6 +36,7 @@ class Request:
         prompt_token_ids_len: Optional[int],
         messages: Optional[list[list[dict[str, Any]]]],
         history: Optional[list[list[str]]],
+        tools: Optional[list[Dict]],
         system: Optional[Union[str, list[str]]],
         sampling_params: SamplingParams,
         eos_token_ids: Optional[list[int]],
@@ -55,6 +56,7 @@ class Request:
         self.system = system
         self.sampling_params = sampling_params
         self.history = history
+        self.tools = tools
         # model specific token ids: end of sentence token ids
         self.eos_token_ids = eos_token_ids
         self.num_cached_tokens = 0
@@ -81,6 +83,7 @@ class Request:
             messages=d.get("messages"),
             system=d.get("system"),
             history=d.get("history"),
+            tools=d.get("tools"),
             sampling_params=sampling_params,
             eos_token_ids=d.get("eos_token_ids"),
             arrival_time=d.get("arrival_time", time.time()),
@@ -102,6 +105,7 @@ class Request:
             "messages": self.messages,
             "system": self.system,
             "history": self.history,
+            "tools": self.tools,
             "eos_token_ids": self.eos_token_ids,
             "arrival_time": self.arrival_time,
             "preprocess_start_time": self.preprocess_start_time,

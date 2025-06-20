@@ -50,6 +50,7 @@ class BaseDataProcessor(ABC):
             f"eos_token is {self.tokenizer.eos_token}, {self.tokenizer.eos_token_id}, "
             f"mask_token is {self.tokenizer.mask_token}, {self.tokenizer.mask_token_id}"
         ))
+        self.is_thinking = False
 
     def _apply_default_parameters(self, request):
         """
@@ -183,6 +184,7 @@ class DataProcessor(BaseDataProcessor):
         self.eos_token_id_len = len(self.eos_token_ids)
         self.pad_token_id = self.get_pad_id()
         self.tokenizer.pad_token_id = self.pad_token_id
+        self.is_thinking = False
 
     def _init_config(self):
         """
@@ -321,7 +323,7 @@ class DataProcessor(BaseDataProcessor):
             self.clear_request_status(req_id)
         return response_dict
 
-    def process_response_dict(self, response_dict, stream=True):
+    def process_response_dict(self, response_dict,  **kwargs):
         """
         Preprocess the response
 
@@ -333,6 +335,7 @@ class DataProcessor(BaseDataProcessor):
         """
         is_end = response_dict["finished"]
         req_id = response_dict["request_id"]
+        stream = kwargs.get("stream", True)
 
         token_ids = response_dict["outputs"]["token_ids"]
 

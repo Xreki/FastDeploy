@@ -98,6 +98,8 @@ class EngineClient:
             input_ids_len = task["prompt_token_ids_len"]
             task["max_tokens"] = min(self.max_model_len - input_ids_len , task.get("max_tokens"))
             min_tokens = task.get("min_tokens", 1)
+            if 'messages' in task:
+                del task['messages']
             api_server_logger.info(f"task['max_tokens']:{task['max_tokens']}")
             work_process_metrics.request_params_max_tokens.observe(task["max_tokens"])
             work_process_metrics.prompt_tokens_total.inc(input_ids_len)

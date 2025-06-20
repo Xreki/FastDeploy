@@ -26,7 +26,19 @@ from typing import Optional, Union, cast, TypeVar, List
 import uuid
 from fastapi import Request
 
-from fastdeploy.entrypoints.openai.protocol import ErrorResponse, CompletionRequest, CompletionResponse, CompletionStreamResponse, CompletionResponseStreamChoice, CompletionResponseChoice,UsageInfo
+from fastdeploy.entrypoints.openai.protocol import (
+    ErrorResponse,
+    CompletionRequest,
+    CompletionResponse,
+    CompletionStreamResponse,
+    CompletionResponseStreamChoice,
+    CompletionResponseChoice,
+    UsageInfo,
+    DeltaToolCall,
+    DeltaFunctionCall,
+    ToolCall,
+    FunctionCall
+)
 from fastdeploy.utils import api_server_logger
 from fastdeploy.engine.request import RequestOutput
 
@@ -121,6 +133,7 @@ class OpenAIServingCompletion:
         Process the full completion request with multiple choices.
         """
         dealer = None
+        enable_thinking = True
         try:
             request_ids = [f"{request_id}-{i}" for i in range(num_choices)]
             # create dealer
@@ -147,9 +160,9 @@ class OpenAIServingCompletion:
                 rid = int(data["request_id"].split("-")[-1])
                 if data.get("error_code", 200) != 200:
                     raise ValueError("{}".format(data["error_msg"]))
+
                 self.engine_client.data_processor.process_response_dict(
-                    data, stream=False
-                )
+                    data, stream=False)
                 output_tokens[rid] += len(data["outputs"]["token_ids"])
                 if data.get("finished", False):
                     data["output_token_ids"] = output_tokens[rid]
@@ -184,6 +197,7 @@ class OpenAIServingCompletion:
         """
         Process the stream completion request.
         """
+        enable_thinking = True
         try:
             dealer = await aiozmq.create_zmq_stream(
                 zmq.DEALER,
@@ -234,7 +248,8 @@ class OpenAIServingCompletion:
                     first_iteration[idx] = False
 
 
-                self.engine_client.data_processor.process_response_dict(res, stream=True)
+                self.engine_client.data_processor.process_response_dict(
+                    res, stream=True)
                 if res['metrics'].get('first_token_time') is not None:
                     arrival_time = res['metrics']['first_token_time']
                     inference_start_time[idx] = res['metrics']['inference_start_time']
@@ -248,12 +263,16 @@ class OpenAIServingCompletion:
                     index=idx,
                     text=output["text"],
                     token_ids=output.get("token_ids"),
+                    tool_calls=output.get("tool_call_content"),
                     reasoning_content=output.get("reasoning_content"),
                     arrival_time=arrival_time
                 ))
                 if res["finished"]:
                     if request.max_tokens is None or output_tokens[idx] + 1 != request.max_tokens:
                         chunk.choices[0].finish_reason = "stop"
+                        if self.engine_client.data_processor.is_thinking and \
+                                self.engine_client.data_processor.reasoning_parser.finish_reason == "tool_calls":
+                            chunk.choices[0].finish_reason = "tool_calls"
                     else:
                         chunk.choices[0].finish_reason = "length"
 
@@ -329,6 +348,7 @@ class OpenAIServingCompletion:
                 index=len(choices),
                 text=output_text,
                 reasoning_content=output.get('reasoning_content'),
+                tool_calls=output.get("tool_call_content"),
                 logprobs=None,
                 finish_reason=None
             )

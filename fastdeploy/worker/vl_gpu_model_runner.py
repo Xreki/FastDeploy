@@ -23,7 +23,7 @@ import paddle.distributed.fleet as fleet
 from safetensors import safe_open
 
 from fastdeploy.input.mm_processor import DataProcessor
-from fastdeploy.input.mm_processor.tokenizer import ErnieVLTokenizer
+from fastdeploy.input.ernie_tokenizer_v2 import ErnieBotTokenizer
 from fastdeploy.model_executor.layers.attention import get_attention_backend
 from fastdeploy.model_executor.layers.rotary_embedding import get_rope_3d
 from fastdeploy.model_executor.layers.sample.meta_data import SamplingMetadata
@@ -153,7 +153,13 @@ class GPUVLModelRunner(VLModelRunnerBase):
 
     def _load_model(self, model_name, dynamic_load_weight):
 
-        tokenizer = ErnieVLTokenizer.from_pretrained(
+        vocab_file_names = ["tokenizer.model", "spm.model", "ernie_token_100k.model"]
+        for i in range(len(vocab_file_names)):
+            if os.path.exists(os.path.join(self.args.tokenizer, vocab_file_names[i])):
+                ErnieBotTokenizer.resource_files_names["vocab_file"] = vocab_file_names[i]
+                break
+
+        tokenizer = ErnieBotTokenizer.from_pretrained(
             self.args.tokenizer,
             model_max_length=self.args.max_model_len,
             padding_side="right",

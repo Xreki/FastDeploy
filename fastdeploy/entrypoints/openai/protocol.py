@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import time
-from typing import List, Literal, Optional, Union
+from typing import Any, ClassVar, Literal, Optional, Union, List, Dict
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -50,6 +50,55 @@ class UsageInfo(BaseModel):
     completion_tokens: Optional[int] = 0
     prompt_tokens_details: Optional[PromptTokenUsageInfo] = None
 
+class FunctionCall(BaseModel):
+    """
+    Function call.
+    """
+    name: str
+    arguments: str
+
+class ToolCall(BaseModel):
+    """
+    Tool call.
+    """
+    id: str = None
+    type: Literal["function"] = "function"
+    function: FunctionCall
+    index: int
+
+class DeltaFunctionCall(BaseModel):
+    """
+    Delta function call.
+    """
+    name: Optional[str] = None
+    arguments: Optional[str] = None
+
+# a tool call delta where everything is optional
+class DeltaToolCall(BaseModel):
+    """
+    Delta tool call.
+    """
+    id: Optional[str] = None
+    type: Optional[Literal["function"]] = None
+    index: int
+    function: Optional[DeltaFunctionCall] = None
+
+
+class FunctionDefinition(BaseModel):
+    """
+    Function definition.
+    """
+    name: str
+    description: Optional[str] = None
+    parameters: Optional[dict[str, Any]] = None
+
+
+class ChatCompletionToolsParam(BaseModel):
+    """
+    Chat completion tools parameter.
+    """
+    type: Literal["function"] = "function"
+    function: FunctionDefinition
 
 class ChatMessage(BaseModel):
     """
@@ -58,6 +107,7 @@ class ChatMessage(BaseModel):
     role: str
     content: str
     reasoning_content: Optional[str] = None
+    tool_calls: Optional[List[DeltaToolCall | ToolCall]] = None
 
 
 class ChatCompletionResponseChoice(BaseModel):
@@ -66,7 +116,7 @@ class ChatCompletionResponseChoice(BaseModel):
     """
     index: int
     message: ChatMessage
-    finish_reason: Optional[Literal["stop", "length"]]
+    finish_reason: Optional[Literal["stop", "length", "tool_calls"]]
 
 
 class ChatCompletionResponse(BaseModel):
@@ -89,6 +139,7 @@ class DeltaMessage(BaseModel):
     content: Optional[str] = None
     token_ids: Optional[List[int]] = None
     reasoning_content: Optional[str] = None
+    tool_calls: Optional[List[DeltaToolCall | ToolCall]] = None
 
 
 class ChatCompletionResponseStreamChoice(BaseModel):
@@ -97,7 +148,7 @@ class ChatCompletionResponseStreamChoice(BaseModel):
     """
     index: int
     delta: DeltaMessage
-    finish_reason: Optional[Literal["stop", "length"]] = None
+    finish_reason: Optional[Literal["stop", "length", "tool_calls"]] = None
     arrival_time: Optional[float] = None
 
 
@@ -123,7 +174,8 @@ class CompletionResponseChoice(BaseModel):
     arrival_time: Optional[float] = None
     logprobs: Optional[int] = None
     reasoning_content: Optional[str] = None
-    finish_reason: Optional[Literal["stop", "length"]]
+    finish_reason: Optional[Literal["stop", "length", "tool_calls"]]
+    tool_calls: Optional[List[DeltaToolCall | ToolCall]] = None
 
 
 class CompletionResponse(BaseModel):
@@ -148,7 +200,8 @@ class CompletionResponseStreamChoice(BaseModel):
     token_ids: Optional[List[int]] = None
     logprobs: Optional[float] = None
     reasoning_content: Optional[str] = None
-    finish_reason: Optional[Literal["stop", "length"]] = None
+    finish_reason: Optional[Literal["stop", "length", "tool_calls"]] = None
+    tool_calls: Optional[List[DeltaToolCall | ToolCall]] = None
 
 
 class CompletionStreamResponse(BaseModel):
@@ -246,6 +299,7 @@ class ChatCompletionRequest(BaseModel):
     # Ordered by official OpenAI API documentation
     # https://platform.openai.com/docs/api-reference/chat/create
     messages: Union[List[ChatCompletionMessageParam], List[int]]
+    tools: Optional[List[ChatCompletionToolsParam]] = None
     model: Optional[str] = "default"
     frequency_penalty: Optional[float] = None
     # remove max_tokens when field is removed from OpenAI API
