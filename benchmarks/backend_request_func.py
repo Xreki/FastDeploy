@@ -55,6 +55,7 @@ class RequestFuncInput:
 class RequestFuncOutput:
     """Output for requesting LLMs via API"""
     generated_text: str = ""
+    reasoning_content: str = ""
     success: bool = False
     latency: float = 0.0
     output_tokens: int = 0
@@ -125,6 +126,7 @@ async def async_request_eb_openai_chat_completions(
 
                             if choices := data.get("choices"):
                                 content = choices[0]["delta"].get("content")
+                                reason_content = choices[0]["delta"].get("reasoning_content")
                                 # First token
                                 if ttft == 0.0:
                                     ttft = timestamp - st
@@ -138,6 +140,7 @@ async def async_request_eb_openai_chat_completions(
                                                       most_recent_timestamp)
 
                                 output.generated_text += content or ""
+                                output.reasoning_content += reason_content or ""
                                 output.arrival_time.append(choices[0].get("arrival_time"))
                             elif usage := data.get("usage"):
                                 output.output_tokens = usage.get(
@@ -148,7 +151,7 @@ async def async_request_eb_openai_chat_completions(
                             most_recent_timestamp = timestamp
 
                     # output.generated_text = generated_text
-                    if output.generated_text == "":
+                    if output.generated_text.strip() == "":
                         output.success = False
                         output.error = "No generated text found!"
                     else:
