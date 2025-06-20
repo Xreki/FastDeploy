@@ -14,6 +14,7 @@
 # limitations under the License.
 """
 import argparse
+import json
 import time
 from typing import List
 
@@ -34,7 +35,6 @@ from fastdeploy.model_executor.layers.quantization import \
 from fastdeploy.platforms import current_platform
 from fastdeploy.utils import get_logger, none_or_str
 from fastdeploy.worker.worker_base import WorkerBase
-
 
 logger = get_logger("worker_process", "worker_process.log")
 
@@ -96,14 +96,12 @@ class PaddleDisWorkerProc():
 
         # TODO(gongshaotian): Use worker factory to get worker
         self.worker = get_worker(fd_config=fd_config,
-                                local_rank=self.local_rank,
-                                rank=self.rank)
+                                 local_rank=self.local_rank,
+                                 rank=self.rank)
 
         # Initialize task queue
         task_address = ('0.0.0.0',
                         self.parallel_config.engine_worker_queue_port)
-        
-
 
         self.task_queue = TaskQueue(
             address=task_address,
@@ -127,10 +125,10 @@ class PaddleDisWorkerProc():
         """
         # init worker_ready_singnal
 
-        array_size = min(8, self.parallel_config.tensor_parallel_degree * self.parallel_config.expert_parallel_degree)
-        workers_ready = np.zeros(
-            shape=[array_size],
-            dtype=np.int32)
+        array_size = min(
+            8, self.parallel_config.tensor_parallel_degree *
+            self.parallel_config.expert_parallel_degree)
+        workers_ready = np.zeros(shape=[array_size], dtype=np.int32)
         self.worker_ready_singnal = IPCSignal(
             name="worker_ready_singnal",
             array=workers_ready,
@@ -150,7 +148,6 @@ class PaddleDisWorkerProc():
         self.worker_healthy_live_signal.value[self.local_rank % 8] = int(
             time.time())
 
-        
         # init model_weights_status
         workers_model_weights = np.zeros(shape=[1], dtype=np.int32)
         self.model_weights_status = IPCSignal(
@@ -160,9 +157,9 @@ class PaddleDisWorkerProc():
             suffix=self.parallel_config.engine_pid,
             create=False)
 
-
         # init exist_task_signal
-        workers_exist_task = np.zeros([self.parallel_config.expert_parallel_degree], dtype=np.int32)
+        workers_exist_task = np.zeros(
+            [self.parallel_config.expert_parallel_degree], dtype=np.int32)
         self.exist_task_signal = IPCSignal(
             name="exist_task_signal",
             array=workers_exist_task,
@@ -171,7 +168,9 @@ class PaddleDisWorkerProc():
             create=False)
 
         # init exist_swapped_task_signal
-        workers_swapped_task = np.zeros(shape=[self.parallel_config.expert_parallel_degree], dtype=np.int32)
+        workers_swapped_task = np.zeros(
+            shape=[self.parallel_config.expert_parallel_degree],
+            dtype=np.int32)
         self.exist_swapped_task_signal = IPCSignal(
             name="exist_swapped_task_signal",
             array=workers_swapped_task,
@@ -245,7 +244,9 @@ class PaddleDisWorkerProc():
                     if self.nnode > 1:
                         self.task_queue.read_finish_flag.set(1)
                     else:
-                        self.exist_task_signal.value[self.fd_config.parallel_config.expert_parallel_rank] = 1
+                        self.exist_task_signal.value[
+                            self.fd_config.parallel_config.
+                            expert_parallel_rank] = 1
 
             if self.parallel_config.tensor_parallel_degree > 1:
                 # Synchronize the signal for other workers
@@ -261,7 +262,8 @@ class PaddleDisWorkerProc():
                 tasks, read_finish = self.task_queue.get_tasks()
                 if read_finish:
                     # Ensure that every worker get the task
-                    self.exist_task_signal.value[self.fd_config.parallel_config.expert_parallel_rank] = 0
+                    self.exist_task_signal.value[self.fd_config.parallel_config
+                                                 .expert_parallel_rank] = 0
                     self.task_queue.read_finish_flag.set(0)
 
                 req_dicts = []
@@ -675,8 +677,15 @@ def initialize_fd_config(args) -> FDConfig:
     else:
         quant_cls = get_quantization_config(quant_config_name)
         quant_config = quant_cls.from_config(quantization_config)
+
+    logger.info("===========quantization_config==============")
+    if quant_config is not None:
+        logger.info(f"{json.dumps(quantization_config, indent=2)}")
+    else:
         logger.info(
-            f"quant_type: {quant_config.name()}, cachekv[{cachekv_dtype}]")
+            "No quantization config found and use original weight and act dtype."
+        )
+    logger.info("============================================")
 
     model_config.architectures = config.get("architectures")
 

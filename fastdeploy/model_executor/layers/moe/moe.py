@@ -73,16 +73,15 @@ class FusedMoE(nn.Layer):
         self.weight_key_map = weight_key_map
         self.use_method = use_method
         self.gate_correction_bias = None
+        self.moe_tag = moe_tag
 
         if self.ep_size > 1:
             expert_id_offset = expert_id_offset + self.ep_rank * self.num_local_experts
 
         self.expert_id_offset = expert_id_offset
 
-        quant_name = "no quant"
         if fd_config.quant_config:
             self.quant_method = fd_config.quant_config.get_quant_method(self)
-            quant_name = self.fd_config.quant_config.name()
         else:
             # now, no quant method(w_fp16 a_fp16) can't get from quant_config, we will optimize it in future
             from .fused_moe_cutlass_backend import CutlassMoEMethod
@@ -94,7 +93,7 @@ class FusedMoE(nn.Layer):
         logger.info(
             f"{moe_tag}MoE config is {num_experts=}[{expert_id_offset}, {expert_id_offset+self.num_local_experts}), \
         {top_k=}, hidden_size={self.hidden_size}, {moe_intermediate_size=}, \
-            quant_type={quant_name}, ep_size={self.ep_size}, \
+            , ep_size={self.ep_size}, \
             tp_size={self.tp_size}.")
 
     def load_experts_weight(self, state_dict: dict,

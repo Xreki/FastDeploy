@@ -29,10 +29,15 @@ class MixQuantConfig(QuantConfigBase):
         self,
         dense_quant_type: str,
         moe_quant_type: str,
+        image_moe_quant_type: str = None,
     ) -> None:
         super().__init__()
         self.dense_quant_type = dense_quant_type
         self.moe_quant_type = moe_quant_type
+        if image_moe_quant_type is None:
+            self.image_moe_quant_type = moe_quant_type
+        else:
+            self.image_moe_quant_type = image_moe_quant_type
         self.quant_max_bound = 0
         self.quant_min_bound = 0
         self.quant_round_type = 0
@@ -42,12 +47,19 @@ class MixQuantConfig(QuantConfigBase):
 
     @classmethod
     def from_config(cls, config: dict) -> "MixQuantConfig":
-        return cls(config['dense_quant_type'], config['moe_quant_type'])
+        return cls(config['dense_quant_type'], config['moe_quant_type'],
+                   config.get('image_moe_quant_type', None))
 
     def get_quant_method(self, layer) -> Optional[QuantMethodBase]:
         if isinstance(layer, FusedMoE):
-            return get_quantization_config(self.moe_quant_type).from_config(
-                {}).get_quant_method(layer)
+            if layer.moe_tag == "Image":
+                return get_quantization_config(
+                    self.image_moe_quant_type).from_config(
+                        {}).get_quant_method(layer)
+            else:
+                return get_quantization_config(
+                    self.moe_quant_type).from_config(
+                        {}).get_quant_method(layer)
         else:
             return get_quantization_config(self.dense_quant_type).from_config(
                 {}).get_quant_method(layer)
