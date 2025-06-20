@@ -279,7 +279,6 @@ class MoEConfig:
     moe_layer_end_index = None
     moe_use_ffn_shared_weight_and_bias = (False, )
     moe_group = (False, )
-    moe_quant_type = "weight_only_int8"
     num_max_dispatch_tokens_per_rank = 256
     enable_redundant_experts = False
     redundant_experts_num = 0

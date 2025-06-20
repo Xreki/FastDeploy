@@ -81,10 +81,6 @@ class PaddleDisWorkerProc():
 
         self.fd_config.parallel_config.column_cut = False
 
-        if self.local_rank == 0:
-            logger.info(
-                f"moe_quant_type {self.fd_config.moe_config.moe_quant_type}")
-
         # For auto TP split
         self.fd_config.model_config.tensor_parallel_degree = self.parallel_config.tensor_parallel_degree
         self.fd_config.model_config.tensor_parallel_rank = self.parallel_config.tensor_parallel_rank
@@ -616,8 +612,6 @@ def initialize_fd_config(args) -> FDConfig:
         "moe_use_ffn_shared_weight_and_bias", False)
     moe_config.use_moe = use_moe
     moe_config.moe_group = config.get("moe_group", False)
-    moe_config.moe_quant_type = config.get("moe_quant_type",
-                                           "weight_only_int4")
 
     moe_config.num_max_dispatch_tokens_per_rank = config.get(
         "num_max_dispatch_tokens_per_rank", 256)

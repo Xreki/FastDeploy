@@ -35,9 +35,8 @@ from paddleformers.utils.log import logger
 
 from fastdeploy.config import (AdditionalConfig, DeviceConfig, FDConfig,
                                KVCacheConfig, LoadConfig, ModelConfig,
-                               MoEConfig, ParallelConfig, SpeculativeConfig,
-                               TmpConfig)
-from fastdeploy.inference_args import MoEPhase
+                               MoEConfig, MoEPhase, ParallelConfig,
+                               SpeculativeConfig, TmpConfig)
 from fastdeploy.model_executor.models.utils import (_vocab_size_with_padding,
                                                     convert_ndarray_dtype,
                                                     load_checkpoint,
@@ -543,7 +542,7 @@ def build_stream_line_model(
             "moe_use_ffn_shared_weight_and_bias", False)
         moe_config.use_moe = use_moe
         moe_config.moe_group = config.get("moe_group", False)
-        moe_config.moe_quant_type = moe_quant_type
+
     parallel_config.use_ep = use_ep
     additional_config.ep_just_for_test = ep_just_for_test
     model_config.moe_phase = moe_phase
