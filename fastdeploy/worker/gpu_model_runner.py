@@ -491,19 +491,22 @@ class GPUModelRunner(ModelRunnerBase):
             self.share_inputs["draft_tokens"] if self.speculative_decoding else
             None, self.share_inputs["seq_lens_encoder"],
             self.share_inputs["seq_lens_decoder"])
-        # Initialize forward meta data
+        
         self.share_inputs["ids_remove_padding"].copy_(ids_remove_padding,
                                                       False)
         self.share_inputs["cum_offsets"].copy_(cum_offsets, False)
         self.share_inputs["padding_offset"].copy_(padding_offset, False)
         self.share_inputs["cu_seqlens_q"].copy_(cu_seqlens_q, False)
         self.share_inputs["cu_seqlens_k"].copy_(cu_seqlens_k, False)
-        # for speculative decoding
+
+        # For speculative decoding
         if self.speculative_decoding:
             self.share_inputs["output_cum_offsets"].copy_(
                 output_cum_offsets, False)
             self.share_inputs["output_padding_offset"].copy_(
                 output_padding_offset, False)
+                
+        # Initialize forward meta data
         self.initialize_forward_meta()
 
         # Get sampling metadata
@@ -639,7 +642,11 @@ class GPUModelRunner(ModelRunnerBase):
             )
         self.attn_backends.append(attn_backend)
 
-    def _dummy_run(self, num_tokens, batch_size) -> paddle.Tensor:
+    def _dummy_run(self, 
+        num_tokens: paddle.Tensor, 
+        batch_size: paddle.Tensor, 
+        in_capturing: bool = False
+    ) -> paddle.Tensor:
         """
         Use dummy inputs to run before formal execution.
         Args:
@@ -656,8 +663,11 @@ class GPUModelRunner(ModelRunnerBase):
             # 2. Initialize attention backend and forward meta data
 
             # 3. Prepare lora
+
             # 4. Run model
-            self.forward_meta.step_use_cudagraph = False
+            is_decode_batch = not ((self.share_inputs["seq_lens_this_time"]
+                                > 1).sum() > 0)
+            self.forward_meta.step_use_cudagraph = is_decode_batch and in_capturing
             model_output = self.model(
                 ids_remove_padding=self.share_inputs["ids_remove_padding"],
                 forward_meta=self.forward_meta)
@@ -813,12 +823,13 @@ class GPUModelRunner(ModelRunnerBase):
         time_before_capture = time.perf_counter()
         capture_sizes = self.cudagraph_capture_sizes.copy()
         for batch_size in sorted(capture_sizes, reverse=True):
-            logger.info(
-                f"Warm up the model with the batch size:{batch_size}, num tokens:{self.parallel_config.max_model_len}"
-            )
-            self.model_runner._dummy_run(
+            self._dummy_run(
                 num_tokens=self.parallel_config.max_model_len,
-                batch_size=batch_size)
+                batch_size=batch_size,
+                in_capturing=True)
+            logger.info(
+                f"Warm up the model with the batch size:{batch_size}, num tokens:{10}"
+            )
 
         time_after_capture = time.perf_counter()
         logger.info(

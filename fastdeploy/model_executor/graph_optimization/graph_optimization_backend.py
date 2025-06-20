@@ -30,6 +30,7 @@ class GraphOptBackend:
     def __init__(self, runnable: Callable, fd_config: FDConfig):
         self.runnable = runnable
         self.fd_config = fd_config
+        self.max_captre_batch = fd_config.graph_opt_config.cudagraph_capture_sizes[0]
 
     def __call__(self, **kwargs):
         # 1. TODO(gongshaotian): Static graph
@@ -55,9 +56,12 @@ class GraphOptBackend:
             if self.cudagraph_piecewise_backend is None:
                 self.cudagraph_piecewise_backend = CudaGraphPiecewiseBackend(
                     fd_config=self.fd_config, runnable=self.runnable)
-            # TODO(gongshaotian): handling kwargs
+            
             assert kwargs["forward_meta"].ids_remove_padding is not None
-            if (not kwargs["forward_meta"].step_use_cudagraph):
+            batch_size = kwargs["forward_meta"].ids_remove_padding.shape[0]
+            
+            if ((not kwargs["forward_meta"].step_use_cudagraph) or (batch_size > self.max_captre_batch)):
                 return self.runnable(**kwargs)
             else:
+                
                 return self.cudagraph_piecewise_backend.__call__(**kwargs)

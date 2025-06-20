@@ -36,7 +36,7 @@ from fastdeploy.model_executor.layers.moe.moe import FusedMoE
 from fastdeploy.model_executor.layers.normalization import RMSNorm
 from fastdeploy.model_executor.models.model_base import ModelForCasualLM
 from fastdeploy.worker.forward_meta import ForwardMeta
-
+from fastdeploy.model_executor.graph_optimization.decorator import support_graph_optimization
 
 class ErniePretrainedModel(PretrainedModel):
     """
@@ -538,7 +538,7 @@ class Ernie45TDecoderLayer(nn.Layer):
 
         return hidden_states, residual
 
-
+# @support_graph_optimization
 class Ernie45TModel(nn.Layer):
 
     def __init__(

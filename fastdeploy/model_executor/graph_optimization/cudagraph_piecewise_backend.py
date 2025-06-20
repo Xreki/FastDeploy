@@ -61,13 +61,14 @@ class CudaGraphPiecewiseBackend:
     ):
         self.fd_config = fd_config
         self.runnable = runnable
-        self.cuda_graph_capture_size = fd_config.graph_opt_config.cudagraph_capture_sizes
-        self.warm_up_size = self.fd_config.graph_opt_config.cudagraph_num_of_warmups
+        self.cudagraph_capture_sizes = fd_config.graph_opt_config.cudagraph_capture_sizes
+        self.warm_up_size = fd_config.graph_opt_config.cudagraph_num_of_warmups
+        self.batch_size_to_captured_size = fd_config.graph_opt_config.batch_size_to_captured_size
 
         # runtime_bs -> ConcreteSizeEntry
         self.concrete_size_entries: Dict[int, ConcreteSizeEntry] = {}
 
-        for shape in self.cuda_graph_capture_size:
+        for shape in self.cudagraph_capture_sizes:
             self.concrete_size_entries[shape] = ConcreteSizeEntry(
                 runtime_bs=shape)
 
@@ -77,13 +78,19 @@ class CudaGraphPiecewiseBackend:
         # Get batch size
         ids_remove_padding: paddle.Tensor = kwargs["ids_remove_padding"]
         batch_size = ids_remove_padding.shape[0]
-        print(f"[CUDA GRAPH] The actual batch size obtained by CUDAGraph is :{batch_size} ")
-        entry = self.concrete_size_entries.get(batch_size)
-        assert entry is not None, f"Batch size:{batch_size} is not in cuda graph capture list."
+        
+        padding_batch_size = self.batch_size_to_captured_size[batch_size]
+        print(
+            f"[CUDA GRAPH] The actual batch size obtained by CUDAGraph is :{batch_size}, ", 
+            f"The padded batch size is :{padding_batch_size}"
+        )
+
+        entry = self.concrete_size_entries.get(padding_batch_size)
+        assert entry is not None, f"Batch size:{padding_batch_size} is not in cuda graph capture list."
         if entry.runnable is None:
             entry.runnable = self.runnable
             print(
-                f"[CUDA GRAPH] New entry lazy initialize with batch size {batch_size}"
+                f"[CUDA GRAPH] New entry lazy initialize with batch size {padding_batch_size}"
             )
 
         if not entry.use_cudagraph:
@@ -97,7 +104,7 @@ class CudaGraphPiecewiseBackend:
                 entry.runnable(**kwargs)
                 print(
                     "[CUDA GRAPH] Warm up for batch size ",
-                    f"{batch_size}, finished ({n+1}/{entry.num_finished_warmup}) times"
+                    f"{padding_batch_size}, finished ({n+1}/{entry.num_finished_warmup}) times"
                 )
 
             # Store input addresses for debug
@@ -123,10 +130,10 @@ class CudaGraphPiecewiseBackend:
 
             paddle.device.synchronize()
             print(
-                f"[CUDA GRAPH] CUDAGraph captured for batch size {batch_size}"
+                f"[CUDA GRAPH] CUDAGraph captured for batch size {padding_batch_size}"
             )
 
         # Replay
         entry.cuda_graph.replay()
-        print(f"[CUDA GRAPH] CUDAGraph replayed for batch size {batch_size}")
+        print(f"[CUDA GRAPH] CUDAGraph replayed for batch size {padding_batch_size}")
         return entry.output_buffer

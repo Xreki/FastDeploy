@@ -460,11 +460,11 @@ class GraphOptimizationConfig:
         - With dyncmic graph backend: ...
         - With static grpah backend: WIP
     """
-    use_cudagraph: bool = False
+    use_cudagraph: bool = True
     """Sizes to capture cudagraph.
     - None (default): capture sizes are inferred from llm config.
     - list[int]: capture sizes are specified as given."""
-    cudagraph_capture_sizes: Optional[list[int]] = [1, 2, 3, 4, 5, 6, 7, 8]
+    cudagraph_capture_sizes: Optional[list[int]] = None
     """ Number of warmup runs for cudagraph. """
     cudagraph_num_of_warmups: int = 2
     """Whether to copy input tensors for cudagraph.
@@ -514,9 +514,7 @@ class GraphOptimizationConfig:
             0] if self.cudagraph_capture_sizes else 0
 
         # pre-compute the mapping from batch size to padded graph size
-        self.batch_size_to_captured_size = [
-            0 for i in range(self.max_capture_size + 1)
-        ]
+        self.batch_size_to_captured_size = {}
         for end, start in zip(self.cudagraph_capture_sizes,
                               self.cudagraph_capture_sizes[1:] + [0]):
             for bs in range(start, end):
@@ -526,6 +524,11 @@ class GraphOptimizationConfig:
                     self.batch_size_to_captured_size[bs] = end
         self.batch_size_to_captured_size[
             self.max_capture_size] = self.max_capture_size
+        
+    def __init__(self):
+        """ """
+        capture_size = [i for i in range(1, 129)]
+        self.init_with_cudagrpah_size(cudagraph_capture_sizes=capture_size)
 
 
 @dataclass
