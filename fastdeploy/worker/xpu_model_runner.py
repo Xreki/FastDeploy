@@ -652,7 +652,14 @@ class XPUModelRunner(ModelRunnerBase):
             output_via_mq=self.model_config.output_via_mq,
             msg_queue_id=self.parallel_config.msg_queue_id,
             mp_rank=self.local_rank,
-            use_ep=self.parallel_config.use_ep)
+            use_ep=self.parallel_config.use_ep,
+            # 投机解码
+            full_hidden_states=None,
+            draft_tokens=None,
+            actual_draft_token_num=None,
+            accept_tokens=None,
+            accept_num=None,
+        )
         xpu_post_process(sampled_token_ids=sampled_token_ids,
                          model_output=model_output_data)
 

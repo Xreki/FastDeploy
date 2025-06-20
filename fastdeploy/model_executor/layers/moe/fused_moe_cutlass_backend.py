@@ -22,8 +22,6 @@ from paddleformers.utils.log import logger
 import fastdeploy
 from fastdeploy.distributed.communication_op import \
     tensor_model_parallel_all_reduce
-from fastdeploy.model_executor.ops.gpu import (moe_expert_dispatch,
-                                               moe_expert_reduce)
 
 from ..utils import get_tensor
 from .fused_moe_backend_base import MoEMethodBase, create_and_set_parameter
@@ -197,6 +195,7 @@ class CutlassMoEMethod(MoEMethodBase):
         """
         Paddle Cutlass compute Fused MoE.
         """
+        from fastdeploy.model_executor.ops.gpu import moe_expert_dispatch
         (
             permute_input,
             token_nums_per_expert,
@@ -224,6 +223,7 @@ class CutlassMoEMethod(MoEMethodBase):
 
         ffn_out = self.compute_ffn(layer, permute_input, token_nums_per_expert,
                                    expert_idx_per_token)
+        from fastdeploy.model_executor.ops.gpu import moe_expert_reduce
 
         # reduce 中会做 topk 个 weight 的 norm 和 routed_scaling_factor
         fused_moe_out = moe_expert_reduce(
