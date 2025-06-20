@@ -49,6 +49,7 @@ if current_platform.is_cuda() and current_platform.available():
 
 from fastdeploy.model_executor.ops.gpu import (save_output,
                                                set_stop_value_multi_ends,
+                                               set_value_by_flags_and_idx,
                                                update_inputs)
 
 
@@ -787,7 +788,7 @@ class GPUVLModelRunner(VLModelRunnerBase):
             temperature=self.share_inputs["temperature"],
             top_p=self.share_inputs["top_p"],
             step_idx=self.share_inputs["step_idx"],
-            prompt_token_ids=self.share_inputs["input_ids"],
+            pre_token_ids=self.share_inputs["pre_ids"],
             frequency_penalties=self.share_inputs["frequency_score"],
             presence_penalties=self.share_inputs["presence_score"],
             repetition_penalties=self.share_inputs["penalty_score"],
@@ -802,7 +803,15 @@ class GPUVLModelRunner(VLModelRunnerBase):
                                     self.share_inputs["image_features"],
                                     self.forward_meta)
         logits = self.model.compute_logits(hiddden_states)
-
+        set_value_by_flags_and_idx(
+            self.share_inputs["pre_ids"],
+            self.share_inputs["input_ids"],
+            self.share_inputs["seq_lens_this_time"],
+            self.share_inputs["seq_lens_encoder"],
+            self.share_inputs["seq_lens_decoder"],
+            self.share_inputs["step_idx"],
+            self.share_inputs["stop_flags"],
+        )
         # sampler & save_output
         next_tokens = self.sampler(logits, self.sampling_metadata)
         if self.fd_config.parallel_config.tensor_parallel_degree > 1:
@@ -896,7 +905,8 @@ class GPUVLModelRunner(VLModelRunnerBase):
         """
         fake input to profile
         """
-        input_length = min(num_total_tokens // number_of_tasks, self.args.max_model_len - 10)
+        input_length = min(num_total_tokens // number_of_tasks,
+                           self.args.max_model_len - 10)
         block_num = (input_length + self.args.block_size - 1 ) // self.args.block_size \
                     + self.args.enc_dec_block_num
         self.share_inputs["free_list"] = paddle.to_tensor([], dtype="int32")

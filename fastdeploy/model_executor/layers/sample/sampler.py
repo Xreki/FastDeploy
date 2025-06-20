@@ -52,7 +52,7 @@ class Sampler(nn.Layer):
         """
 
         logits = apply_penalty_multi_scores(
-            sampling_metadata.prompt_token_ids,
+            sampling_metadata.pre_token_ids,
             logits,
             sampling_metadata.repetition_penalties,
             sampling_metadata.frequency_penalties,
@@ -98,7 +98,7 @@ class SpeculativeSampler(nn.Layer):
         """
 
         logits = apply_speculative_penalty_multi_scores(
-            sampling_metadata.prompt_token_ids,
+            sampling_metadata.pre_token_ids,
             logits,
             sampling_metadata.repetition_penalties,
             sampling_metadata.frequency_penalties,
