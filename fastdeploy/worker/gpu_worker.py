@@ -182,7 +182,7 @@ class GpuWorker(WorkerBase):
 
     def graph_optimize_and_warm_up_model(self) -> None:
         """
-
+        Perform the warm-up and the graph optimization
         """
         # 1. Warm up model
         # NOTE(gongshaotian): may be not need warm_up at this place

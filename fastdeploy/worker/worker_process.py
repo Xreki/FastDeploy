@@ -719,6 +719,7 @@ def run_worker_proc():
     else:
         logger.info("determine_num_available_blocks")
         worker_proc.determine_num_available_blocks()
+    
     if fd_config.parallel_config.use_ep:
         worker_proc.event_loop_ep()
     else:
