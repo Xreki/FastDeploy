@@ -865,6 +865,15 @@ class GPUModelRunner(ModelRunnerBase):
 
         # 4. Compute logits, Sample
         logits = self.model.compute_logits(hiddden_states)
+        set_value_by_flags_and_idx(
+            self.share_inputs["pre_ids"],
+            self.share_inputs["input_ids"],
+            self.share_inputs["seq_lens_this_time"],
+            self.share_inputs["seq_lens_encoder"],
+            self.share_inputs["seq_lens_decoder"],
+            self.share_inputs["step_idx"],
+            self.share_inputs["stop_flags"],
+        )
         if not self.speculative_decoding:
             sampled_token_ids = self.sampler(logits, self.sampling_metadata)
             if self.parallel_config.tensor_parallel_degree > 1:
