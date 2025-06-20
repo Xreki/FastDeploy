@@ -5,4 +5,4 @@ gpu_memory_utilization: 0.9
 kv_cache_ratio: 0.71
 tensor_parallel_size: 4
 cpu_offload_gb: 200
-cache-queue-port: 55664
+cache_queue_port: 55664
