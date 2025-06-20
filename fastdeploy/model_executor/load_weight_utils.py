@@ -180,7 +180,8 @@ def load_pre_sharded_checkpoint(
     """
     state_dict = {}
     _, safetensor_files = get_all_safetensors(
-        model_path, os.path.join(model_path, f"rank{local_rank}")
+        os.path.join(model_path, f"rank{local_rank}"),
+        os.path.join(model_path, f"rank{local_rank}/model.safetensors.index.json"),
     )
     weights_iterator = safetensors_weights_iterator(safetensor_files)
     for name, weight in weights_iterator:
@@ -404,11 +405,11 @@ def load_composite_checkpoint(
                 raise ValueError(
                     f"Your model only supports loading with tp{len(rank_dirs)}"
                 )
-                state_dict = load_pre_sharded_checkpoint(
-                    model_path,
-                    fd_config.parallel_config.tensor_parallel_rank,
-                    use_fastsafetensor=False,
-                )
+            state_dict = load_pre_sharded_checkpoint(
+                model_path,
+                fd_config.parallel_config.tensor_parallel_rank,
+                use_fastsafetensor=False,
+            )
         else:
             if not fd_config.load_config.load_weights_on == "cpu" and (
                 current_platform.is_cuda() and current_platform.available()
@@ -420,5 +421,6 @@ def load_composite_checkpoint(
                 state_dict = load_tp_checkpoint(
                     model_path, cls, fd_config.model_config, return_numpy=return_numpy
                 )
-
+    if not state_dict:
+        raise ValueError(f"weight not found in state_dict !")
     return state_dict
