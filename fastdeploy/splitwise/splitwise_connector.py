@@ -190,7 +190,7 @@ class SplitwiseConnector:
         """
         tasks_status = "mixed"
         current_port = -1
-        is_changable = os.getenv("PD_CHANGEABLE", "0") == "1"
+        is_changable = os.getenv("PD_CHANGEABLE", "1") == "1"
         while True:
             for port in self.cfg.innode_prefill_ports:
                 current_port = self.send_splitwise_tasks_innode(tasks, port)

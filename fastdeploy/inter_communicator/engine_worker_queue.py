@@ -337,6 +337,18 @@ class EngineWorkerQueue:
                 f"get cache infos: {cache_infos}  local_data_parallel_id:{self.local_data_parallel_id}"
             )
         return cache_infos
+    
+    def num_cache_infos(self) -> int:
+        """
+        Get current number of tasks in the queue.
+
+        Returns:
+            int: Total number of tasks
+        """
+        self.lock_info.acquire()
+        total_num: int = len(self.cache_infos)
+        self.lock_info.release()
+        return total_num
 
     def put_finished_req(self, req_ids) -> None:
         """

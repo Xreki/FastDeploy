@@ -202,32 +202,26 @@ class TokenProcessor(object):
         recycle resources
         """
         if is_prefill:
-            while self.resource_manager.cache_transfer_finished[
-                    task_id] != self.cfg.tensor_parallel_size:
+            while True:
                 finished_task_ids = self.engine_worker_queue.get_finished_req()
                 if len(finished_task_ids) > 0:
                     for finished_task_id in finished_task_ids:
-                        llm_logger.info(
-                            f"finished_task_id: {finished_task_id}")
-                        self.resource_manager.cache_transfer_finished[
-                            finished_task_id[0]] += 1
-                        self.prefill_result_status[
-                            finished_task_id[0]] = finished_task_id[1]
+                        llm_logger.info(f"finished_task_id: {finished_task_id}")
+                        self.resource_manager.cache_transfer_finished[finished_task_id[0]] += 1
+                        self.prefill_result_status[finished_task_id[0]] = finished_task_id[1]
+                if self.resource_manager.cache_transfer_finished[task_id] == self.cfg.tensor_parallel_size:
+                    self.split_connector.send_first_token(task.disaggregate_info, [result])
+                    del self.resource_manager.cache_transfer_finished[task_id]
+                    self.resource_manager.stop_flags[index] = True
+                    self.resource_manager.tasks_list[index] = None
+                    self.resource_manager._recycle_block_tables(task)
+                    if self.prefill_result_status[task_id] != "finished":
+                        result.error_code = 400
+                        result.error_message = f"{task_id} failed to {self.prefill_result_status[task_id]}"
+                    del self.resource_manager.req_dict[task_id]
+                    break
                 else:
                     time.sleep(0.002)
-            if self.resource_manager.cache_transfer_finished[
-                    task_id] == self.cfg.tensor_parallel_size:
-                if self.prefill_result_status[task_id] != "finished":
-                    result.error_code = 400
-                    result.error_message = f"{task_id} failed to {self.prefill_result_status[task_id]}"
-                self.split_connector.send_first_token(task.disaggregate_info,
-                                                      [result])
-
-                del self.resource_manager.cache_transfer_finished[task_id]
-                self.resource_manager.stop_flags[index] = True
-                self.resource_manager.tasks_list[index] = None
-                self.resource_manager._recycle_block_tables(task)
-                del self.resource_manager.req_dict[task_id]
         else:
             self.resource_manager.stop_flags[index] = True
             self.resource_manager.tasks_list[index] = None

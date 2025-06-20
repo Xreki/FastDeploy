@@ -139,6 +139,8 @@ class LLMEngine(object):
 
         self.is_started = False
 
+        self.waiting_requests = []
+
         if self.cfg.cache_config.num_gpu_blocks_override is None:
             self.do_profile = 1
         else:
@@ -303,6 +305,9 @@ class LLMEngine(object):
                         self.split_connector.has_splitwise_tasks():
                         time.sleep(0.005)
                         continue
+                if self.engine_worker_queue.num_cache_infos() > 0:
+                    time.sleep(0.001)
+                    continue
                 if len(self.split_connector.current_request_ids) > 0:
                     time.sleep(0.001)
                     continue
@@ -457,54 +462,67 @@ class LLMEngine(object):
         def receiver_loop():
             while self.running:
                 try:
-                    if len(waiting_requests) > 0:
-                        for task in waiting_requests:
-                            if self.resource_manager.is_resource_sufficient(
-                                    task.prompt_token_ids_len):
-                                self.insert_tasks([task])
-                                waiting_requests.remove(task)
-                            else:
-                                break
+
+                    processed_indices = []
+                    for idx, task in enumerate(self.waiting_requests):
+                        if self.resource_manager.is_resource_sufficient(task.prompt_token_ids_len):
+                            self.insert_tasks([task])
+                            llm_logger.info(f"Resource available, processing task {task.request_id}")
+                            processed_indices.append(idx)
+                        else:
+                            llm_logger.debug(f"Still waiting for resources {task.request_id}")
+                            break
+                    
+                    for idx in sorted(processed_indices, reverse=True):
+                        self.waiting_requests.pop(idx)
+                    
                     if not self.engine_worker_queue.disaggregate_queue_empty():
-                        items = self.engine_worker_queue.get_disaggregated_tasks(
-                        )
+                        items = self.engine_worker_queue.get_disaggregated_tasks()
                         for item in items:
                             role = item[0]
                             tasks = item[1]
+                            
                             if role == "prefill":
                                 llm_logger.info("get prefill tasks")
                                 for task in tasks:
-                                    task.max_tokens = task.min_tokens = 2
+                                    task.max_tokens = task.min_tokens = 2 
                                 self.insert_tasks(tasks)
+                            
                             elif role == "decode":
                                 llm_logger.info("get decode tasks")
-                                if hasattr(tasks[0], 'finished'):
+                                
+                                if hasattr(tasks[0], 'finished'): 
                                     if not isinstance(tasks, list):
                                         tasks = [tasks]
                                     for task in tasks:
                                         task.finished = False
-
-                                    # 单机逻辑
-                                    # self.scheduler.put_results(tasks)
-
                                     self.insert_tasks(tasks, allocated=True)
+                                    if self.cfg.innode_prefill_ports is not None:
+                                        self.scheduler.put_results(tasks)
+                                
                                 else:
-                                    if len(waiting_requests):
-                                        for task in tasks:
-                                            waiting_requests.append(task)
+                                    if len(self.waiting_requests):
+                                        llm_logger.info(f"Waiting for resource for task {tasks[0].request_id}")
+                                        self.waiting_requests.extend(tasks)
                                     else:
+                                        new_waiting = []
                                         for task in tasks:
-                                            if not self.resource_manager.is_resource_sufficient(
-                                                    task.prompt_token_ids_len):
-                                                waiting_requests.append(task)
-                                            else:
+                                            if self.resource_manager.is_resource_sufficient(task.prompt_token_ids_len):
                                                 self.insert_tasks([task])
-
+                                            else:
+                                                new_waiting.append(task)
+                                        
+                                        if new_waiting:
+                                            self.waiting_requests.extend(new_waiting)
+                                            llm_logger.info(f"Added {len(new_waiting)} tasks to waiting queue")
+                        
                     else:
                         time.sleep(0.001)
-                        continue
+                
                 except Exception as e:
-                    llm_logger.error(f"get decode tasks error: {e}")
+                    llm_logger.error(f"Error in main loop: {e}")
+                    time.sleep(0.1)
+
 
         threading.Thread(target=receiver_loop, daemon=True).start()
 

@@ -213,7 +213,7 @@ class CacheMessager(object):
                 prefilled_layer_idx = layer_shm_value.value[0]
                 prefilled_step_idx = step_shm_value.value[0]
 
-                if prefilled_step_idx == self.last_step_idx and self.last_layer_idx == prefilled_layer_idx:
+                if prefilled_step_idx == -1:
                     time.sleep(0.001)
                     continue
                 logger.debug(
