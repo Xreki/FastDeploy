@@ -20,82 +20,20 @@ from paddle.nn.quant import weight_quantize
 from paddleformers.utils.log import logger
 
 import fastdeploy
-from fastdeploy.config import MoEPhase
+from fastdeploy.distributed.communication_op import \
+    tensor_model_parallel_all_reduce
 from fastdeploy.model_executor.ops.gpu import (moe_expert_dispatch,
-                                                moe_expert_reduce)
-from fastdeploy.distributed.communication_op import tensor_model_parallel_all_reduce
-    
+                                               moe_expert_reduce)
 
-from ..quantization.quant_base import QuantMethodBase
 from ..utils import get_tensor
-from .ep import EPPrefillRunner
-from .ep import EPDecoderRunner
+from .fused_moe_backend_base import MoEMethodBase, create_and_set_parameter
 
 
-def create_and_set_parameter(layer: nn.Layer, name: str,
-                             tensor: paddle.Tensor):
-    """
-    Create a parameter with the given name and set its value to the given tensor.
-    """
-    setattr(
-        layer, name,
-        layer.create_parameter(
-            shape=tensor.shape,
-            dtype=tensor.dtype,
-            default_initializer=paddle.nn.initializer.Constant(0),
-        ))
-    getattr(layer, name).set_value(tensor)
-
-
-class CutlassMoEMethod(QuantMethodBase):
+class CutlassMoEMethod(MoEMethodBase):
     """
     Use Cutlass Group Gemm to compute Fused MoE.
     This method is the oldest way to compute MoE in Paddle.
     """
-
-    def __init__(self, quant_config):
-        super().__init__()
-        if quant_config is None:
-            self.moe_quant_type = "w16a16"
-        else:
-            self.quant_config = quant_config
-        self.added_weight_attrs = ["moe_ffn1_weight", "moe_ffn2_weight"]
-        self.added_scale_attrs = [
-            "moe_ffn1_weight_scale", "moe_ffn2_weight_scale"
-        ]
-        self.pack_num = 1
-
-    def init_ep(self, layer: nn.Layer) -> None:
-        """
-        Init EP related module
-        """
-        if layer.ep_size > 1:
-            if layer.fd_config.parallel_config.moe_phase == MoEPhase.DECODER:
-                self.ep_decoder_runner = EPDecoderRunner(
-                    layer.top_k, layer.hidden_size, layer.num_experts,
-                    layer.moe_config.num_max_dispatch_tokens_per_rank,
-                    layer.ep_size, layer.ep_rank)
-            else:
-                self.ep_prefill_runner = EPPrefillRunner(
-                    layer.top_k, layer.hidden_size, layer.num_experts,
-                    layer.ep_size, layer.ep_rank)
-
-    def process_loaded_weights(self, layer, weights) -> None:
-        """
-        process_loaded_weights
-        """
-        pass
-
-    def check(self, layer: nn.Layer, ffn1_weights, ffn2_weights):
-        """
-        check layer is valid for this method
-        """
-        assert ffn1_weights[0].shape == [
-            layer.hidden_size // self.pack_num, layer.moe_intermediate_size * 2
-        ]
-        assert ffn2_weights[0].shape == [
-            layer.moe_intermediate_size // self.pack_num, layer.hidden_size
-        ]
 
     def create_weights(self, layer: nn.Layer, state_dict):
         """
@@ -302,23 +240,6 @@ class CutlassMoEMethod(QuantMethodBase):
             tensor_model_parallel_all_reduce(fused_moe_out)
 
         return fused_moe_out
-
-    def apply(
-        self,
-        layer: nn.Layer,
-        x: paddle.Tensor,
-        gate_out: paddle.Tensor,
-    ) -> paddle.Tensor:
-        """
-        Paddle Cutlass compute Fused MoE.
-        """
-        if layer.ep_size > 1:
-            if layer.fd_config.parallel_config.moe_phase == MoEPhase.PREFILL:
-                return self.apply_ep_prefill(layer, x, gate_out)
-            else:
-                return self.apply_ep_decode(layer, x, gate_out)
-        else:
-            return self.apply_tp(layer, x, gate_out)
 
 
 class CutlassW4A8MoEMethod(CutlassMoEMethod):
