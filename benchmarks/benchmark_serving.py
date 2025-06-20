@@ -508,6 +508,7 @@ async def benchmark(
         "itls": [output.itl for output in outputs],
         "input_texts": [input.prompt for input in input_requests],
         "generated_texts": [output.generated_text for output in outputs],
+        "reasoning_contents": [output.reasoning_content for output in outputs],
         "errors": [output.error for output in outputs],
     }
 
