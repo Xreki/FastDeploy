@@ -14,8 +14,6 @@
 # limitations under the License.
 """
 
-import rdma_comm
-
 from fastdeploy.utils import get_logger
 
 logger = get_logger("cache_messager", "cache_messager.log")
@@ -28,6 +26,12 @@ class RDMACommManager:
 
     def __init__(self, splitwise_role, rank, gpu_id, cache_k_ptr_list, \
                 cache_v_ptr_list, max_block_num, block_bytes, rdma_port):
+        try:
+            import rdma_comm
+        except:
+            logger.error(f"The installation of the RDMA library failed." \
+                "Confirm whether your network card supports RDMA transmission.")
+            return
         self.messager = rdma_comm.RDMACommunicator(
             splitwise_role,
             rank,
