@@ -113,6 +113,7 @@ for chunk in response:
 1. 仅支持OpenAI如下参数（其余参数配置会被服务忽略）
 - prompt (v1/completions)
 - messages(v1/chat/completions)
+- tools (x1 模型支持的FuctionCall 工具列表)
 - frequency_penalty: Optional[float] = 0.0
 - max_tokens: Optional[int] = 16
 - presence_penalty: Optional[float] = 0.0
@@ -121,15 +122,20 @@ for chunk in response:
 - stream_options: Optional[StreamOptions] = None
 - temperature: Optional[float] = None
 - top_p: Optional[float] = None
-- metadata: Optional[dict] = None (仅在v1/chat/compeltions中支持，用于配置min_tokens，例如metadata={"min_tokens": 20})
+- metadata: Optional[dict] = None (仅在v1/chat/compeltions中支持)
+    - 配置min_tokens，例如metadata={"min_tokens": 20}
+    - 多模模型配置思考开关， 例如metadata={"enable_thinking": False}
 
 > 注:若为X1 模型 由于思考链默认打卡导致输出过长，max tokens 可以设置为模型最长输出，或无需设置
 
 2. 在返回的信息
 
-新增返回参数：
-arrival_time ：每个token 的返回的累计耗时
-reasoning_content: 思考链返回结果
+新增返回参数：<br>
+arrival_time ：每个token 的返回的累计耗时<br>
+reasoning_content: 思考链返回结果<br>
+finish_reason： 结束原因，增加了tool_calls <br> 
+tool_calls： 调用工具参数 <br> 
+
 
 ```python
 ChatCompletionStreamResponse:
@@ -141,11 +147,29 @@ ChatCompletionStreamResponse:
  ChatCompletionResponseStreamChoice:
     index: int
     delta: DeltaMessage
-    finish_reason: Optional[Literal["stop", "length"]] = None
+    finish_reason: Optional[Literal["stop", "length", "tool_calls"]] = None
     arrival_time: Optional[float] = None
 DeltaMessage:
     role: Optional[str] = None
     content: Optional[str] = None
     token_ids: Optional[List[int]] = None
     reasoning_content: Optional[str] = None
+    tool_calls: Optional[List[DeltaToolCall | ToolCall]] = None
+DeltaToolCall：
+    id: Optional[str] = None
+    type: Optional[Literal["function"]] = None
+    index: int
+    function: Optional[DeltaFunctionCall] = None
+DeltaFunctionCall：
+    name: Optional[str] = None
+    arguments: Optional[str] = None
+ToolCall：
+    id: str = None
+    type: Literal["function"] = "function"
+    function: FunctionCall
+    index: int
+FunctionCall：
+    name: str
+    arguments: str
+
 ```
