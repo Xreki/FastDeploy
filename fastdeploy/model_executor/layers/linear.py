@@ -543,14 +543,6 @@ class RowParallelLinear(LinearBase):
         self.head_dim = fd_config.model_config.head_dim
         self.num_heads = fd_config.model_config.num_attention_heads // self.nranks
 
-        self.with_bias = with_bias
-        self.prefix = prefix
-        self.shift_key = f"{prefix}.shift_bias"
-        self.smooth_key = f"{prefix}.smooth_weight"
-        self.weight_key = f"{prefix}.weight"
-        self.bias_key = f"{prefix}.bias"
-        self.weight_only_scale_key = f"{prefix}.weight_only_scale"
-        self.out_scale_key = f"{prefix}.out_scale"
         self.linear_weight_shape = [
             self.input_size,
             self.output_size,
@@ -560,9 +552,6 @@ class RowParallelLinear(LinearBase):
         if fd_config.quant_config:
             self.quant_method = fd_config.quant_config.get_quant_method(self)
             self.quant_method.create_weights(self)
-        if fd_config.model_config.is_quantized:
-            self.weight_key = f"{prefix}.quant_weight"
-            self.weight_scale_key = f"{prefix}.weight_scale"
         self.init_weight()
 
     def init_weight(self):
