@@ -8,6 +8,6 @@ splitwise_role: prefill
 cache_queue_port: 55664
 engine_worker_queue_port: 6677
 num_gpu_blocks_override: 1024
-cache_transfer_protocol: rdma
-rdma_comm_ports: 7671,7672,7673,7674,7675,7676,7677,7678
-pd_comm_port: 2334
+cache_transfer_protocol: "rdma"
+rdma_comm_ports: "7671,7672,7673,7674,7675,7676,7677,7678"
+pd_comm_port: "2334"

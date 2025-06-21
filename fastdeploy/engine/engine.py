@@ -188,7 +188,7 @@ class LLMEngine(object):
             device_ids = self.cfg.device_ids.split(",")
             self.cache_manager_processes = self.resource_manager.cache_manager.launch_cache_manager(
                 self.cfg.cache_config,
-                self.cfg.tensor_parallel_size, self.cfg.device_ids,
+                self.cfg.tensor_parallel_size, device_ids,
                 self.cfg.engine_worker_queue_port, self.ipc_signal_suffix
             )
 
@@ -233,7 +233,7 @@ class LLMEngine(object):
 
         if self.cfg.splitwise_role != "mixed":
             # 单机逻辑
-            # self.engine_worker_queue.available_prefill_instances.put(1)
+            self.engine_worker_queue.available_prefill_instances.put(1)
             self.split_mode_get_tasks()
             self.splitwise_receive_thread = threading.Thread(
                 target=self.split_connector.start_receiver, args=())
@@ -245,7 +245,8 @@ class LLMEngine(object):
             role = self.cfg.splitwise_role
             host_ip = self.cfg.host_ip
             disaggregate = self.cfg.disaggregate_info
-            self.scheduler.start(role, host_ip, disaggregate)
+            if self.cfg.scheduler_config.name == "splitwise":
+                self.scheduler.start(role, host_ip, disaggregate)
 
             if self.cfg.parallel_config.enable_expert_parallel and self.cfg.parallel_config.data_parallel_size > 1:
                 self.dp_processed = []
@@ -1095,7 +1096,7 @@ class LLMEngine(object):
             device_ids = self.cfg.device_ids.split(",")
             self.cache_manager_processes = self.resource_manager.cache_manager.launch_cache_manager(
                 self.cfg.cache_config,
-                self.cfg.tensor_parallel_size, self.cfg.device_ids,
+                self.cfg.tensor_parallel_size, device_ids,
                 self.cfg.engine_worker_queue_port, self.ipc_signal_suffix
             )
 

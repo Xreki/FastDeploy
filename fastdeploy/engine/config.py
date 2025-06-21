@@ -227,6 +227,12 @@ class CacheConfig:
         self.cache_transfer_protocol = cache_transfer_protocol
         self.pd_comm_port = pd_comm_port
 
+        if rdma_comm_ports is not None and isinstance(rdma_comm_ports, str):
+            self.rdma_comm_ports = rdma_comm_ports.split(',')
+
+        if pd_comm_port is not None and isinstance(pd_comm_port, str):
+            self.pd_comm_port = [int(port) for port in pd_comm_port.split(",")]
+
         self.enable_prefix_caching = enable_prefix_caching
         if cpu_offload_gb is None:
             self.enable_hierarchical_cache = False
