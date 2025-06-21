@@ -369,7 +369,7 @@ class ErnieProcessor(BaseDataProcessor):
                         f"full_text: {full_text}, reasoning_content: {reasoning_content}")
                     response_dict["outputs"]["text"] = reasoning_content
                 data_processor_logger.info(f"req_id:{req_id}, decode_status: {self.decode_status[req_id]}")
-                del self.decode_status[req_id]
+            del self.decode_status[req_id]
 
         return response_dict
 
