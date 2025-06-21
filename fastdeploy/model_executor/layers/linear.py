@@ -430,17 +430,6 @@ class QKVParallelLinear(ColumnParallelLinear):
                          with_bias=with_bias,
                          add_bias=add_bias)
 
-    def load_quantized_weight(self, state_dict):
-        """
-        Load the prequantized weight from the state dictionary.
-
-        Args:
-            state_dict (dict): A dictionary containing the prequantized weights and scales.
-        """
-        self.quant_method.process_quantized_weights(
-            self, get_tensor(state_dict.pop(self.weight_key)),
-            get_tensor(state_dict.pop(self.weight_scale_key)))
-
     def load_unquantized_weight(self, state_dict):
         """
         Load the weight from the state dictionary.
