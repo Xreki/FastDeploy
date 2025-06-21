@@ -20,6 +20,7 @@ import numpy as np
 import paddle
 from paddle import Tensor
 from paddle.framework import in_dynamic_mode
+from scipy.linalg import block_diag
 
 from fastdeploy.platforms import current_platform
 
@@ -136,6 +137,53 @@ def get_tensor(input):
     else:
         # 理论上不会命中这个分支
         return input
+
+
+def matmul_hadU(X):
+    """
+    create_hadamard_matrix
+    """
+    input = X.clone().reshape((-1, X.shape[-1], 1))
+    output = input.clone()
+    while input.shape[1] > 1:
+        input = input.reshape(
+            (input.shape[0], input.shape[1] // 2, 2, input.shape[2]))
+        output = output.reshape(input.shape)
+        output[:, :, 0, :] = input[:, :, 0, :] + input[:, :, 1, :]
+        output[:, :, 1, :] = input[:, :, 0, :] - input[:, :, 1, :]
+        output = output.reshape((input.shape[0], input.shape[1], -1))
+        (input, output) = (output, input)
+    del output
+    return input.reshape(X.shape)
+
+
+def random_hadamard_matrix(block_size, dtype):
+    """
+    create_hadamard_matrix
+    """
+    Q = paddle.diag(paddle.ones((block_size), dtype=dtype))
+    block = matmul_hadU(Q)
+    return block
+
+
+def create_hadamard_matrix(hidden_size):
+    """
+    create_hadamard_matrix
+    """
+    hadamard_block_size = 32
+    h = random_hadamard_matrix(hadamard_block_size, "float32")
+    block_num = hidden_size // hadamard_block_size
+    hadamard_matrix = paddle.to_tensor(
+        block_diag(*[h for i in range(block_num)]))
+    return hadamard_matrix
+
+
+create_hadamard_matrix_map = {}
+# Zkk: below key are used in 4.5T fp8.
+create_hadamard_matrix_map[8192] = create_hadamard_matrix(8192)
+create_hadamard_matrix_map[448] = create_hadamard_matrix(448)
+create_hadamard_matrix_map[1024] = create_hadamard_matrix(1024)
+create_hadamard_matrix_map[3584] = create_hadamard_matrix(3584)
 
 
 def ensure_divisibility(numerator, denominator):
