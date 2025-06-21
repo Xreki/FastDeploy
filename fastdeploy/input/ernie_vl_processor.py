@@ -253,7 +253,7 @@ class ErnieMoEVLProcessor(ErnieProcessor):
                 reasoning_content = "".join(self.decode_status[task_id][3])
                 results_all = "".join(
                     self.decode_status[task_id][4])
-            del self.decode_status[task_id]
+        
         return results_all, reasoning_content
 
     def ids2tokens(self, token_id, task_id):
@@ -373,4 +373,5 @@ class ErnieMoEVLProcessor(ErnieProcessor):
                     response_dict["outputs"]["reasoning_content"] = reasoning_content
                 else:
                     response_dict["outputs"]["text"] = reasoning_content
+            del self.decode_status[req_id]
         return response_dict
