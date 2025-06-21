@@ -14,12 +14,12 @@
 """
 quantization module
 """
+from enum import Enum
 from typing import Dict, List, Type
 
 from fastdeploy.platforms import current_platform
 
 from .quant_base import QuantConfigBase
-from enum import Enum
 
 
 class QuantzationMethods(str, Enum):
@@ -33,6 +33,7 @@ class QuantzationMethods(str, Enum):
     W8A8 = "w8a8"
     W4A8 = "w4a8"
     WFP8AFP8 = "wfp8afp8"
+    WFP8AFP8_PERTENSOR = "wfp8afp8_pertensor"
     KVCACHE = "kvcache"
     MIX_QUANT = "mix_quant"
 
@@ -54,6 +55,7 @@ def get_quantization_config(quantization: str) -> Type[QuantConfigBase]:
     from .w8a8 import W8A8Config
     from .weight_only import WeightOnlyConfig, WINT4Config, WINT8Config
     from .wfp8afp8 import WFP8AFP8Config
+    from .wfp8afp8_pertensor import WFP8AFP8PerTensorConfig
     from .wint2 import WINT2Config
 
     QUANT = QuantzationMethods
@@ -67,6 +69,7 @@ def get_quantization_config(quantization: str) -> Type[QuantConfigBase]:
         QUANT.W8A8: W8A8Config,
         QUANT.W4A8: W4A8Config,
         QUANT.WFP8AFP8: WFP8AFP8Config,
+        QUANT.WFP8AFP8_PERTENSOR: WFP8AFP8PerTensorConfig,
         QUANT.KVCACHE: KvCacheQuantConfig,
         QUANT.MIX_QUANT: MixQuantConfig,
     }
