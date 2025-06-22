@@ -266,7 +266,9 @@ class DataProcessor:
         outputs["position_ids"].append([pos] * 3)
         outputs["cur_position"] += 1
 
-    def _add_text(self, tokens: [int], outputs: Dict) -> None:
+    def _add_text(self, tokens, outputs: Dict) -> None:
+        if isinstance(tokens, str):
+            tokens = self.tokenizer.encode(tokens, add_special_tokens=False)["input_ids"]
         outputs["input_ids"].extend(tokens)
         outputs["token_type_ids"].extend([IDS_TYPE_FLAG["text"]] * len(tokens))
 
