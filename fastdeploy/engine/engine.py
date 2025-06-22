@@ -120,11 +120,13 @@ class LLMEngine(object):
                 local_data_parallel_size=self.cfg.parallel_config.
                 data_parallel_size)
 
+        self.resource_manager = ResourceManager(cfg.max_num_seqs,
+                                                cfg.cache_config,
+                                                cfg.tensor_parallel_size,
+                                                cfg.splitwise_role)
 
-        self.resource_manager = ResourceManager(cfg.max_num_seqs, cfg.cache_config,
-                                                cfg.tensor_parallel_size, cfg.splitwise_role)
-
-        os.environ['INFERENCE_MSG_QUEUE_ID'] = str(self.cfg.engine_worker_queue_port)
+        os.environ['INFERENCE_MSG_QUEUE_ID'] = str(
+            self.cfg.engine_worker_queue_port)
 
         self.split_connector = SplitwiseConnector(cfg, self.scheduler,
                                                   self.engine_worker_queue,
@@ -187,10 +189,9 @@ class LLMEngine(object):
                 or self.cfg.splitwise_role != "mixed"):
             device_ids = self.cfg.device_ids.split(",")
             self.cache_manager_processes = self.resource_manager.cache_manager.launch_cache_manager(
-                self.cfg.cache_config,
-                self.cfg.tensor_parallel_size, device_ids,
-                self.cfg.engine_worker_queue_port, self.ipc_signal_suffix
-            )
+                self.cfg.cache_config, self.cfg.tensor_parallel_size,
+                device_ids, self.cfg.engine_worker_queue_port,
+                self.ipc_signal_suffix)
 
         self.worker_proc = self._start_worker_service()
         console_logger.info("Waitting worker processes ready...")
@@ -458,7 +459,6 @@ class LLMEngine(object):
         """
         Split mode get tasks
         """
-        waiting_requests = []
 
         def receiver_loop():
             while self.running:
@@ -466,33 +466,39 @@ class LLMEngine(object):
 
                     processed_indices = []
                     for idx, task in enumerate(self.waiting_requests):
-                        if self.resource_manager.is_resource_sufficient(task.prompt_token_ids_len):
+                        if self.resource_manager.is_resource_sufficient(
+                                task.prompt_token_ids_len):
                             self.insert_tasks([task])
-                            llm_logger.info(f"Resource available, processing task {task.request_id}")
+                            llm_logger.info(
+                                f"Resource available, processing task {task.request_id}"
+                            )
                             processed_indices.append(idx)
                         else:
-                            llm_logger.debug(f"Still waiting for resources {task.request_id}")
+                            llm_logger.debug(
+                                f"Still waiting for resources {task.request_id}"
+                            )
                             break
-                    
+
                     for idx in sorted(processed_indices, reverse=True):
                         self.waiting_requests.pop(idx)
-                    
+
                     if not self.engine_worker_queue.disaggregate_queue_empty():
-                        items = self.engine_worker_queue.get_disaggregated_tasks()
+                        items = self.engine_worker_queue.get_disaggregated_tasks(
+                        )
                         for item in items:
                             role = item[0]
                             tasks = item[1]
-                            
+
                             if role == "prefill":
                                 llm_logger.info("get prefill tasks")
                                 for task in tasks:
-                                    task.max_tokens = task.min_tokens = 2 
+                                    task.max_tokens = task.min_tokens = 2
                                 self.insert_tasks(tasks)
-                            
+
                             elif role == "decode":
                                 llm_logger.info("get decode tasks")
-                                
-                                if hasattr(tasks[0], 'finished'): 
+
+                                if hasattr(tasks[0], 'finished'):
                                     if not isinstance(tasks, list):
                                         tasks = [tasks]
                                     for task in tasks:
@@ -500,30 +506,35 @@ class LLMEngine(object):
                                     self.insert_tasks(tasks, allocated=True)
                                     if self.cfg.innode_prefill_ports is not None:
                                         self.scheduler.put_results(tasks)
-                                
+
                                 else:
                                     if len(self.waiting_requests):
-                                        llm_logger.info(f"Waiting for resource for task {tasks[0].request_id}")
+                                        llm_logger.info(
+                                            f"Waiting for resource for task {tasks[0].request_id}"
+                                        )
                                         self.waiting_requests.extend(tasks)
                                     else:
                                         new_waiting = []
                                         for task in tasks:
-                                            if self.resource_manager.is_resource_sufficient(task.prompt_token_ids_len):
+                                            if self.resource_manager.is_resource_sufficient(
+                                                    task.prompt_token_ids_len):
                                                 self.insert_tasks([task])
                                             else:
                                                 new_waiting.append(task)
-                                        
+
                                         if new_waiting:
-                                            self.waiting_requests.extend(new_waiting)
-                                            llm_logger.info(f"Added {len(new_waiting)} tasks to waiting queue")
-                        
+                                            self.waiting_requests.extend(
+                                                new_waiting)
+                                            llm_logger.info(
+                                                f"Added {len(new_waiting)} tasks to waiting queue"
+                                            )
+
                     else:
                         time.sleep(0.001)
-                
+
                 except Exception as e:
                     llm_logger.error(f"Error in main loop: {e}")
                     time.sleep(0.1)
-
 
         threading.Thread(target=receiver_loop, daemon=True).start()
 
@@ -790,10 +801,10 @@ class LLMEngine(object):
         Initialize shared memory to indicate engine status
         """
         # worker_ready_signatensor_parallel_size
-        array_size = min(8, self.cfg.tensor_parallel_size * self.cfg.parallel_config.data_parallel_size)
-        worker_ready_signal_data = np.zeros(
-            shape=[array_size],
-            dtype=np.int32)
+        array_size = min(
+            8, self.cfg.tensor_parallel_size *
+            self.cfg.parallel_config.data_parallel_size)
+        worker_ready_signal_data = np.zeros(shape=[array_size], dtype=np.int32)
         self.worker_ready_signal = IPCSignal(name="worker_ready_singnal",
                                              array=worker_ready_signal_data,
                                              dtype=np.int32,
@@ -801,7 +812,8 @@ class LLMEngine(object):
                                              create=True)
 
         # exist_task_signal 用于各worker进程感知是否有新Task需要处理
-        exist_task_signal_data = np.zeros([self.cfg.parallel_config.data_parallel_size], dtype=np.int32)
+        exist_task_signal_data = np.zeros(
+            [self.cfg.parallel_config.data_parallel_size], dtype=np.int32)
         self.exist_task_signal = IPCSignal(name="exist_task_signal",
                                            array=exist_task_signal_data,
                                            dtype=np.int32,
@@ -809,26 +821,27 @@ class LLMEngine(object):
                                            create=True)
 
         # exist_swapped_task_signal 用于engine感知worker中是否存在swapped task
-        exist_swapped_task_signal_data = np.zeros([self.cfg.parallel_config.data_parallel_size], dtype=np.int32)
+        exist_swapped_task_signal_data = np.zeros(
+            [self.cfg.parallel_config.data_parallel_size], dtype=np.int32)
         self.exist_swapped_task_signal = IPCSignal(
             name="exist_swapped_task_signal",
             array=exist_swapped_task_signal_data,
             dtype=np.int32,
             suffix=self.ipc_signal_suffix,
             create=True)
-        
+
         # exist_prefill_task_signal 用于各worker进程感知是否进行prefill
         exist_prefill_task_signal_data = np.zeros([1], dtype=np.int32)
-        self.exist_prefill_task_signal = IPCSignal(name="exist_prefill_task_signal",
-                                           array=exist_prefill_task_signal_data,
-                                           dtype=np.int32,
-                                           suffix=self.ipc_signal_suffix,
-                                           create=True)
+        self.exist_prefill_task_signal = IPCSignal(
+            name="exist_prefill_task_signal",
+            array=exist_prefill_task_signal_data,
+            dtype=np.int32,
+            suffix=self.ipc_signal_suffix,
+            create=True)
 
         # worker_live_signal 用于engine感知各worker进程是否存活，记录每个step 时间
-        worker_healthy_live_recorded_time_array = np.zeros(
-            shape=[array_size],
-            dtype=np.int32)
+        worker_healthy_live_recorded_time_array = np.zeros(shape=[array_size],
+                                                           dtype=np.int32)
         self.worker_healthy_live_signal = IPCSignal(
             name="worker_healthy_live_signal",
             array=worker_healthy_live_recorded_time_array,
@@ -837,9 +850,7 @@ class LLMEngine(object):
             create=True)
 
         if self.do_profile:
-            get_profile_block_num = np.zeros(
-                [array_size],
-                dtype=np.int32)
+            get_profile_block_num = np.zeros([array_size], dtype=np.int32)
             self.get_profile_block_num_signal = IPCSignal(
                 name="get_profile_block_num",
                 array=get_profile_block_num,
@@ -921,7 +932,8 @@ class LLMEngine(object):
             "FLAGS_enable_async_fast_gc":
             os.getenv("FLAGS_enable_async_fast_gc", default="0"),
             "FLAGS_pir_interpreter_record_stream_for_gc_cache":
-            os.getenv("FLAGS_pir_interpreter_record_stream_for_gc_cache", default="1"),
+            os.getenv("FLAGS_pir_interpreter_record_stream_for_gc_cache",
+                      default="1"),
         })
 
         if self.cfg.splitwise_role != "mixed":
@@ -979,7 +991,6 @@ class LLMEngine(object):
             f" --speculative_method {self.cfg.speculative_config.method}"
             f" --speculative_max_draft_token_num {self.cfg.speculative_config.num_speculative_tokens}"
             f" --speculative_model_type {self.cfg.speculative_config.model_type}"
-            f" --load_weights_on {self.cfg.load_weights_on}"
         )
 
         worker_append_flag = {
@@ -1095,10 +1106,9 @@ class LLMEngine(object):
         if self.cfg.cache_config.enable_prefix_caching or self.cfg.splitwise_role != "mixed":
             device_ids = self.cfg.device_ids.split(",")
             self.cache_manager_processes = self.resource_manager.cache_manager.launch_cache_manager(
-                self.cfg.cache_config,
-                self.cfg.tensor_parallel_size, device_ids,
-                self.cfg.engine_worker_queue_port, self.ipc_signal_suffix
-            )
+                self.cfg.cache_config, self.cfg.tensor_parallel_size,
+                device_ids, self.cfg.engine_worker_queue_port,
+                self.ipc_signal_suffix)
 
     def check_health(self, time_interval_threashold=30):
         """

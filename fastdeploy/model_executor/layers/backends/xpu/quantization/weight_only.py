@@ -16,10 +16,13 @@
 
 import paddle
 from paddle import nn
+
+from fastdeploy.model_executor.layers.quantization.quant_base import \
+    QuantMethodBase
 from fastdeploy.model_executor.layers.quantization.weight_only import (
     WeightOnlyConfig, WeightOnlyLinearMethod)
 from fastdeploy.model_executor.ops.xpu import weight_quantize_xpu
-from fastdeploy.model_executor.layers.quantization.quant_base import QuantMethodBase
+
 
 class XPUWeightOnlyLinearMethod(WeightOnlyLinearMethod):
     """
@@ -52,25 +55,12 @@ class XPUWeightOnlyLinearMethod(WeightOnlyLinearMethod):
             is_bias=False,
         )
 
-    def process_quantized_weights(self, layer, quanted_weight_tensor, weight_scale_tensor=None) -> None:
-        """process_quantized_weights"""
-        # (tangbinhan:todo)  quant_utils support xpu
-        layer.linear_weight.set_value(quanted_weight_tensor)
-        if weight_scale_tensor is not None:
-            layer.linear_weight_scale.set_value(weight_scale_tensor)
-
-    def apply_weight_quantization(self, weight):
-        """apply_weight_quantization"""
-        quanted_weight_tensor, weight_scale_tensor = weight_quantize_xpu(
-            weight, self.quant_config.algo, -1, -1)
-        return quanted_weight_tensor, weight_scale_tensor
-
-    def process_unquantized_weights(self, layer, weight) -> None:
+    def process_loaded_weights(self, layer, weight) -> None:
         """
         loaded_weights using xpu special quantization
         """
-        quanted_weight_tensor, weight_scale_tensor = self.apply_weight_quantization(
-            weight)
+        quanted_weight_tensor, weight_scale_tensor = weight_quantize_xpu(
+            weight, self.quant_config.algo, -1, -1)
         layer.linear_weight.set_value(
             paddle.transpose(quanted_weight_tensor, [1, 0]))
         layer.linear_weight_scale.set_value(weight_scale_tensor)
@@ -89,10 +79,7 @@ class XPUWeightOnlyMoEMethod(QuantMethodBase):
         self.quant_config = quant_config
         self.moe_quant_type = self.quant_config.algo
 
-    def create_weights(
-            self,
-            layer: nn.Layer,
-            state_dict):
+    def create_weights(self, layer: nn.Layer, state_dict):
         """
         Paddle cutlass create weight process.
         """
@@ -132,8 +119,7 @@ class XPUWeightOnlyMoEMethod(QuantMethodBase):
                 ))
             getattr(layer, weight_name).set_value(quanted_weight)
 
-            quanted_weight_scale = paddle.stack(weight_scale_list,
-                                                axis=0)
+            quanted_weight_scale = paddle.stack(weight_scale_list, axis=0)
             setattr(
                 layer, scale_name,
                 layer.create_parameter(
@@ -175,5 +161,5 @@ class XPUWeightOnlyMoEMethod(QuantMethodBase):
             from fastdeploy.distributed.communication_op import \
                 tensor_model_parallel_all_reduce
             tensor_model_parallel_all_reduce(fused_moe_out)
-        
+
         return fused_moe_out

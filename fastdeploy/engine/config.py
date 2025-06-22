@@ -1,4 +1,3 @@
-
 """
 # Copyright (c) 2025  PaddlePaddle Authors. All Rights Reserved.
 #
@@ -431,7 +430,7 @@ class SpeculativeConfig:
             key: value
             for key, value in self.__dict__.items() if value is not None
         })
-    
+
     def print(self):
         """
         print all config
@@ -509,7 +508,6 @@ class Config:
         splitwise_role (str): Splitwise role.
         innode_prefill_ports (Optional[List[int]]): Innode prefill ports.
             Temporary configuration, will be removed in the future.
-        load_weights_on(Optional[str]):Load model weights onto the specified device
     """
 
     def __init__(
@@ -537,7 +535,6 @@ class Config:
         max_num_partial_prefills: int = 1,
         max_long_partial_prefills: int = 1,
         long_prefill_token_threshold: int = 0,
-        load_weights_on: str = None,
     ):
         """
         Initialize the Config class.
@@ -562,7 +559,6 @@ class Config:
             enable_mm (bool): Flag to enable multi-modal processing. Default is False.
             splitwise_role (str): Splitwise role. Default is "mixed".
             innode_prefill_ports (Optional[List[int]]): Innode prefill ports. Default is None.
-            load_weights_on(Optional[str]):Load model weights onto the specified device.Default is None
         """
         self.model_config = model_config
         self.cache_config = cache_config
@@ -586,7 +582,6 @@ class Config:
         self.max_num_partial_prefills = max_num_partial_prefills
         self.max_long_partial_prefills = max_long_partial_prefills
         self.long_prefill_token_threshold = long_prefill_token_threshold
-        self.load_weights_on = load_weights_on
 
         assert self.splitwise_role in ["mixed", "prefill", "decode"]
 
@@ -596,7 +591,8 @@ class Config:
             self.max_prefill_batch = 1  # TODO:当前多模prefill阶段只支持并行度为1,待优化
 
         # TODO(@wufeisheng): TP and EP need to be supported simultaneously.
-        assert (self.tensor_parallel_size == 1 and self.parallel_config.expert_parallel_size
+        assert (self.tensor_parallel_size == 1
+                and self.parallel_config.expert_parallel_size
                 >= 1) or (self.tensor_parallel_size >= 1
                           and self.parallel_config.expert_parallel_size
                           == 1), "TP and EP cannot be enabled at the same time"
@@ -612,8 +608,6 @@ class Config:
         self.device_ids = ",".join([str(i) for i in range(min((self.tensor_parallel_size * \
                                         self.parallel_config.expert_parallel_size), 8))])
         self.device_ids = os.getenv("CUDA_VISIBLE_DEVICES", self.device_ids)
-
-
 
         self.read_from_config()
         self.postprocess()

@@ -34,19 +34,8 @@ class QuantMethodBase(ABC):
         Expects create_weights to have been called before on the layer."""
         raise NotImplementedError
 
-    def apply_weight_quantization(self, weight):
-        """Apply the weight quantization.
-        """
-        return
-
-    def process_quantized_weights(self, layer, quant_weight, weight_quanter):
-        """
-        process_quantized_weights
-        """
-        return
-
-    def process_unquantized_weights(self, layer, weights):
-        """Process the nonquant weight after loading.
+    def process_loaded_weights(self, layer, weights):
+        """Process the weight after loading.
 
         This can be used for example, to transpose weights for computation.
         """

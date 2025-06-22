@@ -39,9 +39,8 @@ from fastdeploy.config import (AdditionalConfig, DeviceConfig, FDConfig,
                                SpeculativeConfig, TmpConfig)
 from fastdeploy.model_executor.models.utils import (_vocab_size_with_padding,
                                                     convert_ndarray_dtype,
+                                                    load_checkpoint,
                                                     parser_quant_type)
-from fastdeploy.model_executor.load_weight_utils import load_composite_checkpoint
-from fastdeploy.model_executor.models.utils import reconstruct_memory
 
 from ..layers.quantization import get_quantization_config
 from .ernie45t_moe import ErniePretrainedModel
@@ -63,6 +62,38 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 grandparent_dir = os.path.abspath(
     os.path.join(current_dir, os.pardir, os.pardir))
 sys.path.append(grandparent_dir)
+
+
+def offload_model(model):
+    """
+    Offload the model to CUDAPinnedPlace.
+    """
+    device = paddle.CUDAPinnedPlace()
+    for name, src in model.named_parameters():
+        if src._is_initialized() and not isinstance(src.place,
+                                                    paddle.CUDAPinnedPlace):
+            dst = src._copy_to(device, True)
+            dst_tensor = dst.value().get_tensor()
+            src_tensor = src.value().get_tensor()
+            src_tensor._clear()
+            src_tensor._share_data_with(dst_tensor)
+
+
+def reload_model(model):
+    """
+    Reload the model from CUDAPinnedPlace to GPU.
+    """
+    model.to(paddle.device.get_device())
+
+
+def reconstruct_memory(model):
+    """
+    reconstruct_memory to avoid memory chunks
+    """
+    offload_model(model)
+    paddle.device.cuda.empty_cache()
+    reload_model(model)
+
 
 def load_tensor_from_ipc_meta(state_dict):
     """
@@ -200,7 +231,8 @@ def build_stream_line_model(
     parallel_config.tensor_parallel_degree = tensor_parallel_degree
     parallel_config.tensor_parallel_degree = tensor_parallel_degree
     parallel_config.expert_parallel_degree = 1
-    parallel_config.expert_parallel_rank = int(tensor_parallel_rank / tensor_parallel_degree)
+    parallel_config.expert_parallel_rank = int(tensor_parallel_rank /
+                                               tensor_parallel_degree)
     parallel_config.column_cut = False
 
     speculative_config.is_mtp = draft_type in ["mtp"]
@@ -291,127 +323,6 @@ def build_stream_line_model(
         moe_num_experts = max(moe_num_experts)
     use_moe = moe_num_experts > 0 or draft_type in ["mtp", "eagle"]
 
-    if "ErnieForCausalLM" in architectures or "ErnieBotLMHeadModel" in architectures:
-        use_rmsnorm = config.get("use_rmsnorm", False)
-    else:
-        use_rmsnorm = config.get("use_rmsnorm", True)
-
-    logger.info(f"{runtime_timer.log()}")
-    runtime_timer.start(f"{stage_flag} stage set parameters time")
-
-    if config["hidden_act"].lower() == "swiglu":
-        model_config.hidden_act = "swiglu"
-    model_config.ffn_hidden_size = ffn_hidden_size
-    model_config.max_seq_len = max_model_len
-    model_config.num_layers = num_layers
-    model_config.dtype = dtype
-    model_config.export_model_type = export_model_type
-    parallel_config.block_size = block_size
-
-    model_config.group_size = group_size
-    load_config.model_path = model_path
-    model_config.use_rmsnorm = use_rmsnorm
-    parallel_config.msg_queue_id = msg_queue_id
-    additional_config.use_fake_parameter = use_fake_parameter
-    model_config.num_key_value_heads = num_key_value_heads
-    model_config.use_stop_seqs = use_stop_seqs
-    tmp_config.cache_quant_dtype = cache_quant_dtype
-    tmp_config.has_zero_point = config.get("has_zero_point", False)
-    tmp_config.is_channel_wise = config.get("is_channel_wise", False),
-    speculative_config.speculate_method = speculate_method
-    speculative_config.speculate_max_draft_token_num = speculate_max_draft_token_num
-    model_config.return_all_hidden_states = return_all_hidden_states
-    speculative_config.draft_type = draft_type
-    model_config.start_layer_index = start_layer_index
-    if use_moe:
-        moe_config.use_moe = use_moe
-        moe_config.num_experts = config.get("moe_num_experts", None)
-        moe_config.moe_intermediate_size = config.get("moe_intermediate_size",
-                                                      None)
-        moe_config.moe_every2 = config.get("moe_every2", False)
-        moe_config.top_k = config.get("moe_topk", 8)
-        moe_config.moe_num_shared_experts = config.get(
-            "moe_num_shared_experts", 0)
-        moe_config.moe_layer_start_index = config.get("moe_layer_start_index",
-                                                      None)
-        moe_config.moe_layer_end_index = config.get("moe_layer_end_index",
-                                                    None)
-        moe_config.moe_use_ffn_shared_weight_and_bias = config.get(
-            "moe_use_ffn_shared_weight_and_bias", False)
-        moe_config.use_moe = use_moe
-        moe_config.moe_group = config.get("moe_group", False)
-
-    parallel_config.use_ep = use_ep
-    additional_config.ep_just_for_test = ep_just_for_test
-    model_config.moe_phase = moe_phase
-    parallel_config.use_micro_batch = use_micro_batch
-    tmp_config.weight_block_size = config.get("weight_block_size", [-1, -1])
-    load_config.scale_dir = scale_dir
-    model_config.output_via_mq = output_via_mq
-
-    model_config.ori_vocab_size = ori_vocab_size
-
-    additional_config.fake_server_p = fake_server_p
-    speculative_config.speculate_max_candidate_len = speculate_max_candidate_len
-    speculative_config.speculate_verify_window = speculate_verify_window
-
-    weight_dtype, act_dtype, cachekv_dtype = parser_quant_type(
-        export_model_type)
-
-    model_config.weight_dtype = weight_dtype
-    model_config.act_dtype = act_dtype
-
-    quantization_config = config.get("quantization_config", None)
-
-    quant_config_name = None
-    if quantization_config is not None and quantization_config.get(
-            "quantization", None) is None:
-        raise ValueError(
-            "quantization_config should have a key named 'quantization' for specify quant config."
-        )
-
-    if quantization_config is not None:
-        quant_config_name = quantization_config["quantization"]
-        quant_cls = get_quantization_config(quant_config_name)
-        quant_config = quant_cls.from_config(quantization_config)
-    elif quantization != "None":
-        quantization_config = {}
-        if use_moe and quantization == "wint4":
-            quantization_config["dense_quant_type"] = "wint8"
-            quantization_config["moe_quant_type"] = "wint4"
-            quant_config_name = "mix_quant"
-        else:
-            quant_config_name = quantization
-        quant_cls = get_quantization_config(quant_config_name)
-        quant_config = quant_cls.from_config(quantization_config)
-    else:
-        quant_config = None
-
-    logger.info("===========quantization_config==============")
-    if quant_config is not None:
-        logger.info(f"{quantization_config}")
-    else:
-        logger.info(
-            "No quantization config found and use original weight and act dtype."
-        )
-    logger.info("============================================")
-
-    fd_config = FDConfig(
-        model_config=model_config,
-        parallel_config=parallel_config,
-        speculative_config=speculative_config,
-        device_config=device_config,
-        additional_config=additional_config,
-        load_config=load_config,
-        tmp_config=tmp_config,
-        moe_config=moe_config,
-        quant_config=quant_config,
-        kv_cache_config=kv_cache_config,
-    )
-    fd_config.parallel_config.max_model_len = max_model_len
-    fd_config.model_config.rope_theta = rope_theta
-
-    fd_config.load_config.load_weights_on == "cpu"
     if not sharing_state_dicts:
         if use_empty_parameter:
             context = paddle.LazyGuard()
@@ -420,13 +331,10 @@ def build_stream_line_model(
         elif use_safetensors:
             context = paddle.LazyGuard()
             model_class = model_classes_mapping[architectures[0]]
-            state_dict = load_composite_checkpoint(
-                model_path,
-                model_class,
-                fd_config,
-                None,
-                return_numpy=True
-            )
+            state_dict = load_checkpoint(model_path,
+                                         model_class,
+                                         model_config,
+                                         return_numpy=True)
         elif use_moe:
             tensor_parallel_degree = dist.get_world_size()
             if tensor_parallel_degree > 1:
@@ -586,6 +494,126 @@ def build_stream_line_model(
     else:
         state_dict = sharing_state_dicts
         context = paddle.LazyGuard()
+
+    if "ErnieForCausalLM" in architectures or "ErnieBotLMHeadModel" in architectures:
+        use_rmsnorm = config.get("use_rmsnorm", False)
+    else:
+        use_rmsnorm = config.get("use_rmsnorm", True)
+
+    logger.info(f"{runtime_timer.log()}")
+    runtime_timer.start(f"{stage_flag} stage set parameters time")
+
+    if config["hidden_act"].lower() == "swiglu":
+        model_config.hidden_act = "swiglu"
+    model_config.ffn_hidden_size = ffn_hidden_size
+    model_config.max_seq_len = max_model_len
+    model_config.num_layers = num_layers
+    model_config.dtype = dtype
+    model_config.export_model_type = export_model_type
+    parallel_config.block_size = block_size
+
+    model_config.group_size = group_size
+    load_config.model_path = model_path
+    model_config.use_rmsnorm = use_rmsnorm
+    parallel_config.msg_queue_id = msg_queue_id
+    additional_config.use_fake_parameter = use_fake_parameter
+    model_config.num_key_value_heads = num_key_value_heads
+    model_config.use_stop_seqs = use_stop_seqs
+    tmp_config.cache_quant_dtype = cache_quant_dtype
+    tmp_config.has_zero_point = config.get("has_zero_point", False)
+    tmp_config.is_channel_wise = config.get("is_channel_wise", False),
+    speculative_config.speculate_method = speculate_method
+    speculative_config.speculate_max_draft_token_num = speculate_max_draft_token_num
+    model_config.return_all_hidden_states = return_all_hidden_states
+    speculative_config.draft_type = draft_type
+    model_config.start_layer_index = start_layer_index
+    if use_moe:
+        moe_config.use_moe = use_moe
+        moe_config.num_experts = config.get("moe_num_experts", None)
+        moe_config.moe_intermediate_size = config.get("moe_intermediate_size",
+                                                      None)
+        moe_config.moe_every2 = config.get("moe_every2", False)
+        moe_config.top_k = config.get("moe_topk", 8)
+        moe_config.moe_num_shared_experts = config.get(
+            "moe_num_shared_experts", 0)
+        moe_config.moe_layer_start_index = config.get("moe_layer_start_index",
+                                                      None)
+        moe_config.moe_layer_end_index = config.get("moe_layer_end_index",
+                                                    None)
+        moe_config.moe_use_ffn_shared_weight_and_bias = config.get(
+            "moe_use_ffn_shared_weight_and_bias", False)
+        moe_config.use_moe = use_moe
+        moe_config.moe_group = config.get("moe_group", False)
+
+    parallel_config.use_ep = use_ep
+    additional_config.ep_just_for_test = ep_just_for_test
+    model_config.moe_phase = moe_phase
+    parallel_config.use_micro_batch = use_micro_batch
+    tmp_config.weight_block_size = config.get("weight_block_size", [-1, -1])
+    load_config.scale_dir = scale_dir
+    model_config.output_via_mq = output_via_mq
+
+    model_config.ori_vocab_size = ori_vocab_size
+
+    additional_config.fake_server_p = fake_server_p
+    speculative_config.speculate_max_candidate_len = speculate_max_candidate_len
+    speculative_config.speculate_verify_window = speculate_verify_window
+
+    weight_dtype, act_dtype, cachekv_dtype = parser_quant_type(
+        export_model_type)
+
+    model_config.weight_dtype = weight_dtype
+    model_config.act_dtype = act_dtype
+
+    quantization_config = config.get("quantization_config", None)
+
+    quant_config_name = None
+    if quantization_config is not None and quantization_config.get(
+            "quantization", None) is None:
+        raise ValueError(
+            "quantization_config should have a key named 'quantization' for specify quant config."
+        )
+
+    if quantization_config is not None:
+        quant_config_name = quantization_config["quantization"]
+        quant_cls = get_quantization_config(quant_config_name)
+        quant_config = quant_cls.from_config(quantization_config)
+    elif quantization != "None":
+        quantization_config = {}
+        if use_moe and quantization == "wint4":
+            quantization_config["dense_quant_type"] = "wint8"
+            quantization_config["moe_quant_type"] = "wint4"
+            quant_config_name = "mix_quant"
+        else:
+            quant_config_name = quantization
+        quant_cls = get_quantization_config(quant_config_name)
+        quant_config = quant_cls.from_config(quantization_config)
+    else:
+        quant_config = None
+
+    logger.info("===========quantization_config==============")
+    if quant_config is not None:
+        logger.info(f"{quantization_config}")
+    else:
+        logger.info(
+            "No quantization config found and use original weight and act dtype."
+        )
+    logger.info("============================================")
+
+    fd_config = FDConfig(
+        model_config=model_config,
+        parallel_config=parallel_config,
+        speculative_config=speculative_config,
+        device_config=device_config,
+        additional_config=additional_config,
+        load_config=load_config,
+        tmp_config=tmp_config,
+        moe_config=moe_config,
+        quant_config=quant_config,
+        kv_cache_config=kv_cache_config,
+    )
+    fd_config.parallel_config.max_model_len = max_model_len
+    fd_config.model_config.rope_theta = rope_theta
 
     with context:
         model_cls = ModelRegistry.get_class(model_config.architectures[0])
