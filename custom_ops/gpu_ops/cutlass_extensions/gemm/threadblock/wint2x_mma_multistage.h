@@ -209,6 +209,8 @@ public:
   /// Shared memory read stage index
   int smem_read_stage_idx_;
 
+  uint8_t* column_wise_smem_ptr_B_;
+
   uint8_t* smem_zipped_ptr_B_;
   int smem_zipped_bytes_per_stage_B_;
 
@@ -267,8 +269,10 @@ public:
         shared_storage.operand_B.data(), static_cast<int>(Base::SharedStorage::ShapeB::kRow),
         static_cast<int>(Base::SharedStorage::ShapeB::kColumn));
 
-    smem_zipped_ptr_B_ = shared_storage.operand_zipped_B_ptr();
-    smem_zipped_bytes_per_stage_B_ = ZippedShapeB::kRow * ZippedShapeB::kColumn / Base::kStages;
+    column_wise_smem_ptr_B_ = shared_storage.operand_zipped_B_ptr();
+
+    smem_zipped_ptr_B_ = column_wise_smem_ptr_B_ + Base::SharedStorage::kColumnWiseParamsRows * ZippedShapeB::kColumn;
+    smem_zipped_bytes_per_stage_B_ = Base::SharedStorage::kZippedRowsPerStages * ZippedShapeB::kColumn;
     CUTLASS_TRACE_DEVICE(" smem_zipped_ptr_B_=%p, kRow=%d, kColumn=%d, smem_zipped_bytes_per_stage_B_=%d",
         reinterpret_cast<void*>(smem_zipped_ptr_B_), static_cast<int>(ZippedShapeB::kRow), static_cast<int>(ZippedShapeB::kColumn),
         smem_zipped_bytes_per_stage_B_);
@@ -514,7 +518,8 @@ public:
       copy_tiles_and_advance_per_stage_A(iterator_A);
 
       // Async copy zipped B to shared memory.
-      tile_dequanter_B.Load(smem_zipped_ptr_B_ + (stage % Base::kStages) * smem_zipped_bytes_per_stage_B_, stage);
+      tile_dequanter_B.Load(smem_zipped_ptr_B_ + (stage % Base::kStages) * smem_zipped_bytes_per_stage_B_,
+                            column_wise_smem_ptr_B_, stage);
 
       // Move to the next write stage
       advance_smem_write_stage(iterator_A, iterator_B, tile_dequanter_B);
@@ -615,7 +620,8 @@ public:
       if (warp_mma_k + 1 == Base::kWarpGemmIterations) {
         // Unpack and dequant the first stage of B.
         int unpack_stage = stage - Base::kStages + 2;
-        tile_dequanter_B.UnpackAndDequant(smem_zipped_ptr_B_ + (unpack_stage % Base::kStages) * smem_zipped_bytes_per_stage_B_, unpack_stage);
+        tile_dequanter_B.UnpackAndDequant(smem_zipped_ptr_B_ + (unpack_stage % Base::kStages) * smem_zipped_bytes_per_stage_B_,
+                                          column_wise_smem_ptr_B_, unpack_stage);
 
         // Copy dequatized data to shared memory used by mma core.
         copy_tiles_and_advance_per_stage_B<false, false>(iterator_B);
@@ -675,7 +681,8 @@ public:
         copy_tiles_and_advance_A(iterator_A, group_start_iteration_A);
 
         if (warp_mma_k == 0) {
-          tile_dequanter_B.Load(smem_zipped_ptr_B_ + (stage % Base::kStages) * smem_zipped_bytes_per_stage_B_, stage);
+          tile_dequanter_B.Load(smem_zipped_ptr_B_ + (stage % Base::kStages) * smem_zipped_bytes_per_stage_B_,
+                                column_wise_smem_ptr_B_, stage);
         }
       }
 
@@ -731,7 +738,7 @@ public:
     PipeState pipe_state;
 
     // Unpack and dequant the first stage of B.
-    tile_dequanter_B.UnpackAndDequant(smem_zipped_ptr_B_, 0);
+    tile_dequanter_B.UnpackAndDequant(smem_zipped_ptr_B_, column_wise_smem_ptr_B_, 0);
 
     // Disable global fetching if done with global fetch iterations
     iterator_A.clear_mask(gemm_k_iterations == 0);

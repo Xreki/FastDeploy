@@ -31,7 +31,7 @@ template <typename ElementT, typename ScaleElementT, int Rows, int Columns,
 struct TileDequanter {
   using WeightQuantTraits = WintQuantTraits<ElementT, Method>;
   using MmaElementT = typename WeightQuantTraits::MmaWeightType;
-  using Arguments = typename WeightQuantTraits::Arguments;
+  using QuantArguments = typename WeightQuantTraits::Arguments;
 
   static constexpr bool kUseSharedMemory = false;
 
@@ -46,7 +46,7 @@ struct TileDequanter {
                 const cutlass::MatrixCoord &tb_offset,
                 ScaleElementT *super_scale_ptr,
                 const cutlass::MatrixCoord &tb_offset_scale,
-                const Arguments &quant_args)
+                const QuantArguments &quant_args)
       : pointer(pointer) {}
 
   CUTLASS_DEVICE
@@ -65,7 +65,7 @@ struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, Stages, NumThreads,
                      std::enable_if_t<UseSharedMemory<Method>::value>> {
   using WeightQuantTraits = WintQuantTraits<ElementT, Method>;
   using MmaElementT = typename WeightQuantTraits::MmaWeightType;
-  using Arguments = typename WeightQuantTraits::Arguments;
+  using QuantArguments = typename WeightQuantTraits::Arguments;
 
   using UnzipAndDequantFunctor =
       UnzipAndDequantFunctor<MmaElementT, Method, Rows, Columns, NumThreads>;
@@ -86,9 +86,10 @@ struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, Stages, NumThreads,
   ScaleElementT *super_scale_ptr{nullptr};
   cutlass::MatrixCoord tb_offset_scale;
 
-  Arguments quant_args;
+  QuantArguments quant_args;
 
   int64_t block_start_rows[kStages];
+  bool need_preload{true};
 
   CUTLASS_DEVICE
   TileDequanter(MmaElementT *smem_ptr, char *pointer, int64_t ldm,
@@ -96,7 +97,7 @@ struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, Stages, NumThreads,
                 const cutlass::MatrixCoord &tb_offset,
                 ScaleElementT *super_scale_ptr,
                 const cutlass::MatrixCoord &tb_offset_scale,
-                const Arguments &quant_args)
+                const QuantArguments &quant_args)
       : smem_ptr(smem_ptr), pointer(pointer), ldm(ldm), extent(extent),
         tb_offset(tb_offset), super_scale_ptr(super_scale_ptr),
         tb_offset_scale(tb_offset_scale), quant_args(quant_args) {}
@@ -115,7 +116,7 @@ struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, Stages, NumThreads,
   }
 
   CUTLASS_DEVICE
-  void Load(uint8_t *zipped_smem_ptr, int stage) {
+  void Load(uint8_t *zipped_smem_ptr, uint8_t *column_wise_smem_ptr, int stage) {
     int zipped_row = WeightQuantTraits::CaclPackedDim(tb_offset.row());
     if (tb_offset.row() >= extent.row() ||
         tb_offset.column() >= extent.column()) {
@@ -149,16 +150,17 @@ struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, Stages, NumThreads,
       const float *code_zp_ptr =
           quant_args.code_zp_ptr + tb_offset_scale.column();
       
-      typename UnzipAndDequantFunctor::Arguments args(zipped_smem_ptr);
+      typename UnzipAndDequantFunctor::Arguments args(zipped_smem_ptr, column_wise_smem_ptr);
       functor.LoadAsync(in_ptr, local_scale_ptr, code_scale_ptr, code_zp_ptr,
-                        scale_ptr, &args, ldm);
+                        scale_ptr, &args, ldm, need_preload);
+      need_preload = false;
     } else {
       CUTLASS_TRACE_DEVICE("Not Supported!");
     }
   }
 
   CUTLASS_DEVICE
-  void UnpackAndDequant(uint8_t *zipped_smem_ptr, int stage) {
+  void UnpackAndDequant(uint8_t *zipped_smem_ptr, uint8_t *column_wise_smem_ptr, int stage) {
     MmaElementT *out_ptr = smem_ptr;
 
     int64_t block_start_row = block_start_rows[stage % kStages];
@@ -179,7 +181,7 @@ struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, Stages, NumThreads,
 
     UnzipAndDequantFunctor functor;
     if constexpr (Method == WintQuantMethod::kWeightOnlyInt2) {
-      typename UnzipAndDequantFunctor::Arguments args(zipped_smem_ptr);
+      typename UnzipAndDequantFunctor::Arguments args(zipped_smem_ptr, column_wise_smem_ptr);
       functor.Compute(args, out_ptr, block_start_row);
 #if 0
       for (int col = threadIdx.x; col < Columns; ++col) {

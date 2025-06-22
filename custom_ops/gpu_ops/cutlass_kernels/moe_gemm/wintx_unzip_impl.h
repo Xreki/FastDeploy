@@ -116,6 +116,12 @@ struct UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt2, TileRows,
   static constexpr int32_t kLocalScaleMask = 0xF;
   static constexpr int32_t kBZP = 32;
 
+  // weight               [16, N]     uint8_t
+  // local_scale          [1, N]      uint8_t
+  // code_scale           [N]         float
+  // code_zp              [N]         float
+  // super_scale          [N]         T
+
   // code_scale, code_zp and super_scale
   static constexpr int32_t kColumnWiseSmemBytes = (2 * sizeof(float) + sizeof(T)) * TileColumns;
   // zipped weights and local_scale
@@ -128,65 +134,61 @@ struct UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt2, TileRows,
     float *code_zp_ptr;
     T *super_scale_ptr;
 
+    __device__ Arguments() : weight_ptr(nullptr), local_scale_ptr(nullptr), code_scale_ptr(nullptr), code_zp_ptr(nullptr), super_scale_ptr(nullptr) {}
+
     __device__ explicit Arguments(uint8_t *smem_ptr) {
-      weight_ptr = smem_ptr;
-      local_scale_ptr = smem_ptr + (TileRows / 4) * TileColumns;
-      code_scale_ptr = reinterpret_cast<float *>(smem_ptr + kZippedSmemBytes);
-      code_zp_ptr = reinterpret_cast<float *>(
-          smem_ptr + kZippedSmemBytes + sizeof(float) * TileColumns);
-      super_scale_ptr = reinterpret_cast<T *>(
-          smem_ptr + kZippedSmemBytes + 2 * sizeof(float) * TileColumns);
+      SetZippedPtrs(smem_ptr);
+      SetColumnWisePtrs(smem_ptr + kZippedSmemBytes);
     }
 
     __device__ Arguments(uint8_t *zipped_smem_ptr, uint8_t *column_wise_smem_ptr) {
+      SetZippedPtrs(zipped_smem_ptr);
+      SetColumnWisePtrs(column_wise_smem_ptr);
+    }
+
+    __device__ void SetZippedPtrs(uint8_t *zipped_smem_ptr) {
       weight_ptr = zipped_smem_ptr;
       local_scale_ptr = zipped_smem_ptr + (TileRows / 4) * TileColumns;
+    }
 
+    __device__ void SetColumnWisePtrs(uint8_t *column_wise_smem_ptr) {
       code_scale_ptr = reinterpret_cast<float *>(column_wise_smem_ptr);
       code_zp_ptr = reinterpret_cast<float *>(column_wise_smem_ptr + sizeof(float) * TileColumns);
       super_scale_ptr = reinterpret_cast<T *>(column_wise_smem_ptr + 2 * sizeof(float) * TileColumns);
     }
   };
 
-  __device__ void PreloadColumnWiseParams(
-      const float *g_code_scale_ptr, const float *g_code_zp_ptr,
-      const T *g_super_scale_ptr, Arguments *args) {
+  __device__ void Load(const uint8_t *g_weight_ptr, const uint8_t *g_local_scale_ptr,
+                       const float *g_code_scale_ptr, const float *g_code_zp_ptr,
+                       const T *g_super_scale_ptr,
+                       Arguments *args, const int64_t in_stride, bool need_preload) {
     int tid = threadIdx.x;
 
 #pragma unroll
     for (int col = tid; col < TileColumns; col += NumThreads) {
-      if (g_super_scale_ptr) {
-        args->super_scale_ptr[col] = g_super_scale_ptr[col];
-      } else {
-        args->super_scale_ptr[col] = static_cast<T>(1);
+      if (need_preload) {
+        if (g_super_scale_ptr) {
+          args->super_scale_ptr[col] = g_super_scale_ptr[col];
+        } else {
+          args->super_scale_ptr[col] = static_cast<T>(1);
+        }
+
+        args->code_scale_ptr[col] = g_code_scale_ptr[col];
+        args->code_zp_ptr[col] = g_code_zp_ptr[col];
       }
 
-      args->code_scale_ptr[col] = g_code_scale_ptr[col];
-      args->code_zp_ptr[col] = g_code_zp_ptr[col];
-    }
-  }
-
-  __device__ void Load(const uint8_t *g_weight_ptr,
-                       const uint8_t *g_local_scale_ptr,
-                       Arguments *args, const int64_t in_stride) {
-    int tid = threadIdx.x;
+#pragma unroll
+      for (int ls_row_id = 0; ls_row_id < TileRows / 128; ++ls_row_id) {
+        int local_scale_offset = ls_row_id * in_stride + col;
+        args->local_scale_ptr[ls_row_id * TileColumns + col] = g_local_scale_ptr[local_scale_offset];
+      }
 
 #pragma unroll
-    for (int col = tid; col < TileColumns; col += NumThreads) {
+      for (int zipped_row = 0; zipped_row < TileRows / 4; ++zipped_row) {
+        int s_zipped_offset = zipped_row * TileColumns + col;
+        int g_zipped_offset = zipped_row * 4 * in_stride + col;
 
-#pragma unroll
-      for (int group_id = 0; group_id < TileRows / 64; ++group_id) {
-        int local_scale_offset = (group_id / 2) * in_stride + col;
-        args->local_scale_ptr[col] = g_local_scale_ptr[local_scale_offset];
-
-#pragma unroll
-        for (int zipped_row = 0; zipped_row < 16; ++zipped_row) {
-          int s_zipped_offset =
-              (group_id * 16 + zipped_row) * TileColumns + col;
-          int g_zipped_offset = (group_id * 16 + zipped_row) * in_stride + col;
-
-          args->weight_ptr[s_zipped_offset] = g_weight_ptr[g_zipped_offset];
-        }
+        args->weight_ptr[s_zipped_offset] = g_weight_ptr[g_zipped_offset];
       }
     }
     __syncthreads();
@@ -195,16 +197,10 @@ struct UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt2, TileRows,
   __device__ void LoadAsync(const uint8_t *g_weight_ptr,
                             const uint8_t *g_local_scale_ptr,
                             const float *g_code_scale_ptr,
-                            const float *g_code_zp_ptr, const T *g_super_scale_ptr,
-                            Arguments *args, const int64_t in_stride) {
+                            const float *g_code_zp_ptr,
+                            const T *g_super_scale_ptr,
+                            Arguments *args, const int64_t in_stride, bool need_preload) {
     int tid = threadIdx.x;
-    /*
-      weight               [16, N]     uint8_t
-      local scale          [1, N]      uint8_t
-      code scale           [N]         float
-      code zp              [N]         float
-      super scale          [N]         T
-     */
 
     constexpr int weight_row_size = TileRows / 4;
     constexpr int local_scale_row_size = (TileRows + 127) / 128;
@@ -254,39 +250,41 @@ struct UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt2, TileRows,
           cutlass::arch::cp_async<kBytesPerThread, cutlass::arch::CacheOperation::Global>(
               args->local_scale_ptr + z_offset, g_local_scale_ptr + g_offset, true);
       }
-    } else if (tid < weight_threads + local_scale_threads + code_scale_threads) {
-      constexpr int start_thread_id = weight_threads + local_scale_threads;
-      constexpr int code_scale_per_thread_size = code_scale_size / code_scale_threads;
-      constexpr int kIterations = (code_scale_per_thread_size + kBytesPerThread - 1) / kBytesPerThread;
+    } else if (need_preload) {
+      if (tid < weight_threads + local_scale_threads + code_scale_threads) {
+        constexpr int start_thread_id = weight_threads + local_scale_threads;
+        constexpr int code_scale_per_thread_size = code_scale_size / code_scale_threads;
+        constexpr int kIterations = (code_scale_per_thread_size + kBytesPerThread - 1) / kBytesPerThread;
       
-      CUTLASS_PRAGMA_UNROLL
-      for (int i = 0; i < kIterations; ++i) {
+        CUTLASS_PRAGMA_UNROLL
+        for (int i = 0; i < kIterations; ++i) {
           int offset = ((tid - start_thread_id) * code_scale_per_thread_size + i * kBytesPerThread) / sizeof(float);
           cutlass::arch::cp_async<kBytesPerThread, cutlass::arch::CacheOperation::Global>(
               args->code_scale_ptr + offset, g_code_scale_ptr + offset, true);
-      }
-    } else if (tid < weight_threads + local_scale_threads + code_scale_threads + code_zp_threads) {
-      constexpr int start_thread_id = weight_threads + local_scale_threads + code_scale_threads;
-      constexpr int code_zp_per_thread_size = code_zp_size / code_zp_threads;
-      constexpr int kIterations = (code_zp_per_thread_size + kBytesPerThread - 1) / kBytesPerThread;
+        }
+      } else if (tid < weight_threads + local_scale_threads + code_scale_threads + code_zp_threads) {
+        constexpr int start_thread_id = weight_threads + local_scale_threads + code_scale_threads;
+        constexpr int code_zp_per_thread_size = code_zp_size / code_zp_threads;
+        constexpr int kIterations = (code_zp_per_thread_size + kBytesPerThread - 1) / kBytesPerThread;
       
-      CUTLASS_PRAGMA_UNROLL
-      for (int i = 0; i < kIterations; ++i) {
+        CUTLASS_PRAGMA_UNROLL
+        for (int i = 0; i < kIterations; ++i) {
           int offset = ((tid - start_thread_id) * code_zp_per_thread_size + i * kBytesPerThread) / sizeof(float);
           cutlass::arch::cp_async<kBytesPerThread, cutlass::arch::CacheOperation::Global>(
               args->code_zp_ptr + offset, g_code_zp_ptr + offset, true);
-      }
-    } else if (tid < weight_threads + local_scale_threads + code_scale_threads + code_zp_threads + super_scale_threads) {
-      if (g_super_scale_ptr) {
-        constexpr int start_thread_id = weight_threads + local_scale_threads + code_scale_threads + code_zp_threads;
-        constexpr int super_scale_per_thread_size = super_scale_size / super_scale_threads;
-        constexpr int kIterations = (super_scale_per_thread_size + kBytesPerThread - 1) / kBytesPerThread;
+        }
+      } else if (tid < weight_threads + local_scale_threads + code_scale_threads + code_zp_threads + super_scale_threads) {
+        if (g_super_scale_ptr) {
+          constexpr int start_thread_id = weight_threads + local_scale_threads + code_scale_threads + code_zp_threads;
+          constexpr int super_scale_per_thread_size = super_scale_size / super_scale_threads;
+          constexpr int kIterations = (super_scale_per_thread_size + kBytesPerThread - 1) / kBytesPerThread;
 
-        CUTLASS_PRAGMA_UNROLL
-        for (int i = 0; i < kIterations; ++i) {
+          CUTLASS_PRAGMA_UNROLL
+          for (int i = 0; i < kIterations; ++i) {
             int offset = ((tid - start_thread_id) * super_scale_per_thread_size + i * kBytesPerThread) / sizeof(T);
             cutlass::arch::cp_async<kBytesPerThread, cutlass::arch::CacheOperation::Global>(
                 args->super_scale_ptr + offset, g_super_scale_ptr + offset, true);
+          }
         }
       }
     }
@@ -309,9 +307,19 @@ struct UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt2, TileRows,
 #pragma unroll
       for (int group_id = 0; group_id < TileRows / 64; ++group_id) {
         int local_scale_offset = (group_id / 2) * TileColumns + col;
-        int local_scale_shift = ((block_start_row / 64 + group_id) % 2) * 4;
         int32_t local_scale =
             static_cast<int32_t>(args.local_scale_ptr[local_scale_offset]);
+
+        ScaleComputeT zipped_value[16];
+
+#pragma unroll
+        for (int zipped_row = 0; zipped_row < 16; ++zipped_row) {
+          int zipped_offset = (group_id * 16 + zipped_row) * TileColumns + col;
+          zipped_value[zipped_row] =
+              static_cast<ScaleComputeT>(args.weight_ptr[zipped_offset]);
+        }
+
+        int local_scale_shift = ((block_start_row / 64 + group_id) % 2) * 4;
         int32_t shifted_local_scale =
             (local_scale >> local_scale_shift) & kLocalScaleMask;
         ScaleComputeT scale =
@@ -319,11 +327,8 @@ struct UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt2, TileRows,
 
 #pragma unroll
         for (int zipped_row = 0; zipped_row < 16; ++zipped_row) {
-          int zipped_offset = (group_id * 16 + zipped_row) * TileColumns + col;
-          ScaleComputeT zipped_value =
-              static_cast<ScaleComputeT>(args.weight_ptr[zipped_offset]);
           int32_t decode_value =
-              static_cast<int32_t>(floor(zipped_value * code_scale + code_zp +
+              static_cast<int32_t>(floor(zipped_value[zipped_row] * code_scale + code_zp +
                                          static_cast<ScaleComputeT>(0.5)));
 
           int row = group_id * 64 + zipped_row * 4;
@@ -428,24 +433,25 @@ Wint2UnzipKernel(const uint8_t *zipped_weight_ptr,
 
   // unzip to shared memory
   UnzipFunctor functor;
+
   if (kUseAsyncLoad) {
     functor.LoadAsync(block_zipped_weight_ptr, block_local_scale_ptr,
                       block_code_scale_ptr, block_code_zp_ptr, block_super_scale_ptr,
-                      &args, num_columns);
+                      &args, num_columns, true);
 
     // 发起 cp.async 的收束
     cutlass::arch::cp_async_fence();
 
-    // 等待搬运完成
+    // wait for cp.async
     cutlass::arch::cp_async_wait<0>();
     __syncthreads();
-
-    functor.Compute(args, smem, block_start_row);
   } else {
-    functor.PreloadColumnWiseParams(block_code_scale_ptr, block_code_zp_ptr, block_super_scale_ptr, &args);
-    functor.Load(block_zipped_weight_ptr, block_local_scale_ptr, &args, num_columns);
-    functor.Compute(args, smem, block_start_row);
+    functor.Load(block_zipped_weight_ptr, block_local_scale_ptr,
+                 block_code_scale_ptr, block_code_zp_ptr, block_super_scale_ptr,
+                 &args, num_columns, true);
   }
+
+  functor.Compute(args, smem, block_start_row);
 
   // write back to global memory
   for (int row = 0; row < TileRows; ++row) {

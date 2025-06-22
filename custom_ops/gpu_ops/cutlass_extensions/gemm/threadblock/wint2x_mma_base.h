@@ -133,11 +133,15 @@ public:
     using ShapeB = MatrixShape<Shape::kK + Policy::SmemPaddingB::kRow,
                                Shape::kN + Policy::SmemPaddingB::kColumn>;
 
-    // w uint8; local_scale uint8; code_scale float, code_zp float
+    // w uint8; local_scale uint8;
     constexpr static int kZippedRowsPerStages =
-        Shape::kK / 4 + (Shape::kK + 127) / 128 + 2 * sizeof(float) +
+	Shape::kK / 4 + (Shape::kK + 127) / 128;
+
+    // code_scale float; code_zp float; super_scale ElementB
+    constexpr static int kColumnWiseParamsRows = 2 * sizeof(float) +
         sizeof_bits<typename Operator::ElementB>::value / 8;
-    using ZippedShapeB = MatrixShape<kZippedRowsPerStages * kStages, Shape::kN>;
+
+    using ZippedShapeB = MatrixShape<kColumnWiseParamsRows + kZippedRowsPerStages * kStages, Shape::kN>;
 
     using NopaddingShapeB = MatrixShape<Shape::kK, Shape::kN>;
 
