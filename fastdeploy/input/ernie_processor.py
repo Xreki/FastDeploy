@@ -279,7 +279,8 @@ class ErnieProcessor(BaseDataProcessor):
                         response_dict.outputs.tool_call_content.append(delta_tool_call)
             else:
                 response_content, reasoning_content = self.clear_request_status(req_id)
-                response_dict.outputs.text = response_content
+                response_dict.outputs.text = reasoning_content
+            data_processor_logger.info(f"req_id:{req_id}, decode_status: {self.decode_status[req_id]}")
             del self.decode_status[req_id]
             data_processor_logger.debug("Request id: {} has been completed.".format(token_ids))
         if response_dict.outputs.text == "" and \
@@ -368,7 +369,7 @@ class ErnieProcessor(BaseDataProcessor):
                     data_processor_logger.debug(
                         f"full_text: {full_text}, reasoning_content: {reasoning_content}")
                     response_dict["outputs"]["text"] = reasoning_content
-                data_processor_logger.info(f"req_id:{req_id}, decode_status: {self.decode_status[req_id]}")
+            data_processor_logger.info(f"req_id:{req_id}, decode_status: {self.decode_status[req_id]}")
             del self.decode_status[req_id]
 
         return response_dict
