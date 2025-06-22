@@ -625,16 +625,7 @@ public:
 
         // Copy dequatized data to shared memory used by mma core.
         copy_tiles_and_advance_per_stage_B<false, false>(iterator_B);
-        //if (stage == Base::kStages - 1) {
-        //  copy_tiles_and_advance_B<false>(iterator_B, 0);
-        //}
       }
-
-      //if (stage > Base::kStages - 1) {
-      //  // Prepare the next warp-tile's B to shared memory.
-      //  int group_start_iteration_B = ((warp_mma_k + 1) % Base::kWarpGemmIterations) * Detail::kAccessesPerGroupB;
-      //  copy_tiles_and_advance_B<false>(iterator_B, group_start_iteration_B);
-      //}
 
       // Load the next warp-tile's B fragment from shared memory
       this->warp_tile_iterator_B_.set_kgroup_index((warp_mma_k + 1) % Base::kWarpGemmIterations);
@@ -751,7 +742,6 @@ public:
 
     // Copy dequatized data to shared memory used by mma core.
     copy_tiles_and_advance_per_stage_B<false, true>(iterator_B);
-    //copy_tiles_and_advance_B<false>(iterator_B, 0);
 
     // Load first warp-tile's B fragment from shared memory
     this->warp_tile_iterator_B_.set_kgroup_index(0);
