@@ -90,6 +90,7 @@ struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, Stages, NumThreads,
 
   int64_t block_start_rows[kStages];
   bool need_preload{true};
+  UnzipAndDequantFunctor unzip_functor;
 
   CUTLASS_DEVICE
   TileDequanter(MmaElementT *out_smem_ptr, char *pointer, int64_t ldm,
@@ -137,7 +138,6 @@ struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, Stages, NumThreads,
                       tb_offset.column();
     ScaleElementT *scale_ptr = super_scale_ptr + tb_offset_scale.column();
 
-    UnzipAndDequantFunctor functor;
     if constexpr (Method == WintQuantMethod::kWeightOnlyInt2) {
       const uint8_t *local_scale_ptr = quant_args.local_scale_ptr +
                                        (tb_offset.row() / 128) * ldm +
@@ -148,8 +148,8 @@ struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, Stages, NumThreads,
           quant_args.code_zp_ptr + tb_offset_scale.column();
 
       typename UnzipAndDequantFunctor::Arguments args(zipped_smem_ptr, column_wise_smem_ptr);
-      functor.LoadAsync(in_ptr, local_scale_ptr, code_scale_ptr, code_zp_ptr,
-                        scale_ptr, &args, ldm, need_preload);
+      unzip_functor.LoadAsync(in_ptr, local_scale_ptr, code_scale_ptr, code_zp_ptr,
+                              scale_ptr, &args, ldm, need_preload);
       need_preload = false;
     } else {
       CUTLASS_TRACE_DEVICE("Not Supported!");
@@ -174,10 +174,9 @@ struct TileDequanter<ElementT, ScaleElementT, Rows, Columns, Stages, NumThreads,
                            fake_value);
     }
 
-    UnzipAndDequantFunctor functor;
     if constexpr (Method == WintQuantMethod::kWeightOnlyInt2) {
       typename UnzipAndDequantFunctor::Arguments args(zipped_smem_ptr, column_wise_smem_ptr);
-      functor.Compute(args, out_smem_ptr, block_start_row);
+      unzip_functor.ComputeVectorized(args, out_smem_ptr, block_start_row);
 #if 0
       for (int col = threadIdx.x; col < Columns; ++col) {
         for (int row = 0; row < Rows; ++row) {

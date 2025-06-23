@@ -25,6 +25,9 @@
 #include <cutlass/arch/memory.h>
 #include <cuda_runtime.h>
 
+template <typename T, int N>
+using UnzipArray = cutlass::AlignedArray<T, N, (N * cutlass::sizeof_bits<T>::value / 8)>;
+
 template <typename T, WintQuantMethod QuantMethod, int TileRows,
           int TileColumns, int NumThreads = 128>
 struct UnzipAndDequantFunctor {
@@ -319,7 +322,7 @@ struct UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt2, TileRows,
               static_cast<ScaleComputeT>(args.weight_ptr[zipped_offset]);
         }
 
-        int local_scale_shift = ((block_start_row / 64 + group_id) % 2) * 4;
+        int local_scale_shift = ((block_start_row / 64 + group_id) & 1) * 4;
         int32_t shifted_local_scale =
             (local_scale >> local_scale_shift) & kLocalScaleMask;
         ScaleComputeT scale =
@@ -344,6 +347,86 @@ struct UnzipAndDequantFunctor<T, WintQuantMethod::kWeightOnlyInt2, TileRows,
                 static_cast<T>(scale * value);
           }
         }
+      }
+    }
+    __syncthreads();
+  }
+
+  __device__ void ComputeVectorized(const Arguments &args, T *out_ptr,
+                                    const int64_t block_start_row) {
+    constexpr int N = 2;
+    constexpr int RowStride = NumThreads * N / TileColumns;
+    constexpr int kNumIters = TileRows / (4 * RowStride);
+    static_assert(N * NumThreads >= TileColumns, "");
+
+    int32_t shift_bits[4] = {9, 6, 3, 0};
+
+    int tid = threadIdx.x;
+    int begin_col_id = (tid * N) % TileColumns;
+    int begin_row_id = (tid * N) / TileColumns;
+
+    static_assert(TileRows <= 128, "");
+    UnzipArray<uint8_t, N> local_scales =
+        *reinterpret_cast<const UnzipArray<uint8_t, N> *>(args.local_scale_ptr + begin_col_id);
+
+    UnzipArray<uint8_t, N> zipped_values[2];
+    int zipped_offset = begin_row_id * TileColumns + begin_col_id;
+    zipped_values[0] =
+        *reinterpret_cast<const UnzipArray<uint8_t, N> *>(args.weight_ptr + zipped_offset);
+
+    UnzipArray<T, N> super_scales =
+        *reinterpret_cast<const UnzipArray<T, N> *>(args.super_scale_ptr + begin_col_id);
+    UnzipArray<float, N> code_scales =
+        *reinterpret_cast<const UnzipArray<float, N> *>(args.code_scale_ptr + begin_col_id);
+    UnzipArray<float, N> code_zps =
+        *reinterpret_cast<const UnzipArray<float, N> *>(args.code_zp_ptr + begin_col_id);
+
+    int local_scale_shift = ((block_start_row / 64) & 1) * 4; // special for TileRows = 64
+    UnzipArray<ScaleComputeT, N> scales;
+
+    #pragma unroll
+    for (int i = 0; i < N; ++i) {
+      int32_t shifted_local_scale =
+          (static_cast<int32_t>(local_scales[i]) >> local_scale_shift) & kLocalScaleMask;
+      scales[i] =
+            static_cast<ScaleComputeT>(shifted_local_scale) * static_cast<ScaleComputeT>(super_scales[i]);
+    }
+
+#pragma unroll
+    for (int iter_id = 0; iter_id < kNumIters; ++iter_id) {
+      int zipped_row = begin_row_id + iter_id * RowStride;
+      int row = zipped_row * 4;
+
+      if (iter_id < kNumIters - 1) {
+        int zipped_offset = (zipped_row + RowStride) * TileColumns + begin_col_id;
+        zipped_values[(iter_id + 1) & 1] =
+            *reinterpret_cast<const UnzipArray<uint8_t, N> *>(args.weight_ptr + zipped_offset);
+      }
+
+      UnzipArray<T, N> outs[4];
+
+#pragma unroll
+      for (int i = 0; i < N; ++i) {
+        int32_t decode_value =
+            static_cast<int32_t>(floor(static_cast<ScaleComputeT>(zipped_values[iter_id & 1][i]) * code_scales[i] + code_zps[i] +
+                                       static_cast<ScaleComputeT>(0.5)));
+
+#pragma unroll
+        for (int shift_bit_id = 0; shift_bit_id < 4; ++shift_bit_id) {
+          int32_t shift_bit = shift_bits[shift_bit_id];
+          int32_t shifted_value = (decode_value >> shift_bit) & kWeightMask;
+
+          ScaleComputeT value =
+              static_cast<ScaleComputeT>(shifted_value - kBZP);
+          outs[shift_bit_id][i] = static_cast<T>(scales[i] * value);
+        }
+      }
+
+#pragma unroll
+      for (int shift_bit_id = 0; shift_bit_id < 4; ++shift_bit_id) {
+        UnzipArray<T, N> *tmp_out_ptr = reinterpret_cast<UnzipArray<T, N> *>(
+            out_ptr + (row + shift_bit_id) * TileColumns + begin_col_id);
+        *tmp_out_ptr = outs[shift_bit_id];
       }
     }
     __syncthreads();
