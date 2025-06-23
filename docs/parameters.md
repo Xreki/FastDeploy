@@ -1,158 +1,49 @@
-# 参数说明
+# FastDeploy参数说明
 
-## 环境变量
-|         环境变量        |                       说明                        |   默认值   |
-| :---------------------: | :-----------------------------------------------: | :---------: |
+在使用FastDeploy部署模型（包括离线推理、服务化部署），涉及如下参数配置，其实需要注意，在使用离线推理时，各参数配置即为如下参数名；而在使用命令行启动服务时，相应参数中的分隔符需要从```_```修改为```-```，如```max_model_len```在命令行中则为```--max-model-len```。
 
-## 服务启动参数
+| 参数名 | 类型 | 说明 |
+| :---- | :---- | :----- |
+| ```port``` | int | 仅服务化部署需配置，服务HTTP请求端口号 |
+| ```metrics-port``` | int | 仅服务化部署需配置，服务监控Metrics端口号，默认 |
+| ```engine_worker_queue_port``` | int | FastDeploy内部引擎进程通信端口 |
+| ```cache_queue_port``` | int | FastDeploy内部KVCache进程通信端口 |
+| ```max_model_len``` | int | 推理默认最大支持上下文长度，默认2048 |
+| ```tensor_parallel_size``` | int | 模型默认张量并行数，默认1 |
+| ```block_size``` | int | KVCache管理粒度(Token数)，推荐默认值64 |
+| ```max_num_seqs``` | int | Decode阶段最大的并发数，默认 |
+| ```mm_processor_kwars``` | dict[str] | xxxx |
+| ```limit_mm_per_prompt``` | dict[str] | xxx |
+| ```enable_mm``` | bool | 是否支持多模态数据（仅针对多模模型)，默认False |
+| ```quantization``` | str | 模型量化策略，当在加载BF16 CKPT时，指定wint4或wint8时，支持无损在线4bit/8bit量化 |
+| ```gpu_memory_utilization``` | float | GPU显存利用率，默认0.9 |
+| ```num_gpu_blocks_override``` | int | 预分配KVCache块数，此参数可由FastDeploy自动根据显存情况计算，无需用户配置，默认为None |
+| ```max_num_batched_tokens``` | int | Prefill阶段最大Batch的Token数量，默认为None(与max_model_len一致) |
+| ```kv_cache_ratio``` | float | KVCache块按kv_cache_ratio比例分给Prefill阶段和Decode阶段 | 
+| ```enable_prefix_caching``` | bool | 是否开启Prefix Caching，默认False |
+| ```cpu_offload_gb``` | float | 开启Prefix Caching时，用于swap KVCache的CPU内存大小，单位GB，默认None |
+| ```enable_chunk_prefill``` | bool | 开启Chunked Prefill，默认False |
+| ```max_num_partial_prefills``` | int | 开启Chunked Prefill时，Prefill阶段的最大并发数，默认1 |
+| ```max_long_partial_prefills``` | int | 开启Chunked Prefill时，Prefill阶段并发中包启的最多长请求数，默认1 |
+| ```long_prefill_token_threshold``` | int | 开启Chunked Prefill时，请求Token数超过此值的请求被视为长请求，默认为max_model_len*0.04 |
+| ```static_decode_blocks``` | int | 推理过程中，每条请求强制从Prefill的KVCache分配对应块数给Decode使用，默认2|
 
-|         字段名         | 字段类型 |                       说明                       | 是否必填 |   默认值   |
-| :---------------------: | :------: | :-----------------------------------------------: | :------: | :---------: |
-|          model          |   str   |                     模型路径                     |    是    |  llama-7b  |
-|        tokenizer        |   str   |                  tokenizer的地址                  |    否    |  模型地址  |
-|      max_model_len      |   int   |            模型支持的最长的上下文长度            |    否    |    2048    |
-|  tensor_parallel_size  |   int   |                   tensor 并行度                   |    否    |      1      |
-|       block_size       |   int   |               每个block的token数量               |    否    |     64     |
-|          task          |   str   |     任务类型，目前仅支持generate：token 返回     |    否    |  generate  |
-|      max_num_seqs      |   int   |                同时推理的最大条数                |    否    |      8      |
-|   mm_processor_kwargs   |   dict   |                  多模态输入参数                  |    否    |    None    |
-| gpu_memory_utilization |  float  |        最大显存利用率，用于计算block 数目        |    否    |     0.9     |
-| num_gpu_blocks_override |   int   |        设置分配的gpu的KV Cache的block 数目        |    否    |    None    |
-|  static_decode_blocks  |   int   |        固定分配给decode阶段KV Cache的block数量       |    否    |    2    |
-| max_num_batched_tokens |   int   |         单次支持的最大prefill的token 数目         |    否    |    None    |
-|     kv_cache_ratio     |  float  | 模型输入的长度 / 模型支持的最长的上下文长度的比例 |    否    |    0.75    |
-|          nnode          |   int   |                     节点数量                     |    否    |      1      |
-|         pod_ips         |   str   |                   各个节点的ip                   |    否    |    None    |
-|       use_warmup       |   bool   |                   是否进行预热                   |    否    |    False    |
-|  enable_prefix_caching  |   bool   |                 是否开启前缀缓存                 |    否    |    False    |
-|       enabe_mm          |   bool   |                 是否开启多模态                 |    否    |    False    |
-|  cpu_offload_gb  |   float   |                 cpu cache 空间大小                 |    否    |    0    |
-|  cache_queue_port  |   int   |                 cache 传输同步队列端口号                 |    否    |    None    |
-|  enable_chunked_prefill  |   bool   |            是否开启chunked_prefill       |    否    |    False    |
-|  max_num_partial_prefills  |   int   |        开启chunked_prefill后，prefill阶段最大请求条数       |    否    |    1    |
-|  max_long_partial_prefills  |   int   |        开启chunked_prefill后，prefill阶段长请求的最大数量       |    否    |    1    |
-|  long_prefill_token_threshold  |   int   |        开启chunked_prefill后，token数大于该值的请求被认为是长请求       |    否    |    max_model_len的4%    |
-|  splitwise_role |   str   |           分离式部署角色可选值['prefill', 'decode', 'mixed']       |    否    |    'mixed'    |
-|  innode_prefill_ports  |   list[str]   |        prefill 实例内部引擎启动端口 （仅单机PD分离需要）       |    否    |    None    |
-|  quantization  |   str   |        指定模型量化类型，支持wint8和wint4(moe场景下仅moe为wint4，非moe权重为wint8) |    否    |    None    |
 
-## 请求参数
+## 1. KVCache分配与```num_gpu_blocks_override```、```block_size```的关系？
 
-|         字段名         | 字段类型 |                       说明                       | 是否必填 |   默认值   |
-| :---------------------: | :------: | :-----------------------------------------------: | :------: | :---------: |
-|        request_id        |   str   |                     请求id                     |    是    |  None  |
-|        prompt        |   str   |                     输入prompt                     |    是    |  None  |
-|  prompt_token_ids  |   list[int]   |                     输入prompt的token id                     |    否    |  None  |
-|  prompt_token_ids_len  |   int   |                     输入prompt的token id的长度                     |    否    |  None  |
-|        messages        |   list[list[dict[str, Any]]]   |             上下文对话信息                     |    否    |  None  |
-|        history        |   list[list[str]]   |             历史对话信息                     |    否    |  None  |
-|        system        |   str   |                     系统prompt                     |    否    |  None  |
-|        sampling_params        |   SamplingParams   |                     推理超参设置（具体参数说明见下表）               |    是    |  None  |
-|        eos_token_ids        |   list[int]   |                     结束token id                     |    否    |  None  |
-|        arrival_time        |   float   |                     请求到达时间                     |    是    |  None  |
-|        preprocess_start_time        |   float   |                     预处理开始时间                     |    否    |  None  |
-|        preprocess_end_time        |   float   |                     预处理结束时间                     |    否    |  None  |
-|        multi_modal_inputs        |   dict   |                     多模态输入  （目前不支持）                   |    否    |  None  |
+FastDeploy在推理过程中，显存被```模型权重```、```预分配KVCache块```和```模型计算中间激活值```占用。其中预分配KVCache块由```num_gpu_blocks_override```决定，其单位为```block_size```(默认64），即一个块可以存储64个Token的KVCache。
 
-### 推理参数Sampling Parameters
+在实际推理中，用户很难知道```num_gpu_blocks_override```到底该配置到多少合适，因此FastDeploy采用如下方式来自动推导并配置这个值，流程如下
+> 1. 加载模型，在完成模型加载后，记录当前显存占用情况```total_memory_after_load```和FastDeploy框架占用的显存值```fd_memory_after_load```; 注意前者为GPU实际被占用显存（可能有其它进程也占用），后者是FD框架本身占用显存；
+- 根据用户配置的```max_num_batched_tokens```(默认为```max_model_len```)，Fake相应长度的输入数据进行Prefill计算，记录当前FastDeploy框架显存最大分配值```fd_memory_after_prefill```，因此可以认为```模型计算中间激活值```为```fd_memory_after_prefill - fd_memory_after_load```;
+- - 截止当前，认为GPU卡可以剩分配KVCache的显存(以A800 80G为例)为```80GB * gpu_memory_utilization - total_memory_after_load - (fd_memory_after_prefill - fd_memory_after_load)``` 
+- - 根据模型KVCache的精度（如8bit/16bit)，计算一个block占用的KVCache大小，从而计算出总共可分配的block数量，赋值给```num_gpu_blocks_override```
 
-|       字段名        |      字段类型      |                             说明                             | 是否必填 |    默认值    |
-|---------------------|-------------------|------------------------------------------------------------|----------|-------------|
-| `n`                | int          | 需要返回的生成序列数量（当前仅支持1）                                      | 是       | -           |
-| `presence_penalty` | float             |    话题新鲜度           | 否       | -           |
-| `frequency_penalty`| float             |     频率惩罚度        | 否       | -           |
-| `repetition_penalty`| float             |     重复词或短语的惩罚系数   | 否       | -           |
-| `temperature`      | float             | 表示输出的确定性                    | 否       | -           |
-| `top_p`            | float       | 仅考虑累积概率超过此值的候选词                              | 否       | 1           |
-| `seed`             | int         | 控制生成随机性的种子                                        | 否       | -           |
-| `stop`             | list[str]         | 生成遇到这些字符串时停止（结果不包含它们）                  | 否       | -           |
-| `stop_token_ids`    | list[int]     | 生成遇到这些token时停止（结果包含token，除非是特殊token）   | 否       | -           |
-| `bad_words`        | list[int]         | 禁止生成的token id                    | 否       | None          |
-| `max_tokens`       | int           | 每个序列生成的最大token数                                   | 是       | -           |
-| `min_tokens`       | int           | 生成的最少token数（遇到停止条件前必须生成）                 | 否       | 1          |
-| `logprobs`         | int    | 返回每个token的前N个概率（None表示不返回）     （目前暂不支持）             | 否       | `None`      |
+   在服务启动日志中，我们可以在log/fastdeploy.log中找到```Reset block num, the total_block_num:17220, prefill_kvcache_block_num:12915```，其中```total_block_num```即为自动计算出来的KVCache block数量，将其乘以```block_size```即可知道整个服务可以缓存多少Token的KV值。
 
-### OpenAI Compatible API 请求参数
+## 2. ```kv_cache_ratio```、```block_size```、```max_num_seqs```的关系？
+   - FastDeploy里面将KVCache按照```kv_cache_ratio```分为Prefill阶段使用和Decode阶段使用，在配置这个参数时，可以按照```kv_cache_ratio = 平均输入Token数/(平均输入+平均输出Token数)```进行配置，常规情况输入是输出的3倍，因此可以配置成0.75
+   - ```max_num_seqs```是Decode阶段的最大并发数，一般而言可以配置成最大值128，但用户也可以根据KVCache情况作调用，例如输出的KVCache Token量为```decode_token_cache = total_block_num * (1 - kv_cache_ratio) * block_size```，为了防止极端情况下的显存不足问题，可以配置```max_num_seqs = decode_token_cache / 平均输出Token数```，不高于128即可。
 
-|       字段名        |      字段类型      |                             说明                             | 是否必填 |    默认值    |
-|---------------------|-------------------|------------------------------------------------------------|----------|-------------|
-| `model`            | str         | 模型名称                                                   | 否       | default     |
-| `prompt`           | Union[List[int], List[List[int]], str, List[str]] | 输入prompt                                                 | 是       | -           |
-| `best_of`          | int         | 生成多个序列，返回最好的一个   （当前仅支持1）                                | 否       | 1           |
-| `echo`             | bool        | 是否返回输入prompt                                             | 否       | False       |
-| `frequency_penalty`| float             |    话题新鲜度           | 否       | -           |
-| `logprobs`         | int    | 返回每个token的前N个概率（None表示不返回）     （目前暂不支持）             | 否       | `None`      |
-| `max_tokens`       | int           | 每个序列生成的最大token数                                   | 是       | -           |
-| `n`                | int          | 需要返回的生成序列数量（当前仅支持1）                                      | 是       | -           |
-| `presence_penalty` | float             |    话题新鲜度           | 否       | -           |
-| `repetition_penalty`| float             |     频率惩罚度        | 否       | -           |
-| `seed`             | int         | 控制生成随机性的种子                                        | 否       | -           |
-| `stop`             | Union[str, List[str]]         | 生成遇到这些字符串时停止（结果不包含它们）                  | 否       | -           |
-| `stream`           | bool        | 是否流式返回结果                                              | 否       | False       |
-| `stream_options`   | StreamOptions | 流式返回的选项，包含输入输出token 数目的统计               | 否       | None        |
-| `suffix`           | str         | 生成序列后添加的后缀 （当前不支持）                                           | 否       | None        |
-| `temperature`      | float             | 表示输出的确定性                    | 否       | -           |
-| `top_p`            | float       | 仅考虑累积概率超过此值的候选词                              | 否       | 1           |
-| `user`             | str         | 用户信息（当前不支持）                                                    | 否       | None        |
-| `stop_token_ids`   | list[int]   | 生成遇到这些token时停止（结果包含token，除非是特殊token）   | 否       | -           |
-
-### OpenAI Chat API 请求参数
-
-|       字段名        |      字段类型      |                             说明                             | 是否必填 |    默认值    |
-|---------------------|-------------------|------------------------------------------------------------|----------|-------------|
-| `model`            | str         | 模型名称                                                   | 否       | default     |
-| `messages`         | List[Dict[str, Union[str, List[int], List[List[int]]]]] | 输入prompt                                                 | 是       | -           |
-| `best_of`          | int         | 生成多个序列，返回最好的一个   （当前仅支持1）                                | 否       | 1           |
-| `echo`             | bool        | 是否返回输入prompt                                             | 否       | False       |
-| `frequency_penalty`| float             |    话题新鲜度           | 否       | -           |
-| `logprobs`         | int    | 返回每个token的前N个概率（None表示不返回）     （目前暂不支持）             | 否       | `None`      |
-| `max_tokens`       | int           | 每个序列生成的最大token数                                   | 是       | -           |
-| `n`                | int          | 需要返回的生成序列数量（当前仅支持1）                                      | 是       | -           |
-| `presence_penalty` | float             |    话题新鲜度           | 否       | -           |
-| `repetition_penalty`| float             |     频率惩罚度        | 否       | -           |
-| `seed`             | int         | 控制生成随机性的种子                                        | 否       | -           |
-| `stop`             | Union[str, List[str]]         | 生成遇到这些字符串时停止（结果不包含它们）                  | 否       | -           |
-| `stream`           | bool        | 是否流式返回结果                                              | 否       | False       |
-| `stream_options`   | StreamOptions | 流式返回的选项，包含输入输出token 数目的统计               | 否       | None        |
-| `suffix`           | str         | 生成序列后添加的后缀 （当前不支持）                                           | 否       | None        |
-| `temperature`      | float             | 表示输出的确定性                    | 否       | -           |
-| `top_p`            | float       | 仅考虑累积概率超过此值的候选词                              | 否       | 1           |
-| `user`             | str         | 用户信息（当前不支持）                                                    | 否       | None        |
-
-## 输出参数说明
-
-### 离线推理输出 RequestOutput
-
-|       字段名        |      字段类型      |                             说明                             | 是否必填 |    默认值    |
-|---------------------|-------------------|------------------------------------------------------------|----------|-------------|
-| `request_id`       |       str         | 请求id                                                   | 否       | default     |
-| `prompt`           | Optional[str]     | 输入prompt                                                | 否       | None        |
-| `prompt_token_ids` | Optional[list[int]] | 输入prompt的token id                                      | 否       | None        |
-| `outputs`          | CompletionOutput  | 推理输出                                                  | 是       | -           |
-| `finished`         | bool              | 是否完成                                                  | 是       | False       |
-| `num_cached_tokens`| Optional[int]     | 缓存的token数量                                           | 否       | 0           |
-| `metrics`          | Optional[RequestMetrics] | 请求指标                                                | 否       | None        |
-| `error_code`       | Optional[int]     | 错误代码                                                  | 否       | None        |
-| `error_msg`        | Optional[str]     | 错误信息                                                  | 否       | None        |
-
-#### 离线推理输出 CompletionOutput
-
-|       字段名        |      字段类型      |                             说明                             | 是否必填 |    默认值    |
-|---------------------|-------------------|------------------------------------------------------------|----------|-------------|
-| `index`            | int         | 输出序列的索引                                               | 是       | -           |
-| `token_ids`        | list[int]     | 输出的token id                                          | 是       | -           |
-| `text`             | Optional[str]     | 输出文本                                              | 否       | None        |
-| `reasoning_content`| Optional[str]     | 输出的思考链 （仅思考模型）                               | 否       | None        |
-
-#### 离线推理输出 RequestMetrics
-
-|       字段名        |      字段类型      |                             说明                             | 是否必填 |    默认值    |
-|---------------------|-------------------|------------------------------------------------------------|----------|-------------|
-| `arrival_time`      | float         | 请求到达时间                                               | 是       | -           |
-| `inference_start_time`| Optional[float]     | 推理开始时间                                              | 否       | None        |
-| `first_token_time`  | Optional[float]     | 第一个token生成耗时                                       | 否       | None        |
-| `time_in_queue`     | Optional[float]     | 请求在队列中排队时间                                       | 否       | None        |
-| `preprocess_cost_time`| Optional[float]     | 预处理耗时                                              | 否       | None        |
-| `model_forward_time`| Optional[float]     | 模型前向推理耗时                                       | 否       | None        |
-| `model_execute_time`| Optional[float]     | 模型执行耗时（包含预处理及排队时间）                             | 否       | None        |
-| `request_start_time`| Optional[float]     | 请求开始时间                                           | 否       | None        |
+## 3. ```enable_chunked_prefill```参数配置说明
+@程延福
