@@ -180,15 +180,21 @@ std::vector<std::vector<int>> GetExpertTokenNum(const paddle::Tensor &topk_ids,
                                                 const int num_experts);
 
 paddle::Tensor MoeExpertFFNFunc(
-    const paddle::Tensor &permute_input,
-    const paddle::Tensor &tokens_expert_prefix_sum,
-    const paddle::Tensor &ffn1_weight, const paddle::Tensor &ffn2_weight,
-    const paddle::optional<paddle::Tensor> &ffn1_bias,
-    const paddle::optional<paddle::Tensor> &ffn1_scale,
-    const paddle::optional<paddle::Tensor> &ffn2_scale,
-    const paddle::optional<paddle::Tensor> &ffn2_in_scale,
-    const paddle::optional<paddle::Tensor> &expert_idx_per_token,
-    const std::string &quant_method, const bool used_in_ep_low_latency);
+    const paddle::Tensor& permute_input,
+    const paddle::Tensor& tokens_expert_prefix_sum,
+    const paddle::Tensor& ffn1_weight, const paddle::Tensor& ffn2_weight,
+    const paddle::optional<paddle::Tensor>& ffn1_bias,
+    const paddle::optional<paddle::Tensor>& ffn1_scale,
+    const paddle::optional<paddle::Tensor>& ffn2_scale,
+    const paddle::optional<paddle::Tensor>& ffn2_in_scale,
+    const paddle::optional<paddle::Tensor>& expert_idx_per_token,
+    const paddle::optional<paddle::Tensor>& ffn1_local_scale,
+    const paddle::optional<paddle::Tensor>& ffn1_code_scale,
+    const paddle::optional<paddle::Tensor>& ffn1_code_zp,
+    const paddle::optional<paddle::Tensor>& ffn2_local_scale,
+    const paddle::optional<paddle::Tensor>& ffn2_code_scale,
+    const paddle::optional<paddle::Tensor>& ffn2_code_zp,
+    const std::string& quant_method, const bool used_in_ep_low_latency);
 
 paddle::Tensor MoeExpertReduceFunc(
     const paddle::Tensor &ffn_out, const paddle::Tensor &top_k_weight,
@@ -434,7 +440,25 @@ PYBIND11_MODULE(fastdeploy_ops, m) {
    * moe/fused_moe/moe_ffn.cu
    * moe_expert_ffn
    */
-  m.def("moe_expert_ffn", &MoeExpertFFNFunc, "moe export ffn function");
+  m.def("moe_expert_ffn", &MoeExpertFFNFunc,
+        py::arg("permute_input"),
+        py::arg("tokens_expert_prefix_sum"),
+        py::arg("ffn1_weight"),
+        py::arg("ffn2_weight"),
+        py::arg("ffn1_bias") = std::nullopt,
+        py::arg("ffn1_scale") = std::nullopt,
+        py::arg("ffn2_scale") = std::nullopt,
+        py::arg("ffn2_in_scale") = std::nullopt,
+        py::arg("expert_idx_per_token") = std::nullopt,
+        py::arg("ffn1_local_scale") = std::nullopt,
+        py::arg("ffn1_code_scale") = std::nullopt,
+        py::arg("ffn1_code_zp") = std::nullopt,
+        py::arg("ffn2_local_scale") = std::nullopt,
+        py::arg("ffn2_code_scale") = std::nullopt,
+        py::arg("ffn2_code_zp") = std::nullopt,
+        py::arg("quant_method") = "none",
+        py::arg("used_in_ep_low_latency") = false,
+       "moe export ffn function");
 
   /**
    * moe/fused_moe/moe_expert_reduce.cu

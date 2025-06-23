@@ -21,7 +21,10 @@
 
 namespace phi {
 
+#ifdef PADDLE_CUDA_BF16
 template class MoeGemmRunner<
-    half, cutlass::WintQuantTraits<half, cutlass::WintQuantMethod::kWeightOnlyInt4>>;
+    __nv_bfloat16,
+    cutlass::WintQuantTraits<__nv_bfloat16, cutlass::WintQuantMethod::kWeightOnlyInt2>>;
+#endif
 
 } // namespace phi

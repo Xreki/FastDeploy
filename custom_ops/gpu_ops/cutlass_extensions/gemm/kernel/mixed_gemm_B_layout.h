@@ -63,7 +63,8 @@ template <typename TypeA, typename Arch>
 struct LayoutDetailsB<TypeA, half_t, Arch, typename platform::enable_if<Arch::kMinComputeCapability >= 75>::type>
 {
     static constexpr int ThreadblockK = 128 * 8 / cutlass::sizeof_bits<TypeA>::value;
-    using Layout = layout::ColumnMajor;
+    // Change the Layout to RowMajor, keep consistent with Paddle.
+    using Layout = layout::RowMajor;
     static constexpr int ElementsPerAccess = 128 / cutlass::sizeof_bits<half_t>::value;
     using Operator = cutlass::arch::OpMultiplyAdd;
 };
@@ -72,7 +73,8 @@ template <typename TypeA, typename Arch>
 struct LayoutDetailsB<TypeA, bfloat16_t, Arch, typename platform::enable_if<Arch::kMinComputeCapability >= 75>::type>
 {
     static constexpr int ThreadblockK = 128 * 8 / cutlass::sizeof_bits<TypeA>::value;
-    using Layout = layout::ColumnMajor;
+    // Change the Layout to RowMajor, keep consistent with Paddle.
+    using Layout = layout::RowMajor;
     static constexpr int ElementsPerAccess = 128 / cutlass::sizeof_bits<bfloat16_t>::value;
     using Operator = cutlass::arch::OpMultiplyAdd;
 };
@@ -128,6 +130,15 @@ public:
     using Layout = layout::ColumnMajorTileInterleave<ThreadblockK, ColumnsInterleaved>;
     static constexpr int ElementsPerAccess = 128 / cutlass::sizeof_bits<uint4b_t>::value;
     using Operator = cutlass::arch::OpMultiplyAddDequantizeInterleavedBToA;
+};
+
+template <typename TypeA, typename Arch>
+struct LayoutDetailsB<TypeA, uint2b_t, Arch, typename platform::enable_if<Arch::kMinComputeCapability >= 75>::type>
+{
+    static constexpr int ThreadblockK = 128 * 8 / cutlass::sizeof_bits<TypeA>::value;
+    using Layout = layout::RowMajor;
+    static constexpr int ElementsPerAccess = 128 / cutlass::sizeof_bits<TypeA>::value;
+    using Operator = cutlass::arch::OpMultiplyAdd;
 };
 
 template <typename TypeA, typename Arch>
