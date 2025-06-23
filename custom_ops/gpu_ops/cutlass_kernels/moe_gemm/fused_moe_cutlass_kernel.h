@@ -43,7 +43,10 @@
 #include "cutlass/trace.h"
 
 #include "cutlass_extensions/gemm/kernel/gemm_moe_problem_visitor.h"
-#include "paddle/phi/kernels/fusion/cutlass/cutlass_extensions/tile_interleaved_layout.h"
+#include "cutlass_extensions/tile_interleaved_layout.h"
+#include "cutlass_kernels/moe_gemm/tile_dequanter.h"
+#include "cutlass_kernels/moe_gemm/wint_type_traits.h"
+
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 namespace cutlass {
@@ -64,9 +67,27 @@ template <typename Mma>
 struct use_dq_gemm<Mma, void_t<typename Mma::IteratorScale>>
     : platform::true_type {};
 
+template <typename KernelArch>
+constexpr bool NeedCompile() {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 700) && (__CUDA_ARCH__ < 750)
+  return platform::is_same<KernelArch, arch::Sm70>::value;
+#elif defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750) && (__CUDA_ARCH__ < 800)
+  return platform::is_same<KernelArch, arch::Sm75>::value;
+#elif defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800) && (__CUDA_ARCH__ < 900)
+  return platform::is_same<KernelArch, arch::Sm80>::value;
+#elif defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900) && (__CUDA_ARCH__ < 910)
+  return platform::is_same<KernelArch, arch::Sm80>::value;
+#else
+  CUTLASS_NOT_IMPLEMENTED();
+  return false;
+#endif
+}
+
 // SFINAE overload for dequantizing gemm
 template <
     typename Mma,
+    typename TileDequanterB,
+    WintQuantMethod QuantMethod,
     typename ElementScale,
     typename platform::enable_if<use_dq_gemm<Mma>::value, bool>::type = true>
 CUTLASS_DEVICE static void run_mma(Mma mma,
@@ -74,11 +95,13 @@ CUTLASS_DEVICE static void run_mma(Mma mma,
                                    typename Mma::FragmentC& accum,  // NOLINT
                                    typename Mma::IteratorA iterator_A,
                                    typename Mma::IteratorB iterator_B,
+                                   TileDequanterB tile_dequanter_B,
                                    typename Mma::FragmentC const& src_accum,
                                    ElementScale* weight_scale_ptr,
                                    MatrixCoord scale_extent,
                                    const int thread_idx,
                                    MatrixCoord tb_offset_scale) {
+  //CUTLASS_TRACE_DEVICE(" iterator_Scale, weight_scale_ptr=%p", weight_scale_ptr);                                  
   typename Mma::IteratorScale iterator_scale(
       Mma::IteratorScale::Layout(scale_extent.column()),
       weight_scale_ptr,
@@ -97,6 +120,8 @@ CUTLASS_DEVICE static void run_mma(Mma mma,
 // SFINAE overload for normal gemm. This completely ignores the scale parameters
 template <
     typename Mma,
+    typename TileDequanterB,
+    WintQuantMethod QuantMethod,
     typename ElementScale,
     typename platform::enable_if<!use_dq_gemm<Mma>::value, bool>::type = true>
 CUTLASS_DEVICE static void run_mma(Mma mma,
@@ -104,12 +129,18 @@ CUTLASS_DEVICE static void run_mma(Mma mma,
                                    typename Mma::FragmentC& accum,  // NOLINT
                                    typename Mma::IteratorA iterator_A,
                                    typename Mma::IteratorB iterator_B,
+                                   TileDequanterB tile_dequanter_B,
                                    typename Mma::FragmentC const& src_accum,
                                    ElementScale* weight_scale_ptr,
                                    MatrixCoord scale_extent,
                                    const int thread_idx,
                                    MatrixCoord tb_offset_scale) {
-  mma(gemm_k_iterations, accum, iterator_A, iterator_B, src_accum);
+  //CUTLASS_TRACE_DEVICE(" use_dq_gemm is false");
+  if constexpr (QuantMethod == WintQuantMethod::kWeightOnlyInt2) {
+    mma(gemm_k_iterations, accum, iterator_A, iterator_B, tile_dequanter_B, src_accum);
+  } else {
+  //  mma(gemm_k_iterations, accum, iterator_A, iterator_B, src_accum);
+  }
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -209,6 +240,13 @@ struct MoeFCGemm {
     int64_t gemm_n;
     int64_t gemm_k;
 
+    WintQuantMethod quant_method;
+
+    // Extra arguments for wint2.0
+    uint8_t* local_scale;
+    float* code_scale;
+    float* code_zp;
+
     // Only used by device-level operator
     GemmCoord* host_problem_sizes;
 
@@ -230,6 +268,10 @@ struct MoeFCGemm {
           total_rows(-1),
           gemm_n(0),
           gemm_k(0),
+          quant_method(WintQuantMethod::kNone),
+          local_scale(nullptr),
+          code_scale(nullptr),
+          code_zp(nullptr),
           host_problem_sizes(nullptr) {}
 
     /// Ctor
@@ -246,6 +288,10 @@ struct MoeFCGemm {
               int64_t total_rows,
               int64_t gemm_n,
               int64_t gemm_k,
+              WintQuantMethod quant_method,
+              const uint8_t* local_scale,
+              const float* code_scale,
+              const float* code_zp,
               GemmCoord* host_problem_sizes = nullptr)
         : problem_count(problem_count),
           threadblock_count(threadblock_count),
@@ -259,11 +305,36 @@ struct MoeFCGemm {
           total_rows(total_rows),
           gemm_n(gemm_n),
           gemm_k(gemm_k),
+          quant_method(quant_method),
+          local_scale(const_cast<uint8_t*>(local_scale)),
+          code_scale(const_cast<float*>(code_scale)),
+          code_zp(const_cast<float*>(code_zp)),
           host_problem_sizes(nullptr) {
-      if (platform::is_same<uint8_t, ElementB>::value ||
+      if (quant_method != WintQuantMethod::kNone || platform::is_same<uint8_t, ElementB>::value ||
           platform::is_same<uint4b_t, ElementB>::value) {
         assert(weight_scales);
       }
+
+      CUTLASS_TRACE_HOST("[Arguments] problem_count: " << problem_count << ", threadblock_count: " << threadblock_count << ", gemm_n: " << gemm_n << ", gemm_k: " << gemm_k);
+      CUTLASS_TRACE_HOST("[Arguments] ptr_A: " << static_cast<void const*>(ptr_A));
+      CUTLASS_TRACE_HOST("[Arguments] ptr_B: " << static_cast<void const*>(ptr_B));
+      CUTLASS_TRACE_HOST("[Arguments] ptr_C: " << static_cast<void const*>(ptr_C));
+      CUTLASS_TRACE_HOST("[Arguments] ptr_D: " << static_cast<void*>(ptr_D));
+      CUTLASS_TRACE_HOST("[Arguments] weight_scales: " << static_cast<void const*>(weight_scales));
+      CUTLASS_TRACE_HOST("[Arguments] total_rows_before_expert: " << static_cast<void*>(total_rows_before_expert));
+      CUTLASS_TRACE_HOST("[Arguments] local_scale: " << static_cast<void const*>(local_scale));
+      CUTLASS_TRACE_HOST("[Arguments] code_scale: " << static_cast<void const*>(code_scale));
+      CUTLASS_TRACE_HOST("[Arguments] code_zp: " << static_cast<void const*>(code_zp));
+      CUTLASS_TRACE_HOST("[Arguments] quant_method: " << static_cast<int>(quant_method));
+      CUTLASS_TRACE_HOST("[Arguments] LayoutA: " << GetCutlassLayoutString<LayoutA>());
+      CUTLASS_TRACE_HOST("[Arguments] LayoutB: " << GetCutlassLayoutString<LayoutB>());
+      CUTLASS_TRACE_HOST("[Arguments] LayoutC: " << GetCutlassLayoutString<LayoutC>());
+      CUTLASS_TRACE_HOST("[Arguments] Mma::IteratorA::AccessType::kElements:" << Mma::IteratorA::AccessType::kElements);
+      CUTLASS_TRACE_HOST("[Arguments] Mma::IteratorB::AccessType::kElements:" << Mma::IteratorB::AccessType::kElements);
+      CUTLASS_TRACE_HOST("[Arguments] SharedStorage Information:");
+      CUTLASS_TRACE_HOST(" - ProblemVisitor::SharedStorage: " << sizeof(typename ProblemVisitor::SharedStorage) << " bytes");
+      CUTLASS_TRACE_HOST(" - Mma::SharedStorage: " << sizeof(typename Mma::SharedStorage) << " bytes");
+      CUTLASS_TRACE_HOST(" - Epilogue::SharedStorage: " << sizeof(typename Epilogue::SharedStorage) << " bytes");
     }
   };
 
@@ -284,6 +355,13 @@ struct MoeFCGemm {
     ElementC* ptr_C;
     ElementC* ptr_D;
 
+    WintQuantMethod quant_method;
+
+    // Extra arguments for wint2.0
+    uint8_t* local_scale;
+    float* code_scale;
+    float* code_zp;
+
     //
     // Methods
     //
@@ -294,7 +372,11 @@ struct MoeFCGemm {
           ptr_B(nullptr),
           weight_scales(nullptr),
           ptr_C(nullptr),
-          ptr_D(nullptr) {}
+          ptr_D(nullptr),
+          quant_method(WintQuantMethod::kNone),
+          local_scale(nullptr),
+          code_scale(nullptr),
+          code_zp(nullptr) {}
 
     CUTLASS_HOST_DEVICE
     Params(Arguments const& args,
@@ -313,7 +395,11 @@ struct MoeFCGemm {
           ptr_B(args.ptr_B),
           weight_scales(args.weight_scales),
           ptr_C(args.ptr_C),
-          ptr_D(args.ptr_D) {}
+          ptr_D(args.ptr_D),
+          quant_method(args.quant_method),
+          local_scale(args.local_scale),
+          code_scale(args.code_scale),
+          code_zp(args.code_zp) {}
 
     CUTLASS_HOST_DEVICE
     void update(Arguments const& args,
@@ -334,6 +420,7 @@ struct MoeFCGemm {
       weight_scales = args.weight_scales;
       ptr_C = args.ptr_C;
       ptr_D = args.ptr_D;
+      quant_method = args.quant_method;
     }
   };
 
@@ -358,7 +445,7 @@ struct MoeFCGemm {
   }
 
   static Status can_implement(Arguments const& args) {
-    if (platform::is_same<uint8_t, ElementB>::value ||
+    if (args.quant_method != WintQuantMethod::kNone || platform::is_same<uint8_t, ElementB>::value ||
         platform::is_same<uint4b_t, ElementB>::value) {
       if (args.weight_scales == nullptr) {
         CUTLASS_TRACE_HOST(
@@ -383,7 +470,7 @@ struct MoeFCGemm {
   // The dummy template parameter is not used and exists so that we can compile
   // this code using a standard earlier than C++17. Prior to C++17, fully
   // specialized templates HAD to exists in a namespace
-  template <bool B, typename dummy = void>
+  template <WintQuantMethod QuantMethod, bool B, typename dummy = void>
   struct KernelRunner {
     CUTLASS_DEVICE
     static void run_kernel(Params const& params,
@@ -392,8 +479,22 @@ struct MoeFCGemm {
     }
   };
 
-  template <typename dummy>
-  struct KernelRunner<true, dummy> {
+  template <WintQuantMethod QuantMethod, typename dummy>
+  struct KernelRunner<QuantMethod, true, dummy> {
+    using WeightQuantTraits = WintQuantTraits<ElementA, QuantMethod>;
+    using QuantArguments = typename WeightQuantTraits::Arguments;
+
+    CUTLASS_DEVICE
+    static QuantArguments get_quant_args(Params const& params, int32_t problem_idx, const int64_t gemm_k, const int64_t gemm_n) {
+      QuantArguments quant_args;
+      if constexpr (QuantMethod == WintQuantMethod::kWeightOnlyInt2) {
+        quant_args.local_scale_ptr = params.local_scale + problem_idx * gemm_k * gemm_n / 128;
+        quant_args.code_scale_ptr = params.code_scale + problem_idx * gemm_n;
+        quant_args.code_zp_ptr = params.code_zp + problem_idx * gemm_n;
+      }
+      return quant_args;
+    }
+
     CUTLASS_DEVICE
     static void run_kernel(Params const& params,
                            SharedStorage& shared_storage) {  // NOLINT
@@ -401,12 +502,17 @@ struct MoeFCGemm {
       // These types shadow the type-level definitions and support the ability
       // to implement a 'transposed' GEMM that computes the transposed problems.
       //
+      //CUTLASS_TRACE_DEVICE(" MoeFCGemm::KernelRunner::run_kernel()");
+
       using ElementA = typename Mma::IteratorA::Element;
       using LayoutA = typename Mma::IteratorA::Layout;
       using ElementB = typename Mma::IteratorB::Element;
       using LayoutB = typename Mma::IteratorB::Layout;
       using ElementC = typename Epilogue::OutputTileIterator::Element;
       using LayoutC = typename Epilogue::OutputTileIterator::Layout;
+      using QuantElementB = typename WeightQuantTraits::WeightType;
+      using MmaElementB = typename WeightQuantTraits::MmaWeightType;
+
       static constexpr int kInterleave =
           Mma::IteratorB::Shape::kRow / Mma::Shape::kK;
       static_assert(
@@ -416,6 +522,9 @@ struct MoeFCGemm {
                   kInterleave >= 1,
           "B must be row major/col major OR col major interleaved.");
 
+      // LayoutB should be RowMajor
+      using TileDequanterB = TileDequanter<ElementA, ElementScale, ThreadblockShape::kK, ThreadblockShape::kN, kStages, kThreadCount, QuantMethod>;
+
       //
       // Problem visitor.
       //
@@ -424,21 +533,37 @@ struct MoeFCGemm {
 
       const int64_t gemm_k = params.problem_visitor.gemm_k;
       const int64_t gemm_n = params.problem_visitor.gemm_n;
-      int64_t bytes_per_expert_matrix =
-          (gemm_k * gemm_n / 8) * cutlass::sizeof_bits<ElementB>::value;
+      // wint2.5 and wint2.0 is quantized and packed along k dimension with group_size 64.
+      const int64_t quant_gemm_k = WintQuantTraits<ElementA, QuantMethod>::CaclPackedDim(gemm_k);
+      int64_t bytes_per_expert_matrix = (quant_gemm_k * gemm_n / 8) * cutlass::sizeof_bits<QuantElementB>::value;
+
+      CUTLASS_TRACE_DEVICE(" gemm_k: %ld, quant_gemm_k: %ld, gemm_n: %ld, bytes_per_expert_matrix: %ld, kInterleave: %d", gemm_k, quant_gemm_k, gemm_n, bytes_per_expert_matrix, kInterleave);
 
       // Outer 'persistent' loop to iterate over tiles
       while (problem_visitor.next_tile()) {
         GemmCoord problem_size = problem_visitor.problem_size();
         int32_t problem_idx = problem_visitor.problem_index();
         int32_t cta_idx = int32_t(problem_visitor.threadblock_idx());
+        CUTLASS_TRACE_DEVICE(" problem_idx: %d, cta_idx: %d, problem_size: {%d, %d, %d}",
+            problem_idx, cta_idx, static_cast<int>(problem_size.m()), static_cast<int>(problem_size.n()), static_cast<int>(problem_size.k()));
+
+        if (problem_idx > 2) {
+          //break;
+        }
 
         GemmCoord grid_shape = problem_visitor.grid_shape(problem_size);
 
+        // threadblock_offset of C
         cutlass::gemm::GemmCoord threadblock_offset(
             int(cta_idx / grid_shape.n()) * Mma::Shape::kM,  // NOLINT
             int(cta_idx % grid_shape.n()) * Mma::Shape::kN,  // NOLINT
             0);
+
+        // begin address offset for weight_scale.
+        ElementScale* weight_scale_ptr =
+            params.weight_scales ? params.weight_scales + problem_idx * problem_size.n() : nullptr;
+        // the begin threadblock_offset of scale, which holds the same column id with C, but with no row id
+        cutlass::MatrixCoord tb_offset_scale{0, threadblock_offset.n()};
 
         // Load element pointers. Exchange pointers and strides if working on
         // the transpose
@@ -450,45 +575,69 @@ struct MoeFCGemm {
           rows_to_jump = problem_idx * (params.problem_visitor.total_rows / params.problem_visitor.problem_count);
         }
 
+        // begin address offset for A for current tile
         ElementA* ptr_A =
             reinterpret_cast<ElementA*>(params.ptr_A) + rows_to_jump * gemm_k;
         typename LayoutA::LongIndex ldm_A = gemm_k;
 
-        char* byte_ptr_B = ((char*)params.ptr_B) +                 // NOLINT
-                           problem_idx * bytes_per_expert_matrix;  // NOLINT
-        ElementB* ptr_B = reinterpret_cast<ElementB*>(byte_ptr_B);
-        typename LayoutB::LongIndex ldm_B =
-            platform::is_same<layout::RowMajor, LayoutB>::value
-                ? gemm_n
-                : gemm_k * kInterleave;
-
         // Compute initial location in logical coordinates
+        // the begin threadblock_offset of A, which holds the same row id with C
         cutlass::MatrixCoord tb_offset_A{
             threadblock_offset.m(),
             0,
         };
 
+        // begin address offset for B for current problem_idx, totally num_experts problems
+        char* byte_ptr_B = ((char*)params.ptr_B) +                 // NOLINT
+                           problem_idx * bytes_per_expert_matrix;  // NOLINT
+      
+        typename LayoutB::LongIndex ldm_B =
+            platform::is_same<layout::RowMajor, LayoutB>::value
+                ? gemm_n
+                : gemm_k * kInterleave;
+        typename LayoutB::LongIndex ldm_B_shared = TileDequanterB::kColumns;
+
+        // the begin threadblock_offset of B, which holds the same column id with C
         cutlass::MatrixCoord tb_offset_B{0,
                                          threadblock_offset.n() / kInterleave};
 
-        cutlass::MatrixCoord tb_offset_scale{0, threadblock_offset.n()};
+        cutlass::MatrixCoord extent_B{problem_size.k() * kInterleave, problem_size.n() / kInterleave};
+        cutlass::MatrixCoord extent_B_shared{TileDequanterB::kRows, TileDequanterB::kColumns};
+
+        // MmaElementB* smem_unzip_B_ptr = dequant_storage_B.smem;
+        MmaElementB* smem_unzip_B_ptr = nullptr;
+        if constexpr (QuantMethod == WintQuantMethod::kWeightOnlyInt2) {
+          smem_unzip_B_ptr = shared_storage.main_loop.operand_unzip_B_ptr();
+        }
+        QuantArguments quant_args = get_quant_args(params, problem_idx, gemm_k, gemm_n);
+        TileDequanterB tile_dequanter_B(smem_unzip_B_ptr,
+                                        byte_ptr_B,
+                                        ldm_B,
+                                        extent_B,
+                                        tb_offset_B,
+                                        weight_scale_ptr,
+                                        tb_offset_scale,
+                                        quant_args);
+        MmaElementB* ptr_B = tile_dequanter_B.GetOutPtr();
 
         // Compute position within threadblock
         int thread_idx = threadIdx.x;
 
         // Construct iterators to A and B operands
+        //CUTLASS_TRACE_DEVICE(" iterator_A, ptr_A=%p, ldm_A=%ld", ptr_A, ldm_A);
         typename Mma::IteratorA iterator_A(LayoutA(ldm_A),
                                            ptr_A,
                                            {problem_size.m(), problem_size.k()},
                                            thread_idx,
                                            tb_offset_A);
 
+        //CUTLASS_TRACE_DEVICE(" iterator_B, ptr_B=%p, ldm_B=%ld", ptr_B, ldm_B);
         typename Mma::IteratorB iterator_B(
-            LayoutB(ldm_B),
+            LayoutB(TileDequanterB::kUseSharedMemory ? ldm_B_shared : ldm_B),
             ptr_B,
-            {problem_size.k() * kInterleave, problem_size.n() / kInterleave},
+            TileDequanterB::kUseSharedMemory ? extent_B_shared : extent_B,
             thread_idx,
-            tb_offset_B);
+            TileDequanterB::kUseSharedMemory ? cutlass::make_Coord(0, 0) : tb_offset_B);
 
         typename Mma::FragmentC accumulators;
 
@@ -500,6 +649,7 @@ struct MoeFCGemm {
 
         int lane_idx = threadIdx.x % 32;
 
+#if 1
         //
         // Matrix multiply phase
         //
@@ -518,24 +668,27 @@ struct MoeFCGemm {
         // Compute threadblock-scoped matrix multiply-add
         int gemm_k_iterations =
             (problem_size.k() + Mma::Shape::kK - 1) / Mma::Shape::kK;
+        //CUTLASS_TRACE_DEVICE(" gemm_k: %d, gemm_k_iterations: %d", problem_size.k(), gemm_k_iterations);
 
         // Wait for all threads to finish their epilogue phases from the
         // previous tile.
         __syncthreads();
 
         // Compute threadblock-scoped matrix multiply-add
-        ElementScale* weight_scale_ptr =
-            params.weight_scales + problem_idx * problem_size.n();
-        run_mma<Mma>(mma,
+        run_mma<Mma, TileDequanterB, QuantMethod>(mma,
                      gemm_k_iterations,
                      accumulators,
                      iterator_A,
                      iterator_B,
+                     tile_dequanter_B,
                      accumulators,
                      weight_scale_ptr,
                      {1, problem_size.n()},
                      thread_idx,
                      tb_offset_scale);
+
+        CUTLASS_TRACE_DEVICE(" FragmentC::kElements=%d", static_cast<int>(Mma::FragmentC::kElements));
+        CUTLASS_TRACE_DEVICE_TID(" accumulators[0:1]={%f, %f}", static_cast<float>(accumulators[0]), static_cast<float>(accumulators[1]));
 
         //
         // Epilogue
@@ -544,7 +697,7 @@ struct MoeFCGemm {
         EpilogueOutputOp output_op(params.output_op);
 
         ElementC* ptr_C =
-            reinterpret_cast<ElementC*>(params.ptr_C) + problem_idx * gemm_n;
+            params.ptr_C ? reinterpret_cast<ElementC*>(params.ptr_C) + problem_idx * gemm_n : nullptr;
         ElementC* ptr_D =
             reinterpret_cast<ElementC*>(params.ptr_D) + rows_to_jump * gemm_n;
 
@@ -555,6 +708,7 @@ struct MoeFCGemm {
         typename Epilogue::OutputTileIterator::Params params_D(layout_D);
 
         // Tile iterator loading from source tensor.
+        //CUTLASS_TRACE_DEVICE(" iterator_C, ptr_C=%p", ptr_C);
         typename Epilogue::OutputTileIterator iterator_C(
             params_C,
             ptr_C,
@@ -563,6 +717,7 @@ struct MoeFCGemm {
             threadblock_offset.mn());
 
         // Tile iterator writing to destination tensor.
+        //CUTLASS_TRACE_DEVICE(" iterator_D, ptr_D=%p", ptr_D);
         typename Epilogue::OutputTileIterator iterator_D(
             params_D,
             ptr_D,
@@ -575,6 +730,7 @@ struct MoeFCGemm {
 
         // Execute the epilogue operator to update the destination tensor.
         epilogue(output_op, iterator_D, accumulators, iterator_C);
+#endif
 
         // Next tile
         problem_visitor.advance(gridDim.x);
@@ -590,21 +746,22 @@ struct MoeFCGemm {
   CUTLASS_DEVICE
   void operator()(Params const& params,
                   SharedStorage& shared_storage) {  // NOLINT
-#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 700) && (__CUDA_ARCH__ < 750)
-    static constexpr bool compile_needed =
-        platform::is_same<KernelArch, arch::Sm70>::value;
-    KernelRunner<compile_needed>::run_kernel(params, shared_storage);
-#elif defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750) && (__CUDA_ARCH__ < 800)
-    static constexpr bool compile_needed =
-        platform::is_same<KernelArch, arch::Sm75>::value;
-    KernelRunner<compile_needed>::run_kernel(params, shared_storage);
-#elif defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800) && (__CUDA_ARCH__ < 910)
-    static constexpr bool compile_needed =
-        platform::is_same<KernelArch, arch::Sm80>::value;
-    KernelRunner<compile_needed>::run_kernel(params, shared_storage);
-#else
-    CUTLASS_NOT_IMPLEMENTED();
-#endif
+    static constexpr bool kCompileNeeded = NeedCompile<KernelArch>();
+    if constexpr (std::is_same<ElementB, cutlass::bfloat16_t>::value || std::is_same<ElementB, cutlass::half_t>::value) {
+      if (params.quant_method == WintQuantMethod::kWeightOnlyInt25) {
+        //KernelRunner<WintQuantMethod::kWeightOnlyInt25, kCompileNeeded>::run_kernel(params, shared_storage);
+      } else if (params.quant_method == WintQuantMethod::kWeightOnlyInt2) {
+        KernelRunner<WintQuantMethod::kWeightOnlyInt2, kCompileNeeded>::run_kernel(params, shared_storage);
+      } else {
+        KernelRunner<WintQuantMethod::kNone, kCompileNeeded>::run_kernel(params, shared_storage);
+      }
+    } else if constexpr (std::is_same<ElementB, uint8_t>::value) {
+      //KernelRunner<WintQuantMethod::kWeightOnlyInt8, kCompileNeeded>::run_kernel(params, shared_storage);
+    } else if constexpr (std::is_same<ElementB, cutlass::uint4b_t>::value) {
+      //KernelRunner<WintQuantMethod::kWeightOnlyInt4, kCompileNeeded>::run_kernel(params, shared_storage);
+    } else {
+      CUTLASS_NOT_IMPLEMENTED();
+    }
   }
 };
 

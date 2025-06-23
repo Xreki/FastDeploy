@@ -21,7 +21,10 @@
 
 namespace phi {
 
-template class MoeGemmRunner<half,
-                             WintQuantTraits<half, WintQuantMethod::kNone>>;
+#ifdef PADDLE_CUDA_BF16
+template class MoeGemmRunner<
+    __nv_bfloat16,
+    WintQuantTraits<__nv_bfloat16, WintQuantMethod::kWeightOnlyInt2>>;
+#endif
 
 } // namespace phi

@@ -33,7 +33,7 @@
 #include "cutlass/gemm/gemm.h"
 #include "cutlass_kernels/w4a8_moe/cutlass_extensions/compute_occupancy.h"
 #include "cutlass/gemm/device/gemm_universal_base.h"
-#include "base64_encode.h"
+//#include "base64_encode.h"
 
 #include "cutlass_kernels/w4a8_moe/cutlass_extensions/gemm/kernel/gemm_with_epilogue_visitor_interleaved_nf4.h"
 #include "w4a8_moe_gemm_with_epilogue_visitor.h"
