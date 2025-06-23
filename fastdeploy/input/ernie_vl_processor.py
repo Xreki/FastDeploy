@@ -232,57 +232,6 @@ class ErnieMoEVLProcessor(ErnieProcessor):
 
         return outs
 
-    def clear_request_status(self, task_id):
-        """
-        clear request status
-
-        Args:
-            task_id (str): task id
-
-        Returns:
-            results_all (str): all token strings
-        """
-
-        results_all = ""
-        reasoning_content = ""
-
-        if task_id in self.decode_status:
-            if self.use_hf_tokenizer:
-                results_all = self.decode_status[task_id][2]
-            else:
-                reasoning_content = "".join(self.decode_status[task_id][3])
-                results_all = "".join(
-                    self.decode_status[task_id][4])
-        
-        return results_all, reasoning_content
-
-    def ids2tokens(self, token_id, task_id):
-        """
-        token ids to strings
-
-        Args:
-            token_ids (List[int]): token ids
-                        task_id (str): task id
-
-        Returns:
-            List[str]: strings
-        """
-
-        if task_id not in self.decode_status:
-            # prefix offset & read offset & history token ids & history token strings
-            self.decode_status[task_id] = [0, 0, [], "", ""]
-
-        prefix_offset = self.decode_status[task_id][0]
-        read_offset = self.decode_status[task_id][1]
-        previous_token_ids = self.decode_status[task_id][2]
-        decode_str, prefix_offset, read_offset = self.tokenizer.decode_token(
-            previous_token_ids + token_id, prefix_offset, read_offset)
-        self.decode_status[task_id][0] = prefix_offset
-        self.decode_status[task_id][1] = read_offset
-        self.decode_status[task_id][2] += token_id
-        self.decode_status[task_id][3] += decode_str
-        return decode_str
-
     def ids2tokens_thinking(self, token_id, task_id):
         """
         token ids to strings
@@ -323,6 +272,46 @@ class ErnieMoEVLProcessor(ErnieProcessor):
         elif decode_str != "</think>":
             content = decode_str
         return content, reasoning_content
+
+    def process_response(self, response_dict,  **kwargs):
+        """
+        Preprocess the response
+
+        Args:
+            response_dict (Dict): response for engine, contain ids fields
+
+        Returns:
+            Dict: response contain text fields
+        """
+
+        enable_thinking = kwargs.get("enable_thinking", True)
+        is_end = response_dict.finished
+        req_id = response_dict.request_id
+        token_ids = response_dict.outputs.token_ids
+
+        if is_end and len(token_ids) > 0:
+            if token_ids[-1] == self.tokenizer.eos_token_id:
+                token_ids = token_ids[:-1]
+        if is_end:
+            full_text = self.ids2tokens(token_ids, req_id)
+            if enable_thinking:
+                result = full_text.partition("</think>")
+                if result[1]:
+                    response_dict.outputs.text = result[2]
+                    response_dict.outputs.reasoning_content = result[0]
+                else:
+                    response_dict.outputs.reasoning_content = result[0]
+            else:
+                response_dict.outputs.text = full_text
+            data_processor_logger.info(f"req_id:{req_id}, decode_status: {self.decode_status[req_id]}")
+            del self.decode_status[req_id]
+            data_processor_logger.debug("Request id: {} has been completed.".format(token_ids))
+        if response_dict.outputs.text == "" and \
+                response_dict.outputs.reasoning_content == "" and \
+                response_dict.outputs.tool_call_content == []:
+            return None
+
+        return response_dict
 
     def process_response_dict(self, response_dict, **kwargs):
         """
