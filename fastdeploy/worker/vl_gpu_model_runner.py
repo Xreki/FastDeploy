@@ -22,8 +22,8 @@ import paddle
 import paddle.distributed.fleet as fleet
 from safetensors import safe_open
 
-from fastdeploy.input.mm_processor import DataProcessor
 from fastdeploy.input.ernie_tokenizer_v2 import ErnieBotTokenizer
+from fastdeploy.input.mm_processor import DataProcessor
 from fastdeploy.model_executor.layers.attention import get_attention_backend
 from fastdeploy.model_executor.layers.rotary_embedding import get_rope_3d
 from fastdeploy.model_executor.layers.sample.meta_data import SamplingMetadata
@@ -37,7 +37,7 @@ from fastdeploy.model_executor.models.ernie45t_vl.dfnrope.modeling import \
     DFNRopeVisionTransformerPretrainedModel
 from fastdeploy.model_executor.models.ernie45t_vl.modeling_resampler import (
     ScatterOp, VariableResolutionResamplerModel)
-from paddleformers.transformers.model_utils import  load_tp_checkpoint
+from fastdeploy.model_executor.models.utils import load_checkpoint
 from fastdeploy.platforms import current_platform
 from fastdeploy.worker.forward_meta import ForwardMeta
 from fastdeploy.worker.utils import check_safetensors_model
@@ -153,10 +153,14 @@ class GPUVLModelRunner(VLModelRunnerBase):
 
     def _load_model(self, model_name, dynamic_load_weight):
 
-        vocab_file_names = ["tokenizer.model", "spm.model", "ernie_token_100k.model"]
+        vocab_file_names = [
+            "tokenizer.model", "spm.model", "ernie_token_100k.model"
+        ]
         for i in range(len(vocab_file_names)):
-            if os.path.exists(os.path.join(self.args.tokenizer, vocab_file_names[i])):
-                ErnieBotTokenizer.resource_files_names["vocab_file"] = vocab_file_names[i]
+            if os.path.exists(
+                    os.path.join(self.args.tokenizer, vocab_file_names[i])):
+                ErnieBotTokenizer.resource_files_names[
+                    "vocab_file"] = vocab_file_names[i]
                 break
 
         tokenizer = ErnieBotTokenizer.from_pretrained(
@@ -421,7 +425,7 @@ class GPUVLModelRunner(VLModelRunnerBase):
             self.model.set_state_dict(state_dict)
             self.resampler_model.set_state_dict(resampler_state)
         else:
-            state_dict = load_tp_checkpoint(
+            state_dict = load_checkpoint(
                 args.model_name_or_path,
                 ErniePretrainedModel,
                 self.model_cfg,

@@ -301,11 +301,12 @@ class Qwen3PretrainedModel(PretrainedModel):
         _init_weight
         """
         return None
-        
+
     @classmethod
     def _get_tensor_parallel_mappings(cls, config: ModelConfig, is_split=True):
 
-        from paddleformers.transformers.conversion_utils import split_or_merge_func
+        from paddleformers.transformers.conversion_utils import \
+            split_or_merge_func
 
         fn = split_or_merge_func(
             is_split=is_split,

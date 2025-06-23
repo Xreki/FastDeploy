@@ -45,6 +45,9 @@ class WeightOnlyConfig(QuantConfigBase):
             "FLAGS_weight_only_linear_arch")
         if self.weight_only_linear_arch is not None:
             self.weight_only_linear_arch = int(self.weight_only_linear_arch)
+        self.quant_max_bound = 0
+        self.quant_min_bound = 0
+        self.quant_round_type = 0
 
     def name(self) -> str:
         return "weight_only"
@@ -119,9 +122,6 @@ class WeightOnlyLinearMethod(QuantMethodBase):
     ) -> None:
         super().__init__()
         self.quant_config = quant_config
-        self.quant_max_bound = 0
-        self.quant_min_bound = 0
-        self.quant_round_type = 0
 
     def create_weights(self, layer):
         layer.linear_weight_shape.reverse()
@@ -141,8 +141,7 @@ class WeightOnlyLinearMethod(QuantMethodBase):
         )
 
     @abstractmethod
-    def process_unquantized_weights(self, layer, weights) -> None:
-        """process_unquantized_weights"""
+    def process_loaded_weights(self, layer, weights) -> None:
         raise NotImplementedError
 
     def apply(self, layer, x):
@@ -171,8 +170,8 @@ class GPUWeightOnlyLinearMethod(WeightOnlyLinearMethod):
     ) -> None:
         super().__init__(quant_config)
 
-    def process_quantized_weights(self, layer, quant_weight,
-                                weight_scale=None) -> None:
+    def process_prequanted_weights(self, layer, quant_weight,
+                                   weight_scale) -> None:
         """
         Process pre-quantized weights before applying them to the model
         Args:
@@ -184,19 +183,13 @@ class GPUWeightOnlyLinearMethod(WeightOnlyLinearMethod):
         layer.linear_weight_scale.set_value(
             weight_scale.astype(paddle.get_default_dtype()))
 
-    def apply_weight_quantization(self, weight):
-        """apply_weight_quantization"""
+    def process_loaded_weights(self, layer, weight) -> None:
         quanted_weight_tensor, weight_scale_tensor = weight_quantize(
             weight,
             algo=self.quant_config.algo,
             arch=self.quant_config.weight_only_linear_arch,
         )
-        return quanted_weight_tensor, weight_scale_tensor
 
-    def process_unquantized_weights(self, layer, weights) -> None:
-        """process_unquantized_weights"""
-        quanted_weight_tensor, weight_scale_tensor = self.apply_weight_quantization(
-            weights)
         layer.linear_weight.set_value(quanted_weight_tensor)
         layer.linear_weight_scale.set_value(
             weight_scale_tensor.astype(paddle.get_default_dtype()))

@@ -139,7 +139,6 @@ class ModelConfig(PretrainedConfig):
         head_dim: Optional[int] = None,
         tie_word_embeddings: bool = False,
         is_quantized: bool = False,
-        pre_quant: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -201,7 +200,6 @@ class ModelConfig(PretrainedConfig):
         self.dtype = dtype
         self.tie_word_embeddings = tie_word_embeddings
         self.is_quantized = is_quantized
-        self.pre_quant = pre_quant
 
 
 # This class will be removed in future and replaced by MoEConfig
@@ -529,7 +527,7 @@ class GraphOptimizationConfig:
                     self.batch_size_to_captured_size[bs] = end
         self.batch_size_to_captured_size[
             self.max_capture_size] = self.max_capture_size
-        
+
     def __init__(self):
         """ """
         capture_size = [i for i in range(1, 129)]
@@ -548,7 +546,6 @@ class LoadConfig:
 
     act_scales = None
     bias_keys = None
-    load_weights_on: str = None  # cpu/gpu
 
     def _post_init(self, model_config):
         if self.weight_keys:

@@ -31,8 +31,8 @@ import paddle
 import paddle.distributed as dist
 from paddle.common_ops_import import convert_dtype
 from paddle.distributed import fleet
-
-from paddleformers.transformers.model_utils import _add_variant, load_tp_checkpoint
+from paddleformers.transformers.model_utils import (_add_variant,
+                                                    load_tp_checkpoint)
 from paddleformers.transformers.utils import paddleformers_load
 from paddleformers.utils.env import (PADDLE_WEIGHTS_INDEX_NAME,
                                      SAFE_MASTER_WEIGHTS_INDEX_NAME,
@@ -47,40 +47,10 @@ from fastdeploy.platforms import current_platform
 
 from .configuration import ErnieBotConfig, QuantizationConfig
 from .tokenizer import ErnieBotTokenizer
-from typing import NamedTuple, Optional
-import enum
-
 
 MAX_BSZ = 512
 MAX_DRAFT_TOKENS = 6
 
-
-class LayerIdPlaceholder(str, enum.Enum):
-    """LayerIdPlaceholder"""
-    LAYER_ID = "layer_id"
-    FFN_LAYER_ID = "ffn_layer_id"
-    MOE_LAYER_ID = "moe_layer_id"
-    EXPERT_ID = "export_id"
-
-
-class WeightMeta(NamedTuple):
-    """
-    #tensor split parameters
-
-    # weight_name: weight name
-    # is_column: whether to split by columns
-    # extra: optional flags like "is_naive_2fuse", "is_gqa", "is_naive_3fuse"
-
-    # quantization parameters
-
-    # quant_method: quantization pre/post processing  func
-    # layer_key: layer name this weight belongs to in the model
-    """
-    weight_name: str
-    is_column: bool
-    extra: Optional[str] = None
-    quant_method: Optional[enum.Enum] = None
-    layer_key: Optional[str] = None
 
 class UniqueIDGenerator:
     """
@@ -584,6 +554,337 @@ def calculate_effective_tokens(training_args, train_dataset, max_seq_len):
 
     return total_effective_tokens, total_tokens
 
+
+def quantization_func(
+    tensor,
+    config: QuantizationConfig,
+    PrePostQuantFn: Optional[Callable] = None,
+    ernie_config: Optional[ErnieBotConfig] = None,
+):
+    """
+    quantization function
+    """
+
+    def apply_block_fp8(tensor):
+        from fastdeploy.model_executor.layers.utils import \
+            per_block_cast_to_fp8
+
+        quanted_weight_tensor, weight_scale_tensor = per_block_cast_to_fp8(
+            tensor)
+        # 转成uint8存
+        return quanted_weight_tensor.view("uint8"), weight_scale_tensor
+
+    def apply_weight_quantize(tensor, weight_only_type="weight_only_int4"):
+        from paddle.nn.quant import weight_quantize
+
+        quanted_weight_tensor, weight_scale_tensor = weight_quantize(
+            tensor,
+            algo=weight_only_type,
+            arch=config.arch,
+        )
+        return quanted_weight_tensor, weight_scale_tensor
+
+    def apply_wint4_fp8(tensor, groupsize=-1, scale_dtype="float16"):
+        from fastdeploy.model_executor.gpu import \
+            scaled_gemm_f8_i4_f16_weight_quantize
+
+        quanted_weight_tensor, weight_scale_tensor = (
+            scaled_gemm_f8_i4_f16_weight_quantize(
+                paddle.cast(tensor, "float32"),
+                groupsize=config.groupsize,
+                scale_dtype=config.scale_dtype,
+            ))
+        return quanted_weight_tensor, weight_scale_tensor
+
+    def apply_cast(tensor, weight_dtype):
+        quanted_weight_tensor = paddle.cast(tensor, weight_dtype)
+        return quanted_weight_tensor, None
+
+    if PrePostQuantFn is not None:
+        tensor, _ = PrePostQuantFn(True, tensor, None, config, ernie_config)
+
+    if config.quantization_type == "PerBlockFp8":
+        # block_fp8
+        quanted_weight_tensor, weight_scale_tensor = apply_block_fp8(tensor)
+    elif config.quantization_type == "Wint8":
+        quanted_weight_tensor, weight_scale_tensor = apply_weight_quantize(
+            tensor, "weight_only_int8")
+    elif config.quantization_type == "Wint4":
+        quanted_weight_tensor, weight_scale_tensor = apply_weight_quantize(
+            tensor, "weight_only_int4")
+    elif config.quantization_type == "W4AFp8":
+        quanted_weight_tensor, weight_scale_tensor = apply_wint4_fp8(
+            tensor, config.groupsize, config.scale_dtype)
+    elif config.quantization_type == "W4A8":
+        quanted_weight_tensor, weight_scale_tensor = apply_weight_quantize(
+            tensor, "w4a8")
+    else:
+        quanted_weight_tensor, weight_scale_tensor = apply_cast(
+            tensor, config.quantization_type)
+
+    if PrePostQuantFn is not None:
+        quanted_weight_tensor, weight_scale_tensor = PrePostQuantFn(
+            False, quanted_weight_tensor, weight_scale_tensor, config,
+            ernie_config)
+
+    return quanted_weight_tensor, weight_scale_tensor
+
+
+def load_ep_checkpoint(model_path: str,
+                       config: ModelConfig,
+                       return_numpy: bool = False,
+                       return_key_name: bool = True):
+    """
+    load ep checkpoint
+    """
+    # return_numpy=True cpu
+    # return_numpy=False gpu
+    with open(os.path.join(model_path, "model.safetensors.index.json"),
+              "r") as f:
+        weight_list = json.load(f)["weight_map"]
+    filtered_map = {k: v for k, v in weight_list.items() if "experts" not in k}
+    num_local_ffn_keys = []
+    quant_suffix = (".quant_weight" if config.use_offline_quant
+                    and config.moe_quant_type != "default" else "")
+    scale_suffix = (".quant_scale" if config.use_offline_quant
+                    and config.moe_quant_type != "default" else "")
+
+    for i in range(config.moe_layer_start_index, config.num_layers):
+        for j in range(
+                config.num_experts_start_offset,
+                config.num_experts_start_offset + config.num_experts_per_rank,
+        ):
+            ffn1_quant_key = f"ernie.layers.{i}.mlp.experts.{j}.up_gate_proj.weight{quant_suffix}"
+            ffn2_quant_key = (
+                f"ernie.layers.{i}.mlp.experts.{j}.down_proj.weight{quant_suffix}"
+            )
+            ffn1_scale_key = f"ernie.layers.{i}.mlp.experts.{j}.up_gate_proj.weight{scale_suffix}"
+            ffn2_scale_key = (
+                f"ernie.layers.{i}.mlp.experts.{j}.down_proj.weight{scale_suffix}"
+            )
+            num_local_ffn_keys.append(ffn1_quant_key)
+            num_local_ffn_keys.append(ffn2_quant_key)
+            num_local_ffn_keys.append(ffn1_scale_key)
+            num_local_ffn_keys.append(ffn2_scale_key)
+
+    for k in num_local_ffn_keys:
+        if k in weight_list:
+            filtered_map[k] = weight_list[k]
+
+    state_dict = {}
+    # Get all safetensor file paths that need to be opened
+    safetensor_paths = set(filtered_map.values())
+
+    # Open each safetensor file sequentially with progress bar
+    for safetensor_path in tqdm(safetensor_paths,
+                                desc="Loading safetensor files",
+                                unit="file"):
+        with safe_open(os.path.join(model_path, safetensor_path),
+                       framework="np",
+                       device="cpu") as f:
+            # Check if this file contains keys from filtered_map
+            for k in filtered_map:
+                if filtered_map[k] == safetensor_path and k in f.keys():
+                    weight = f.get_tensor(k)
+                    if not return_numpy:
+                        weight = paddle.Tensor(weight, zero_copy=True)
+                        weight = weight._copy_to(
+                            paddle.framework._current_expected_place(), False)
+                    state_dict[k] = weight
+    return state_dict
+
+
+def get_safetensor_file(model_path):
+    """
+    get_safetensor_file
+    """
+    with open(os.path.join(model_path, "model.safetensors.index.json"),
+              "r") as f:
+        weight_map = json.load(f)["weight_map"]
+    weight_files_in_index = set()
+    for weight_name in weight_map:
+        weight_files_in_index.add(
+            os.path.join(model_path, weight_map[weight_name]))
+    key_name_list = list(set(weight_map.keys()))
+    safetensor_list = list(weight_files_in_index)
+    safetensor_list.sort()
+    return key_name_list, safetensor_list
+
+
+def safetensors_weights_iterator(safe_tensor_list: list[str], ):
+    """
+    safetensors_weights_iterator
+    """
+    for st_file in tqdm(
+            safe_tensor_list,
+            desc="Loading safetensors checkpoint shards",
+    ):
+        with safe_open(st_file, framework="np") as f:
+            for name in f.keys():  # noqa: SIM118
+                param = f.get_tensor(name)
+                yield name, param
+
+
+def fastsafetensors_weights_iterator(safetensor_list: list[str]):
+    """
+    fastsafetensors_weights_iterator
+    """
+    from fastsafetensors import SafeTensorsFileLoader, SingleGroup
+    world_size = dist.get_world_size()
+    if world_size > 1:
+        dist.init_parallel_env()
+        pg = dist.get_group()
+        device = f"gpu:{pg.rank}" if paddle.is_compiled_with_cuda() else "cpu"
+    else:
+        pg = SingleGroup()
+        device = f"gpu:{pg.rank()}" if paddle.is_compiled_with_cuda(
+        ) else "cpu"
+
+    safetensor_files_sub_lists = [
+        safetensor_list[i:i + world_size]
+        for i in range(0, len(safetensor_list), world_size)
+    ]
+    for st_file in tqdm(
+            safetensor_files_sub_lists,
+            desc="Loading fastsafetensors checkpoint shards",
+    ):
+        loader = SafeTensorsFileLoader(pg,
+                                       device,
+                                       nogds=True,
+                                       debug_log=False,
+                                       framework="paddle")
+        rank_file_map = {i: [f] for i, f in enumerate(st_file)}
+        loader.add_filenames(rank_file_map)
+        try:
+            fb = loader.copy_files_to_device()
+            try:
+                keys = list(fb.key_to_rank_lidx.keys())
+                for k in keys:
+                    t = fb.get_tensor(k)
+                    yield k, t
+            finally:
+                fb.close()
+        finally:
+            loader.close()
+
+
+def get_state_dict(model_path, config, use_fastsafetensor=False):
+    """
+    get_state_dict
+    """
+    state_dict = {}
+    _, safetensor_list = get_safetensor_file(
+        os.path.join(model_path, f"rank{config.tensor_parallel_rank}"))
+    if use_fastsafetensor:
+        weights_iterator = fastsafetensors_weights_iterator(safetensor_list)
+    else:
+        weights_iterator = safetensors_weights_iterator(safetensor_list)
+
+    for name, weight in weights_iterator:
+        state_dict[name] = weight
+    return state_dict
+
+
+def apply_quant(name_action_quant_mappings, key, tensor, state_dict):
+    """
+    apply_quant
+    """
+    if key in name_action_quant_mappings:
+        action = name_action_quant_mappings.pop(key)
+        quant_weight_tensor, weight_scale_tensor = action(tensor)
+        if quant_weight_tensor is not None and weight_scale_tensor is not None:
+            state_dict[key + ".quant_weight"] = quant_weight_tensor
+            state_dict[key + ".weight_scale"] = weight_scale_tensor
+        else:
+            state_dict[key] = quant_weight_tensor
+    else:
+        state_dict[key] = tensor
+
+
+def get_tp_state_dict(model_path, cls, config, use_fastsafetensor=True):
+    """
+    get_tp_state_dict,帮tp切分
+    """
+    loaded_state_dict_keys, safetensor_list = get_safetensor_file(model_path)
+
+    name_action_mappings = cls._get_tensor_parallel_mappings(config,
+                                                             is_split=True)
+    state_keys_map = cls._resolve_prefix_keys(name_action_mappings.keys(),
+                                              loaded_state_dict_keys)
+    for k, v in state_keys_map.items():
+        name_action_mappings[v] = name_action_mappings.pop(k)
+
+    if use_fastsafetensor:
+        weights_iterator = fastsafetensors_weights_iterator(safetensor_list)
+    else:
+        weights_iterator = safetensors_weights_iterator(safetensor_list)
+
+    if config.use_offline_quant:
+        name_action_quant_mappings = cls._get_tensor_quantization_mappings(
+            config)
+        quant_state_keys_map = cls._resolve_prefix_keys(
+            name_action_quant_mappings.keys(), loaded_state_dict_keys)
+        for k, v in quant_state_keys_map.items():
+            name_action_quant_mappings[v] = name_action_quant_mappings.pop(k)
+    state_dict = {}
+    for key, weight in weights_iterator:
+        tensor = weight
+        if key in name_action_mappings:
+            action = name_action_mappings.pop(key)
+            tensor = action(weight).clone()
+        if config.use_offline_quant:
+            apply_quant(name_action_quant_mappings, key, tensor, state_dict)
+        else:
+            state_dict[key] = tensor
+    return state_dict
+
+
+def load_checkpoint(model_path, cls, config, return_numpy=True, load_gpu=True):
+    """
+    load checkpoint
+    """
+    if getattr(config, "parallel_config", None) is not None:
+        use_ep = getattr(config.parallel_config, "use_ep", False)
+        tensor_parallel_degree = config.parallel_config.tensor_parallel_degree
+    else:
+        use_ep = getattr(config, "use_ep", False)
+        tensor_parallel_degree = config.tensor_parallel_degree
+
+    if getattr(config, "model_config", None) is not None:
+        model_config = config.model_config
+    else:
+        model_config = config
+
+    if use_ep:
+        state_dict = load_ep_checkpoint(model_path,
+                                        config,
+                                        return_numpy=True,
+                                        return_key_name=True)
+    else:
+        rank_dirs = [
+            f for f in os.listdir(model_path) if f.startswith("rank")
+            and os.path.isdir(os.path.join(model_path, f))
+        ]
+        if len(rank_dirs) > 1:
+            if tensor_parallel_degree != len(rank_dirs):
+                raise ValueError(
+                    f"Your model only supports loading with tp{len(rank_dirs)}"
+                )
+            state_dict = get_state_dict(model_path, model_config)
+        else:
+            state_dict = load_tp_checkpoint(model_path,
+                                            cls,
+                                            model_config,
+                                            return_numpy=return_numpy)
+            import re
+            for k, v in state_dict.items():
+                match = re.search(r'layers\.(\d+)', k)
+                if match and int(match.group(1)) > 0:
+                    continue
+                print(f"dict key {k} value shape {v.shape}")
+    return state_dict
+
+
 def parser_quant_type(quant_type):
     """
     Parse the quantization type string and return the corresponding quantization types for weights,
@@ -659,34 +960,3 @@ def parser_quant_type(quant_type):
             quant_type_list.append(default_type)
 
         return quant_type_list[0], quant_type_list[1], quant_type_list[2]
-
-
-def offload_model(model):
-    """
-    Offload the model to CUDAPinnedPlace.
-    """
-    device = paddle.CUDAPinnedPlace()
-    for name, src in model.named_parameters():
-        if src._is_initialized() and not isinstance(src.place,
-                                                    paddle.CUDAPinnedPlace):
-            dst = src._copy_to(device, True)
-            dst_tensor = dst.value().get_tensor()
-            src_tensor = src.value().get_tensor()
-            src_tensor._clear()
-            src_tensor._share_data_with(dst_tensor)
-
-
-def reload_model(model):
-    """
-    Reload the model from CUDAPinnedPlace to GPU.
-    """
-    model.to(paddle.device.get_device())
-
-
-def reconstruct_memory(model):
-    """
-    reconstruct_memory to avoid memory chunks
-    """
-    offload_model(model)
-    paddle.device.cuda.empty_cache()
-    reload_model(model)

@@ -19,7 +19,8 @@ from dataclasses import fields as dataclass_fields
 from typing import Any, Dict, List, Optional
 
 from fastdeploy.engine.config import (CacheConfig, Config, ModelConfig,
-                                      ParallelConfig, SpeculativeConfig, TaskOption)
+                                      ParallelConfig, SpeculativeConfig,
+                                      TaskOption)
 from fastdeploy.scheduler.config import SchedulerConfig
 from fastdeploy.utils import FlexibleArgumentParser
 
@@ -264,11 +265,6 @@ class EngineArgs:
     SplitWise Use, Results Writer Batch Size
     """
 
-    load_weights_on: str = None
-    """
-    Load model weights onto the specified device
-    """
-
     def __post_init__(self):
         """
         Post-initialization processing to set default tokenizer if not provided.
@@ -355,13 +351,6 @@ class EngineArgs:
                                  "default is None. The priority of this configuration "\
                                  "is lower than that of the config file. " \
                                  "More complex quantization methods need to be configured via the config file.")
-        # Load group
-        load_group = parser.add_argument_group("Load Configuration")
-        load_group.add_argument(
-            "--load_weights_on",
-            type=str,
-            default=EngineArgs.load_weights_on,
-            help="Load model weights onto the specified device cuda/cpu.")
 
         # Parallel processing parameters group
         parallel_group = parser.add_argument_group("Parallel Configuration")
@@ -448,13 +437,12 @@ class EngineArgs:
                                 default=EngineArgs.splitwise_role,
                                 help="Role of splitwise. Default is \
             'mixed'. (prefill, decode, mixed)")
-        
+
         perf_group.add_argument("--innode-prefill-ports",
                                 type=lambda s: s.split(",") if s else None,
                                 default=EngineArgs.innode_prefill_ports,
                                 help="port for innode prefill")
 
-    
         perf_group.add_argument("--enable-chunked-prefill",
                                 action='store_true',
                                 default=EngineArgs.enable_chunked_prefill,
@@ -476,8 +464,7 @@ class EngineArgs:
             type=int,
             default=EngineArgs.long_prefill_token_threshold,
             help=("For chunked prefill, the threshold number of"
-                  " tokens for a prompt to be considered long.")
-        )
+                  " tokens for a prompt to be considered long."))
 
         perf_group.add_argument(
             "--cache-transfer-protocol",
@@ -564,19 +551,22 @@ class EngineArgs:
             "--scheduler-sync-period",
             type=int,
             default=EngineArgs.scheduler_sync_period,
-            help=f"SplitWise Use, node load sync period, Default is {EngineArgs.scheduler_sync_period}ms. (global)"
+            help=
+            f"SplitWise Use, node load sync period, Default is {EngineArgs.scheduler_sync_period}ms. (global)"
         )
         scheduler_group.add_argument(
             "--scheduler-expire-period",
             type=int,
             default=EngineArgs.scheduler_expire_period,
-            help=f"SplitWise Use, node will not be scheduled after expire-period ms not sync load,"
+            help=
+            f"SplitWise Use, node will not be scheduled after expire-period ms not sync load,"
             f" Default is {EngineArgs.scheduler_expire_period}ms. (global)")
         scheduler_group.add_argument(
             "--scheduler-release-load-expire-period",
             type=int,
             default=EngineArgs.scheduler_release_load_expire_period,
-            help=f"SplitWise Use, scheduler will release req load after expire period(s). "
+            help=
+            f"SplitWise Use, scheduler will release req load after expire period(s). "
             f"Default is {EngineArgs.scheduler_release_load_expire_period}. (global)"
         )
         scheduler_group.add_argument(
@@ -727,6 +717,4 @@ class EngineArgs:
             innode_prefill_ports=self.innode_prefill_ports,
             max_num_partial_prefills=self.max_num_partial_prefills,
             max_long_partial_prefills=self.max_long_partial_prefills,
-            long_prefill_token_threshold=self.long_prefill_token_threshold,
-            load_weights_on=self.load_weights_on,
-            )
+            long_prefill_token_threshold=self.long_prefill_token_threshold)

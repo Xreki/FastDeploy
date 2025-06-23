@@ -156,12 +156,12 @@ def quanted_tensor(cls, config, args=None):
             tensor = weight
             if key in name_action_mappings:
                 action = name_action_mappings.pop(key)
-                quant_weight_tensor, weight_quanter_tensor = action(tensor)
-                if quant_weight_tensor is not None and weight_quanter_tensor is not None:
+                quant_weight_tensor, weight_scale_tensor = action(tensor)
+                if quant_weight_tensor is not None and weight_scale_tensor is not None:
                     state_dict_to_save[
                         key + ".quant_weight"] = quant_weight_tensor.cpu()
                     state_dict_to_save[
-                        key + ".weight_quanter"] = weight_quanter_tensor.cpu()
+                        key + ".weight_scale"] = weight_scale_tensor.cpu()
                 else:
                     state_dict_to_save[key] = quant_weight_tensor.cpu()
             else:
@@ -191,7 +191,7 @@ def quanted_tensor(cls, config, args=None):
                         key + ".quant_weight"] = quanted_weight_tensor.cpu()
                 if weight_scale_tensor._is_initialized():
                     state_dict_to_save[
-                        key + ".weight_quanter"] = weight_scale_tensor.cpu()
+                        key + ".weight_scale"] = weight_scale_tensor.cpu()
                 else:
                     state_dict_to_save[key] = quanted_weight_tensor.cpu()
             else:

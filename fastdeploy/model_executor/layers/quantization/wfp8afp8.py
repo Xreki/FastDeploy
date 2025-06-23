@@ -32,6 +32,9 @@ class WFP8AFP8Config(QuantConfigBase):
         super().__init__()
         self.weight_scale_dict = weight_scale_dict
         self.act_scale_dict = act_scale_dict
+        self.quant_max_bound = 448
+        self.quant_min_bound = -448
+        self.quant_round_type = 1
 
     def name(self) -> str:
         return "wfp8afp8"
@@ -57,17 +60,13 @@ class WFP8AFP8LinearMethod(QuantMethodBase):
     ) -> None:
         super().__init__()
         self.quant_config = quant_config
-        self.quant_max_bound = 448
-        self.quant_min_bound = -448
-        self.quant_round_type = 1
-        self.weight_dtype = "float8_e4m3fn"
 
     def create_weights(self, layer):
         layer.linear_weight_shape.reverse()
-        layer.weight_dtype = self.weight_dtype
-        # TODO(YuanRisheng): set weight logic should be moved to process_noquant_weights func
-        weight_scale = self.quant_config.weight_scale_dict.get(
-            layer.prefix + ".weight_scale")
+        layer.weight_dtype = "float8_e4m3fn"
+        # TODO(YuanRisheng): set weight logic should be moved to process_loaded_weights func
+        weight_scale = self.quant_config.weight_scale_dict.get(layer.prefix +
+                                                               ".weight_scale")
         in_scale = self.quant_config.act_scale_dict.get(layer.prefix +
                                                         ".activation_scale")
         self.skip_quant = False
@@ -95,25 +94,14 @@ class WFP8AFP8LinearMethod(QuantMethodBase):
             layer.linear_out_scale.set_value(
                 convert_to_npu_dequant_scale(linear_out_scale))
 
-    def process_quantized_weights(self, layer, weight_tensor, weight_quanter=None) -> None:
-        """process_quantized_weights"""
-        layer.linear_weight.set_value(weight_tensor)
-
-    def apply_weight_quantization(self, weights):
-        """apply_weight_quantization"""
-        weight_tensor = weights.transpose([1, 0])
-        weight_tensor = paddle.cast(
-            weight_tensor, self.weight_dtype)
-        return weight_tensor, None
-
-    def process_unquantized_weights(self, layer, weights) -> None:
-        """process_unquantized_weights"""
+    def process_loaded_weights(self, layer, weights) -> None:
         # TODO(YuanRisheng): We should abstract the ‌skip_quant‌ logic to adapt to more quant methods
         if self.skip_quant:
             weight_tensor = weights.cast(layer._dtype)
             layer.linear_weight.set_value(weight_tensor)
             return
-        weight_tensor, _ = self.apply_weight_quantization(weight_tensor)
+        weight_tensor = weights.transpose([1, 0])
+        weight_tensor = paddle.cast(weight_tensor, "float8")
         self.linear_weight.copy_(weight_tensor, False)
 
     def apply(self, layer, x):
